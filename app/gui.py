@@ -44,8 +44,8 @@ class App:
             sys.path.insert(0, str(shared_dir))
 
         self.root.title(APP_TITLE)
-        self.root.geometry("1200x750")
-        self.root.minsize(900, 600)
+        self.root.geometry("1200x860")
+        self.root.minsize(900, 640)
         self._set_window_icon()
 
         self.brands = scan_cars(self.cars_dir)
@@ -128,7 +128,7 @@ class App:
 
         apk_frame = ttk.LabelFrame(left, text="Стандартные приложения", padding=6)
         apk_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
-        apk_canvas = tk.Canvas(apk_frame, highlightthickness=0, width=260)
+        self.apk_canvas = apk_canvas = tk.Canvas(apk_frame, highlightthickness=0, width=260)
         apk_scroll = ttk.Scrollbar(apk_frame, orient="vertical", command=apk_canvas.yview)
         self.apk_inner = ttk.Frame(apk_canvas)
         self.apk_inner.bind(
@@ -139,6 +139,8 @@ class App:
         apk_canvas.configure(yscrollcommand=apk_scroll.set)
         apk_canvas.pack(side="left", fill="both", expand=True)
         apk_scroll.pack(side="right", fill="y")
+        self._bind_mousewheel(apk_canvas)
+        self._bind_mousewheel(self.apk_inner)
         self._populate_apks()
 
         right_pane = ttk.Panedwindow(right, orient=tk.VERTICAL)
@@ -173,10 +175,20 @@ class App:
             text = apk.name
             cb = ttk.Checkbutton(self.apk_inner, text=text, variable=var)
             cb.pack(anchor="w", padx=2, pady=1)
+            self._bind_mousewheel(cb)
             if apk.description:
-                ttk.Label(self.apk_inner, text=apk.description, foreground="#888",
-                          wraplength=230, font=("Segoe UI", 8)).pack(anchor="w", padx=20)
+                desc = ttk.Label(self.apk_inner, text=apk.description, foreground="#888",
+                                  wraplength=230, font=("Segoe UI", 8))
+                desc.pack(anchor="w", padx=20)
+                self._bind_mousewheel(desc)
             self.apk_vars.append((apk, var))
+
+    def _bind_mousewheel(self, widget):
+        """Прокрутка списка APK колёсиком мыши — по умолчанию Canvas её не
+        поддерживает, а колёсико над чекбоксом/подписью не долетает до
+        родительского Canvas без явной привязки на каждый виджет."""
+        widget.bind("<MouseWheel>",
+                     lambda e: self.apk_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
     # ------------------------------------------------------------------
     # Марки / модели
