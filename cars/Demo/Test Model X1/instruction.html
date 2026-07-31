@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Test Model X1 — доступ к ADB</title>
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 16px; color: #222; }
+  h1 { font-size: 18px; color: #1a4d8f; }
+  h2 { font-size: 15px; margin-top: 20px; color: #1a4d8f; }
+  ol { padding-left: 22px; }
+  li { margin-bottom: 8px; line-height: 1.4; }
+  .warn { background: #fff3cd; border: 1px solid #ffe08a; padding: 8px 12px; border-radius: 4px; }
+  .path { background: #eee; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; }
+  img.screenshot { max-width: 100%; border: 1px solid #ccc; border-radius: 4px; margin: 6px 0; }
+</style>
+</head>
+<body>
+<h1>Это демо-инструкция. Скопируйте эту папку как шаблон для реальной модели.</h1>
+
+<p class="warn">Это пример оформления. Реальные шаги и скриншоты для конкретной магнитолы
+нужно заменить на актуальные — фото меню, точные названия пунктов и т.д.</p>
+
+<h2>1. Вход в инженерное меню</h2>
+<ol>
+  <li>На главном экране откройте <span class="path">Настройки → О системе</span>.</li>
+  <li>Нажмите 7 раз на пункт «Версия сборки», пока не появится сообщение
+      «Вы стали разработчиком».</li>
+  <li>Вернитесь назад — в настройках появится новый пункт «Для разработчиков».</li>
+</ol>
+
+<h2>2. Включение отладки по USB</h2>
+<ol>
+  <li>Откройте <span class="path">Настройки → Для разработчиков</span>.</li>
+  <li>Включите переключатель «Отладка по USB».</li>
+  <li>Если есть пункт «Отладка по USB (настройки безопасности)» — включите и его.</li>
+</ol>
+
+<h2>3. Подключение и проверка</h2>
+<ol>
+  <li>Подключите магнитолу к ноутбуку по USB (или используйте ADB по Wi-Fi,
+      если модель не имеет прямого USB-порта для ПК).</li>
+  <li>На экране магнитолы подтвердите запрос «Разрешить отладку по USB» и
+      поставьте галочку «Всегда разрешать с этого компьютера».</li>
+  <li>В приложении нажмите «Обновить список устройств» — модель должна появиться
+      в списке со статусом <span class="path">device</span>.</li>
+</ol>
+
+<p>Пример картинки-скриншота (замените на реальный файл рядом с этим html и
+вставьте <span class="path">&lt;img src="images/step1.png"&gt;</span>):</p>
+<img class="screenshot" alt="пример"
+     src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='160'%3E%3Crect width='400' height='160' fill='%23dde7f7'/%3E%3Ctext x='50%25' y='50%25' font-family='Segoe UI' font-size='16' fill='%231a4d8f' text-anchor='middle' dominant-baseline='middle'%3EСюда вставляется скриншот%3C/text%3E%3C/svg%3E">
+
+</body>
+</html>

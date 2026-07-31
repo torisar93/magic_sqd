@@ -1,0 +1,15 @@
+# Виртуальное окружение и кэш Python
+.venv/
+__pycache__/
+*.pyc
+
+# Артефакты сборки PyInstaller (пересобираются из magic_sqd.spec)
+build/
+dist/
+
+# platform-tools (adb.exe и спутники) — качаются отдельно, см. tools/README.txt
+tools/*.exe
+tools/*.dll
+
+# Локальные настройки Claude Code (привязаны к этой машине, не для репозитория)
+.claude/settings.local.json
