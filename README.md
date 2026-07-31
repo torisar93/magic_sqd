@@ -10,6 +10,9 @@ Android-магнитолы китайских авто — через ADB или
 
 ```
 magic_sqd.exe
+assets/
+    icon.ico                  <- иконка окна и .exe
+    splash.png                 <- картинка сплеш-скрина при запуске
 tools/
     adb.exe                  <- положить сюда platform-tools (см. tools/README.txt)
     AdbWinApi.dll
@@ -165,9 +168,27 @@ python -m venv .venv
 ```
 
 Готовый `dist\magic_sqd.exe` скопируйте туда, где будут лежать
-`cars\`, `apk\` и `tools\` — например на флешку или в рабочую папку на
-ноутбуке. Сама программа кода не содержит "жёстко зашитых" моделей — всё
+`cars\`, `apk\`, `tools\` и `assets\` — например на флешку или в рабочую папку
+на ноутбуке. Сама программа кода не содержит "жёстко зашитых" моделей — всё
 подхватывается из соседних папок.
+
+## Иконка и сплеш-скрин
+
+`assets\icon.ico` — иконка `.exe` (зашивается в файл при сборке через
+`icon=` в `magic_sqd.spec`) и иконка окна во время работы программы.
+`assets\splash.png` — картинка, которая на пару секунд показывается при
+запуске, пока программа читает `cars\`/`apk\` и грузит `tkinterweb`. Если
+`assets\splash.png` рядом с `.exe`/`main.py` нет — сплеш просто не
+показывается, программа стартует как обычно.
+
+Если понадобится заменить логотип — исходник лежит в
+`assets\icon_source.png` (1024×1024). Пересобрать `icon.ico`/`icon.png`/
+`splash.png` из него:
+
+```powershell
+.\.venv\Scripts\pip install Pillow
+.\.venv\Scripts\python -c "from PIL import Image; im = Image.open('assets/icon_source.png').convert('RGBA'); im.save('assets/icon.ico', sizes=[(s,s) for s in (16,24,32,48,64,128,256)]); im.resize((256,256)).save('assets/icon.png'); im.resize((420,420)).save('assets/splash.png')"
+```
 
 ## adb.exe
 

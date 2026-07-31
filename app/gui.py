@@ -26,9 +26,14 @@ NO_INSTRUCTION_HTML = (
 )
 
 
-class App(tk.Tk):
-    def __init__(self, base_dir: Path):
-        super().__init__()
+class App:
+    def __init__(self, base_dir: Path, root: tk.Tk):
+        """root — уже созданный (и настроенный вызывающим кодом) корень Tk.
+        Так сплеш-скрин в main.py и главное окно используют один и тот же
+        Tcl-интерпретатор — на Windows это важно: если создать/уничтожить
+        один tk.Tk() (сплеш), а потом создать ещё один tk.Tk() для главного
+        окна, у второго корня перестаёт применяться iconbitmap."""
+        self.root = root
         self.base_dir = base_dir
         self.cars_dir = base_dir / "cars"
         self.apk_dir = base_dir / "apk"
@@ -38,9 +43,10 @@ class App(tk.Tk):
         if shared_dir.exists():
             sys.path.insert(0, str(shared_dir))
 
-        self.title(APP_TITLE)
-        self.geometry("1200x750")
-        self.minsize(900, 600)
+        self.root.title(APP_TITLE)
+        self.root.geometry("1200x750")
+        self.root.minsize(900, 600)
+        self._set_window_icon()
 
         self.brands = scan_cars(self.cars_dir)
         self.shared_apks = scan_apks(self.apk_dir)
@@ -54,16 +60,24 @@ class App(tk.Tk):
         self._build_ui()
         self._populate_brands()
         self._refresh_devices()
-        self.after(100, self._drain_log_queue)
+        self.root.after(100, self._drain_log_queue)
 
         if not self.brands:
             self._log(f"В папке {self.cars_dir} не найдено ни одной марки/модели.")
+
+    def _set_window_icon(self):
+        icon_path = self.base_dir / "assets" / "icon.ico"
+        if icon_path.exists():
+            try:
+                self.root.iconbitmap(default=str(icon_path))
+            except tk.TclError:
+                pass
 
     # ------------------------------------------------------------------
     # Построение интерфейса
     # ------------------------------------------------------------------
     def _build_ui(self):
-        root_pane = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
+        root_pane = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
         root_pane.pack(fill=tk.BOTH, expand=True)
 
         left = ttk.Frame(root_pane, padding=8)
@@ -274,13 +288,13 @@ class App(tk.Tk):
         if not self.current_model:
             return
         selected_apks = [apk.path for apk, var in self.apk_vars if var.get()]
-        UsbDialog(self, self.base_dir, self.current_model, selected_apks)
+        UsbDialog(self.root, self.base_dir, self.current_model, selected_apks)
 
     def _open_stage_wizard(self):
         if not self.current_model or not self.current_model.stages_script:
             return
         selected_apks = [apk.path for apk, var in self.apk_vars if var.get()]
-        StageWizard(self, self.base_dir, self.adb_path, self.current_model, selected_apks)
+        StageWizard(self.root, self.base_dir, self.adb_path, self.current_model, selected_apks)
 
     # ------------------------------------------------------------------
     # Логи и колбэки из фонового потока (только через очередь!)
@@ -310,7 +324,7 @@ class App(tk.Tk):
                         messagebox.showerror(APP_TITLE, message)
         except queue.Empty:
             pass
-        self.after(100, self._drain_log_queue)
+        self.root.after(100, self._drain_log_queue)
 
     def _log(self, message):
         self.log_view.config(state="normal")
