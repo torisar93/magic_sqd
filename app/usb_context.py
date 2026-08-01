@@ -1,4 +1,5 @@
-"""Объект ctx, передаваемый в usb_install.py каждой модели (режим "USB-флешка")."""
+"""Объект ctx, передаваемый в run(ctx) "usb"-этапа stages.py модели (режим
+"USB-флешка", см. stage_wizard.py/usb_dialog.py)."""
 import shutil
 from pathlib import Path
 

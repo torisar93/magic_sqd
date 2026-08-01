@@ -1,8 +1,6 @@
-"""Динамическая загрузка и запуск install.py конкретной модели в фоновом потоке."""
-import importlib.util
+"""Запуск одного ADB-этапа stages.py (функция run(ctx)) в фоновом потоке."""
 import threading
 import traceback
-from pathlib import Path
 
 from .content_sync import ensure_apks_downloaded, sync_model_files
 from .install_context import InstallContext, InstallCancelled
@@ -43,13 +41,12 @@ class InstallRunner:
     def cancel(self):
         self._cancel_flag.set()
 
-    def start(self, model, device_serial, selected_apks, run_fn=None):
-        """Если run_fn не задан — запускает install.py модели (как раньше).
-        Если задан — запускает run_fn(ctx) напрямую (используется мастером этапов)."""
+    def start(self, model, device_serial, selected_apks, run_fn):
+        """Запускает run_fn(ctx) в фоновом потоке — run_fn это функция
+        конкретного ADB-этапа из stages.py модели (см. stage_wizard.py,
+        единственный вызывающий)."""
         if self.running:
             raise RuntimeError("Установка уже выполняется.")
-        if not run_fn and not model.install_script:
-            raise RuntimeError(f"В папке модели нет install.py: {model.dir}")
 
         self._cancel_flag = threading.Event()
         self._thread = threading.Thread(
@@ -63,7 +60,7 @@ class InstallRunner:
         if self._cancel_flag.is_set():
             raise InstallCancelled("Установка остановлена пользователем.")
 
-    def _run(self, model, device_serial, selected_apks, run_fn=None):
+    def _run(self, model, device_serial, selected_apks, run_fn):
         try:
             if self.base_dir:
                 sync_model_files(self.base_dir, model, log=self.on_log,
@@ -79,13 +76,7 @@ class InstallRunner:
                 cancel_flag=self._cancel_flag,
                 ask_input_fn=self.ask_input_fn,
             )
-            if run_fn:
-                run_fn(ctx)
-            else:
-                module = self._load_module(model.install_script)
-                if not hasattr(module, "run"):
-                    raise RuntimeError("install.py должен содержать функцию run(ctx)")
-                module.run(ctx)
+            run_fn(ctx)
         except InstallCancelled as exc:
             self.on_finished(False, str(exc))
             return
@@ -94,12 +85,3 @@ class InstallRunner:
             self.on_finished(False, f"Ошибка установки: {exc}")
             return
         self.on_finished(True, "Установка завершена успешно.")
-
-    @staticmethod
-    def _load_module(script_path: Path):
-        spec = importlib.util.spec_from_file_location(
-            f"car_install_script_{abs(hash(str(script_path)))}", script_path
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module

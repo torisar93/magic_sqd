@@ -10,7 +10,6 @@ class ModelInfo:
     name: str
     dir: Path
     instruction_html: Path | None
-    install_script: Path | None
     stages_script: Path | None
 
 
@@ -38,14 +37,12 @@ def scan_cars(cars_dir: Path) -> dict[str, list[ModelInfo]]:
             if not model_dir.is_dir():
                 continue
             instruction = model_dir / "instruction.html"
-            install_script = model_dir / "install.py"
             stages_script = model_dir / "stages.py"
             models.append(ModelInfo(
                 brand=brand_dir.name,
                 name=model_dir.name,
                 dir=model_dir,
                 instruction_html=instruction if instruction.exists() else None,
-                install_script=install_script if install_script.exists() else None,
                 stages_script=stages_script if stages_script.exists() else None,
             ))
         if models:
