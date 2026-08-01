@@ -1,25 +1,33 @@
 """
-Geely Monjaro (прошитый Китай) — установка по ADB.
+Geely Monjaro (машина ОД) — установка по ADB.
 
-Переписано из старого adb_install.bat, пункт меню "2. ПИ — Установка
-Monjaro Starter Pack (WiFi, Приложения, Магазины приложений, Monjaro
-Tweaks PRO)". В отличие от машины ОД (модель "Monjaro" рядом), здесь GNSS
-(USBGPS4Droid) не ставится.
+Переписано из старого adb_install.bat, пункт меню "1. ОД — Установка
+Monjaro Starter Pack (WiFi, GPS, Приложения, Магазины приложений,
+Monjaro Tweaks PRO)". Вариант для прошитого Китая (без GNSS) — отдельная
+модель "Monjaro (Китай)" рядом. Подключение — по USB-кабелю, устройство
+выбирается прямо в этапе мастера "Установка" (см. stages.py).
 
-Свои APK разложите по подпапке files/pack/ этой модели (раньше лежали в
-папке Pack рядом с .bat) — тот же набор, что и для модели "Monjaro".
+Свои APK разложите по подпапкам files/ этой модели (раньше лежали в
+подпапках рядом с .bat):
+    files/pack/  - Starter Pack (раньше папка Pack), показывается галочками
+                   на этапе "Выбор приложений" в stages.py
+    files/gnss/  - USBGPS4Droid и т.п. (раньше папка GNSS) — отдельный этап
 """
 
 
-def install_pack(ctx):
-    """Установка Monjaro Starter Pack из files/pack/."""
-    pack_dir = ctx.file("pack")
-    apks = sorted(pack_dir.glob("*.apk")) if pack_dir.exists() else []
+def install_gnss(ctx):
+    """USBGPS4Droid: APK из files/gnss/ + разрешение на подмену геолокации
+    + сервис специальных возможностей (в .bat — блок ":GNSS")."""
+    gnss_dir = ctx.file("gnss")
+    apks = sorted(gnss_dir.glob("*.apk")) if gnss_dir.exists() else []
     if not apks:
-        ctx.log(f"(нет APK в {pack_dir} — пропускаю)")
+        ctx.log(f"(нет APK в {gnss_dir} — пропускаю)")
         return
     for apk in apks:
-        ctx.install_apk(apk, reinstall=True, extra_args=["-g"])
+        ctx.install_apk(apk)
+    pkg = "org.broeuschmeul.android.gps.usb.provider"
+    ctx.shell(f"appops set {pkg} android:mock_location allow", check=False)
+    _add_accessibility_service(ctx, f"{pkg}/{pkg}.service.BootService")
 
 
 def grant_macrodroid_permissions(ctx):
@@ -76,7 +84,8 @@ def enable_wifi_settings(ctx):
 
 def _add_accessibility_service(ctx, *services):
     """Дописывает сервисы в settings secure enabled_accessibility_services,
-    не затирая то, что там уже включено."""
+    не затирая то, что там уже включено (аналог парсинга
+    "settings list secure | findstr enabled_access" + обрезки префикса в .bat)."""
     result = ctx.shell("settings list secure", check=False)
     current = ""
     for line in (result.stdout or "").splitlines():
@@ -90,26 +99,3 @@ def _add_accessibility_service(ctx, *services):
     ctx.shell(f"settings put secure enabled_accessibility_services {':'.join(parts)}", check=False)
 
 
-def run(ctx):
-    """"2. ПИ" из .bat: Starter Pack + права Macrodroid + клавиатура +
-    WiFi, без GNSS. Вызывается кнопкой "Установить по ADB"."""
-    ctx.log("Устанавливаю Monjaro Starter Pack")
-    install_pack(ctx)
-
-    ctx.log("Выдаю права Macrodroid")
-    grant_macrodroid_permissions(ctx)
-
-    ctx.log("Разрешаю установку APK из магазинов/файловых менеджеров")
-    grant_install_permissions(ctx)
-
-    ctx.log("Устанавливаю Google-клавиатуру по умолчанию")
-    set_google_keyboard_default(ctx)
-
-    ctx.log("Настраиваю WiFi")
-    enable_wifi_settings(ctx)
-
-    if ctx.selected_apks:
-        ctx.log(f"Устанавливаю {len(ctx.selected_apks)} отмеченных приложений из apk/")
-        ctx.install_selected_apks()
-
-    ctx.log("Готово. Перезагрузите магнитолу.")

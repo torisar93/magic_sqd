@@ -11,13 +11,14 @@ class InstallCancelled(RuntimeError):
 
 class InstallContext:
     def __init__(self, adb_path, device_serial, model_dir: Path, selected_apks,
-                 log_fn, cancel_flag):
+                 log_fn, cancel_flag, ask_input_fn=None):
         self.model_dir = Path(model_dir)
         self.files_dir = self.model_dir / "files"
         self.selected_apks = [Path(p) for p in selected_apks]
         self.device = device_serial
         self._log_fn = log_fn
         self._cancel_flag = cancel_flag
+        self._ask_input_fn = ask_input_fn
         self._adb = Adb(adb_path, device_serial, log=self._log_fn)
 
     # --- служебное -------------------------------------------------
@@ -27,6 +28,22 @@ class InstallContext:
     def check_cancelled(self):
         if self._cancel_flag.is_set():
             raise InstallCancelled("Установка остановлена пользователем.")
+
+    def ask_input(self, prompt, title="Ввод данных"):
+        """Запрашивает у пользователя строку (например, IPv6-адрес магнитолы)
+        через диалоговое окно. Вызывается из фонового потока установки и
+        блокирует его до ответа пользователя — сам диалог показывается на
+        главном потоке через ask_input_fn (см. gui.py/stage_wizard.py).
+        Бросает InstallCancelled, если пользователь нажал "Отмена" или
+        оставил поле пустым."""
+        self.check_cancelled()
+        if not self._ask_input_fn:
+            raise RuntimeError("В этом режиме запуска ask_input недоступен")
+        value = self._ask_input_fn(prompt, title)
+        self.check_cancelled()
+        if not value:
+            raise InstallCancelled("Ввод отменён пользователем.")
+        return value
 
     def sleep(self, seconds):
         end = time.time() + seconds
@@ -53,9 +70,9 @@ class InstallContext:
         self.log(f"Установка APK: {Path(path).name}")
         return self._adb.install(path, reinstall=reinstall, extra_args=extra_args, timeout=timeout)
 
-    def install_selected_apks(self):
+    def install_selected_apks(self, extra_args=None):
         for apk in self.selected_apks:
-            self.install_apk(apk)
+            self.install_apk(apk, extra_args=extra_args)
 
     def uninstall(self, package, check=False):
         return self._adb.uninstall(package, check=check)

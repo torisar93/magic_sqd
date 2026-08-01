@@ -1,2 +1,3 @@
 tkinterweb>=4.25
+customtkinter>=6.0
 pyinstaller>=6.0

@@ -102,6 +102,21 @@ class Adb:
         raise AdbError("Не дождались полной загрузки системы (sys.boot_completed).")
 
 
+def kill_server(adb_path: str) -> None:
+    """Останавливает локальный adb-сервер (adb kill-server) — вызывается при
+    закрытии программы, иначе adb.exe висит в процессах и после закрытия
+    держит файлы (мешает пересборке/обновлению, см. память проекта)."""
+    try:
+        subprocess.run(
+            [adb_path, "kill-server"],
+            capture_output=True,
+            timeout=15,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+
 def list_devices(adb_path: str) -> list[dict]:
     """Возвращает список подключённых устройств: [{'serial': ..., 'state': ..., 'model': ...}]."""
     try:

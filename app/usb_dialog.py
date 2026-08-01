@@ -4,34 +4,40 @@ import threading
 import traceback
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import messagebox
 
+import customtkinter
+
+from .content_sync import ensure_apks_downloaded, sync_model_files
 from .install_context import InstallCancelled
 from .usb_context import UsbContext
-from .usb_runner import run_usb_install
 from .usb_utils import list_removable_drives, format_drive, UsbSafetyError
+from . import theme
 
 
-class UsbDialog(tk.Toplevel):
-    def __init__(self, parent, base_dir: Path, model, selected_apks, run_fn=None, title_suffix=None,
-                 on_finished=None):
-        """run_fn(ctx), если задан, используется вместо usb_install.py модели
-        (или копирования по умолчанию) — так мастер этапов переиспользует этот
-        диалог для отдельных USB-этапов.
+class UsbDialog(customtkinter.CTkToplevel):
+    def __init__(self, parent, base_dir: Path, model, selected_apks, run_fn, title_suffix=None,
+                 on_finished=None, variant: str | None = None):
+        """run_fn(ctx) — этап "usb" из stages.py модели (мастер этапов —
+        единственный, кто открывает этот диалог).
         on_finished(success: bool), если задан, вызывается из фонового потока
         по завершении (в дополнение к обычному messagebox) — мастер этапов
-        использует его, чтобы отметить этап выполненным."""
+        использует его, чтобы отметить этап выполненным.
+        variant — выбранный техником вариант содержимого (Full/Lite/...),
+        см. UsbContext."""
         super().__init__(parent)
+        theme.style_toplevel(self)
         self.base_dir = base_dir
         self.model = model
         self.selected_apks = selected_apks
         self.run_fn = run_fn
         self.on_finished = on_finished
+        self.variant = variant
 
         self.title(f"USB-флешка — {model.brand} / {model.name}" +
                    (f" — {title_suffix}" if title_suffix else ""))
-        self.geometry("580x520")
-        self.minsize(520, 420)
+        self.geometry("670x600")
+        self.minsize(600, 480)
         self.transient(parent)
         self.grab_set()
 
@@ -47,53 +53,68 @@ class UsbDialog(tk.Toplevel):
 
     # ------------------------------------------------------------------
     def _build_ui(self):
-        frame = ttk.Frame(self, padding=10)
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(6, weight=1)
 
-        ttk.Label(frame, text="Флешка:", font=("Segoe UI", 10, "bold")).grid(
-            row=0, column=0, sticky="w")
-        self.drive_combo = ttk.Combobox(frame, state="readonly")
+        customtkinter.CTkLabel(frame, text="Флешка:", font=theme.FONT_BOLD,
+                                text_color=theme.TEXT).grid(row=0, column=0, sticky="w")
+        self.drive_combo = customtkinter.CTkOptionMenu(
+            frame, values=[""], font=theme.FONT, fg_color=theme.BG_CARD,
+            button_color=theme.BORDER, button_hover_color=theme.ACCENT, text_color=theme.TEXT)
         self.drive_combo.grid(row=0, column=1, sticky="we", padx=(6, 6))
-        ttk.Button(frame, text="Обновить", command=self._refresh_drives).grid(row=0, column=2)
+        customtkinter.CTkButton(frame, text="Обновить", command=self._refresh_drives,
+                                 **theme.secondary_button()).grid(row=0, column=2)
 
-        ttk.Label(frame, text="Показаны только съёмные USB-накопители — системный "
-                               "и внутренние диски в списке не появятся.",
-                  foreground="#888", wraplength=520).grid(
-            row=1, column=0, columnspan=3, sticky="w", pady=(4, 10))
+        customtkinter.CTkLabel(
+            frame, text="Показаны только съёмные USB-накопители — системный "
+                        "и внутренние диски в списке не появятся.",
+            text_color=theme.TEXT_DIM, font=theme.FONT_SMALL, wraplength=520, justify="left"
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 10))
 
         self.format_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(frame, text="Отформатировать флешку перед копированием",
-                         variable=self.format_var, command=self._update_warning).grid(
-            row=2, column=0, columnspan=3, sticky="w")
+        customtkinter.CTkCheckBox(
+            frame, text="Отформатировать флешку перед копированием", variable=self.format_var,
+            command=self._update_warning, font=theme.FONT, text_color=theme.TEXT,
+            fg_color=theme.ACCENT, hover_color=theme.ACCENT_HOVER, border_color=theme.BORDER
+        ).grid(row=2, column=0, columnspan=3, sticky="w")
 
-        fs_frame = ttk.Frame(frame)
+        fs_frame = customtkinter.CTkFrame(frame, fg_color="transparent")
         fs_frame.grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 8))
-        ttk.Label(fs_frame, text="Файловая система:").pack(side="left")
+        customtkinter.CTkLabel(fs_frame, text="Файловая система:", text_color=theme.TEXT,
+                                font=theme.FONT).pack(side="left")
         self.fs_var = tk.StringVar(value="FAT32")
-        ttk.Radiobutton(fs_frame, text="FAT32 (обычно нужна магнитолам, до ~32 ГБ)",
-                         value="FAT32", variable=self.fs_var).pack(side="left", padx=(8, 0))
-        ttk.Radiobutton(fs_frame, text="exFAT (для флешек больше 32 ГБ)",
-                         value="exFAT", variable=self.fs_var).pack(side="left", padx=(8, 0))
+        radio_kwargs = dict(variable=self.fs_var, font=theme.FONT, text_color=theme.TEXT,
+                             fg_color=theme.ACCENT, hover_color=theme.ACCENT_HOVER,
+                             border_color=theme.BORDER)
+        customtkinter.CTkRadioButton(fs_frame, text="FAT32 (обычно нужна магнитолам, до ~32 ГБ)",
+                                      value="FAT32", **radio_kwargs).pack(side="left", padx=(8, 0))
+        customtkinter.CTkRadioButton(fs_frame, text="exFAT (для флешек больше 32 ГБ)",
+                                      value="exFAT", **radio_kwargs).pack(side="left", padx=(8, 0))
 
         self.warning_var = tk.StringVar()
-        ttk.Label(frame, textvariable=self.warning_var, foreground="#a33",
-                  wraplength=540, font=("Segoe UI", 9, "bold")).grid(
+        customtkinter.CTkLabel(frame, textvariable=self.warning_var, text_color=theme.DANGER,
+                                wraplength=540, font=theme.FONT_BOLD, justify="left").grid(
             row=4, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
-        ttk.Label(frame, text="Лог:").grid(row=5, column=0, columnspan=3, sticky="w")
-        self.log_view = scrolledtext.ScrolledText(frame, height=14, state="disabled",
-                                                    font=("Consolas", 9))
+        customtkinter.CTkLabel(frame, text="Лог:", text_color=theme.TEXT_DIM,
+                                font=theme.FONT).grid(row=5, column=0, columnspan=3, sticky="w")
+        self.log_view = customtkinter.CTkTextbox(frame, height=200, state="disabled",
+                                                   font=theme.FONT_MONO, fg_color=theme.BG_CARD,
+                                                   text_color=theme.TEXT)
         self.log_view.grid(row=6, column=0, columnspan=3, sticky="nsew")
 
-        btn_frame = ttk.Frame(frame)
+        btn_frame = customtkinter.CTkFrame(frame, fg_color="transparent")
         btn_frame.grid(row=7, column=0, columnspan=3, sticky="we", pady=(10, 0))
-        self.start_btn = ttk.Button(btn_frame, text="Начать", command=self._start)
+        self.start_btn = customtkinter.CTkButton(btn_frame, text="Начать", command=self._start,
+                                                   **theme.accent_button())
         self.start_btn.pack(side="left")
-        self.stop_btn = ttk.Button(btn_frame, text="Стоп", command=self._stop, state="disabled")
+        self.stop_btn = customtkinter.CTkButton(btn_frame, text="Стоп", command=self._stop,
+                                                  state="disabled", **theme.danger_button())
         self.stop_btn.pack(side="left", padx=(6, 0))
-        ttk.Button(btn_frame, text="Закрыть", command=self._on_close).pack(side="right")
+        customtkinter.CTkButton(btn_frame, text="Закрыть", command=self._on_close,
+                                 **theme.secondary_button()).pack(side="right")
 
         self._update_warning()
 
@@ -112,18 +133,17 @@ class UsbDialog(tk.Toplevel):
     # ------------------------------------------------------------------
     def _refresh_drives(self):
         self.drives = list_removable_drives()
-        self.drive_combo["values"] = [d.display for d in self.drives]
-        if self.drives:
-            self.drive_combo.current(0)
-        else:
-            self.drive_combo.set("")
+        labels = [d.display for d in self.drives]
+        self.drive_combo.configure(values=labels)
+        self.drive_combo.set(labels[0] if labels else "")
         self._log(f"Найдено съёмных флешек: {len(self.drives)}")
 
     def _selected_drive(self):
-        idx = self.drive_combo.current()
-        if idx is None or idx < 0 or idx >= len(self.drives):
-            return None
-        return self.drives[idx]
+        display = self.drive_combo.get()
+        for d in self.drives:
+            if d.display == display:
+                return d
+        return None
 
     # ------------------------------------------------------------------
     def _start(self):
@@ -144,9 +164,9 @@ class UsbDialog(tk.Toplevel):
                 return
 
         self._cancel_flag = threading.Event()
-        self.start_btn.config(state="disabled")
-        self.stop_btn.config(state="normal")
-        self.drive_combo.config(state="disabled")
+        self.start_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        self.drive_combo.configure(state="disabled")
 
         self._worker_thread = threading.Thread(target=self._worker, args=(drive,), daemon=True)
         self._worker_thread.start()
@@ -155,8 +175,17 @@ class UsbDialog(tk.Toplevel):
         self._cancel_flag.set()
         self._log("Останавливаю... (завершится на ближайшей проверке)")
 
+    def _check_cancelled(self):
+        if self._cancel_flag.is_set():
+            raise InstallCancelled("Копирование остановлено пользователем.")
+
     def _worker(self, drive):
         try:
+            sync_model_files(self.base_dir, self.model, log=self._log_threaded,
+                              check_cancelled=self._check_cancelled)
+            ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", self.selected_apks,
+                                    log=self._log_threaded, check_cancelled=self._check_cancelled)
+
             if self.format_var.get():
                 try:
                     format_drive(drive.letter, self.fs_var.get(), self.model.name,
@@ -175,11 +204,9 @@ class UsbDialog(tk.Toplevel):
                 selected_apks=self.selected_apks,
                 log_fn=self._log_threaded,
                 cancel_flag=self._cancel_flag,
+                variant=self.variant,
             )
-            if self.run_fn:
-                self.run_fn(ctx)
-            else:
-                run_usb_install(self.model, ctx)
+            self.run_fn(ctx)
         except InstallCancelled as exc:
             self._finished_threaded(False, str(exc))
             return
@@ -207,9 +234,9 @@ class UsbDialog(tk.Toplevel):
                 elif kind == "finished":
                     success, message = payload
                     self._log(message)
-                    self.start_btn.config(state="normal")
-                    self.stop_btn.config(state="disabled")
-                    self.drive_combo.config(state="readonly")
+                    self.start_btn.configure(state="normal")
+                    self.stop_btn.configure(state="disabled")
+                    self.drive_combo.configure(state="normal")
                     if self.on_finished:
                         self.on_finished(success)
                     if success:
@@ -222,10 +249,10 @@ class UsbDialog(tk.Toplevel):
             self.after(100, self._drain_log_queue)
 
     def _log(self, message):
-        self.log_view.config(state="normal")
+        self.log_view.configure(state="normal")
         self.log_view.insert(tk.END, str(message) + "\n")
         self.log_view.see(tk.END)
-        self.log_view.config(state="disabled")
+        self.log_view.configure(state="disabled")
 
     def _on_close(self):
         if self._worker_thread is not None and self._worker_thread.is_alive():

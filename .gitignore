@@ -14,6 +14,11 @@ tools/*.dll
 # Локальные настройки Claude Code (привязаны к этой машине, не для репозитория)
 .claude/settings.local.json
 
+# Логи с этой конкретной машины — не для репозитория
+crash.log
+startup.log
+*.log
+
 # Сами APK в git не кладём (среди них попадаются очень большие файлы,
 # GitHub вообще блокирует пуш файлов больше 100 МБ). Программа и так
 # читает их прямо с диска — этот .gitignore только про сам репозиторий.
@@ -22,3 +27,32 @@ tools/*.dll
 # скачивание по запросу).
 apk/*.apk
 cars/**/*.apk
+
+# Тяжёлые файлы конкретных моделей (прошивки, ISO, USB-инсталляторы —
+# то же самое, что Excludes в installer.iss уже держит вне самого
+# инсталлятора) — живут только на своём сервере (см. server/README.md,
+# content_sync.py), в git не попадают вовсе. Среди них попадаются файлы
+# по 500+ МБ (например, ISO прошивки HAVAL M6) — GitHub такое не примет.
+# README.txt-заглушки — исключение, чтобы структура пустых папок были
+# видна в самом репозитории (см. cars/*/files/*/README.txt).
+cars/**/files/**
+cars/**/usb_files/**
+# Поддиректории нужно переисключить отдельно (git не спускается внутрь
+# уже исключённой директории, даже если файл внутри переисключён ниже) —
+# см. https://git-scm.com/docs/gitignore, "It is not possible to
+# re-include a file if a parent directory of that file is excluded".
+!cars/**/files/**/
+!cars/**/usb_files/**/
+!cars/**/files/**/README.txt
+!cars/**/usb_files/**/README.txt
+
+# Ссылка на Я.Диск — своя для каждого, не для репозитория (см. cloud_config.py)
+cloud.json
+
+# Секреты/адреса своего сервера — свои для каждого окружения (см. server/README.md)
+server.json
+submit.json
+server/backend.env
+
+# Собранный инсталлятор (пересобирается из installer.iss)
+installer_output/

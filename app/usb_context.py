@@ -6,12 +6,18 @@ from .install_context import InstallCancelled
 
 
 class UsbContext:
-    def __init__(self, drive_root: Path, model_dir: Path, selected_apks, log_fn, cancel_flag):
+    def __init__(self, drive_root: Path, model_dir: Path, selected_apks, log_fn, cancel_flag,
+                 variant: str | None = None):
+        """variant — выбранный техником вариант содержимого (Full/Lite/...),
+        если у usb-этапа есть несколько (см. StepSpec.variants в
+        car_generator.py, stage_wizard.py._run_usb_stage) — None для
+        обычных однонаборных этапов, как и раньше."""
         self.drive_root = Path(drive_root)
         self.model_dir = Path(model_dir)
         self.files_dir = self.model_dir / "files"
         self.usb_files_dir = self.model_dir / "usb_files"
         self.selected_apks = [Path(p) for p in selected_apks]
+        self.variant = variant
         self._log_fn = log_fn
         self._cancel_flag = cancel_flag
 

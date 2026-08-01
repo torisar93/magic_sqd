@@ -6,6 +6,23 @@ from pathlib import Path
 SPLASH_BG = "#ff00fe"       # хромакей — этот цвет вырезается через -transparentcolor
 MIN_SPLASH_SECONDS = 1.8    # сплеш держим на экране не меньше этого времени
 
+_STARTUP_LOG_PATH = None  # выставляется в main() — путь к startup.log рядом с программой
+
+
+def _log_step(message: str) -> None:
+    """Построчный лог запуска с немедленным сбросом на диск — в отличие от
+    traceback в except-блоке ниже, переживает и жёсткое падение (нативный
+    краш без Python-исключения): по последней записанной строке видно, до
+    какого шага программа вообще дошла."""
+    if _STARTUP_LOG_PATH is None:
+        return
+    try:
+        with open(_STARTUP_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {message}\n")
+            f.flush()
+    except OSError:
+        pass
+
 
 def get_base_dir() -> Path:
     """Папка рядом с magic_sqd.exe (или со скриптом при запуске из исходников)."""
@@ -76,31 +93,92 @@ def _show_splash(root, base_dir: Path):
 
 
 def main():
+    global _STARTUP_LOG_PATH
+    _STARTUP_LOG_PATH = get_base_dir() / "startup.log"
+    try:
+        _STARTUP_LOG_PATH.unlink(missing_ok=True)  # только текущий запуск, не копится
+    except OSError:
+        pass
+
+    _log_step("_set_dpi_aware()")
     _set_dpi_aware()
 
     base_dir = get_base_dir()
     sys.path.insert(0, str(base_dir))
 
-    import tkinter as tk
+    _log_step("import customtkinter")
+    import customtkinter
 
-    root = tk.Tk()
-    root.withdraw()  # пока видна только заглушка, не пустое главное окно
+    # customtkinter иначе сам вызывает SetProcessDpiAwareness() при первом
+    # окне — а _set_dpi_aware() выше его уже вызвала. Повторный вызов этого
+    # WinAPI с другим значением DPI-awareness в связке PyInstaller+
+    # customtkinter на некоторых машинах приводит к падению процесса без
+    # трассировки (ровно то, что мы ловим — сплеш, затем окно, затем всё
+    # исчезает без единой ошибки в консоли).
+    _log_step("deactivate_automatic_dpi_awareness()")
+    customtkinter.deactivate_automatic_dpi_awareness()
+
+    _log_step("customtkinter.CTk()")
+    root = customtkinter.CTk()
+    # Раньше здесь был root.withdraw() (сплеш поверх скрытого окна, потом
+    # root.deiconify() под конец) — лог показал, что падение происходит
+    # ровно в момент входа в mainloop(), сразу после deiconify: похоже,
+    # резкий переход "окно ни разу не отрисовывалось" → "сразу видимое и
+    # полностью построенное" на некоторых машинах роняет процесс на уровне
+    # Tcl (без единого Python-исключения) — новые CTk-виджеты (в частности
+    # CTkScrollableFrame под капотом CTkListbox) получают самый первый цикл
+    # реальной отрисовки одним скачком. Теперь root виден с самого начала
+    # (сплеш поверх него) — виджеты строятся и красятся постепенно, как
+    # обычно у Tk-приложений, без "мгновенного" первого рендера.
+    _log_step("CTk() created OK")
+
+    from app.theme import apply_theme
+    _log_step("apply_theme()")
+    apply_theme(root, base_dir)
+    _log_step("apply_theme() OK")
 
     splash_started = time.time()
+    _log_step("_show_splash()")
     splash = _show_splash(root, base_dir)
+    _log_step(f"_show_splash() OK, shown={splash is not None}")
 
     from app.gui import App
 
+    _log_step("App(base_dir, root) - building main window UI")
     App(base_dir, root)  # строит UI поверх root, пока показан сплеш
+    _log_step("App() OK")
 
     if splash is not None:
         remaining = MIN_SPLASH_SECONDS - (time.time() - splash_started)
         if remaining > 0:
             time.sleep(remaining)
         splash.destroy()
-    root.deiconify()
+        _log_step("splash destroyed")
+    _log_step("entering mainloop()")
     root.mainloop()
+    _log_step("mainloop() returned (normal close)")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # console=False в сборке — без этого сбой на старте выглядит как
+        # "окно мелькнуло и пропало", без единого шанса понять причину.
+        import traceback
+        text = traceback.format_exc()
+        _log_step("EXCEPTION:\n" + text)
+        try:
+            (get_base_dir() / "crash.log").write_text(text, encoding="utf-8")
+        except OSError:
+            pass
+        try:
+            import tkinter.messagebox as messagebox
+            messagebox.showerror(
+                "Magic SQD — не удалось запустить",
+                "Подробности сохранены в startup.log/crash.log рядом с программой.\n\n"
+                + text[-1500:],
+            )
+        except Exception:
+            pass
+        raise

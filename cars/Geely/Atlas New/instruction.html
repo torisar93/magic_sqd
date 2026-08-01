@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Geely Atlas — доступ к ADB по Wi-Fi</title>
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 16px; background: #171f30; color: #e8ecf4; }
+  h1 { font-size: 18px; color: #7ee0c0; }
+  h2 { font-size: 15px; margin-top: 20px; color: #7ee0c0; }
+  ol { padding-left: 22px; }
+  li { margin-bottom: 8px; line-height: 1.4; }
+  .warn { background: #4a3f1a; border: 1px solid #8a6d1f; padding: 8px 12px; border-radius: 4px; color: #f3e3a8; }
+  .danger { background: #4a2222; border: 1px solid #8a3a3a; padding: 8px 12px; border-radius: 4px; color: #f3c6c6; }
+  .path { background: #232c42; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; color: #7ee0c0; }
+</style>
+</head>
+<body>
+<h1>Geely Atlas — вход в инженерное меню и подключение по Wi-Fi ADB</h1>
+
+<p class="danger">Всё, что вы делаете со своим автомобилем, вы делаете на свой страх
+и риск. Никто, кроме вас, не несёт ответственности за последствия.</p>
+
+<p class="warn">Эта магнитола не использует USB-кабель для установки — компьютер
+подключается к <b>Wi-Fi-сети самой магнитолы</b>, а программа сама вызывает
+<span class="path">adb connect</span> на IP этой сети (порт 5555).</p>
+
+<h2>1. Включение ADB</h2>
+<ol>
+  <li>Подключите телефон к магнитоле по Bluetooth.</li>
+  <li>В номеронабирателе телефона наберите <span class="path">#*32279</span> —
+      откроется инженерное меню магнитолы.</li>
+  <li>Выберите пункт 8, на магнитоле нажмите значок шестерёнки — откроются настройки.</li>
+  <li>Включите ADB соответствующим переключателем.</li>
+</ol>
+
+<h2>2. Подключение по Wi-Fi</h2>
+<ol>
+  <li>Подключите компьютер к Wi-Fi-сети магнитолы.</li>
+  <li>Нажмите «Установить по ADB» — программа сама определит IP магнитолы
+      (шлюз по умолчанию этого Wi-Fi) и подключится.</li>
+</ol>
+
+<p class="warn">После завершения работы отключитесь от Wi-Fi магнитолы и выключите
+ADB переключателем на самой магнитоле.</p>
+
+<h2>Что делает установка</h2>
+<p>Кнопка «Установить по ADB» ставит стартовый пакет приложений и MacroDroid + Helper
+с нужными правами. GPS Connector / UsbGps4Droid (взаимоисключающие варианты — по
+типу вашего USB GPS), HUR 7.04/7.2 и открытие настроек Android — отдельные кнопки
+в «Установка по этапам...».</p>
+
+</body>
+</html>

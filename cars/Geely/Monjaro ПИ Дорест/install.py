@@ -1,0 +1,84 @@
+"""
+Geely Monjaro (прошитый Китай) — установка по ADB.
+
+Переписано из старого adb_install.bat, пункт меню "2. ПИ — Установка
+Monjaro Starter Pack (WiFi, Приложения, Магазины приложений, Monjaro
+Tweaks PRO)". В отличие от машины ОД (модель "Monjaro" рядом), здесь GNSS
+(USBGPS4Droid) не ставится.
+
+Свои APK разложите по подпапке files/pack/ этой модели (раньше лежали в
+папке Pack рядом с .bat) — тот же набор, что и для модели "Monjaro".
+Показываются галочками на этапе "Выбор приложений" в stages.py.
+Подключение — по USB-кабелю, устройство выбирается прямо в этапе мастера
+"Установка".
+"""
+
+
+def grant_macrodroid_permissions(ctx):
+    """Права Macrodroid + сервис специальных возможностей (часть сценария
+    ":Pack" в .bat)."""
+    pkg = "com.arlosoft.macrodroid"
+    for perm in (
+        "WRITE_SECURE_SETTINGS",
+        "CHANGE_CONFIGURATION",
+        "READ_LOGS",
+        "SET_VOLUME_KEY_LONG_PRESS_LISTENER",
+        "DUMP",
+    ):
+        ctx.shell(f"pm grant {pkg} android.permission.{perm}", check=False)
+    ctx.shell(f"pm grant {pkg}.helper android.permission.WRITE_SECURE_SETTINGS", check=False)
+    _add_accessibility_service(
+        ctx,
+        f"{pkg}/{pkg}.triggers.services.MacroDroidAccessibilityServiceJellyBean",
+        f"{pkg}/{pkg}.triggers.services.VolumeButtonAccessibilityService",
+        f"{pkg}/{pkg}.action.services.UIInteractionAccessibilityService",
+        f"{pkg}/{pkg}.triggers.services.FingerprintAccessibilityService",
+    )
+
+
+def grant_install_permissions(ctx):
+    """Разрешить перечисленным магазинам/файловым менеджерам ставить APK
+    без лишних подтверждений (часть сценария ":Pack" в .bat)."""
+    for pkg in (
+        "com.aurora.store",
+        "com.huawei.appmarket",
+        "com.estrongs.android.pop",
+        "com.android.chrome",
+        "ru.vk.store",
+        "ru.yandex.disk",
+    ):
+        ctx.shell(f"appops set {pkg} REQUEST_INSTALL_PACKAGES allow", check=False)
+
+
+def set_google_keyboard_default(ctx):
+    """Google-клавиатура по умолчанию (часть сценария ":Pack" в .bat)."""
+    ime = "com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME"
+    ctx.shell(f"ime enable {ime}", check=False)
+    ctx.shell(f"ime set {ime}", check=False)
+
+
+def enable_wifi_settings(ctx):
+    """adb root/remount + сброс ipcp + включение development_settings
+    (в .bat — "Включаю WiFi...", часть сценария ":Pack")."""
+    ctx.adb("root")
+    ctx.adb("remount")
+    ctx.shell("setprop persist.service.wifi.ipcp false", check=False)
+    ctx.shell("settings put global development_settings_enabled 1", check=False)
+
+
+def _add_accessibility_service(ctx, *services):
+    """Дописывает сервисы в settings secure enabled_accessibility_services,
+    не затирая то, что там уже включено."""
+    result = ctx.shell("settings list secure", check=False)
+    current = ""
+    for line in (result.stdout or "").splitlines():
+        if line.startswith("enabled_accessibility_services="):
+            current = line.split("=", 1)[1].strip()
+            break
+    parts = [p for p in current.split(":") if p]
+    for service in services:
+        if service not in parts:
+            parts.append(service)
+    ctx.shell(f"settings put secure enabled_accessibility_services {':'.join(parts)}", check=False)
+
+
