@@ -2,7 +2,7 @@
 import importlib.util
 from pathlib import Path
 
-STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check")
+STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction")
 
 
 class StageDefinitionError(RuntimeError):

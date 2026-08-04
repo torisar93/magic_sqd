@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Magic SQD</title>
+  <link rel="stylesheet" href="css/tokens.css" />
+  <link rel="stylesheet" href="css/components.css" />
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <div class="panel" id="left-panel">
+      <div id="picker"></div>
+      <div class="left-actions">
+        <button id="add-car-btn">Добавить машину...</button>
+        <button id="edit-car-btn" disabled>Изменить машину...</button>
+        <button id="admin-upload-btn" class="accent" style="display: none">Выгрузить на сервер...</button>
+      </div>
+    </div>
+    <div id="resizer"></div>
+    <div class="panel" id="right-panel">
+      <div class="card" style="flex: 1; margin-bottom: 4px">
+        <div class="card-header">
+          <span class="section-label">Инструкция и установка</span>
+          <button id="report-btn" disabled>Сообщить о проблеме...</button>
+        </div>
+        <div id="install-content">
+          <p class="placeholder-text">
+            Выберите марку и модель слева, чтобы увидеть инструкцию и этапы установки.
+          </p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="section-label">Лог</span></div>
+        <div class="progress-bar" id="main-progress" style="display: none"></div>
+        <div id="log-panel"></div>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="usb-dialog">
+    <h2 id="usb-dialog-title">USB-флешка</h2>
+    <div class="field row">
+      <select id="usb-drive" style="flex: 1"></select>
+      <button id="usb-refresh">Обновить</button>
+    </div>
+    <p style="color: var(--text-dim); font-size: 12px">
+      Показаны только съёмные USB-накопители — системный и внутренние диски в списке не появятся.
+    </p>
+    <div class="field">
+      <label class="row"><input type="checkbox" id="usb-format" checked /> Отформатировать флешку перед копированием</label>
+    </div>
+    <div class="field row">
+      <span>Файловая система:</span>
+      <label class="row"><input type="radio" name="usb-fs" value="FAT32" checked /> FAT32 (обычно нужна магнитолам, до ~32 ГБ)</label>
+      <label class="row"><input type="radio" name="usb-fs" value="exFAT" /> exFAT (для флешек больше 32 ГБ)</label>
+    </div>
+    <div class="callout danger" id="usb-warning"></div>
+    <div class="progress-bar" id="usb-progress" style="display: none"></div>
+    <div class="dialog-log" id="usb-log"></div>
+    <div class="dialog-actions spread">
+      <div>
+        <button id="usb-start" class="accent">Начать</button>
+        <button id="usb-stop" class="danger" disabled>Стоп</button>
+      </div>
+      <button id="usb-close">Закрыть</button>
+    </div>
+  </dialog>
+
+  <dialog id="report-dialog">
+    <h2 id="report-dialog-title">Сообщить о проблеме</h2>
+    <div class="field">
+      <span class="field-label">Причина</span>
+      <select id="report-reason" style="width: 100%"></select>
+    </div>
+    <div class="field">
+      <span class="field-label">Описание (необязательно)</span>
+      <textarea id="report-description"></textarea>
+    </div>
+    <div id="report-status" style="color: var(--text-dim); font-size: 12px"></div>
+    <div class="dialog-actions">
+      <button id="report-cancel">Отмена</button>
+      <button id="report-send" class="accent">Отправить</button>
+    </div>
+  </dialog>
+
+  <dialog id="admin-dialog">
+    <h2>Выгрузить на сервер</h2>
+    <div id="admin-server-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></div>
+    <div class="field">
+      <span class="field-label">Логин</span>
+      <input type="text" id="admin-username" />
+    </div>
+    <div class="field">
+      <span class="field-label">Пароль</span>
+      <input type="password" id="admin-password" />
+    </div>
+    <p style="color: var(--text-dim); font-size: 12px">
+      Загрузит ВЕСЬ локальный cars/ и apk/ поверх содержимого на сервере (слиянием —
+      одноимённые файлы перезаписываются, лишнее на сервере не удаляется). Пароль нигде не сохраняется.
+    </p>
+    <div class="progress-bar" id="admin-progress" style="display: none"></div>
+    <div class="dialog-log" id="admin-log"></div>
+    <div class="dialog-actions spread">
+      <button id="admin-start" class="accent">Войти и загрузить</button>
+      <button id="admin-close">Закрыть</button>
+    </div>
+  </dialog>
+
+  <dialog id="car-wizard-dialog" class="dialog-large">
+    <h2 id="car-wizard-title">Добавить машину</h2>
+    <div id="car-wizard-header"></div>
+    <div class="car-wizard-body">
+      <div class="car-step-list-col">
+        <span class="field-label">Этапы установки</span>
+        <ul class="picker-list" id="car-step-list" style="flex: 1"></ul>
+        <div class="row" style="margin-top: 6px">
+          <select id="car-new-step-type" style="flex: 1"></select>
+        </div>
+        <button id="car-add-step" style="margin-top: 4px">Добавить этап</button>
+        <div class="row" style="margin-top: 4px">
+          <button id="car-move-up" style="flex: 1">▲</button>
+          <button id="car-move-down" style="flex: 1">▼</button>
+        </div>
+        <button id="car-remove-step" class="danger" style="margin-top: 4px">Удалить этап</button>
+      </div>
+      <div class="car-step-form" id="car-step-form"></div>
+    </div>
+    <div class="dialog-actions">
+      <button id="car-wizard-cancel">Отмена</button>
+      <button id="car-wizard-save" class="accent">Создать</button>
+    </div>
+  </dialog>
+
+  <dialog id="admin-login-dialog">
+    <h2>Вход в админку</h2>
+    <div class="field">
+      <span class="field-label">Логин</span>
+      <input type="text" id="admin-login-username" />
+    </div>
+    <div class="field">
+      <span class="field-label">Пароль</span>
+      <input type="password" id="admin-login-password" />
+    </div>
+    <div id="admin-login-error" class="callout danger" style="display: none"></div>
+    <div class="dialog-actions">
+      <button id="admin-login-cancel">Отмена</button>
+      <button id="admin-login-submit" class="accent">Войти</button>
+    </div>
+  </dialog>
+
+  <dialog id="instruction-editor-dialog" class="dialog-large">
+    <h2>Инструкция</h2>
+    <div class="instruction-toolbar">
+      <button data-block-type="h1">+ Заголовок</button>
+      <button data-block-type="h2">+ Подзаголовок</button>
+      <button data-block-type="p">+ Текст</button>
+      <button data-block-type="steps">+ Шаги</button>
+      <button data-block-type="warn">+ Важно</button>
+      <button data-block-type="danger">+ Осторожно</button>
+      <button data-block-type="photo">+ Фото</button>
+    </div>
+    <div class="instruction-editor-body">
+      <div class="instruction-block-list" id="instruction-block-list"></div>
+      <div class="instruction-preview" style="display: flex; flex-direction: column">
+        <button id="instruction-refresh-preview" style="margin-bottom: 6px">Обновить предпросмотр</button>
+        <iframe id="instruction-preview-frame" sandbox="" style="flex: 1"></iframe>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button id="instruction-editor-cancel">Отмена</button>
+      <button id="instruction-editor-save" class="accent">Сохранить</button>
+    </div>
+  </dialog>
+
+  <script src="js/events.js"></script>
+  <script src="js/dom.js"></script>
+  <script src="js/components/modal.js"></script>
+  <script src="js/components/resizer.js"></script>
+  <script src="js/screens/main_picker.js"></script>
+  <script src="js/screens/stage_wizard.js"></script>
+  <script src="js/screens/dialogs.js"></script>
+  <script src="js/screens/instruction_editor.js"></script>
+  <script src="js/screens/car_wizard.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

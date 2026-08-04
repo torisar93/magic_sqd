@@ -11,8 +11,17 @@ dist/
 tools/*.exe
 tools/*.dll
 
-# Локальные настройки Claude Code (привязаны к этой машине, не для репозитория)
-.claude/settings.local.json
+# Служебные файлы Claude Code (локальные настройки/скиллы, не часть продукта)
+.claude/
+.agents/
+skills-lock.json
+
+# Собственные dev-инструменты автора (ADB sniffer/fake-device для
+# тестирования install.py/stages.py без реального железа) — не часть
+# самой программы, не для публичного репозитория.
+devtools/
+adb_sniffer.spec
+fake_adb_device.spec
 
 # Логи с этой конкретной машины — не для репозитория
 crash.log
@@ -49,6 +58,7 @@ cars/**/usb_files/**
 # Секреты/адреса своего сервера — свои для каждого окружения (см. server/README.md)
 server.json
 submit.json
+admin.json
 
 # Анонимный id конкретной установки для счётчика пользователей (см.
 # app/ping_client.py) — генерируется программой сама при первом запуске

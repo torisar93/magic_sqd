@@ -1,0 +1,108 @@
+/* Палитра "Диагностика" — перенесена без изменений из app/theme.py
+   (значения провалидированы по WCAG-контрасту, см. комментарий в
+   theme.py — переносим числа, а не переосмысляем их). Один источник для
+   всего фронтенда, как раньше theme.py был для всего customtkinter-кода. */
+:root {
+  --bg: #12151a;
+  --bg-card: #191d24;
+  --text: #e9ecf1;
+  --text-dim: #9aa2b0;
+  --accent: #0e8f6d;
+  --accent-hover: #0b7059;
+  --accent-2: #d98a3d;
+  --border: #2b303a;
+  --danger: #e0605b;
+  --danger-hover: #c94842;
+
+  --warn-bg: #4a3f1a;
+  --warn-bg-hover: #584e2c;
+  --warn-border: #8a6d1f;
+  --warn-text: #f3e3a8;
+  --danger-bg: #4a2222;
+  --danger-bg-hover: #583434;
+  --danger-border: #8a3a3a;
+  --danger-text: #f3c6c6;
+
+  /* Тона "материальности" — раньше вычислялись в theme.py линейной
+     интерполяцией (_mix_hex) поверх основной палитры, здесь то же самое
+     заранее посчитано в hex (CSS color-mix() можно завести позже, если
+     понадобится параметризация в рантайме). */
+  --bg-elevated: #333a46;
+  --accent-soft: #24352f;
+  --steps-bg: #221f1c;
+  --steps-bg-hover: #2c2620;
+
+  --corner-radius: 8px;
+  --corner-radius-lg: 14px;
+  --card-pad-x: 12px;
+  --card-pad-y: 10px;
+
+  --font: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-heading: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  overflow: hidden; /* каждый экран сам решает, что скроллится внутри него */
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  border-radius: var(--corner-radius);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  padding: 6px 14px;
+}
+
+button:hover {
+  background: var(--bg-elevated);
+}
+
+button.accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.accent:hover {
+  background: var(--accent-hover);
+}
+
+button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+button.danger:hover {
+  background: var(--danger-hover);
+}
+
+/* inset, не outline — outline на фокусируемом элементе внутри контейнера
+   с overflow:auto (списки, прокручиваемые формы) обрезается по границе
+   скролла, box-shadow inset всегда остаётся внутри рамки самого элемента. */
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+
+/* Элемент с flex:1 внутри flex-строки (.row) иначе не сжимается меньше
+   своей "содержимой" ширины (default min-width:auto у input/select/
+   textarea) — выглядит как "узкое поле рядом с вылезающим соседом". */
+.row > input, .row > select, .row > textarea {
+  min-width: 0;
+}

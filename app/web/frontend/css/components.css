@@ -1,0 +1,640 @@
+/* Компоненты главного окна — карточка, разделитель панелей, список
+   марка/модель/модификация с breadcrumb вместо старой "фейковой строки
+   Назад" внутри списка (см. план миграции). */
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 320px 4px 1fr;
+  height: 100vh;
+}
+
+.app-shell.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+#resizer {
+  cursor: col-resize;
+  background: var(--border);
+}
+
+#resizer:hover {
+  background: var(--accent);
+}
+
+.panel {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* иначе flex-ребёнок с overflow не сжимается внутри grid-колонки */
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius-lg);
+  padding: var(--card-pad-y) var(--card-pad-x);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.card-header .section-label {
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* Breadcrumb — реальная навигация "назад" вместо синтетической строки
+   "‹ Назад" внутри списка марок/моделей, которая была в CTkListbox. */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  min-height: 20px;
+}
+
+.breadcrumb .crumb {
+  cursor: pointer;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.breadcrumb .crumb:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.breadcrumb .crumb.current {
+  color: var(--text);
+  cursor: default;
+}
+
+.breadcrumb .crumb.current:hover {
+  background: none;
+}
+
+.breadcrumb .sep {
+  color: var(--border);
+}
+
+.picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  background: var(--bg);
+}
+
+.picker-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.picker-list li:last-child {
+  border-bottom: none;
+}
+
+.picker-list li:hover {
+  background: var(--bg-elevated);
+}
+
+.picker-list li.selected {
+  background: var(--accent-soft);
+  /* inset, не outline — outline на элементе внутри overflow:auto контейнера
+     обрезается по краю скролла (см. баг с невидимым выделением), box-shadow
+     inset всегда остаётся внутри рамки элемента. */
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.picker-list li img.logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.picker-list .empty {
+  padding: 10px;
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.picker-list .empty:hover {
+  background: none;
+}
+
+.left-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.left-actions button {
+  height: 38px;
+}
+
+#install-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.placeholder-text {
+  color: var(--text-dim);
+  max-width: 520px;
+}
+
+#log-panel {
+  height: 140px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* ---- Stage wizard (см. js/screens/stage_wizard.js) ---- */
+.wizard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.wizard-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  /* display:flex — иначе flex:1 у полностью-инструкционной страницы этапа
+     (type="instruction", см. buildInstructionBlock(stage, fullPage=true)
+     в stage_wizard.js) ни на что не влияет: flex-свойства работают только
+     когда РОДИТЕЛЬ сам flex-контейнер. Без этого iframe с инструкцией
+     схлопывался к дефолтной маленькой высоте (~четверть окна — сообщено
+     пользователем на собранном .exe). Обычные (не fullPage) страницы
+     этапов не ломаются — их блоки без flex:1 просто идут друг за другом
+     в столбик, как и в обычном block-layout. */
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.wizard-nav .page-label {
+  flex: 1;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.instruction-block {
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius-lg);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.instruction-block iframe {
+  width: 100%;
+  height: 220px;
+  border: none;
+  display: block;
+  background: var(--bg-card);
+}
+
+.instruction-block .plain-text {
+  padding: 12px;
+  background: var(--bg-card);
+  white-space: pre-wrap;
+}
+
+.action-panel {
+  background: var(--bg-elevated);
+  border-radius: var(--corner-radius-lg);
+  padding: var(--card-pad-y) var(--card-pad-x);
+}
+
+.action-chip {
+  display: inline-block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--accent-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  margin-bottom: 10px;
+}
+
+.callout {
+  border-radius: var(--corner-radius);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  color: var(--warn-text);
+}
+
+.callout.danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.field-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+select {
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  padding: 6px 8px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.apps-tree {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 120px;
+}
+
+.apps-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 0;
+  font-weight: 600;
+}
+
+.apps-section-body {
+  padding-left: 20px;
+}
+
+.apps-section-body.collapsed {
+  display: none;
+}
+
+.app-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.app-row .app-desc {
+  color: var(--text-dim);
+  font-size: 12px;
+  padding-left: 22px;
+  margin-top: -2px;
+}
+
+/* ---- Диалоги (usb/report/admin-upload/ask-input) — нативный <dialog>,
+   см. план миграции: фокус-трэп и оверлей бесплатно, без своего кода. ---- */
+dialog {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius-lg);
+  padding: 16px;
+  width: min(560px, 90vw);
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+dialog h2 {
+  margin: 0 0 12px;
+  font-family: var(--font-heading);
+  font-size: 16px;
+}
+
+dialog .dialog-log {
+  height: 180px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  padding: 8px;
+  margin: 8px 0;
+}
+
+dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+dialog .dialog-actions.spread {
+  justify-content: space-between;
+}
+
+dialog input[type="text"], dialog input[type="password"], dialog textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: inherit;
+  box-sizing: border-box;
+}
+
+dialog textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+dialog .field {
+  margin-bottom: 10px;
+}
+
+/* Индикатор "идёт фоновая операция" — usb-копирование/admin-выгрузка/
+   сохранение машины (см. dialogs.js, car_wizard.js). Заранее неизвестная
+   длительность (архивирование+сеть) — тот же indeterminate CTkProgressBar,
+   что был в соответствующих tkinter-диалогах, здесь как CSS-анимация. */
+.progress-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+  position: relative;
+  margin: 8px 0;
+}
+
+.progress-bar.indeterminate::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -30%;
+  width: 30%;
+  background: var(--accent-2);
+  border-radius: 2px;
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% { left: -30%; }
+  50% { left: 40%; }
+  100% { left: 100%; }
+}
+
+/* ---- Мастер "Добавить/Изменить машину" (см. js/screens/car_wizard.js) и
+   редактор инструкции (js/screens/instruction_editor.js) — большие
+   диалоги, занимают почти всё окно, с внутренней прокруткой. ---- */
+dialog.dialog-large {
+  width: min(1100px, 95vw);
+  height: 88vh;
+  max-height: 88vh;
+  flex-direction: column;
+}
+
+/* КРИТИЧНО: display должен зависеть от [open] — author-стили всегда
+   перебивают UA-стиль `dialog:not([open]) { display: none }` по origin
+   каскада независимо от specificity, так что БЕЗ этого условия close()
+   снимает [open], но элемент всё равно рендерится (просто уже не как
+   модалка/без backdrop) — снаружи выглядит как "окно не закрылось". */
+dialog.dialog-large[open] {
+  display: flex;
+}
+
+.car-wizard-body {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  margin-top: 10px;
+}
+
+.car-step-list-col {
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.car-step-form {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Достаточный зазор от полосы прокрутки — при 4px содержимое (карточки
+     вариантов, кнопки ✕) визуально касалось скроллбара; сообщено
+     пользователем скриншотом ("обводка кнопки налезает на обводку
+     строки" — на самом деле налезала на скроллбар панели, не на рамку
+     самой карточки, поэтому правка padding у .option-card не помогала). */
+  padding-right: 16px;
+}
+
+.car-header-grid {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr auto 1fr;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.spoiler-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.spoiler-body {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+
+.spoiler-body.collapsed {
+  display: none;
+}
+
+/* Кнопка-иконка (один глиф: ✕/▲/▼) — ФИКСИРОВАННЫЙ размер (как
+   width=28,height=24 у CTkButton в старом коде, см. _render_check_options/
+   instruction_editor.py:_build_row), а не padding поверх текста: padding-
+   based размер плавает вместе с высотой строки-родителя и провоцирует
+   рассинхрон высоты между соседними рядами (см. историю правок этого
+   файла) — фиксированный box с flex-центрированием содержимого от этого
+   не зависит вообще. margin-right — дополнительный зазор от кнопки до
+   края панели/полосы прокрутки, независимый от padding контейнеров выше. */
+.icon-btn {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.option-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  line-height: 24px; /* = высота icon-btn — убирает лёгкое смещение текста вниз от лишнего leading шрифта */
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  /* Вертикальный padding (5px) подобран так, чтобы итоговая высота карточки
+     (5+5 + 24px фиксированной icon-btn ≈ 34px) совпадала со строкой
+     добавления варианта — там высоту задаёт обычная текстовая кнопка
+     "Добавить вариант" (padding 6px 14px из tokens.css, тоже ≈ 32-34px). */
+  padding: 5px 10px;
+  margin-bottom: 4px;
+}
+
+.instruction-editor-body {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  margin-top: 10px;
+}
+
+.instruction-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.instruction-block-list {
+  width: 340px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.instruction-block-row {
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--bg-card);
+}
+
+.instruction-block-row .block-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+/* Цвет кнопок тулбара/подписи блока по типу — та же подсказка "как будет
+   выглядеть блок", что и TOOLBAR_BLOCK_COLORS в старом instruction_editor.py
+   (цвета взяты из тех же переменных, что и сами плашки .warn/.danger в
+   itself сгенерированном instruction.html, см. instruction_html.py). */
+[data-block-type="steps"] {
+  background: var(--steps-bg);
+  color: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+[data-block-type="steps"]:hover {
+  background: var(--steps-bg-hover);
+}
+
+[data-block-type="warn"] {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-color: var(--warn-border);
+}
+
+[data-block-type="warn"]:hover {
+  background: var(--warn-bg-hover);
+}
+
+[data-block-type="danger"] {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: var(--danger-border);
+}
+
+[data-block-type="danger"]:hover {
+  background: var(--danger-bg-hover);
+}
+
+.block-row-header [data-block-type] {
+  background: none;
+  border: none;
+  padding: 0;
+  text-transform: uppercase;
+}
+
+.instruction-preview {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius-lg);
+  overflow: hidden;
+}
+
+.instruction-preview iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--bg-card);
+}

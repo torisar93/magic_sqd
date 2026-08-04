@@ -151,7 +151,12 @@ def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=
     url = get_base_url(base_dir)
     if not url:
         return 0
-    remote_base = f"cars/{model.brand}/{model.name}"
+    # Путь строим из model.dir (а не brand+name), чтобы одинаково работать
+    # и для обычных моделей (cars/<Марка>/<Модель>/), и для модификаций
+    # (cars/<Марка>/<Модель>/<Модификация>/, см. scanner.py:ModelGroup) —
+    # реальная глубина папки модели на диске тут единственный источник
+    # истины, brand+name её не определяют однозначно.
+    remote_base = "cars/" + model.dir.relative_to(base_dir / "cars").as_posix()
     downloaded = 0
     for subfolder in ("files", "usb_files"):
         local_dir = model.dir / subfolder

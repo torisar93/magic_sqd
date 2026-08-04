@@ -3,8 +3,11 @@
 (см. app/add_car_dialog.py). Модель описывается свободной последовательностью
 этапов (StepSpec) — тем же набором типов, что и stages.py, написанный
 руками: "apps" (выбор приложений), "usb" (запись на флешку), "adb"
-(команды/установка), "manual" (просто инструкция). Генератор только
-собирает из них текст файла — сам механизм ("apps"-этап,
+(команды/установка), "manual" (просто инструкция), "instruction" (часть
+общей инструкции — заголовки/шаги/плашки/фото, см. StepSpec.
+instruction_blocks). Общей instruction.html на всю модель больше нет —
+содержимое набирается такими этапами прямо в последовательности установки.
+Генератор только собирает из них текст файла — сам механизм ("apps"-этап,
 load_sibling.load_install, wifi_adb.connect_wifi, UsbContext.usb_file()/
 copy_dir()/copy_selected_apks(), ctx.install_selected_apks()) уже есть в
 проекте и используется как есть."""
@@ -35,16 +38,30 @@ class StepVariant:
 
 @dataclass
 class StepSpec:
-    type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check"
+    type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check" | "instruction"
     title: str = ""
     description: str = ""
+    # "instruction" — часть общей инструкции (заголовки/шаги/плашки/фото),
+    # собранная тем же блочным редактором, что и общая инструкция модели
+    # (см. app/instruction_editor.py, app/instruction_html.py) — но
+    # показывается отдельной страницей ПОСЛЕДОВАТЕЛЬНО среди этапов
+    # установки (см. app/stage_wizard.py), а не только один раз в начале.
+    # Пишется в files/instruction_<i>/instruction.html — своя папка на
+    # каждый такой этап, чтобы фото разных "частей инструкции" не путались
+    # друг с другом при очистке "осиротевших" файлов (см. _write_model_files).
+    instruction_blocks: list[dict] = field(default_factory=list)
     # "usb" — используется, только если variants (см. ниже) пуст
     usb_files: list[Path] = field(default_factory=list)
     usb_copy_selected_apks: bool = False
     # "adb" — см. _parse_adb_line ниже за синтаксисом спецкоманд (#sleep,
-    # #reboot, #wait_device, #ask) вперемешку с обычными adb shell командами
+    # #reboot, #root, #push, ...) вперемешку с обычными adb shell командами
+    # ИЛИ "сырыми" строками прямо из .bat/.sh автора набора (adb root/push/
+    # install/..., TIMEOUT /T N) — парсер понимает оба варианта.
     commands: list[str] = field(default_factory=list)
     adb_install_selected_apks: bool = False
+    # Файлы, прикреплённые к ADB-этапу — на них ссылаются команды #push/
+    # #install (или их "сырые" аналоги adb push/adb install) по имени файла.
+    adb_files: list[Path] = field(default_factory=list)
     # "apps" — используется, только если variants (см. ниже) пуст
     standard_apks: list[Path] = field(default_factory=list)
     # "exe" — готовый установщик, который производитель магнитолы даёт
@@ -73,13 +90,13 @@ class StepSpec:
 class NewCarSpec:
     brand: str
     model: str
-    # обязателен — Path: .html/.htm копируется как есть, что угодно другое
-    # оборачивается в простой HTML; list[dict] — блоки из редактора
-    # инструкции (см. app/instruction_editor.py, app/instruction_html.py)
-    instruction_source: Path | list[dict]
     wifi: bool = False
     wifi_port: int = 5555
     steps: list[StepSpec] = field(default_factory=list)
+    # Необязательный слой "модификация" (рестайлинг/версия для другого
+    # рынка) — см. app/scanner.py:ModelGroup. Пусто — обычная модель,
+    # cars/<Марка>/<Модель>/; иначе — cars/<Марка>/<Модель>/<Модификация>/.
+    modification: str = ""
 
 
 class CarGenerationError(RuntimeError):
@@ -87,25 +104,45 @@ class CarGenerationError(RuntimeError):
 
 
 def create_car(cars_dir: Path, spec: NewCarSpec) -> Path:
-    """Создаёт cars/<марка>/<модель>/ со всеми файлами. Бросает
-    CarGenerationError, если модель уже существует, марка/модель заданы
-    некорректно или не задано ни одного этапа."""
+    """Создаёт cars/<марка>/<модель>/ (или cars/<марка>/<модель>/
+    <модификация>/, если spec.modification задана) со всеми файлами.
+    Бросает CarGenerationError, если модель уже существует, марка/модель/
+    модификация заданы некорректно, не задано ни одного этапа, или
+    модификация указана для модели, у которой уже есть свои файлы прямо
+    в cars/<марка>/<модель>/ (обычная модель без модификаций — см.
+    app/scanner.py:ModelGroup, там же и обратный случай "leaf побеждает
+    модификации", так что смешивать их в одной папке модели нельзя)."""
     brand = spec.brand.strip()
     model = spec.model.strip()
+    modification = spec.modification.strip()
     if not brand or not model:
         raise CarGenerationError("Не заданы марка и/или модель.")
     if any(c in INVALID_NAME_CHARS for c in brand) or any(c in INVALID_NAME_CHARS for c in model):
         raise CarGenerationError('Марка/модель не должны содержать символы: < > : " / \\ | ? *')
+    if modification and any(c in INVALID_NAME_CHARS for c in modification):
+        raise CarGenerationError('Модификация не должна содержать символы: < > : " / \\ | ? *')
     if not spec.steps:
         raise CarGenerationError("Не задано ни одного этапа установки.")
 
-    model_dir = cars_dir / brand / model
+    model_root = cars_dir / brand / model
+    if modification:
+        if model_root.exists() and _has_own_files(model_root):
+            raise CarGenerationError(
+                f"{model_root} уже существует как обычная модель без модификаций — "
+                "чтобы добавить модификацию, сначала перенесите её файлы в подпапку вручную.")
+        model_dir = model_root / modification
+    else:
+        model_dir = model_root
     if model_dir.exists():
         raise CarGenerationError(f"Такая модель уже существует: {model_dir}")
 
     model_dir.mkdir(parents=True)
     _write_model_files(model_dir, spec)
     return model_dir
+
+
+def _has_own_files(model_root: Path) -> bool:
+    return any((model_root / name).exists() for name in ("instruction.html", "stages.py", "install.py"))
 
 
 def update_car(model_dir: Path, spec: NewCarSpec) -> None:
@@ -121,11 +158,15 @@ def update_car(model_dir: Path, spec: NewCarSpec) -> None:
     _write_model_files(model_dir, spec)
 
 
-def load_car_spec(model_dir: Path) -> NewCarSpec | None:
+def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "") -> NewCarSpec | None:
     """Загружает _wizard_spec.json модели (если она была создана этим
     мастером) — для повторного открытия в редакторе. Пути в StepSpec
     указывают на уже скопированные файлы внутри model_dir (тот же порядок
-    подпапок pack/pack_N, usb_files/step_N, что пишет _write_model_files)."""
+    подпапок pack/pack_N, usb_files/step_N, что пишет _write_model_files).
+    brand/model/modification — передаются вызывающим кодом (см.
+    app/scanner.py:ModelInfo), а не выводятся из model_dir.parent/.name:
+    для модификации (cars/<Марка>/<Модель>/<Модификация>/) такой вывод дал
+    бы Модель вместо Марки и Модификацию вместо Модели."""
     spec_path = model_dir / SPEC_FILENAME
     if not spec_path.exists():
         return None
@@ -170,14 +211,31 @@ def load_car_spec(model_dir: Path) -> NewCarSpec | None:
                 standard_apks = [pack_dir / name for name in step_data.get("standard_apks", [])]
         elif step_type == "exe" and step_data.get("exe_file"):
             exe_file = files_dir / f"exe_{i}" / step_data["exe_file"]
+        adb_files: list[Path] = []
+        if step_type == "adb":
+            adb_files = [files_dir / f"adb_{i}" / name for name in step_data.get("adb_files", [])]
+        instruction_blocks: list[dict] = []
+        if step_type == "instruction":
+            instr_step_dir = files_dir / f"instruction_{i}"
+            instr_path = instr_step_dir / "instruction.html"
+            try:
+                text = instr_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            # model_dir=instr_step_dir (не model_dir целиком) — относительные
+            # пути фото-блоков в этом файле считаются от instr_step_dir/images/
+            # (см. instruction_html.save_instruction/_write_model_files).
+            instruction_blocks = instruction_html.parse_blocks(text, instr_step_dir) or []
         steps.append(StepSpec(
             type=step_type,
             title=step_data.get("title", ""),
             description=step_data.get("description", ""),
+            instruction_blocks=instruction_blocks,
             usb_files=usb_files,
             usb_copy_selected_apks=step_data.get("usb_copy_selected_apks", False),
             commands=step_data.get("commands", []),
             adb_install_selected_apks=step_data.get("adb_install_selected_apks", False),
+            adb_files=adb_files,
             standard_apks=standard_apks,
             exe_file=exe_file,
             check_var=step_data.get("check_var", ""),
@@ -188,9 +246,9 @@ def load_car_spec(model_dir: Path) -> NewCarSpec | None:
         ))
 
     return NewCarSpec(
-        brand=model_dir.parent.name,
-        model=model_dir.name,
-        instruction_source=model_dir / "instruction.html",
+        brand=brand,
+        model=model,
+        modification=modification,
         wifi=data.get("wifi", False),
         wifi_port=data.get("wifi_port", 5555),
         steps=steps,
@@ -198,19 +256,17 @@ def load_car_spec(model_dir: Path) -> NewCarSpec | None:
 
 
 def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
-    """Пишет instruction.html/files/usb_files/install.py/stages.py/
-    _wizard_spec.json в model_dir — общая часть create_car/update_car.
-    Копирование файлов идёт "по требуемому состоянию": уже лежащий на месте
-    файл (source == destination, обычный случай при повторном сохранении
-    без изменений в этом этапе) не трогаем — shutil.copy2 не переживает
-    копирование файла в самого себя; а то, что раньше было скопировано, но
-    больше не входит ни в один этап (переименовали/удалили/переставили
-    этапы местами), удаляем, чтобы не копились сироты."""
+    """Пишет files/usb_files/install.py/stages.py/_wizard_spec.json в
+    model_dir — общая часть create_car/update_car. Копирование файлов идёт
+    "по требуемому состоянию": уже лежащий на месте файл (source ==
+    destination, обычный случай при повторном сохранении без изменений в
+    этом этапе) не трогаем — shutil.copy2 не переживает копирование файла в
+    самого себя; а то, что раньше было скопировано, но больше не входит ни
+    в один этап (переименовали/удалили/переставили этапы местами), удаляем,
+    чтобы не копились сироты."""
     files_dir = model_dir / "files"
     files_dir.mkdir(parents=True, exist_ok=True)
     usb_root = model_dir / "usb_files"
-
-    _write_instruction(model_dir, spec.instruction_source)
 
     keep_paths: set[Path] = set()
     apps_index = 0
@@ -263,6 +319,24 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
             if step.exe_file.resolve() != dst:
                 shutil.copy2(step.exe_file, dst)
             keep_paths.add(dst)
+        elif step.type == "adb" and step.adb_files:
+            adb_step_dir = files_dir / f"adb_{i}"
+            adb_step_dir.mkdir(parents=True, exist_ok=True)
+            for f in step.adb_files:
+                dst = (adb_step_dir / f.name).resolve()
+                if f.resolve() != dst:
+                    shutil.copy2(f, dst)
+                keep_paths.add(dst)
+        elif step.type == "instruction" and step.instruction_blocks:
+            instr_step_dir = files_dir / f"instruction_{i}"
+            instr_step_dir.mkdir(parents=True, exist_ok=True)
+            instruction_html.save_instruction(instr_step_dir, step.instruction_blocks)
+            keep_paths.add((instr_step_dir / "instruction.html").resolve())
+            images_dir = instr_step_dir / "images"
+            if images_dir.is_dir():
+                for f in images_dir.iterdir():
+                    if f.is_file():
+                        keep_paths.add(f.resolve())
 
     for root in (files_dir, usb_root):
         if not root.exists():
@@ -281,31 +355,6 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     (model_dir / SPEC_FILENAME).write_text(_render_spec_json(spec), encoding="utf-8")
 
 
-def _write_instruction(model_dir: Path, source: Path | list[dict]) -> None:
-    if isinstance(source, list):
-        instruction_html.save_instruction(model_dir, source)
-        return
-
-    dest = model_dir / "instruction.html"
-    if source.suffix.lower() in (".html", ".htm"):
-        if source.resolve() != dest.resolve():
-            shutil.copy2(source, dest)
-    else:
-        text = source.read_text(encoding="utf-8", errors="replace")
-        dest.write_text(_text_to_html(text), encoding="utf-8")
-
-
-def _text_to_html(text: str) -> str:
-    escaped = (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-               .replace("\n", "<br>"))
-    return (
-        "<!DOCTYPE html>\n<html lang=\"ru\"><head><meta charset=\"utf-8\"></head>\n"
-        "<body style='font-family:Segoe UI, sans-serif; background:#171f30; "
-        "color:#e8ecf4; padding:16px'>"
-        f"<p>{escaped}</p></body></html>\n"
-    )
-
-
 # ----------------------------------------------------------------------
 # _wizard_spec.json — снимок NewCarSpec для повторного открытия в редакторе
 # ----------------------------------------------------------------------
@@ -322,6 +371,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "usb_copy_selected_apks": step.usb_copy_selected_apks,
                 "commands": step.commands,
                 "adb_install_selected_apks": step.adb_install_selected_apks,
+                "adb_files": [f.name for f in step.adb_files],
                 "standard_apks": [f.name for f in step.standard_apks],
                 "exe_file": step.exe_file.name if step.exe_file else None,
                 "check_var": step.check_var,
@@ -344,25 +394,64 @@ def _render_spec_json(spec: NewCarSpec) -> str:
 
 
 # ----------------------------------------------------------------------
-# Спецкоманды ADB-этапа — см. подсказку в add_car_dialog._build_adb_fields.
-# Каждая строка команд этапа — либо обычная "adb shell" команда, либо одна
-# из этих спецкоманд (пауза/перезагрузка/ожидание устройства/вопрос
-# пользователю) — то, что уже умеет InstallContext (см. install_context.py),
-# но раньше было недоступно из мастера, только из руками написанных
-# install.py.
+# Команды ADB-этапа — см. подсказку в add_car_dialog._build_adb_fields.
+# Каждая строка — одна из трёх вещей:
+#   1. #-спецкоманда (пауза/перезагрузка/root/push/...) — то, что уже умеет
+#      InstallContext (см. install_context.py), но раньше было недоступно
+#      из мастера, только из руками написанных install.py;
+#   2. "сырая" строка ПРЯМО из .bat/.sh автора набора установки — "adb
+#      root"/"adb shell ..."/"adb push ... ..."/"TIMEOUT /T N" и т.п. —
+#      технику не нужно вручную переписывать в #-спецкоманды, можно просто
+#      вставить нужный кусок скрипта как есть; декоративный batch-мусор
+#      (@echo/cls/pause/rem/:метки) распознаётся и пропускается, а не
+#      отправляется на устройство как есть;
+#   3. обычная "adb shell" команда как есть — если ничего из вышеперечисленного
+#      не подошло (так безопаснее, чем требовать явного экранирования).
 # ----------------------------------------------------------------------
 _ADB_SLEEP_RE = re.compile(r"^#sleep\s+([\d.]+)\s*$", re.IGNORECASE)
 _ADB_REBOOT_RE = re.compile(r"^#reboot\s*$", re.IGNORECASE)
 _ADB_REBOOT_NOWAIT_RE = re.compile(r"^#reboot_nowait\s*$", re.IGNORECASE)
 _ADB_WAIT_DEVICE_RE = re.compile(r"^#wait_device(?:\s+([\d.]+))?\s*$", re.IGNORECASE)
 _ADB_ASK_RE = re.compile(r"^#ask\s+(.+)$", re.IGNORECASE)
+_ADB_ROOT_RE = re.compile(r"^#root\s*$", re.IGNORECASE)
+_ADB_DISABLE_VERITY_RE = re.compile(r"^#disable_verity\s*$", re.IGNORECASE)
+_ADB_REMOUNT_RE = re.compile(r"^#remount\s*$", re.IGNORECASE)
+_ADB_PUSH_RE = re.compile(r"^#push\s+(\S+)\s+(.+)$", re.IGNORECASE)
+_ADB_INSTALL_RE = re.compile(r"^#install\s+(\S+)\s*$", re.IGNORECASE)
+
+# "Сырые" строки прямо из .bat/.sh — необязательный "-s <serial>" после adb
+# (техник мог скопировать команду вместе с указанием устройства).
+_DEV = r"(?:\s+-s\s+\S+)?"
+_RAW_ADB_ROOT_RE = re.compile(rf"^adb{_DEV}\s+root\s*$", re.IGNORECASE)
+_RAW_ADB_DISABLE_VERITY_RE = re.compile(rf"^adb{_DEV}\s+disable-verity\s*$", re.IGNORECASE)
+_RAW_ADB_REMOUNT_RE = re.compile(rf"^adb{_DEV}\s+remount\s*$", re.IGNORECASE)
+_RAW_ADB_REBOOT_RE = re.compile(rf"^adb{_DEV}\s+reboot\s*$", re.IGNORECASE)
+_RAW_ADB_WAIT_DEVICE_RE = re.compile(rf"^adb{_DEV}\s+wait-for-device\s*$", re.IGNORECASE)
+_RAW_ADB_SHELL_RE = re.compile(rf"^adb{_DEV}\s+shell\s+(.+)$", re.IGNORECASE)
+_RAW_ADB_PUSH_RE = re.compile(rf"^adb{_DEV}\s+push\s+(\S+)\s+(\S+)\s*$", re.IGNORECASE)
+_RAW_ADB_INSTALL_RE = re.compile(rf"^adb{_DEV}\s+install\s+(?:-[a-zA-Z]+\s+)*(\S+)\s*$", re.IGNORECASE)
+
+# Batch-специфика без прямого аналога на устройстве — пауза для техника,
+# читающего консоль ноутбука ("TIMEOUT"), и чисто декоративный/управляющий
+# batch-мусор (цвет, echo-статусы, cls, pause, rem-комментарии, метки
+# ":имя") — просто пропускается, а не улетает на устройство буквально.
+_BAT_TIMEOUT_RE = re.compile(r"^TIMEOUT\s+/T\s+([\d.]+)", re.IGNORECASE)
+_BAT_NOOP_RE = re.compile(
+    r"^(@?echo(\s|\.|$)|cls\s*$|color\s|pause\s*$|rem[:\s]|::|:\w+\s*$)", re.IGNORECASE)
 
 
-def _parse_adb_line(line: str) -> tuple[str, float | str | None]:
+def _adb_basename(local: str) -> str:
+    """Имя файла из batch-пути вида %~dp0\\..\\apk\\File.apk — для поиска
+    среди StepSpec.adb_files по имени (см. _ADB_PUSH_RE/_RAW_ADB_PUSH_RE)."""
+    local = local.strip().strip('"')
+    return local.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _parse_adb_line(line: str) -> tuple[str, object]:
     """Разбирает одну строку команд ADB-этапа. Что не распознано ни одной
-    из спецкоманд — обычная adb shell команда как есть (в том числе
-    случайная строка, начинающаяся с "#", но не совпавшая ни с одним
-    шаблоном — так безопаснее, чем требовать явного экранирования)."""
+    из спецкоманд/сырых adb-команд — обычная adb shell команда как есть (в
+    том числе случайная строка, начинающаяся с "#", но не совпавшая ни с
+    одним шаблоном — так безопаснее, чем требовать явного экранирования)."""
     if m := _ADB_SLEEP_RE.match(line):
         return "sleep", float(m.group(1))
     if _ADB_REBOOT_RE.match(line):
@@ -373,6 +462,39 @@ def _parse_adb_line(line: str) -> tuple[str, float | str | None]:
         return "wait_device", float(m.group(1)) if m.group(1) else None
     if m := _ADB_ASK_RE.match(line):
         return "ask", m.group(1).strip()
+    if _ADB_ROOT_RE.match(line):
+        return "root", None
+    if _ADB_DISABLE_VERITY_RE.match(line):
+        return "disable_verity", None
+    if _ADB_REMOUNT_RE.match(line):
+        return "remount", None
+    if m := _ADB_PUSH_RE.match(line):
+        return "push", (_adb_basename(m.group(1)), m.group(2).strip())
+    if m := _ADB_INSTALL_RE.match(line):
+        return "install", _adb_basename(m.group(1))
+
+    # "Сырые" строки прямо из .bat/.sh автора набора (см. пояснение выше).
+    if _RAW_ADB_ROOT_RE.match(line):
+        return "root", None
+    if _RAW_ADB_DISABLE_VERITY_RE.match(line):
+        return "disable_verity", None
+    if _RAW_ADB_REMOUNT_RE.match(line):
+        return "remount", None
+    if _RAW_ADB_REBOOT_RE.match(line):
+        return "reboot_nowait", None
+    if _RAW_ADB_WAIT_DEVICE_RE.match(line):
+        return "wait_device", None
+    if m := _RAW_ADB_PUSH_RE.match(line):
+        return "push", (_adb_basename(m.group(1)), m.group(2).strip())
+    if m := _RAW_ADB_INSTALL_RE.match(line):
+        return "install", _adb_basename(m.group(1))
+    if m := _RAW_ADB_SHELL_RE.match(line):
+        return "shell", m.group(1).strip()
+    if m := _BAT_TIMEOUT_RE.match(line):
+        return "sleep", float(m.group(1))
+    if _BAT_NOOP_RE.match(line):
+        return "skip", None
+
     return "shell", line
 
 
@@ -393,7 +515,9 @@ def _render_install_py(spec: NewCarSpec) -> str:
             lines.append("    _ask = None")
             for raw_line in step.commands:
                 kind, payload = _parse_adb_line(raw_line)
-                if kind == "sleep":
+                if kind == "skip":
+                    continue
+                elif kind == "sleep":
                     lines.append(f"    ctx.sleep({payload})")
                 elif kind == "reboot":
                     lines.append("    ctx.reboot(wait=True)")
@@ -406,6 +530,19 @@ def _render_install_py(spec: NewCarSpec) -> str:
                         lines.append("    ctx.wait_for_device()")
                 elif kind == "ask":
                     lines.append(f"    _ask = ctx.ask_input({payload!r})")
+                elif kind == "root":
+                    lines.append('    ctx.adb("root", check=False)')
+                elif kind == "disable_verity":
+                    lines.append('    ctx.adb("disable-verity", check=False)')
+                elif kind == "remount":
+                    lines.append('    ctx.adb("remount", check=False)')
+                elif kind == "push":
+                    name, remote = payload
+                    rel = f"adb_{i}/{name}"
+                    lines.append(f"    ctx.push(ctx.file({rel!r}), {remote!r})")
+                elif kind == "install":
+                    rel = f"adb_{i}/{payload}"
+                    lines.append(f"    ctx.install_apk(ctx.file({rel!r}))")
                 else:
                     if "{ask}" in payload:
                         lines.append(
@@ -445,7 +582,15 @@ def _render_stages_py(spec: NewCarSpec) -> str:
         "import sys",
         "from pathlib import Path",
         "",
-        'sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_shared"))',
+        # Не жёсткий parents[2] — модель с модификацией лежит на уровень
+        # глубже (cars/<Марка>/<Модель>/<Модификация>/stages.py), чем
+        # модель без неё (cars/<Марка>/<Модель>/stages.py), поэтому ищем
+        # _shared/ подъёмом вверх до первого совпадения, а не по фиксированному
+        # числу родителей.
+        "for _p in Path(__file__).resolve().parents:",
+        '    if (_p / "_shared").is_dir():',
+        '        sys.path.insert(0, str(_p / "_shared"))',
+        "        break",
         "from load_sibling import load_install  # noqa: E402",
     ]
     if spec.wifi:
@@ -504,6 +649,11 @@ def _render_stages_py(spec: NewCarSpec) -> str:
                 f'        "exe_path": Path(__file__).resolve().parent / "files" / "exe_{i}" '
                 f'/ {step.exe_file.name!r},'
             )
+        elif step.type == "instruction" and step.instruction_blocks:
+            # "instruction" — относительный путь-строка (см.
+            # app/stage_runner.py: stage_instruction_html_path резолвит его
+            # как model.dir / rel), а не Path-выражение, как "exe_path" выше.
+            entry.append(f'        "instruction": {f"files/instruction_{i}/instruction.html"!r},')
         # "manual" — без "run"
 
         entry.append("    },")

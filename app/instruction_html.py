@@ -23,6 +23,8 @@ import re
 import shutil
 from pathlib import Path
 
+from . import colors as theme
+
 EDITOR_MARKER = "magicsqd-instruction-editor:v1"
 
 BLOCK_TYPE_LABELS = {
@@ -36,20 +38,22 @@ BLOCK_TYPE_LABELS = {
 }
 
 # Та же палитра/классы, что уже вручную писались в существующих
-# instruction.html (.warn/.danger/.path/img.screenshot) — берём готовый
-# устоявшийся стиль, а не придумываем новый.
-INSTRUCTION_CSS = """
-  body { font-family: "Segoe UI", Arial, sans-serif; margin: 16px; background: #171f30; color: #e8ecf4; }
-  h1 { font-size: 18px; color: #7ee0c0; }
-  h2 { font-size: 15px; margin-top: 20px; color: #7ee0c0; }
-  ol { padding-left: 22px; }
-  li { margin-bottom: 8px; line-height: 1.4; }
-  p { line-height: 1.4; }
-  .warn { background: #4a3f1a; border: 1px solid #8a6d1f; padding: 8px 12px; border-radius: 4px; color: #f3e3a8; }
-  .danger { background: #4a2222; border: 1px solid #8a3a3a; padding: 8px 12px; border-radius: 4px; color: #f3c6c6; }
-  .path { background: #232c42; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; color: #7ee0c0; }
-  .caption { color: #9aa4b8; font-size: 12px; margin-top: -4px; }
-  img.screenshot { max-width: 100%; border: 1px solid #2a3448; border-radius: 4px; margin: 6px 0; }
+# instruction.html (.warn/.danger/.path/img.screenshot) — теперь взята из
+# app/theme.py (единый источник цветов), а не задублирована собственными
+# литералами — иначе правка палитры в theme.py не долетает до сгенерированных
+# инструкций, и они визуально расходятся с остальным приложением.
+INSTRUCTION_CSS = f"""
+  body {{ font-family: "Segoe UI", Arial, sans-serif; margin: 16px; background: {theme.BG_CARD}; color: {theme.TEXT}; }}
+  h1 {{ font-size: 18px; color: {theme.ACCENT_2}; }}
+  h2 {{ font-size: 15px; margin-top: 20px; color: {theme.ACCENT_2}; }}
+  ol {{ padding-left: 22px; }}
+  li {{ margin-bottom: 8px; line-height: 1.4; }}
+  p {{ line-height: 1.4; }}
+  .warn {{ background: {theme.WARN_BG}; border: 1px solid {theme.WARN_BORDER}; padding: 8px 12px; border-radius: 4px; color: {theme.WARN_TEXT}; }}
+  .danger {{ background: {theme.DANGER_BG}; border: 1px solid {theme.DANGER_BORDER}; padding: 8px 12px; border-radius: 4px; color: {theme.DANGER_TEXT}; }}
+  .path {{ background: {theme.BG_ELEVATED}; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; color: {theme.ACCENT_2}; }}
+  .caption {{ color: {theme.TEXT_DIM}; font-size: 12px; margin-top: -4px; }}
+  img.screenshot {{ max-width: 100%; border: 1px solid {theme.BORDER}; border-radius: 4px; margin: 6px 0; }}
 """
 
 _BLOCKS_RE = re.compile(

@@ -1,20 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
-
-# customtkinter хранит темы/шрифты как файлы данных (.json/.otf) рядом со
-# своим кодом — PyInstaller их не подхватывает автоматически без этого.
-# Официально для customtkinter поддерживается только --onedir (не
-# --onefile): в --onefile данные распаковываются во временную папку при
-# каждом запуске, и это ненадёжно (мигающее окно, которое тут же
-# закрывается, — типичный симптом, который мы и получили на реальной
-# машине). Поэтому здесь COLLECT (--onedir) вместо прежнего EXE-only.
-customtkinter_datas = collect_data_files("customtkinter")
-
+# pywebview-сборка (см. main_web.py, app/web/) — заменила customtkinter/
+# tkinterweb. datas теперь — статические файлы app/web/frontend/ (HTML/CSS/
+# JS), а не customtkinter_datas (тем/шрифтов у pywebview нет, он рисует
+# страницу в WebView2). hiddenimports для pythonnet/clr_loader/webview не
+# нужны вручную — их даёт готовый hook из pyinstaller-hooks-contrib (см.
+# requirements.txt), проверено: hook-webview.py/hook-clr_loader.py уже есть
+# в установленном пакете. Onedir (не onefile) сохраняется по прежней
+# причине (см. историю этого файла) — не единственная больше, но менять
+# нет смысла: onedir проще для докачки cars/apk рядом с exe.
 a = Analysis(
-    ['main.py'],
+    ['main_web.py'],
     pathex=[],
     binaries=[],
-    datas=customtkinter_datas,
+    datas=[('app/web/frontend', 'app/web/frontend')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
