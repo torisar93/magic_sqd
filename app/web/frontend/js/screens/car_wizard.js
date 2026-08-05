@@ -34,7 +34,7 @@
   let steps = [];
   let currentStepIndex = 0;
   let editingVariantIndex = 0;
-  let brand = "", model = "", modification = "", wifi = false, wifiPort = 5555;
+  let brand = "", model = "", modification = "", wifi = false, wifiPort = 5555, changelog = "";
   let isEditing = false;
   let editModelKey = null;
   let onCreatedCb = null;
@@ -120,6 +120,10 @@
       brand = ""; model = ""; modification = ""; wifi = false; wifiPort = 5555;
       steps = [{ ...newStep("instruction"), title: "Этап 1" }];
     }
+    // Заметка "что изменилось" — разовая подпись к КОНКРЕТНОМУ сохранению
+    // (см. app/car_generator.py: version.json), не часть spec — поэтому
+    // всегда пустая при открытии, даже в режиме редактирования.
+    changelog = "";
 
     document.getElementById("car-wizard-title").textContent = isEditing ? "Изменить машину" : "Добавить машину";
     document.getElementById("car-wizard-save").textContent = isEditing ? "Сохранить" : "Создать";
@@ -182,6 +186,24 @@
     wifiRow.appendChild(el("span", { text: "Порт:" }));
     wifiRow.appendChild(wifiPortInput);
     headerEl.appendChild(wifiRow);
+
+    // Короткая заметка "что изменилось в этом сохранении" — необязательная,
+    // пишется в version.json (см. app/car_generator.py) и попадает в сводку
+    // "Что нового" у техников при следующем запуске (см. app/web/api/
+    // sync_api.py, app/update_tracker.py). Не привязана к прошлым
+    // сохранениям — каждый раз пустая, см. open().
+    const changelogField = el("div", { class: "field", style: "margin-top: 8px" });
+    changelogField.appendChild(el("span", {
+      class: "field-label",
+      text: "Что нового в этом сохранении (необязательно, увидят техники)",
+    }));
+    const changelogInput = el("textarea", {
+      rows: "2", placeholder: "Например: поправили баг с автоподключением Wi-Fi",
+    });
+    changelogInput.value = changelog;
+    changelogInput.addEventListener("input", () => { changelog = changelogInput.value; });
+    changelogField.appendChild(changelogInput);
+    headerEl.appendChild(changelogField);
   }
 
   // ------------------------------------------------------------------
@@ -609,7 +631,7 @@
   // через car_save_log/car_save_finished (см. init()).
   // ------------------------------------------------------------------
   function specToJson() {
-    return { brand, model, modification, wifi, wifi_port: Number(wifiPort) || 5555, steps };
+    return { brand, model, modification, wifi, wifi_port: Number(wifiPort) || 5555, steps, changelog };
   }
 
   async function onSave() {

@@ -34,9 +34,17 @@ class ScannerApi:
         self.cars_dir = cars_dir
         self.apk_dir = apk_dir
         self._models_by_key: dict[str, ModelInfo] = {}
+        # Заполняется sync_api.SyncApi.startup_sync() при старте (список APK
+        # на сервере, ещё не скачанных локально — см. content_sync.
+        # list_shared_apk_catalog) — до этого просто пусто, list_apks()
+        # покажет только то, что уже есть на диске, как и раньше.
+        self._remote_apk_catalog: list[dict] = []
+
+    def set_remote_apk_catalog(self, catalog: list[dict]) -> None:
+        self._remote_apk_catalog = catalog
 
     def list_apks(self) -> list[dict]:
-        return [apk_to_dict(apk) for apk in scan_apks(self.apk_dir)]
+        return [apk_to_dict(apk) for apk in scan_apks(self.apk_dir, self._remote_apk_catalog)]
 
     def list_cars(self) -> dict:
         brands_tree = scan_cars(self.cars_dir)

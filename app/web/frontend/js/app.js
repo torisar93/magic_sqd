@@ -24,12 +24,32 @@ function onCarCreated(brand, modelName, modification) {
   window.mainPicker.reload();
 }
 
+// Сводка "Что нового" после автообновления cars/ с сервера при старте (см.
+// app/web/api/sync_api.py: startup_sync/app/update_tracker.py) — пусто на
+// первом запуске программы и когда server.json не настроен.
+function showUpdatesNotice(changes) {
+  const added = changes.filter((c) => c.kind === "added");
+  const updated = changes.filter((c) => c.kind === "updated");
+  const lines = [];
+  const describe = (c) => `  • ${c.label}` + (c.changelog ? `: ${c.changelog}` : "");
+  if (added.length) {
+    lines.push("Добавлены:", ...added.map(describe));
+  }
+  if (updated.length) {
+    if (lines.length) lines.push("");
+    lines.push("Обновлены:", ...updated.map(describe));
+  }
+  window.notice(lines.join("\n"), { title: "Что нового" });
+}
+
 window.addEventListener("pywebviewready", async () => {
   window.initResizer(document.getElementById("app-shell"), document.getElementById("resizer"));
 
   window.initDialogs();
   window.carWizard.init(log);
   window.stageWizard.init(document.getElementById("install-content"), log);
+
+  const syncResult = await window.pywebview.api.sync_startup();
   await window.mainPicker.init(document.getElementById("picker"), { onModelSelected });
 
   const info = await window.pywebview.api.app_get_info();
@@ -45,4 +65,8 @@ window.addEventListener("pywebviewready", async () => {
   document.getElementById("admin-upload-btn").addEventListener("click", () => window.adminDialog.open());
 
   window.events.on("log", (event) => log(event.text));
+
+  if (syncResult.changes && syncResult.changes.length > 0) {
+    showUpdatesNotice(syncResult.changes);
+  }
 });

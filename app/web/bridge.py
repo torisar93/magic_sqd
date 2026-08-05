@@ -12,6 +12,7 @@ from .api.car_editor_api import CarEditorApi
 from .api.install_api import InstallApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
+from .api.sync_api import SyncApi
 from .api.usb_api import UsbApi
 from ..adb_utils import find_adb_path
 
@@ -29,10 +30,15 @@ class WebApi:
         self._report = ReportApi(base_dir)
         self._admin = AdminApi(base_dir)
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner)
+        self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
 
     # -- метаданные окна ------------------------------------------------
     def app_get_info(self) -> dict:
         return {"admin_mode": self.admin_mode}
+
+    # -- sync_api -----------------------------------------------------------
+    def sync_startup(self) -> dict:
+        return self._sync.startup_sync()
 
     # -- scanner_api ------------------------------------------------------
     def scanner_list_cars(self) -> dict:

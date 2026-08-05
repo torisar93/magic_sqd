@@ -14,6 +14,9 @@ from pathlib import Path
 NO_INSTRUCTION_MARKER = "no_instruction.txt"
 
 
+VERSION_FILENAME = "version.json"
+
+
 @dataclass
 class ModelInfo:
     brand: str
@@ -22,6 +25,13 @@ class ModelInfo:
     stages_script: Path | None
     modification: str | None = None  # см. ModelGroup — None, если у модели нет слоя модификаций
     no_instruction: bool = False  # см. NO_INSTRUCTION_MARKER
+    # Ревизия/чейнджлог из version.json (см. app/car_generator.py — пишется
+    # мастером "Добавить/Изменить машину" при каждом сохранении) — 0/"" для
+    # моделей, написанных вручную без мастера, или ещё ни разу не
+    # пересохранённых им. Используется app/update_tracker.py, чтобы решить,
+    # показывать ли модель в сводке "Что нового" при старте программы.
+    revision: int = 0
+    changelog: str = ""
 
     @property
     def display_label(self) -> str:
@@ -120,6 +130,7 @@ def _model_sub_dirs(model_dir: Path) -> list[Path]:
 
 def _build_model_info(brand: str, name: str, modification: str | None, leaf_dir: Path) -> ModelInfo:
     stages_script = leaf_dir / "stages.py"
+    revision, changelog = _read_version(leaf_dir)
     return ModelInfo(
         brand=brand,
         name=name,
@@ -127,7 +138,35 @@ def _build_model_info(brand: str, name: str, modification: str | None, leaf_dir:
         stages_script=stages_script if stages_script.exists() else None,
         modification=modification,
         no_instruction=(leaf_dir / NO_INSTRUCTION_MARKER).exists(),
+        revision=revision,
+        changelog=changelog,
     )
+
+
+def _read_version(model_dir: Path) -> tuple[int, str]:
+    try:
+        data = json.loads((model_dir / VERSION_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0, ""
+    try:
+        revision = int(data.get("revision", 0))
+    except (TypeError, ValueError):
+        revision = 0
+    return revision, str(data.get("changelog") or "")
+
+
+def flatten_models(brands: dict[str, list[ModelGroup]]) -> list[ModelInfo]:
+    """Плоский список всех ModelInfo из дерева scan_cars() — и leaf-модели, и
+    модификации (см. ModelGroup) — для app/update_tracker.py, которому важен
+    просто список моделей с их revision/changelog, без структуры марка/
+    модель/модификация."""
+    models = []
+    for groups in brands.values():
+        for group in groups:
+            if group.leaf:
+                models.append(group.leaf)
+            models.extend(group.modifications)
+    return models
 
 
 def scan_apks(apk_dir: Path, remote_catalog: list[dict] | None = None) -> list[ApkInfo]:

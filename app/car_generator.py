@@ -15,9 +15,11 @@ import json
 import re
 import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from . import instruction_html
+from .scanner import VERSION_FILENAME
 
 INVALID_NAME_CHARS = set('<>:"/\\|?*')
 SPEC_FILENAME = "_wizard_spec.json"
@@ -97,6 +99,12 @@ class NewCarSpec:
     # рынка) — см. app/scanner.py:ModelGroup. Пусто — обычная модель,
     # cars/<Марка>/<Модель>/; иначе — cars/<Марка>/<Модель>/<Модификация>/.
     modification: str = ""
+    # Короткая заметка "что изменилось в этом сохранении" — необязательная,
+    # не хранится в _wizard_spec.json (это не часть состояния мастера, а
+    # разовая подпись к конкретному сохранению). Пишется в version.json
+    # вместе с автоинкрементным revision — см. _write_version_file,
+    # app/update_tracker.py (сводка "Что нового" у техника при старте).
+    changelog: str = ""
 
 
 class CarGenerationError(RuntimeError):
@@ -353,6 +361,30 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     (model_dir / "install.py").write_text(_render_install_py(spec), encoding="utf-8")
     (model_dir / "stages.py").write_text(_render_stages_py(spec), encoding="utf-8")
     (model_dir / SPEC_FILENAME).write_text(_render_spec_json(spec), encoding="utf-8")
+    _write_version_file(model_dir, spec.changelog)
+
+
+def _write_version_file(model_dir: Path, changelog: str) -> None:
+    """revision — просто счётчик сохранений этой модели через мастер,
+    +1 к тому, что уже лежало в version.json (0, если файла ещё нет —
+    первое сохранение новой модели даёт revision=1). Не привязан к
+    какой-либо внешней схеме версионирования (semver и т.п.) — единственная
+    цель: у клиента (см. app/update_tracker.py) есть монотонно растущее
+    число, чтобы отличить "видел уже" от "появилось новое", а changelog —
+    что показать техническому в сводке при этом."""
+    version_path = model_dir / VERSION_FILENAME
+    revision = 0
+    try:
+        existing = json.loads(version_path.read_text(encoding="utf-8"))
+        revision = int(existing.get("revision", 0))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+    data = {
+        "revision": revision + 1,
+        "changelog": changelog.strip(),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    version_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 # ----------------------------------------------------------------------

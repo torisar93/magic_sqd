@@ -185,6 +185,7 @@ class CarEditorApi:
             modification=spec_data.get("modification", ""),
             wifi=spec_data.get("wifi", False), wifi_port=spec_data.get("wifi_port", 5555),
             steps=[_step_from_dict(s) for s in spec_data.get("steps", [])],
+            changelog=spec_data.get("changelog", ""),
         )
 
         self._cancel_flag = threading.Event()
