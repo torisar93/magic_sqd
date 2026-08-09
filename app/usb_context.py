@@ -8,15 +8,19 @@ from .install_context import InstallCancelled
 
 class UsbContext:
     def __init__(self, drive_root: Path, model_dir: Path, selected_apks, log_fn, cancel_flag,
-                 variant: str | None = None):
+                 variant: str | None = None, shared_dir: Path | None = None):
         """variant — выбранный техником вариант содержимого (Full/Lite/...),
         если у usb-этапа есть несколько (см. StepSpec.variants в
         car_generator.py, stage_wizard.py._run_usb_stage) — None для
-        обычных однонаборных этапов, как и раньше."""
+        обычных однонаборных этапов, как и раньше. shared_dir — см.
+        InstallContext: cars/_shared/, для наборов файлов, общих на много
+        моделей (StepSpec.usb_shared_folder), одна копия на всех, а не в
+        каждой модели отдельно."""
         self.drive_root = Path(drive_root)
         self.model_dir = Path(model_dir)
         self.files_dir = self.model_dir / "files"
         self.usb_files_dir = self.model_dir / "usb_files"
+        self.shared_dir = Path(shared_dir) if shared_dir is not None else None
         self.selected_apks = [Path(p) for p in selected_apks]
         self.variant = variant
         self._log_fn = log_fn

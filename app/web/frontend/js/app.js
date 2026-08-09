@@ -46,7 +46,7 @@ window.addEventListener("pywebviewready", async () => {
   window.initResizer(document.getElementById("app-shell"), document.getElementById("resizer"));
 
   window.initDialogs();
-  window.carWizard.init(log);
+  window.graphWizard.init(log);
   window.stageWizard.init(document.getElementById("install-content"), log);
 
   const syncResult = await window.pywebview.api.sync_startup();
@@ -58,9 +58,9 @@ window.addEventListener("pywebviewready", async () => {
   }
 
   document.getElementById("add-car-btn").addEventListener("click", () =>
-    window.carWizard.open(null, window.mainPicker.getBrands(), onCarCreated));
+    window.graphWizard.open(null, window.mainPicker.getBrands(), onCarCreated));
   document.getElementById("edit-car-btn").addEventListener("click", () =>
-    window.carWizard.open(currentModel, window.mainPicker.getBrands(), onCarCreated));
+    window.graphWizard.open(currentModel, window.mainPicker.getBrands(), onCarCreated));
   document.getElementById("report-btn").addEventListener("click", () => window.reportDialog.open(currentModel));
   document.getElementById("admin-upload-btn").addEventListener("click", () => window.adminDialog.open());
 

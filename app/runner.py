@@ -75,6 +75,7 @@ class InstallRunner:
                 log_fn=self.on_log,
                 cancel_flag=self._cancel_flag,
                 ask_input_fn=self.ask_input_fn,
+                shared_dir=(self.base_dir / "cars" / "_shared") if self.base_dir else None,
             )
             run_fn(ctx)
         except InstallCancelled as exc:

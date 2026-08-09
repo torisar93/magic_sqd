@@ -55,6 +55,16 @@ class StepSpec:
     # "usb" — используется, только если variants (см. ниже) пуст
     usb_files: list[Path] = field(default_factory=list)
     usb_copy_selected_apks: bool = False
+    # "usb" — имя папки в cars/_shared/ (см. app/install_context.py,
+    # app/usb_context.py: ctx.shared_dir) с набором файлов, общим сразу для
+    # многих моделей (например, один и тот же универсальный инструмент) —
+    # копируется на флешку НАПРЯМУЮ из общей папки при установке, без
+    # копирования в usb_files САМОЙ модели, чтобы не дублировать одно и то
+    # же на сервере и у каждого техника по разу на модель. Пусто — не
+    # используется, работает как раньше (только usb_files). Может
+    # применяться ОДНОВРЕМЕННО с usb_files — на флешку попадёт и то, и
+    # другое (см. _render_install_py).
+    usb_shared_folder: str = ""
     # "adb" — см. _parse_adb_line ниже за синтаксисом спецкоманд (#sleep,
     # #reboot, #root, #push, ...) вперемешку с обычными adb shell командами
     # ИЛИ "сырыми" строками прямо из .bat/.sh автора набора (adb root/push/
@@ -86,6 +96,13 @@ class StepSpec:
     # техник выбирает нужный прямо на этапе установки. Пусто — обычное
     # поведение (один набор файлов, см. usb_files/standard_apks выше).
     variants: list[StepVariant] = field(default_factory=list)
+    # Позиция узла в визуальном редакторе-графе (app/web/frontend/js/screens/
+    # graph_wizard.js) — только для раскладки на холсте, ни на что в
+    # install.py/stages.py не влияет. Классический мастер их не показывает,
+    # просто сохраняет как есть (0.0 по умолчанию — граф сам раскладывает
+    # шаги без сохранённой позиции при открытии).
+    pos_x: float = 0.0
+    pos_y: float = 0.0
 
 
 @dataclass
@@ -241,6 +258,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             instruction_blocks=instruction_blocks,
             usb_files=usb_files,
             usb_copy_selected_apks=step_data.get("usb_copy_selected_apks", False),
+            usb_shared_folder=step_data.get("usb_shared_folder", ""),
             commands=step_data.get("commands", []),
             adb_install_selected_apks=step_data.get("adb_install_selected_apks", False),
             adb_files=adb_files,
@@ -251,6 +269,8 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             condition_var=step_data.get("condition_var", ""),
             condition_values=step_data.get("condition_values", []),
             variants=variants,
+            pos_x=step_data.get("pos_x", 0.0),
+            pos_y=step_data.get("pos_y", 0.0),
         ))
 
     return NewCarSpec(
@@ -261,6 +281,28 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         wifi_port=data.get("wifi_port", 5555),
         steps=steps,
     )
+
+
+def _copy_path(src: Path, dst: Path, keep_paths: set[Path]) -> None:
+    """Копирует src в dst — файл через copy2, папку целиком и рекурсивно
+    через copytree (dirs_exist_ok=True, чтобы повторное сохранение без
+    изменений в этой папке не падало на уже существующей dst — тот же
+    принцип "не трогаем то, что и так на месте", что и для одиночных
+    файлов). Для папки в keep_paths попадают ВСЕ файлы внутри нужно —
+    иначе цикл очистки "осиротевших" файлов в _write_model_files сочтёт их
+    лишними и удалит сразу после копирования (он ничего не знает про
+    usb_files/adb_files, только ходит по files_dir/usb_root целиком)."""
+    dst = dst.resolve()
+    if src.is_dir():
+        if src.resolve() != dst:
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        for f in dst.rglob("*"):
+            if f.is_file():
+                keep_paths.add(f.resolve())
+    else:
+        if src.resolve() != dst:
+            shutil.copy2(src, dst)
+        keep_paths.add(dst)
 
 
 def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
@@ -309,17 +351,11 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                     variant_dir = usb_step_dir / variant.name
                     variant_dir.mkdir(parents=True, exist_ok=True)
                     for f in variant.usb_files:
-                        dst = (variant_dir / f.name).resolve()
-                        if f.resolve() != dst:
-                            shutil.copy2(f, dst)
-                        keep_paths.add(dst)
+                        _copy_path(f, variant_dir / f.name, keep_paths)
             elif step.usb_files:
                 usb_step_dir.mkdir(parents=True, exist_ok=True)
                 for f in step.usb_files:
-                    dst = (usb_step_dir / f.name).resolve()
-                    if f.resolve() != dst:
-                        shutil.copy2(f, dst)
-                    keep_paths.add(dst)
+                    _copy_path(f, usb_step_dir / f.name, keep_paths)
         elif step.type == "exe" and step.exe_file:
             exe_step_dir = files_dir / f"exe_{i}"
             exe_step_dir.mkdir(parents=True, exist_ok=True)
@@ -331,10 +367,7 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
             adb_step_dir = files_dir / f"adb_{i}"
             adb_step_dir.mkdir(parents=True, exist_ok=True)
             for f in step.adb_files:
-                dst = (adb_step_dir / f.name).resolve()
-                if f.resolve() != dst:
-                    shutil.copy2(f, dst)
-                keep_paths.add(dst)
+                _copy_path(f, adb_step_dir / f.name, keep_paths)
         elif step.type == "instruction" and step.instruction_blocks:
             instr_step_dir = files_dir / f"instruction_{i}"
             instr_step_dir.mkdir(parents=True, exist_ok=True)
@@ -401,6 +434,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "description": step.description,
                 "usb_files": [f.name for f in step.usb_files],
                 "usb_copy_selected_apks": step.usb_copy_selected_apks,
+                "usb_shared_folder": step.usb_shared_folder,
                 "commands": step.commands,
                 "adb_install_selected_apks": step.adb_install_selected_apks,
                 "adb_files": [f.name for f in step.adb_files],
@@ -410,6 +444,8 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "check_options": step.check_options,
                 "condition_var": step.condition_var,
                 "condition_values": step.condition_values,
+                "pos_x": step.pos_x,
+                "pos_y": step.pos_y,
                 "variants": [
                     {
                         "name": v.name,
@@ -600,6 +636,19 @@ def _render_install_py(spec: NewCarSpec) -> str:
             if step.usb_copy_selected_apks:
                 lines += ["    if ctx.selected_apks:",
                            '        ctx.copy_selected_apks("")']
+            if step.usb_shared_folder:
+                # Общий для многих моделей набор файлов (см.
+                # StepSpec.usb_shared_folder) — копируется НАПРЯМУЮ из
+                # cars/_shared/, а не из usb_files этой модели, чтобы не
+                # дублировать одно и то же на сервере/у каждого техника
+                # отдельно на модель. Работает независимо/вместе с обычным
+                # usb_dir выше — не привязан к variant (общий набор один на
+                # все варианты этого этапа).
+                lines += [
+                    f"    shared_dir = ctx.shared_dir / {step.usb_shared_folder!r} if ctx.shared_dir else None",
+                    "    if shared_dir and shared_dir.exists():",
+                    '        ctx.copy_dir(shared_dir, "")',
+                ]
 
     return "\n".join(lines) + "\n"
 

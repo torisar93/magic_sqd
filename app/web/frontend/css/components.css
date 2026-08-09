@@ -399,7 +399,7 @@ dialog .field {
 }
 
 /* Индикатор "идёт фоновая операция" — usb-копирование/admin-выгрузка/
-   сохранение машины (см. dialogs.js, car_wizard.js). Заранее неизвестная
+   сохранение машины (см. dialogs.js, graph_wizard.js). Заранее неизвестная
    длительность (архивирование+сеть) — тот же indeterminate CTkProgressBar,
    что был в соответствующих tkinter-диалогах, здесь как CSS-анимация. */
 .progress-bar {
@@ -429,7 +429,7 @@ dialog .field {
   100% { left: 100%; }
 }
 
-/* ---- Мастер "Добавить/Изменить машину" (см. js/screens/car_wizard.js) и
+/* ---- Мастер "Добавить/Изменить машину" (см. js/screens/graph_wizard.js) и
    редактор инструкции (js/screens/instruction_editor.js) — большие
    диалоги, занимают почти всё окно, с внутренней прокруткой. ---- */
 dialog.dialog-large {
@@ -446,35 +446,6 @@ dialog.dialog-large {
    модалка/без backdrop) — снаружи выглядит как "окно не закрылось". */
 dialog.dialog-large[open] {
   display: flex;
-}
-
-.car-wizard-body {
-  display: flex;
-  gap: 12px;
-  flex: 1;
-  min-height: 0;
-  margin-top: 10px;
-}
-
-.car-step-list-col {
-  width: 260px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.car-step-form {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  /* Достаточный зазор от полосы прокрутки — при 4px содержимое (карточки
-     вариантов, кнопки ✕) визуально касалось скроллбара; сообщено
-     пользователем скриншотом ("обводка кнопки налезает на обводку
-     строки" — на самом деле налезала на скроллбар панели, не на рамку
-     самой карточки, поэтому правка padding у .option-card не помогала). */
-  padding-right: 16px;
 }
 
 .car-header-grid {

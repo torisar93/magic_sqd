@@ -108,6 +108,12 @@ class WebApi:
     def car_pick_files(self, kind: str, multiple: bool) -> list:
         return self._car_editor.pick_files(kind, multiple)
 
+    def car_list_shared_usb_folders(self) -> list:
+        return self._car_editor.list_shared_usb_folders()
+
+    def car_save_shared_usb_files(self, name: str, files: list) -> dict:
+        return self._car_editor.save_shared_usb_files(name, files)
+
     def car_instruction_default_blocks(self, brand: str, model: str) -> list:
         return self._car_editor.instruction_default_blocks(brand, model)
 

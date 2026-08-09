@@ -1,0 +1,285 @@
+/* Визуальный редактор-граф (эксперимент, см. app/web/frontend/js/screens/
+   graph_wizard.js и план в C:\Users\user\.claude\plans\tingly-mixing-mist.md)
+   — отдельный файл, а не добавки в components.css: это самостоятельная
+   визуальная подсистема (холст/узлы/провода с абсолютным позиционированием
+   и transform), не связанная со списочно-карточным стилем остального
+   интерфейса. Токены — из tokens.css, новых цветов не заводим. */
+
+.graph-wizard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  margin-top: 10px;
+}
+
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-main {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Холст: viewport — фиксированная видимая область (overflow: hidden), world —
+   панится/масштабируется через transform: translate(...) scale(...). Провод
+   ный SVG-слой — первый child внутри world, поэтому наследует тот же
+   transform автоматически (координаты проводов не нужно пересчитывать
+   вручную при pan/zoom, см. план). */
+.graph-viewport {
+  /* На весь холст, а не только на .graph-node — иначе быстрый клик мимо
+     узла (пустой фон, "Начало" и т.п.) мог запустить нативное выделение
+     текста браузером параллельно с нашим pan/drag (см. graph_wizard.js:
+     preventDefault в mousedown-обработчиках — это вторая, CSS-часть той
+     же защиты). */
+  user-select: none;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 24px 24px;
+  cursor: grab;
+}
+
+.graph-viewport.panning {
+  cursor: grabbing;
+}
+
+.graph-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+}
+
+.graph-wires {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.graph-wire {
+  fill: none;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.graph-wire-flow {
+  stroke: var(--accent);
+}
+
+.graph-wire-condition {
+  stroke: var(--accent-2);
+  stroke-dasharray: 4 3;
+}
+
+/* Широкая прозрачная линия поверх видимого провода — только она ловит
+   клики (см. graph_wizard.js: appendWire). 2px видимую линию (тем более
+   изогнутую и в уменьшенном масштабе) кликнуть точно почти невозможно —
+   это и была основная причина жалобы "не могу убирать существующие провода". */
+.graph-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.graph-wire-hit:hover {
+  stroke: rgba(255, 255, 255, 0.12);
+}
+
+.graph-wire-dragging {
+  opacity: 0.8;
+  stroke-dasharray: 5 3;
+}
+
+/* Псевдо-узел "Начало" — фиксированная точка отсчёта порядка выполнения
+   (см. graph_wizard.js), не часть steps, не перетаскивается. */
+.graph-start-node {
+  position: absolute;
+  width: 120px;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--corner-radius);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Сокеты — вход/выход "поток" (верх/низ узла). Перетаскивание от выхода
+   одного узла (или "Начала") на вход другого переставляет узлы в steps —
+   см. graph_wizard.js: connectFlow. */
+.graph-socket {
+  position: absolute;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-card);
+  cursor: crosshair;
+  z-index: 2;
+}
+
+.graph-socket:hover {
+  background: var(--accent-hover);
+}
+
+.graph-socket-in {
+  top: -6px;
+}
+
+.graph-socket-out {
+  bottom: -6px;
+}
+
+/* Во время перетаскивания провода — увеличивает все подходящие сокеты-цели
+   (см. graph_wizard.js: highlightDropTargets), чтобы попасть в маленькую
+   12px-точку после долгого перетаскивания было реально просто, а не по
+   везению. transform масштабирует от центра (position:absolute + left/top
+   уже центрируют точку), сама точка не смещается. */
+.graph-drop-target {
+  transform: scale(2.2);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.18);
+  z-index: 3;
+}
+
+/* Вход "условие" — левый край узла, отдельный цвет (совпадает с проводом
+   условия), есть у любого типа узла. */
+.graph-socket-condition-in {
+  left: -6px;
+  top: 50%;
+  margin-top: -6px;
+  margin-left: 0;
+  background: var(--accent-2);
+}
+
+/* Выходы по вариантам "Проверка/выбор" — обычные элементы потока (не
+   position:absolute), каждый в своей строке рядом с текстом варианта, а не
+   привязаны к фиксированной точке узла — потому что их число и подписи
+   меняются вместе с check_options (см. graph_wizard.js: checkOptionSocketPos
+   измеряет их фактическое положение, а не вычисляет геометрию заранее). */
+.graph-node-check-outputs {
+  border-top: 1px solid var(--border);
+}
+
+.graph-check-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  /* Без правого паддинга — точка сама выступает за границу узла (см.
+     margin-right ниже), как и остальные сокеты (.graph-socket-in/-out) */
+  padding: 3px 0 3px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.graph-socket-condition-out {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  border: 2px solid var(--bg-card);
+  cursor: crosshair;
+  flex-shrink: 0;
+  /* Центр точки ложится точно на границу узла (та же логика -6px = половина
+     диаметра, что и у .graph-socket-in/-out) — без этого точка визуально
+     "тонет" внутри строки, и непонятно, от какого именно варианта идёт
+     провод (см. отчёт пользователя). */
+  margin-right: -6px;
+}
+
+.graph-socket-condition-out:hover {
+  background: var(--accent-hover);
+}
+
+.graph-node {
+  position: absolute;
+  width: 200px;
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  background: var(--bg-card);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  user-select: none;
+  cursor: grab;
+}
+
+.graph-node.dragging {
+  cursor: grabbing;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.graph-node.selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.graph-node-header {
+  padding: 6px 10px;
+  border-top-left-radius: var(--corner-radius);
+  border-top-right-radius: var(--corner-radius);
+  border-left: 4px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Цвет левой полосы по типу этапа — переиспользуем существующие токены
+   (см. tokens.css), без новых цветов. */
+.graph-node-type-adb .graph-node-header { border-left-color: var(--accent); }
+.graph-node-type-usb .graph-node-header { border-left-color: var(--accent-2); }
+.graph-node-type-manual .graph-node-header { border-left-color: var(--border); }
+.graph-node-type-apps .graph-node-header { border-left-color: var(--steps-bg); }
+.graph-node-type-exe .graph-node-header { border-left-color: var(--warn-border); }
+.graph-node-type-check .graph-node-header { border-left-color: var(--danger-border); }
+.graph-node-type-instruction .graph-node-header { border-left-color: var(--accent-hover); }
+
+.graph-node-type-label {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.graph-node-body {
+  padding: 6px 10px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.graph-props {
+  width: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  padding-right: 16px;
+}

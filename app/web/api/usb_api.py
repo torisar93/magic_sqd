@@ -85,6 +85,7 @@ class UsbApi:
                 log_fn=self._log,
                 cancel_flag=self._cancel_flag,
                 variant=variant,
+                shared_dir=self.base_dir / "cars" / "_shared",
             )
             stage["run"](ctx)
         except InstallCancelled as exc:

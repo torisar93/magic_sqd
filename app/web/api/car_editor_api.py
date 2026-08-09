@@ -9,6 +9,7 @@ Path<->str на границе, (2) открывает нативные диал
 сервер в фоновом потоке (см. _CreateCarProgressDialog в старом коде)."""
 import base64
 import mimetypes
+import shutil
 import threading
 from pathlib import Path
 
@@ -18,8 +19,8 @@ from ..events import event_bridge
 from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cached_session,
                               get_cached_session, login, set_cached_session, upload_model)
 from ...admin_config import get_admin_base_url
-from ...car_generator import (CarGenerationError, NewCarSpec, StepSpec, StepVariant,
-                               create_car, load_car_spec, update_car)
+from ...car_generator import (INVALID_NAME_CHARS, CarGenerationError, NewCarSpec, StepSpec,
+                               StepVariant, create_car, load_car_spec, update_car)
 from ...instruction_html import default_blocks, render_document
 from ...ping_client import get_or_create_client_id
 from ...submit_client import SubmitCancelled, SubmitError, submit_model
@@ -50,6 +51,7 @@ def _step_to_dict(step: StepSpec) -> dict:
         "instruction_blocks": step.instruction_blocks,
         "usb_files": _files_to_dicts(step.usb_files),
         "usb_copy_selected_apks": step.usb_copy_selected_apks,
+        "usb_shared_folder": step.usb_shared_folder,
         "commands": step.commands,
         "adb_install_selected_apks": step.adb_install_selected_apks,
         "adb_files": _files_to_dicts(step.adb_files),
@@ -58,6 +60,7 @@ def _step_to_dict(step: StepSpec) -> dict:
         "check_var": step.check_var, "check_options": step.check_options,
         "condition_var": step.condition_var, "condition_values": step.condition_values,
         "variants": [_variant_to_dict(v) for v in step.variants],
+        "pos_x": step.pos_x, "pos_y": step.pos_y,
     }
 
 
@@ -78,6 +81,7 @@ def _step_from_dict(data: dict) -> StepSpec:
         instruction_blocks=data.get("instruction_blocks") or [],
         usb_files=_files_from_dicts(data.get("usb_files")),
         usb_copy_selected_apks=data.get("usb_copy_selected_apks", False),
+        usb_shared_folder=data.get("usb_shared_folder", ""),
         commands=data.get("commands") or [],
         adb_install_selected_apks=data.get("adb_install_selected_apks", False),
         adb_files=_files_from_dicts(data.get("adb_files")),
@@ -86,6 +90,7 @@ def _step_from_dict(data: dict) -> StepSpec:
         check_var=data.get("check_var", ""), check_options=data.get("check_options") or [],
         condition_var=data.get("condition_var", ""), condition_values=data.get("condition_values") or [],
         variants=[_variant_from_dict(v) for v in (data.get("variants") or [])],
+        pos_x=data.get("pos_x", 0.0), pos_y=data.get("pos_y", 0.0),
     )
 
 
@@ -117,14 +122,66 @@ class CarEditorApi:
 
     # -- выбор файлов — нативный диалог pywebview (нужны реальные пути) ---
     def pick_files(self, kind: str, multiple: bool) -> list[dict]:
-        file_types = {"apk": APK_FILE_TYPES, "exe": EXE_FILE_TYPES,
-                      "image": IMAGE_FILE_TYPES}.get(kind, ANY_FILE_TYPES)
-        dialog_type = webview.OPEN_DIALOG
-        result = webview.windows[0].create_file_dialog(
-            dialog_type, allow_multiple=multiple, file_types=file_types)
+        if kind == "folder":
+            # Отдельный нативный диалог (ОС не даёт выбирать вперемешку
+            # файлы и папки в одном окне) — для usb_files, где нужно
+            # положить на флешку не только отдельные файлы, но и целые
+            # папки как есть (см. car_generator.py: _copy_path копирует
+            # рекурсивно). multiple здесь фактически игнорируется — папку
+            # обычно выбирают по одной за раз.
+            result = webview.windows[0].create_file_dialog(webview.FOLDER_DIALOG, allow_multiple=multiple)
+        else:
+            file_types = {"apk": APK_FILE_TYPES, "exe": EXE_FILE_TYPES,
+                          "image": IMAGE_FILE_TYPES}.get(kind, ANY_FILE_TYPES)
+            result = webview.windows[0].create_file_dialog(
+                webview.OPEN_DIALOG, allow_multiple=multiple, file_types=file_types)
         if not result:
             return []
         return [_file_dict(Path(p)) for p in result]
+
+    # -- общие наборы файлов (cars/_shared/) — см. app/install_context.py,
+    # app/usb_context.py: ctx.shared_dir, app/car_generator.py:
+    # StepSpec.usb_shared_folder. Один и тот же набор файлов на много
+    # разных моделей — хранится и синхронизируется один раз, а не
+    # копируется в каждую модель отдельно.
+    def list_shared_usb_folders(self) -> list[str]:
+        shared_dir = self.cars_dir / "_shared"
+        if not shared_dir.is_dir():
+            return []
+        return sorted(
+            p.name for p in shared_dir.iterdir()
+            if p.is_dir() and not p.name.startswith((".", "__"))
+        )
+
+    def save_shared_usb_files(self, name: str, files: list[dict]) -> dict:
+        """Копирует выбранные файлы/папки (см. pick_files) в
+        cars/_shared/<name>/ — создаёт папку при первом использовании, при
+        повторном добавлении файлов в тот же набор — дополняет (не стирает
+        то, что там уже было). name — такое же имя папки на диске, поэтому
+        проверяется тем же набором запрещённых символов, что и марка/
+        модель модели (см. car_generator.create_car)."""
+        name = name.strip()
+        if not name:
+            return {"ok": False, "error": "Не указано имя общего набора."}
+        if any(c in INVALID_NAME_CHARS for c in name):
+            return {"ok": False, "error": 'Имя не должно содержать символы: < > : " / \\ | ? *'}
+        if not files:
+            return {"ok": False, "error": "Не выбрано ни одного файла или папки."}
+        shared_dir = (self.cars_dir / "_shared" / name).resolve()
+        try:
+            shared_dir.mkdir(parents=True, exist_ok=True)
+            for item in files:
+                src = Path(item["path"])
+                dst = (shared_dir / src.name).resolve()
+                if src.resolve() == dst:
+                    continue
+                if src.is_dir():
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, dst)
+        except OSError as exc:
+            return {"ok": False, "error": f"Не удалось скопировать: {exc}"}
+        return {"ok": True, "name": name}
 
     # -- блочный редактор "Инструкция" (app/instruction_html.py, чистые данные) --
     def instruction_default_blocks(self, brand: str, model: str) -> list[dict]:

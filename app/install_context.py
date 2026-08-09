@@ -11,9 +11,18 @@ class InstallCancelled(RuntimeError):
 
 class InstallContext:
     def __init__(self, adb_path, device_serial, model_dir: Path, selected_apks,
-                 log_fn, cancel_flag, ask_input_fn=None):
+                 log_fn, cancel_flag, ask_input_fn=None, shared_dir: Path | None = None):
         self.model_dir = Path(model_dir)
         self.files_dir = self.model_dir / "files"
+        # cars/_shared/ — общие для МНОГИХ моделей файлы (не только Python-
+        # модули вроде wifi_adb.py, которые уже подключаются через sys.path
+        # в сгенерированном stages.py, но и произвольный payload — скрипты,
+        # прошивки и т.п., см. StepSpec.usb_shared_folder в car_generator.py).
+        # Синхронизируется на клиент автоматически как часть cars/ (см.
+        # content_sync.sync_scripts), одной копией на всех — не дублируется
+        # в каждую модель. None, если вызывающий не передал base_dir
+        # (не должно происходить в реальной установке, только в тестах).
+        self.shared_dir = Path(shared_dir) if shared_dir is not None else None
         self.selected_apks = [Path(p) for p in selected_apks]
         self.device = device_serial
         self._log_fn = log_fn

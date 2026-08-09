@@ -5,6 +5,7 @@
   <title>Magic SQD</title>
   <link rel="stylesheet" href="css/tokens.css" />
   <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/graph.css" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
@@ -106,28 +107,29 @@
     </div>
   </dialog>
 
-  <dialog id="car-wizard-dialog" class="dialog-large">
-    <h2 id="car-wizard-title">Добавить машину</h2>
-    <div id="car-wizard-header"></div>
-    <div class="car-wizard-body">
-      <div class="car-step-list-col">
-        <span class="field-label">Этапы установки</span>
-        <ul class="picker-list" id="car-step-list" style="flex: 1"></ul>
-        <div class="row" style="margin-top: 6px">
-          <select id="car-new-step-type" style="flex: 1"></select>
-        </div>
-        <button id="car-add-step" style="margin-top: 4px">Добавить этап</button>
-        <div class="row" style="margin-top: 4px">
-          <button id="car-move-up" style="flex: 1">▲</button>
-          <button id="car-move-down" style="flex: 1">▼</button>
-        </div>
-        <button id="car-remove-step" class="danger" style="margin-top: 4px">Удалить этап</button>
+  <dialog id="graph-wizard-dialog" class="dialog-large">
+    <h2 id="graph-wizard-title">Визуальный редактор</h2>
+    <div id="graph-wizard-header"></div>
+    <div class="graph-wizard-body">
+      <div class="graph-toolbar">
+        <select id="graph-new-node-type"></select>
+        <button id="graph-add-node">Добавить узел</button>
+        <button id="graph-remove-node" class="danger">Удалить узел</button>
+        <span style="flex: 1"></span>
+        <button id="graph-zoom-reset">100%</button>
       </div>
-      <div class="car-step-form" id="car-step-form"></div>
+      <div class="graph-main">
+        <div class="graph-viewport" id="graph-viewport">
+          <div class="graph-world" id="graph-world">
+            <svg class="graph-wires" id="graph-wires"></svg>
+          </div>
+        </div>
+        <div class="graph-props" id="graph-props"></div>
+      </div>
     </div>
     <div class="dialog-actions">
-      <button id="car-wizard-cancel">Отмена</button>
-      <button id="car-wizard-save" class="accent">Создать</button>
+      <button id="graph-wizard-cancel">Отмена</button>
+      <button id="graph-wizard-save" class="accent">Создать</button>
     </div>
   </dialog>
 
@@ -174,13 +176,15 @@
 
   <script src="js/events.js"></script>
   <script src="js/dom.js"></script>
+  <script src="js/graph/svg.js"></script>
   <script src="js/components/modal.js"></script>
   <script src="js/components/resizer.js"></script>
   <script src="js/screens/main_picker.js"></script>
   <script src="js/screens/stage_wizard.js"></script>
   <script src="js/screens/dialogs.js"></script>
   <script src="js/screens/instruction_editor.js"></script>
-  <script src="js/screens/car_wizard.js"></script>
+  <script src="js/screens/car_step_fields.js"></script>
+  <script src="js/screens/graph_wizard.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

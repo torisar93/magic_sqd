@@ -70,6 +70,50 @@ def _set_dpi_aware():
             pass
 
 
+def _fix_window_position_win32(window) -> None:
+    """Подстраховка поверх pywebview's штатного центрирования — на Windows
+    (WinForms-бэкенд) конвертация координат экрана в физические пиксели
+    берёт DPI-масштаб ТЕКУЩЕГО монитора окна В МОМЕНТ СОЗДАНИЯ (см.
+    webview/platforms/winforms.py: Window._scale через GetDpiForWindow,
+    используется и в StartPosition-логике конструктора, и в Window.move()).
+    У пользователя два монитора с РАЗНЫМ DPI-масштабом (главный — 1.25x,
+    второй, повёрнутый, смещён в отрицательные Y — 1.0x) — если WinForms
+    создаёт HWND не на главном мониторе, масштаб для пересчёта берётся не
+    тот, и итоговая позиция получается неверной (проверено: и штатный
+    x=y=None/CenterScreen, и ручной расчёт через webview.screens, и
+    screen=<Screen главного монитора> — все давали окно частично за
+    пределами видимой области, каждый раз по-своему). GetSystemMetrics
+    SM_CXSCREEN/SM_CYSCREEN — размеры ИМЕННО главного монитора в физических
+    пикселях всегда однозначно (это системная константа, не зависит от
+    того, на каком мониторе создано конкретное окно) — двигаем окно туда
+    напрямую через SetWindowPos, в обход pywebview-обёртки целиком."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        hwnd = window.native.Handle.ToInt32()
+        screen_w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+        screen_h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+        rect = wintypes.RECT()
+        user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect))
+        win_w = rect.right - rect.left
+        win_h = rect.bottom - rect.top
+        x = max(0, (screen_w - win_w) // 2)
+        y = max(0, (screen_h - win_h) // 2)
+        SWP_NOSIZE = 0x0001
+        SWP_NOZORDER = 0x0004
+        user32.SetWindowPos(wintypes.HWND(hwnd), None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER)
+        _log_step(
+            f"_fix_window_position_win32: screen={screen_w}x{screen_h} "
+            f"window={win_w}x{win_h} -> ({x},{y})"
+        )
+    except Exception as exc:
+        _log_step(f"_fix_window_position_win32 failed: {exc}")
+
+
 def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     """Общая точка входа technician/admin сборок — main_web.py и
     admin_main_web.py вызывают её с разными admin_mode/log_prefix/title,
@@ -107,6 +151,7 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
         height=990,
         min_size=(1040, 740),
     )
+    window.events.shown += lambda: _fix_window_position_win32(window)
     events.set_window(window)
     events.event_bridge.start_pump()
 

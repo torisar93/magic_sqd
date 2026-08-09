@@ -1,5 +1,6 @@
 // Блочный редактор instruction.html — портировано из app/instruction_editor.py.
-// Открывается из car_wizard.js для этапов типа "instruction". Блоки —
+// Открывается из car_step_fields.js для этапов типа "instruction" (общая
+// панель свойств узла графа, см. graph_wizard.js). Блоки —
 // обычные dict {"type":..., "text"|"path"/"caption":...}, тот же формат,
 // что и app/instruction_html.py (никакой отдельной модели на JS-стороне).
 (function () {
