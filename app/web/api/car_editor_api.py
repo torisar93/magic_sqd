@@ -51,6 +51,7 @@ def _step_to_dict(step: StepSpec) -> dict:
         "instruction_blocks": step.instruction_blocks,
         "usb_files": _files_to_dicts(step.usb_files),
         "usb_copy_selected_apks": step.usb_copy_selected_apks,
+        "usb_apks_dest": step.usb_apks_dest,
         "usb_shared_folder": step.usb_shared_folder,
         "commands": step.commands,
         "adb_install_selected_apks": step.adb_install_selected_apks,
@@ -81,6 +82,7 @@ def _step_from_dict(data: dict) -> StepSpec:
         instruction_blocks=data.get("instruction_blocks") or [],
         usb_files=_files_from_dicts(data.get("usb_files")),
         usb_copy_selected_apks=data.get("usb_copy_selected_apks", False),
+        usb_apks_dest=data.get("usb_apks_dest", ""),
         usb_shared_folder=data.get("usb_shared_folder", ""),
         commands=data.get("commands") or [],
         adb_install_selected_apks=data.get("adb_install_selected_apks", False),
@@ -288,8 +290,10 @@ class CarEditorApi:
         if admin_base_url and admin_session_cookie:
             try:
                 self._log("Упаковываю в архив...")
+                shared_names = {s.usb_shared_folder for s in spec.steps if s.usb_shared_folder}
+                extra_dirs = [self.cars_dir / "_shared" / name for name in shared_names]
                 upload_model(admin_base_url, admin_session_cookie, self.cars_dir, model_dir,
-                             log=self._log, check_cancelled=self._check_cancelled)
+                             extra_dirs=extra_dirs, log=self._log, check_cancelled=self._check_cancelled)
                 self._log("Опубликовано на сервере.")
             except AdminUploadCancelled:
                 self._log("Публикация отменена (локально сохранено).")

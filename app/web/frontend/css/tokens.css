@@ -106,3 +106,27 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .row > input, .row > select, .row > textarea {
   min-width: 0;
 }
+
+/* Скроллбар Chromium (pywebview/WebView2) по умолчанию — белый и
+   прямоугольный, выбивается из тёмного скруглённого стиля всего
+   остального интерфейса (лог, список марок, диалоги USB/APK и т.д.).
+   iframe с инструкцией — отдельный документ, туда это не долетает, для
+   него та же палитра задублирована в app/instruction_html.py. */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bg-elevated);
+}
+::-webkit-scrollbar-corner {
+  background: var(--bg);
+}

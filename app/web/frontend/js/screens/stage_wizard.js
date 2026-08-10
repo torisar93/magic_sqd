@@ -245,7 +245,7 @@
         el("p", { text: "Для этой машины пока нет известных способов установки." }),
         el("p", {
           style: "color: var(--text-dim)",
-          text: "Если вы знаете рабочий способ получить доступ к ADB или поставить приложения — нажмите «Сообщить о проблеме...» в углу и опишите его, мы добавим инструкцию.",
+          text: "Если вы знаете рабочий способ получить доступ к ADB или поставить приложения — нажмите «Сообщить о проблеме» в углу и опишите его, мы добавим инструкцию.",
         }),
       ]),
     ]));
@@ -348,8 +348,16 @@
   // -- apps ----------------------------------------------------------------
   async function renderAppsStage(panel, stage) {
     buildVariantPicker(panel, stage, stage.index);
+    panel.appendChild(await buildAppsTree(stage));
+  }
+
+  // Общее дерево "Стандартные приложения этого этапа" + "Дополнительные
+  // приложения" (вся общая библиотека apk/, по категориям) — используется и
+  // "apps"-этапом (единственный способ установить что-либо), и "usb"-этапом
+  // с usb_copy_selected_apks (технику нужно видеть и отмечать те же самые
+  // галочки, чтобы выбрать, что скопировать на флешку вместе со скриптом).
+  async function buildAppsTree(stage) {
     const tree = el("div", { class: "apps-tree" });
-    panel.appendChild(tree);
 
     const standard = await window.pywebview.api.install_standard_apks(model.key, stage.index, chosenVariants[stage.index]);
     for (const apk of standard) {
@@ -373,6 +381,7 @@
       extraBody.appendChild(buildCollapsibleSection(`extra:${category}`, category || "Без категории", byCategory[category]));
     }
     tree.appendChild(buildCollapsibleSection("extra", "Дополнительные приложения", null, extraBody));
+    return tree;
   }
 
   function buildCollapsibleSection(key, title, apks, presetBody) {
@@ -417,8 +426,11 @@
   }
 
   // -- usb ------------------------------------------------------------------
-  function renderUsbStage(panel, stage) {
+  async function renderUsbStage(panel, stage) {
     buildVariantPicker(panel, stage, stage.index);
+    if (stage.usb_copy_selected_apks) {
+      panel.appendChild(await buildAppsTree(stage));
+    }
     panel.appendChild(el("button", {
       class: "accent",
       text: "Подготовить флешку для этого этапа...",

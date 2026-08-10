@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 
 from ..events import event_bridge
-from ...content_sync import ensure_apks_downloaded, sync_model_files
+from ...content_sync import ensure_apks_downloaded, sync_model_files, sync_shared_folder
 from ...install_context import InstallCancelled
 from ...stage_runner import load_stages
 from ...usb_context import UsbContext
@@ -66,6 +66,9 @@ class UsbApi:
         try:
             sync_model_files(self.base_dir, model, log=self._log, check_cancelled=self._check_cancelled)
             ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apk_paths,
+                                    log=self._log, check_cancelled=self._check_cancelled)
+            if stage.get("usb_shared_folder"):
+                sync_shared_folder(self.base_dir, stage["usb_shared_folder"],
                                     log=self._log, check_cancelled=self._check_cancelled)
 
             if do_format:

@@ -55,6 +55,12 @@ class StepSpec:
     # "usb" — используется, только если variants (см. ниже) пуст
     usb_files: list[Path] = field(default_factory=list)
     usb_copy_selected_apks: bool = False
+    # "usb" — подпапка на флешке, куда копируются приложения, отмеченные
+    # техником галочками из общей библиотеки apk/ (см. usb_copy_selected_apks).
+    # Пусто — корень флешки (как раньше). Разные скрипты на разных флешках
+    # ждут APK в разных папках (например "apps"/"APK"/"Install"), поэтому
+    # это настраиваемое поле, а не хардкод.
+    usb_apks_dest: str = ""
     # "usb" — имя папки в cars/_shared/ (см. app/install_context.py,
     # app/usb_context.py: ctx.shared_dir) с набором файлов, общим сразу для
     # многих моделей (например, один и тот же универсальный инструмент) —
@@ -258,6 +264,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             instruction_blocks=instruction_blocks,
             usb_files=usb_files,
             usb_copy_selected_apks=step_data.get("usb_copy_selected_apks", False),
+            usb_apks_dest=step_data.get("usb_apks_dest", ""),
             usb_shared_folder=step_data.get("usb_shared_folder", ""),
             commands=step_data.get("commands", []),
             adb_install_selected_apks=step_data.get("adb_install_selected_apks", False),
@@ -434,6 +441,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "description": step.description,
                 "usb_files": [f.name for f in step.usb_files],
                 "usb_copy_selected_apks": step.usb_copy_selected_apks,
+                "usb_apks_dest": step.usb_apks_dest,
                 "usb_shared_folder": step.usb_shared_folder,
                 "commands": step.commands,
                 "adb_install_selected_apks": step.adb_install_selected_apks,
@@ -635,7 +643,7 @@ def _render_install_py(spec: NewCarSpec) -> str:
             ]
             if step.usb_copy_selected_apks:
                 lines += ["    if ctx.selected_apks:",
-                           '        ctx.copy_selected_apks("")']
+                           f"        ctx.copy_selected_apks({step.usb_apks_dest!r})"]
             if step.usb_shared_folder:
                 # Общий для многих моделей набор файлов (см.
                 # StepSpec.usb_shared_folder) — копируется НАПРЯМУЮ из
@@ -720,6 +728,10 @@ def _render_stages_py(spec: NewCarSpec) -> str:
         elif step.type == "usb":
             run_expr = f"m.usb_step_{i}"
             entry.append(f'        "run": {run_expr},')
+            if step.usb_copy_selected_apks:
+                entry.append('        "usb_copy_selected_apks": True,')
+            if step.usb_shared_folder:
+                entry.append(f'        "usb_shared_folder": {step.usb_shared_folder!r},')
             if step.variants:
                 entry.append(f'        "variant_names": {[v.name for v in step.variants]!r},')
         elif step.type == "adb":

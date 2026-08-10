@@ -15,7 +15,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 CHUNK_SIZE = 1024 * 1024
 
@@ -105,7 +105,7 @@ def upload_dir(base_url: str, session_cookie: str, target: str, source_dir: Path
 
 
 def upload_model(base_url: str, session_cookie: str, cars_dir: Path, model_dir: Path,
-                  log=lambda m: None, check_cancelled=lambda: None) -> int:
+                  extra_dirs=(), log=lambda m: None, check_cancelled=lambda: None) -> int:
     """Заливает ОДНУ модель (model_dir — cars_dir/<Марка>/<Модель>/... или
     .../<Модификация>/), а не весь cars/ — для автоматической выгрузки сразу
     по кнопке "Создать"/"Сохранить" в мастере (см. add_car_dialog.py), без
@@ -113,7 +113,11 @@ def upload_model(base_url: str, session_cookie: str, cars_dir: Path, model_dir: 
     (архивирует содержимое source_dir как есть) здесь имена файлов внутри
     архива — путь ОТНОСИТЕЛЬНО cars_dir (например "Chery/Tiggo 7/
     install.py"), чтобы на сервере файлы легли туда же, где и обычно, а не
-    прямо в корень content/cars/."""
+    прямо в корень content/cars/. extra_dirs — дополнительные папки ВНУТРИ
+    cars_dir (например cars/_shared/<name>/ — общий набор файлов USB-этапа,
+    см. StepSpec.usb_shared_folder), которые физически лежат вне model_dir,
+    но должны попасть на сервер вместе с моделью, иначе content_sync.py на
+    других машинах не найдёт их вовсе."""
 
     def build_archive(tmp: Path) -> Path:
         log(f"Архивирую {model_dir.relative_to(cars_dir)}...")
@@ -123,6 +127,12 @@ def upload_model(base_url: str, session_cookie: str, cars_dir: Path, model_dir: 
                 for file in model_dir.rglob("*"):
                     if file.is_file():
                         zf.write(file, file.relative_to(cars_dir))
+                for extra_dir in extra_dirs:
+                    if not extra_dir.is_dir():
+                        continue
+                    for file in extra_dir.rglob("*"):
+                        if file.is_file():
+                            zf.write(file, file.relative_to(cars_dir))
         except OSError as exc:
             raise AdminClientError(f"Не удалось собрать архив: {exc}") from exc
         return archive_path
@@ -179,3 +189,128 @@ def _build_and_send(base_url: str, session_cookie: str, target: str, build_archi
             raise AdminClientError(f"Не удалось связаться с сервером: {exc}") from exc
         finally:
             conn.close()
+
+
+def _request(base_url: str, session_cookie: str, method: str, path: str) -> dict:
+    """GET/DELETE без тела — общая часть list_cars_path/delete_cars_path
+    (см. server/backend.py: /admin/api/cars/list, /admin/api/cars — то же
+    HTTP-соединение и разбор ответа, что и _build_and_send, но без отправки
+    файла)."""
+    parts = urlsplit(base_url)
+    conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    conn = conn_cls(parts.netloc, timeout=30)
+    try:
+        conn.putrequest(method, path)
+        conn.putheader("Cookie", session_cookie)
+        conn.endheaders()
+        response = conn.getresponse()
+        raw = response.read()
+        if response.status == 401:
+            raise AdminClientError("Сессия входа истекла — войдите заново.")
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            data = {}
+        if response.status != 200:
+            raise AdminClientError(f"Сервер отклонил запрос ({response.status}): "
+                                    f"{data.get('error', raw.decode('utf-8', 'replace'))}")
+        return data
+    except (OSError, http.client.HTTPException) as exc:
+        raise AdminClientError(f"Не удалось связаться с сервером: {exc}") from exc
+    finally:
+        conn.close()
+
+
+def list_cars_path(base_url: str, session_cookie: str, rel_path: str) -> list[dict]:
+    """Содержимое content/cars/<rel_path> на сервере — папки моделей,
+    _shared/, отдельные файлы внутри них (см. server/backend.py:
+    list_cars_path). rel_path пустой — корень cars/ (марки + _shared)."""
+    data = _request(base_url, session_cookie, "GET",
+                     f"/admin/api/cars/list?path={quote(rel_path)}")
+    return data.get("items", [])
+
+
+def delete_cars_path(base_url: str, session_cookie: str, rel_path: str) -> None:
+    """Удаляет файл или папку (рекурсивно) content/cars/<rel_path> на
+    сервере — единственный способ убрать уже опубликованное: upload_dir/
+    upload_model льют только слиянием и никогда сами не удаляют лишнее."""
+    _request(base_url, session_cookie, "DELETE", f"/admin/api/cars?path={quote(rel_path)}")
+
+
+def upload_single_apk(base_url: str, session_cookie: str, category: str, filename: str,
+                       file_path: Path, log=lambda m: None, check_cancelled=lambda: None) -> None:
+    """Заливает ОДИН .apk точечно (см. server/backend.py:
+    POST /admin/api/apks/upload?category=&filename=) — в отличие от
+    upload_dir(apk/...), который каждый раз архивирует и заново заливает
+    ВСЮ общую библиотеку целиком, это лишь один файл независимо от того,
+    сколько APK уже накопилось на сервере (см. AdminApi.add_apk — раньше
+    каждое добавление одного APK через "Добавить APK..." перезаливало всю
+    apk/, и с ростом библиотеки каждая следующая загрузка становилась
+    тяжелее предыдущей)."""
+    size = file_path.stat().st_size
+    log(f"Отправляю {filename} ({size / (1024 * 1024):.1f} МБ)...")
+    parts = urlsplit(base_url)
+    conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    conn = conn_cls(parts.netloc, timeout=600)
+    try:
+        path = f"/admin/api/apks/upload?category={quote(category)}&filename={quote(filename)}"
+        conn.putrequest("POST", path)
+        conn.putheader("Cookie", session_cookie)
+        conn.putheader("Content-Length", str(size))
+        conn.putheader("Content-Type", "application/vnd.android.package-archive")
+        conn.endheaders()
+        with open(file_path, "rb") as f:
+            while True:
+                check_cancelled()
+                chunk = f.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                conn.send(chunk)
+        response = conn.getresponse()
+        raw = response.read()
+        if response.status == 401:
+            raise AdminClientError("Сессия входа истекла — войдите заново.")
+        if response.status != 200:
+            try:
+                error = json.loads(raw).get("error", raw.decode("utf-8", "replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error = raw.decode("utf-8", "replace")
+            raise AdminClientError(f"Сервер отклонил {filename} ({response.status}): {error}")
+    except (OSError, http.client.HTTPException) as exc:
+        raise AdminClientError(f"Не удалось связаться с сервером: {exc}") from exc
+    finally:
+        conn.close()
+
+
+def edit_apk_metadata(base_url: str, session_cookie: str, category: str, filename: str,
+                       name: str, description: str) -> None:
+    """Пишет/переносит категорию и <файл>.json с именем/описанием (см.
+    server/backend.py: POST /admin/api/apks/edit?category=&filename=) —
+    вызывается сразу после upload_single_apk, чтобы "красивое" имя,
+    введённое в "Добавить APK...", попало на сервер вместе с файлом."""
+    body = json.dumps({"category": category, "name": name, "description": description}).encode("utf-8")
+    parts = urlsplit(base_url)
+    conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    conn = conn_cls(parts.netloc, timeout=30)
+    try:
+        path = f"/admin/api/apks/edit?category={quote(category)}&filename={quote(filename)}"
+        conn.putrequest("POST", path)
+        conn.putheader("Cookie", session_cookie)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.endheaders()
+        conn.send(body)
+        response = conn.getresponse()
+        raw = response.read()
+        if response.status == 401:
+            raise AdminClientError("Сессия входа истекла — войдите заново.")
+        if response.status != 200:
+            try:
+                error = json.loads(raw).get("error", raw.decode("utf-8", "replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error = raw.decode("utf-8", "replace")
+            raise AdminClientError(f"Сервер отклонил метаданные {filename} ({response.status}): {error}")
+    except (OSError, http.client.HTTPException) as exc:
+        raise AdminClientError(f"Не удалось связаться с сервером: {exc}") from exc
+    finally:
+        conn.close()

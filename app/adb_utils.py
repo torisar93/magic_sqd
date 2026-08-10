@@ -16,8 +16,53 @@ def find_adb_path(base_dir: Path) -> str:
     return "adb"
 
 
+def get_default_gateway_ip() -> str | None:
+    """IP шлюза по умолчанию активного сетевого адаптера — на магнитолах с
+    Wi-Fi ADB ноутбук обычно подключается к собственной Wi-Fi-сети
+    магнитолы, и этот шлюз и есть её IP (не нужно спрашивать у техника
+    руками). Независимая копия той же логики, что и в
+    cars/_shared/wifi_adb.py:get_default_gateway (тот модуль подгружается
+    отдельно из cars/_shared при установке конкретной модели, без доступа к
+    app/ — здесь та же idea для кнопки «Подключить Wi-Fi» под логом
+    главного окна, которая должна работать независимо от конкретной
+    модели). Возвращает None вместо исключения — вызывающий сам решает, как
+    показать ошибку технику."""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
+             "| Select-Object -First 1 -ExpandProperty IPv4DefaultGateway).NextHop"],
+            capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    ip = (result.stdout or "").strip()
+    return ip or None
+
+
 class AdbError(RuntimeError):
     pass
+
+
+# Команды верхнего уровня adb (управляют самим adb/подключением) в отличие
+# от произвольного текста, который должен выполниться ВНУТРИ шелла
+# устройства. Мини-консоль под логом главного окна (см.
+# app/web/api/install_api.py: console_send) раньше всегда оборачивала ввод в
+# "adb shell <...>" — из-за этого "connect <ip>:<port>" пытался выполниться
+# КАК ШЕЛЛ-КОМАНДА НА УСТРОЙСТВЕ (там такой команды нет), а не как сама
+# adb-команда подключения, поэтому Wi-Fi ADB через консоль не работал вообще
+# — устройство никогда не подключалось и не появлялось в списке.
+TOP_LEVEL_COMMANDS = {
+    "connect", "disconnect", "pair", "tcpip", "usb", "root", "unroot",
+    "remount", "reboot", "wait-for-device", "kill-server", "start-server",
+    "devices", "get-state", "get-serialno", "push", "pull", "install",
+    "uninstall", "logcat", "forward", "reverse", "sideload",
+}
+# Из них команды уровня adb-сервера (не конкретного устройства) — "-s
+# <serial>" им не нужен, а для connect/pair устройство ещё и не может быть
+# известно заранее (в этом весь смысл команды), поэтому выполняются без
+# привязки к выбранному в консоли устройству, даже если оно выбрано.
+SERVER_LEVEL_COMMANDS = {"connect", "disconnect", "pair", "devices", "kill-server", "start-server"}
 
 
 class Adb:

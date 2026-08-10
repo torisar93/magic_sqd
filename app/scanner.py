@@ -198,15 +198,42 @@ def scan_apks(apk_dir: Path, remote_catalog: list[dict] | None = None) -> list[A
         key = (category, filename)
         if key in apks:
             continue
+        apk_path = (apk_dir / category / filename) if category else (apk_dir / filename)
+        # Сам APK ещё не скачан (remote_only), но его <файл>.json сайдкар —
+        # лёгкий, тянется отдельно при каждом запуске (см.
+        # content_sync.sync_shared_apk_metadata) — если он уже на месте,
+        # берём "красивое" имя/описание из него, а не голое имя файла.
+        name, description = _read_apk_meta(apk_path)
         apks[key] = ApkInfo(
-            path=(apk_dir / category / filename) if category else (apk_dir / filename),
-            name=Path(filename).stem,
+            path=apk_path,
+            name=name,
+            description=description,
             category=category,
             remote_only=True,
             size=entry.get("size", -1),
         )
 
     return sorted(apks.values(), key=lambda a: (a.category != "", a.category.lower(), a.name.lower()))
+
+
+def _read_apk_meta(apk_path: Path) -> tuple[str, str]:
+    """Читает <файл>.json рядом с apk_path (имя/описание) — общий код для
+    уже скачанных APK (scan_apk_dir) и ещё не скачанных, но чей JSON-сайдкар
+    уже подтянут (см. content_sync.sync_shared_apk_metadata) — иначе для
+    remote_only записей вместо "красивого" имени показывалось бы голое имя
+    файла. Возвращает (name, description); name — apk_path.stem, если
+    сайдкара нет или он битый."""
+    name = apk_path.stem
+    description = ""
+    meta_path = apk_path.with_suffix(".json")
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            name = meta.get("name", name)
+            description = meta.get("description", "")
+        except (json.JSONDecodeError, OSError):
+            pass
+    return name, description
 
 
 def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
@@ -216,15 +243,6 @@ def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
     "Стандартных приложений" конкретной модели (см. stage_wizard.py)."""
     apks = []
     for apk_path in sorted(folder.glob("*.apk"), key=lambda p: p.name.lower()):
-        name = apk_path.stem
-        description = ""
-        meta_path = apk_path.with_suffix(".json")
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                name = meta.get("name", name)
-                description = meta.get("description", "")
-            except (json.JSONDecodeError, OSError):
-                pass
+        name, description = _read_apk_meta(apk_path)
         apks.append(ApkInfo(path=apk_path, name=name, description=description, category=category))
     return apks

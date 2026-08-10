@@ -92,12 +92,20 @@
   color: var(--border);
 }
 
+#picker {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0; /* иначе ul с overflow:auto ниже не сжимается внутри flex-колонки панели */
+}
+
 .picker-list {
   list-style: none;
   margin: 0;
   padding: 0;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: var(--corner-radius);
   background: var(--bg);
@@ -173,6 +181,50 @@
   font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
+}
+
+/* Мини-консоль ADB под логом (была в tkinter-версии до перехода на
+   pywebview — см. историю app/gui.py) — свободная "adb shell <команда>" на
+   выбранное устройство, без привязки к конкретному этапу мастера. */
+.adb-console-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+#adb-console-device {
+  flex: 0 0 200px;
+}
+
+#adb-console-refresh {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+}
+
+.adb-console-label {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#adb-console-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: inherit;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-radius);
+  padding: 6px 8px;
+  box-sizing: border-box;
+}
+
+#adb-console-wifi-connect {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 /* ---- Stage wizard (см. js/screens/stage_wizard.js) ---- */

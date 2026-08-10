@@ -12,9 +12,12 @@
     <div class="panel" id="left-panel">
       <div id="picker"></div>
       <div class="left-actions">
-        <button id="add-car-btn">Добавить машину...</button>
-        <button id="edit-car-btn" disabled>Изменить машину...</button>
+        <button id="add-car-btn">Добавить машину</button>
+        <button id="edit-car-btn" disabled>Изменить машину</button>
+        <button id="admin-login-btn" style="display: none">Войти в админку...</button>
         <button id="admin-upload-btn" class="accent" style="display: none">Выгрузить на сервер...</button>
+        <button id="admin-add-apk-btn" style="display: none">Добавить APK в общую библиотеку...</button>
+        <button id="admin-browse-btn" style="display: none">Файлы на сервере...</button>
       </div>
     </div>
     <div id="resizer"></div>
@@ -22,7 +25,7 @@
       <div class="card" style="flex: 1; margin-bottom: 4px">
         <div class="card-header">
           <span class="section-label">Инструкция и установка</span>
-          <button id="report-btn" disabled>Сообщить о проблеме...</button>
+          <button id="report-btn" disabled>Сообщить о проблеме</button>
         </div>
         <div id="install-content">
           <p class="placeholder-text">
@@ -34,6 +37,17 @@
         <div class="card-header"><span class="section-label">Лог</span></div>
         <div class="progress-bar" id="main-progress" style="display: none"></div>
         <div id="log-panel"></div>
+        <div class="adb-console-row" id="adb-console-row">
+          <select id="adb-console-device"></select>
+          <button id="adb-console-refresh" title="Обновить список устройств">⟳</button>
+          <span class="adb-console-label">adb</span>
+          <input type="text" id="adb-console-input"
+                 placeholder="команда... (shell по умолчанию, connect/pair/tcpip — как есть)"
+                 title="Обычный текст выполняется как «adb shell <команда>» на выбранном устройстве. connect/disconnect/pair/tcpip/devices/reboot/root/push/pull/install/uninstall и т.п. — как сама команда adb, без обёртки в shell (например: connect 192.168.1.1:5555)." />
+          <button id="adb-console-send">Отправить</button>
+          <button id="adb-console-wifi-connect"
+                  title="Сначала пробует определить IP магнитолы автоматически (по шлюзу текущей Wi-Fi-сети); если не получится — предложит ввести IP вручную.">Подключить Wi-Fi</button>
+        </div>
       </div>
     </div>
   </div>
@@ -84,6 +98,28 @@
     </div>
   </dialog>
 
+  <dialog id="admin-login-dialog">
+    <h2>Войти в админку</h2>
+    <div id="admin-login-server-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></div>
+    <div class="field">
+      <span class="field-label">Логин</span>
+      <input type="text" id="admin-login-username" />
+    </div>
+    <div class="field">
+      <span class="field-label">Пароль</span>
+      <input type="password" id="admin-login-password" />
+    </div>
+    <p style="color: var(--text-dim); font-size: 12px">
+      Только вход — ничего не выгружает. Сессия переиспользуется другими кнопками
+      ("Добавить APK...", "Файлы на сервере..."), пока открыта программа.
+    </p>
+    <p id="admin-login-status" style="color: var(--text-dim); font-size: 12px"></p>
+    <div class="dialog-actions spread">
+      <button id="admin-login-start" class="accent">Войти</button>
+      <button id="admin-login-close">Закрыть</button>
+    </div>
+  </dialog>
+
   <dialog id="admin-dialog">
     <h2>Выгрузить на сервер</h2>
     <div id="admin-server-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></div>
@@ -104,6 +140,58 @@
     <div class="dialog-actions spread">
       <button id="admin-start" class="accent">Войти и загрузить</button>
       <button id="admin-close">Закрыть</button>
+    </div>
+  </dialog>
+
+  <dialog id="admin-apk-dialog">
+    <h2>Добавить APK в общую библиотеку</h2>
+    <div class="field">
+      <span class="field-label">Папка в каталоге apk/</span>
+      <div class="row">
+        <select id="admin-apk-category" style="flex: 1"></select>
+        <button id="admin-apk-new-folder">Новая папка...</button>
+        <button id="admin-apk-delete-folder" class="danger">Удалить папку</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="field-label">Файл APK</span>
+      <div class="row">
+        <button id="admin-apk-pick-file">Выбрать APK...</button>
+        <span id="admin-apk-file-label" style="color: var(--text-dim)">(не выбрано)</span>
+      </div>
+    </div>
+    <div class="field">
+      <span class="field-label">Название (как будет показано технику)</span>
+      <input type="text" id="admin-apk-name" />
+    </div>
+    <div class="field">
+      <span class="field-label">Описание (необязательно)</span>
+      <input type="text" id="admin-apk-description" />
+    </div>
+    <div class="progress-bar" id="admin-apk-progress" style="display: none"></div>
+    <div class="dialog-log" id="admin-apk-log"></div>
+    <div class="dialog-actions spread">
+      <button id="admin-apk-add" class="accent">Добавить</button>
+      <button id="admin-apk-close">Закрыть</button>
+    </div>
+  </dialog>
+
+  <dialog id="admin-browse-dialog" class="dialog-large">
+    <h2>Файлы на сервере</h2>
+    <p style="color: var(--text-dim); font-size: 12px">
+      Показывает то, что реально лежит в content/cars/ на сервере — модели и общие
+      наборы (_shared/). Удаление отсюда — единственный способ убрать то, что уже
+      опубликовано: "Выгрузить на сервер..."/автопубликация только сливают файлы,
+      сами ничего не удаляют.
+    </p>
+    <div class="row" style="margin-bottom: 8px">
+      <button id="admin-browse-up">Наверх</button>
+      <button id="admin-browse-refresh">Обновить</button>
+      <span id="admin-browse-path" style="color: var(--text-dim); margin-left: 8px"></span>
+    </div>
+    <div id="admin-browse-list" style="max-height: 400px; overflow-y: auto"></div>
+    <div class="dialog-actions">
+      <button id="admin-browse-close">Закрыть</button>
     </div>
   </dialog>
 

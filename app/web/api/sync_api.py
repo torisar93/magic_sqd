@@ -15,7 +15,7 @@ import time
 from ..events import event_bridge
 from ... import update_tracker
 from ...content_config import get_base_url
-from ...content_sync import list_shared_apk_catalog, sync_scripts
+from ...content_sync import list_shared_apk_catalog, sync_scripts, sync_shared_apk_metadata
 from ...ping_client import PingError, get_or_create_client_id, send_ping
 from ...scanner import flatten_models, scan_cars
 from ...submit_config import get_submit_config
@@ -61,6 +61,14 @@ class SyncApi:
             else:
                 if catalog:
                     self._scanner_api.set_remote_apk_catalog(catalog)
+
+            try:
+                # Лёгкие *.json сайдкары (имя/описание) — чтобы ещё не
+                # скачанные APK в общей библиотеке показывали "красивое"
+                # имя, а не голое имя файла (см. scanner.scan_apks).
+                sync_shared_apk_metadata(self.base_dir, self.apk_dir, log=self._log)
+            except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
+                self._log(f"Не удалось получить метаданные общей библиотеки приложений: {exc}")
 
         self._start_heartbeat()
         return {"changes": changes}

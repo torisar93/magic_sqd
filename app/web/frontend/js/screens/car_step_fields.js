@@ -128,7 +128,8 @@
     function renderUsbFields(step) {
       renderVariantToggle(step, "usb_files", "Файлы всех вариантов будут потеряны.");
       if (step.variants.length) {
-        renderVariantManager(step, "usb_files", "any", 'Файлы варианта «{name}» в корень флешки');
+        renderVariantSelector(step);
+        renderVariantFileList(step, "usb_files", "any", 'Файлы варианта «{name}» в корень флешки');
       } else {
         container.appendChild(el("span", { class: "field-label", text: "Файлы в корень флешки" }));
         container.appendChild(buildFileList(step.usb_files, "any", true, () => rerender()));
@@ -136,10 +137,18 @@
       const copyRow = el("label", { class: "row", style: "margin-top: 8px" });
       const copyCheckbox = el("input", { type: "checkbox" });
       copyCheckbox.checked = step.usb_copy_selected_apks;
-      copyCheckbox.addEventListener("change", () => { step.usb_copy_selected_apks = copyCheckbox.checked; });
+      copyCheckbox.addEventListener("change", () => { step.usb_copy_selected_apks = copyCheckbox.checked; rerender(); });
       copyRow.appendChild(copyCheckbox);
-      copyRow.appendChild(document.createTextNode("Скопировать отмеченные галочками приложения на эту флешку"));
+      copyRow.appendChild(document.createTextNode("Добавить выбор APK из общей библиотеки"));
       container.appendChild(copyRow);
+
+      if (step.usb_copy_selected_apks) {
+        container.appendChild(el("span", { class: "field-label", style: "margin-top: 4px", text: "Папка на флешке для этих APK (пусто — корень флешки)" }));
+        const destInput = el("input", { type: "text", placeholder: "например apps" });
+        destInput.value = step.usb_apks_dest;
+        destInput.addEventListener("input", () => { step.usb_apks_dest = destInput.value.trim(); });
+        container.appendChild(destInput);
+      }
 
       renderSharedUsbFolderField(step);
     }
@@ -194,7 +203,8 @@
     function renderAppsFields(step) {
       renderVariantToggle(step, "standard_apks", "APK всех вариантов будут потеряны.");
       if (step.variants.length) {
-        renderVariantManager(step, "standard_apks", "apk", "APK варианта «{name}»");
+        renderVariantSelector(step);
+        renderVariantFileList(step, "standard_apks", "apk", "APK варианта «{name}»");
       } else {
         container.appendChild(el("span", { class: "field-label", text: "APK стандартного набора для этого этапа" }));
         container.appendChild(buildFileList(step.standard_apks, "apk", true, () => rerender()));
@@ -224,7 +234,7 @@
       container.appendChild(row);
     }
 
-    function renderVariantManager(step, field, pickKind, headingTpl) {
+    function renderVariantSelector(step) {
       if (editingVariantIndex >= step.variants.length) editingVariantIndex = 0;
       const row = el("div", { class: "row", style: "margin-bottom: 4px" });
       const select = el("select", {}, step.variants.map((v, i) => el("option", { value: i, text: v.name, selected: i === editingVariantIndex ? "" : null })));
@@ -234,7 +244,13 @@
       row.appendChild(el("button", { text: "Переименовать", onclick: () => renameVariant(step) }));
       row.appendChild(el("button", { class: "danger", text: "Удалить вариант", onclick: () => removeVariant(step) }));
       container.appendChild(row);
+    }
 
+    // Список файлов текущего выбранного варианта для одного поля (usb_files
+    // ИЛИ standard_apks) — вызывается отдельно для каждого поля, которое
+    // нужно показать для варианта (см. renderUsbFields — у usb-варианта их
+    // два: файлы флешки и APK), renderVariantSelector рисуется один раз.
+    function renderVariantFileList(step, field, pickKind, headingTpl) {
       const variant = step.variants[editingVariantIndex];
       container.appendChild(el("span", { class: "field-label", text: headingTpl.replace("{name}", variant.name) }));
       container.appendChild(buildFileList(variant[field], pickKind, true, () => rerender()));

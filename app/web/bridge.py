@@ -28,7 +28,7 @@ class WebApi:
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
         self._usb = UsbApi(base_dir, self._scanner)
         self._report = ReportApi(base_dir)
-        self._admin = AdminApi(base_dir)
+        self._admin = AdminApi(base_dir, self.apk_dir)
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner)
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
 
@@ -59,6 +59,12 @@ class WebApi:
 
     def install_list_devices(self) -> list:
         return self._install.list_devices()
+
+    def install_console_send(self, device, command: str) -> dict:
+        return self._install.console_send(device, command)
+
+    def install_wifi_connect(self, port: int, ip: str | None = None) -> dict:
+        return self._install.wifi_connect(port, ip)
 
     def install_start_stage(self, model_key: str, stage_index: int, device_serial, selected_apk_paths: list) -> dict:
         return self._install.start_stage(model_key, stage_index, device_serial, selected_apk_paths)
@@ -95,11 +101,32 @@ class WebApi:
     def admin_get_info(self) -> dict:
         return self._admin.get_info()
 
+    def admin_login(self, username: str, password: str) -> dict:
+        return self._admin.login_only(username, password)
+
     def admin_start_upload(self, username: str, password: str) -> dict:
         return self._admin.start_upload(username, password)
 
     def admin_cancel_upload(self) -> dict:
         return self._admin.cancel_upload()
+
+    def admin_list_apk_categories(self) -> list:
+        return self._admin.list_apk_categories()
+
+    def admin_create_apk_category(self, name: str) -> dict:
+        return self._admin.create_apk_category(name)
+
+    def admin_delete_apk_category(self, name: str) -> dict:
+        return self._admin.delete_apk_category(name)
+
+    def admin_add_apk(self, file_path: str, name: str, description: str, category: str) -> dict:
+        return self._admin.add_apk(file_path, name, description, category)
+
+    def admin_browse_server_cars(self, rel_path: str) -> dict:
+        return self._admin.browse_server_cars(rel_path)
+
+    def admin_delete_server_cars_path(self, rel_path: str) -> dict:
+        return self._admin.delete_server_cars_path(rel_path)
 
     # -- car_editor_api ---------------------------------------------------
     def car_load_spec(self, model_key: str) -> dict:

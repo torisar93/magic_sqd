@@ -10,10 +10,13 @@ import base64
 import mimetypes
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 from ..events import event_bridge, input_broker
-from ...adb_utils import list_devices
+from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
+                           list_devices)
+from ...content_sync import sync_model_files
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir
 from ...stage_runner import StageDefinitionError, load_stages, stage_instruction_html_path
@@ -65,6 +68,16 @@ class InstallApi:
             return {"error": "unknown model key"}
         if not model.stages_script:
             return {"stages": []}
+        # Свои files/usb_files модели (в т.ч. instruction.html — см.
+        # stage_instruction_html_path) синхронизируются JIT прямо перед
+        # установкой (runner.py) — но техник должен УВИДЕТЬ инструкцию уже
+        # на экране этапов, до нажатия "Установка", иначе на свежем клиенте
+        # (files/ ещё не скачаны) шаги показываются без текста инструкций,
+        # хотя в админке она уже загружена на сервер.
+        try:
+            sync_model_files(self.base_dir, model, log=self._on_log)
+        except Exception as exc:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
+            self._on_log(f"Не удалось проверить обновления файлов модели: {exc}")
         try:
             stages = load_stages(model)
         except StageDefinitionError as exc:
@@ -87,6 +100,7 @@ class InstallApi:
             "condition_values": stage.get("condition_values"),
             "variant_names": stage.get("variant_names"),
             "standard_label": stage.get("standard_label", "Стандартные приложения"),
+            "usb_copy_selected_apks": stage.get("usb_copy_selected_apks", False),
             "check_var": stage.get("check_var", ""),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,
@@ -121,6 +135,70 @@ class InstallApi:
     # ------------------------------------------------------------------
     def list_devices(self) -> list[dict]:
         return list_devices(self.adb_path)
+
+    # -- мини-консоль ADB под логом главного окна (была в tkinter-версии до
+    # перехода на pywebview, см. app/gui.py:_send_console_command в истории
+    # git) — свободная "adb shell <команда>" на выбранное устройство, не
+    # привязанная к конкретному этапу мастера установки. -------------------
+    def console_send(self, device: str | None, command: str) -> dict:
+        command = command.strip()
+        if not command:
+            return {"ok": False}
+        threading.Thread(target=self._console_worker, args=(device, command), daemon=True).start()
+        return {"ok": True}
+
+    @staticmethod
+    def _console_log(message) -> None:
+        event_bridge.push({"kind": "log", "text": str(message)})
+
+    def _console_worker(self, device: str | None, command: str) -> None:
+        first_word = command.split(maxsplit=1)[0].lower() if command else ""
+        try:
+            if first_word in TOP_LEVEL_COMMANDS:
+                # "connect"/"pair"/"devices" и т.п. — команды самого adb, не
+                # шелла устройства (см. adb_utils.TOP_LEVEL_COMMANDS). Для
+                # серверных команд не привязываемся к выбранному устройству —
+                # при "connect" оно ещё и не может быть известно заранее.
+                target = None if first_word in SERVER_LEVEL_COMMANDS else device
+                adb = Adb(self.adb_path, target, log=self._console_log)
+                adb.run(*command.split(), check=False)
+            else:
+                adb = Adb(self.adb_path, device, log=self._console_log)
+                adb.shell(command, check=False)
+        except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
+            self._console_log(f"Ошибка: {exc}")
+
+    # -- кнопка «Подключить Wi-Fi» под логом главного окна — то же самое, что
+    # печатать "connect <ip>:<port>" в консоли выше, но без необходимости
+    # знать IP магнитолы вручную (см. get_default_gateway_ip) — до этого
+    # единственным способом подключиться по Wi-Fi ADB вне готовой модели с
+    # галочкой "Wi-Fi" в мастере был именно ручной ввод команды, что
+    # оказалось не всем очевидно (устройство ведь ещё НЕ появилось в
+    # списке — выбирать пока нечего, сначала нужно подключиться).
+    # Синхронная (не в фоновом потоке, в отличие от console_send) — JS-сторона
+    # (см. app.js: connectAdbWifi) ждёт результат, чтобы решить, предлагать
+    # ли технику ввести IP вручную: автоопределение по шлюзу работает,
+    # только если ноутбук подключён именно к собственной точке доступа
+    # магнитолы — не всегда так (например, магнитола в общей сети, или
+    # локальный тест через 127.0.0.1). -------------------------------------
+    def wifi_connect(self, port: int, ip: str | None = None) -> dict:
+        ip = (ip or "").strip() or None
+        auto = ip is None
+        if not ip:
+            ip = get_default_gateway_ip()
+            if not ip:
+                return {"ok": False, "auto": True, "ip": None,
+                        "error": "Не удалось определить IP магнитолы автоматически "
+                                 "(нет активного Wi-Fi-подключения с шлюзом)."}
+        self._console_log(f"Подключаюсь по Wi-Fi ADB: {ip}:{port}")
+        adb = Adb(self.adb_path, None, log=self._console_log)
+        try:
+            result = adb.run("connect", f"{ip}:{port}", check=False)
+        except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
+            return {"ok": False, "auto": auto, "ip": ip, "error": str(exc)}
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        ok = "connected to" in output.lower() or "already connected" in output.lower()
+        return {"ok": ok, "auto": auto, "ip": ip, "message": output}
 
     def start_stage(self, model_key: str, stage_index: int, device_serial: str | None,
                      selected_apk_paths: list[str]) -> dict:

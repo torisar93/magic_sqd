@@ -54,6 +54,15 @@ INSTRUCTION_CSS = f"""
   .path {{ background: {theme.BG_ELEVATED}; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; color: {theme.ACCENT_2}; }}
   .caption {{ color: {theme.TEXT_DIM}; font-size: 12px; margin-top: -4px; }}
   img.screenshot {{ max-width: 100%; border: 1px solid {theme.BORDER}; border-radius: 4px; margin: 6px 0; }}
+  /* Инструкция рендерится в собственном <iframe> (см. srcdoc в
+     stage_wizard.js/instruction_editor.js) — это отдельный документ, общий
+     скроллбар из css/tokens.css сюда не долетает, поэтому дублируем его
+     тут же, чтобы скроллбар не был белым дефолтным на тёмном фоне. */
+  ::-webkit-scrollbar {{ width: 12px; height: 12px; }}
+  ::-webkit-scrollbar-track {{ background: {theme.BG_CARD}; }}
+  ::-webkit-scrollbar-thumb {{ background: {theme.BORDER}; border-radius: 8px; border: 3px solid {theme.BG_CARD}; }}
+  ::-webkit-scrollbar-thumb:hover {{ background: {theme.BG_ELEVATED}; }}
+  ::-webkit-scrollbar-corner {{ background: {theme.BG_CARD}; }}
 """
 
 _BLOCKS_RE = re.compile(

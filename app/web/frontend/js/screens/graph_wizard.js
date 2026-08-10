@@ -82,7 +82,7 @@
   function newStep(type) {
     return {
       type, title: "", description: "", instruction_blocks: [],
-      usb_files: [], usb_copy_selected_apks: false, usb_shared_folder: "",
+      usb_files: [], usb_copy_selected_apks: false, usb_apks_dest: "", usb_shared_folder: "",
       commands: [], adb_install_selected_apks: false, adb_files: [],
       standard_apks: [], exe_file: null,
       check_var: type === "check" ? generateCheckVar() : "", check_options: [],
@@ -137,6 +137,15 @@
     window.events.on("car_save_finished", (event) => {
       logFn(event.message);
       setMainProgressVisible(false);
+      // Диалог мастера к этому моменту уже закрыт (onSave закрывает его
+      // оптимистично, не дожидаясь результата фонового потока — само
+      // сохранение идёт в фоне, см. app/web/api/car_editor_api.py:_worker) —
+      // без явного уведомления ошибка (например "такая модель уже
+      // существует") видна только строчкой в логе главного окна и легко
+      // остаётся незамеченной.
+      if (!event.success) {
+        window.notice(event.message, { title: "Не удалось сохранить", danger: true });
+      }
     });
   }
 
