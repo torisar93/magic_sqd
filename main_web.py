@@ -160,6 +160,15 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
         webview.start(debug=debug)
     finally:
         _log_step("webview.start() returned (normal close)")
+        # adb.exe запускает свой собственный фоновый сервер-процесс при
+        # первом обращении (adb devices/connect/...) и живёт отдельно от
+        # клиентских вызовов — без явного "adb kill-server" он остаётся в
+        # диспетчере задач и после закрытия программы, держа файлы (мешает
+        # пересборке при разработке, а на машине техника просто висит
+        # процессом без дела).
+        from app.adb_utils import kill_server
+        kill_server(api.adb_path)
+        _log_step("kill_server() done")
 
 
 def _run_with_crash_log(admin_mode: bool, log_prefix: str, title: str) -> None:
