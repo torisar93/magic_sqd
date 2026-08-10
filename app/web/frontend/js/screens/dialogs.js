@@ -11,7 +11,7 @@
   // USB-флешка (открывается из js/screens/stage_wizard.js: renderUsbStage)
   // ==================================================================
   const usb = (() => {
-    let dialog, driveSelect, formatCheckbox, fsRadios, warningEl, progressEl, logEl, startBtn, stopBtn;
+    let dialog, driveSelect, formatCheckbox, fsRadios, warningEl, progressEl, logEl, startBtn, stopBtn, closeBtn;
     let drives = [];
     let opts = null; // {modelKey, stageIndex, variant, selectedApkPaths, titleSuffix, onFinished}
     let running = false;
@@ -26,6 +26,7 @@
       logEl = document.getElementById("usb-log");
       startBtn = document.getElementById("usb-start");
       stopBtn = document.getElementById("usb-stop");
+      closeBtn = document.getElementById("usb-close");
 
       document.getElementById("usb-refresh").addEventListener("click", refreshDrives);
       formatCheckbox.addEventListener("change", updateWarning);
@@ -34,7 +35,13 @@
         window.pywebview.api.usb_cancel();
         log("Останавливаю... (завершится на ближайшей проверке)");
       });
-      document.getElementById("usb-close").addEventListener("click", onClose);
+      closeBtn.addEventListener("click", onClose);
+      // Esc на нативном <dialog> закрывает его в обход кнопки "Закрыть"
+      // (событие "cancel" срабатывает до закрытия) — без этого блокировка
+      // кнопки ниже (см. setRunning) можно было бы обойти одной клавишей.
+      dialog.addEventListener("cancel", (event) => {
+        if (running) event.preventDefault();
+      });
 
       window.events.on("usb_log", (event) => log(event.text));
       window.events.on("usb_finished", onFinished);
@@ -70,6 +77,7 @@
       startBtn.disabled = value;
       stopBtn.disabled = !value;
       driveSelect.disabled = value;
+      closeBtn.disabled = value;
       progressEl.style.display = value ? "" : "none";
       progressEl.classList.toggle("indeterminate", value);
     }
@@ -108,9 +116,10 @@
       else await window.notice(event.message, { title: "Ошибка", danger: true });
     }
 
-    async function onClose() {
-      if (running && !(await window.confirmDialog("Операция ещё выполняется. Закрыть окно?"))) return;
-      if (running) window.pywebview.api.usb_cancel();
+    function onClose() {
+      // Пока идёт запись (running), кнопка отключена (см. setRunning) и
+      // Esc перехвачен (см. init) — сюда попадаем, только когда процесс уже
+      // не выполняется, спрашивать подтверждение не о чем.
       dialog.close();
     }
 
