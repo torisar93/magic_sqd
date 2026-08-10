@@ -9,12 +9,26 @@ IPv6-адрес — link-local (fe80::...), поэтому телефон/ПК �
 подключение, и на Windows это не имя интерфейса ("wlan0" — андроидное/линуксовое
 имя), а его числовой ifIndex, поэтому подставляем ifIndex активного
 сетевого адаптера (того же, что берёт для Wi-Fi ADB cars/_shared/wifi_adb.py)."""
+import os
 import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+
+def _powershell_path() -> str:
+    """Полный путь к powershell.exe вместо голого имени — на части машин
+    (ограниченный PATH, сторонний софт, переписавший переменную окружения)
+    subprocess.run(["powershell", ...]) падает с [WinError 2] "Не удается
+    найти указанный файл", хотя powershell.exe стоит штатно (независимая
+    копия той же логики, что и app/adb_utils.py:find_powershell_path — этот
+    файл подгружается отдельно из cars/_shared, без доступа к app/)."""
+    windir = os.environ.get("SystemRoot", r"C:\Windows")
+    candidate = Path(windir) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    return str(candidate) if candidate.exists() else "powershell"
 
 
 def get_active_interface_index() -> str:
@@ -22,7 +36,7 @@ def get_active_interface_index() -> str:
     что у wifi_adb.get_default_gateway) — используется как zone id для
     link-local IPv6-адреса на Windows."""
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+        [_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
          "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
          "| Select-Object -First 1 -ExpandProperty InterfaceIndex)"],
         capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,

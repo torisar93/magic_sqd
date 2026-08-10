@@ -16,6 +16,22 @@ def find_adb_path(base_dir: Path) -> str:
     return "adb"
 
 
+def find_powershell_path() -> str:
+    """Полный путь к powershell.exe вместо голого имени — на части машин
+    (политики, ограничивающие PATH, сторонний софт, переписавший переменную
+    окружения) subprocess.run(["powershell", ...]) падает с [WinError 2]
+    "Не удается найти указанный файл", хотя сам powershell.exe у
+    пользователя стоит штатно, просто не резолвится через PATH (реальный
+    случай — техник словил это именно на форматировании флешки, см.
+    usb_utils.format_drive). Путь стандартный для любой версии Windows,
+    меняться не должен; на всякий случай всё равно проверяем, что файл
+    реально существует, и откатываемся на голое имя, если нет (пусть
+    Windows сама поищет — лучше, чем упасть здесь на пустом месте)."""
+    windir = os.environ.get("SystemRoot", r"C:\Windows")
+    candidate = Path(windir) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    return str(candidate) if candidate.exists() else "powershell"
+
+
 def get_default_gateway_ip() -> str | None:
     """IP шлюза по умолчанию активного сетевого адаптера — на магнитолах с
     Wi-Fi ADB ноутбук обычно подключается к собственной Wi-Fi-сети
@@ -29,7 +45,7 @@ def get_default_gateway_ip() -> str | None:
     показать ошибку технику."""
     try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+            [find_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
              "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
              "| Select-Object -First 1 -ExpandProperty IPv4DefaultGateway).NextHop"],
             capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,

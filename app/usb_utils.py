@@ -7,6 +7,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .adb_utils import find_powershell_path
+
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 DRIVE_REMOVABLE = 2
 
@@ -118,7 +120,7 @@ def format_drive(letter: str, filesystem: str, label: str, base_dir: Path, log=l
         f"-NewFileSystemLabel '{safe_label}' -Confirm:$false -Force | Out-Null"
     )
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_command],
+        [find_powershell_path(), "-NoProfile", "-NonInteractive", "-Command", ps_command],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=600, creationflags=CREATE_NO_WINDOW,
     )
