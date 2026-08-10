@@ -11,7 +11,7 @@
   // USB-флешка (открывается из js/screens/stage_wizard.js: renderUsbStage)
   // ==================================================================
   const usb = (() => {
-    let dialog, driveSelect, formatCheckbox, fsRadios, warningEl, progressEl, logEl, startBtn, stopBtn, closeBtn;
+    let dialog, driveSelect, showAllCheckbox, driveHintEl, formatCheckbox, fsRadios, warningEl, progressEl, logEl, startBtn, stopBtn, closeBtn;
     let drives = [];
     let opts = null; // {modelKey, stageIndex, variant, selectedApkPaths, titleSuffix, onFinished}
     let running = false;
@@ -19,6 +19,8 @@
     function init() {
       dialog = document.getElementById("usb-dialog");
       driveSelect = document.getElementById("usb-drive");
+      showAllCheckbox = document.getElementById("usb-show-all");
+      driveHintEl = document.getElementById("usb-drive-hint");
       formatCheckbox = document.getElementById("usb-format");
       fsRadios = Array.from(document.querySelectorAll('input[name="usb-fs"]'));
       warningEl = document.getElementById("usb-warning");
@@ -29,6 +31,7 @@
       closeBtn = document.getElementById("usb-close");
 
       document.getElementById("usb-refresh").addEventListener("click", refreshDrives);
+      showAllCheckbox.addEventListener("change", refreshDrives);
       formatCheckbox.addEventListener("change", updateWarning);
       startBtn.addEventListener("click", onStart);
       stopBtn.addEventListener("click", () => {
@@ -61,7 +64,8 @@
     }
 
     async function refreshDrives() {
-      drives = await window.pywebview.api.usb_list_drives();
+      const showAll = showAllCheckbox.checked;
+      drives = await window.pywebview.api.usb_list_drives(showAll);
       clear(driveSelect);
       for (const d of drives) {
         const option = document.createElement("option");
@@ -69,7 +73,10 @@
         option.textContent = d.display;
         driveSelect.appendChild(option);
       }
-      log(`Найдено съёмных флешек: ${drives.length}`);
+      driveHintEl.textContent = showAll
+        ? "Показаны все локальные диски, кроме системного — будьте внимательны при выборе, чтобы не отформатировать не тот диск."
+        : "Показаны только съёмные USB-накопители — системный и внутренние диски в списке не появятся.";
+      log(`Найдено дисков: ${drives.length}`);
     }
 
     function setRunning(value) {
@@ -77,6 +84,7 @@
       startBtn.disabled = value;
       stopBtn.disabled = !value;
       driveSelect.disabled = value;
+      showAllCheckbox.disabled = value;
       closeBtn.disabled = value;
       progressEl.style.display = value ? "" : "none";
       progressEl.classList.toggle("indeterminate", value);
@@ -128,6 +136,7 @@
       document.getElementById("usb-dialog-title").textContent = `USB-флешка — ${opts.titleSuffix}`;
       clear(logEl);
       setRunning(false);
+      showAllCheckbox.checked = false; // безопасный дефолт при каждом открытии — не наследуем выбор с прошлого раза
       updateWarning();
       refreshDrives();
       dialog.showModal();

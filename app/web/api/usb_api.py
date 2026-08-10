@@ -12,7 +12,7 @@ from ...content_sync import ensure_apks_downloaded, sync_model_files, sync_share
 from ...install_context import InstallCancelled
 from ...stage_runner import load_stages
 from ...usb_context import UsbContext
-from ...usb_utils import list_removable_drives, format_drive, UsbSafetyError
+from ...usb_utils import list_drives as _list_drives, format_drive, UsbSafetyError
 
 
 def _drive_to_dict(d) -> dict:
@@ -31,8 +31,8 @@ class UsbApi:
     def _running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def list_drives(self) -> list[dict]:
-        return [_drive_to_dict(d) for d in list_removable_drives()]
+    def list_drives(self, include_all: bool = False) -> list[dict]:
+        return [_drive_to_dict(d) for d in _list_drives(include_all, self.base_dir)]
 
     def start(self, model_key: str, stage_index: int, variant, selected_apk_paths: list[str],
               drive_letter: str, do_format: bool, filesystem: str) -> dict:

@@ -79,8 +79,8 @@ class WebApi:
         return self._install.run_exe(exe_path)
 
     # -- usb_api ------------------------------------------------------------
-    def usb_list_drives(self) -> list:
-        return self._usb.list_drives()
+    def usb_list_drives(self, include_all: bool = False) -> list:
+        return self._usb.list_drives(include_all)
 
     def usb_start(self, model_key: str, stage_index: int, variant, selected_apk_paths: list,
                   drive_letter: str, do_format: bool, filesystem: str) -> dict:

@@ -58,9 +58,12 @@
       <select id="usb-drive" style="flex: 1"></select>
       <button id="usb-refresh">Обновить</button>
     </div>
-    <p style="color: var(--text-dim); font-size: 12px">
+    <p id="usb-drive-hint" style="color: var(--text-dim); font-size: 12px">
       Показаны только съёмные USB-накопители — системный и внутренние диски в списке не появятся.
     </p>
+    <div class="field">
+      <label class="row"><input type="checkbox" id="usb-show-all" /> Показать все диски (если нужной флешки нет в списке)</label>
+    </div>
     <div class="field">
       <label class="row"><input type="checkbox" id="usb-format" checked /> Отформатировать флешку перед копированием</label>
     </div>
