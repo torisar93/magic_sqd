@@ -13,8 +13,20 @@ from .api.install_api import InstallApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
 from .api.sync_api import SyncApi
+from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
 from ..adb_utils import find_adb_path
+from ..ping_client import get_or_create_client_id
+
+# DEBUG-СБОРКА (не часть обычного релиза, см. installer_debug.iss/
+# main_web.py:_enable_debug_log_all) — маркер-файл рядом с exe включает
+# подробное логирование КАЖДОГО вызова моста + весь stdout/stderr в
+# base_dir/debug_logs/<client_id>/debug_all.log. client_id тот же, что и
+# обычный "пульс" (см. ping_client.py) — читается здесь один раз, чтобы
+# main_web.py мог сразу знать папку лога и app.js мог показать его в углу
+# окна (см. app_get_info) для сверки "чей это лог", если дебаг-сборку
+# ставят нескольким людям одновременно.
+DEBUG_LOG_ALL_MARKER = "DEBUG_LOG_ALL"
 
 
 class WebApi:
@@ -24,6 +36,8 @@ class WebApi:
         self.cars_dir = base_dir / "cars"
         self.apk_dir = base_dir / "apk"
         self.adb_path = find_adb_path(base_dir)
+        self.debug_mode = (base_dir / DEBUG_LOG_ALL_MARKER).exists()
+        self.client_id = get_or_create_client_id(base_dir) if self.debug_mode else ""
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
         self._usb = UsbApi(base_dir, self._scanner)
@@ -31,14 +45,22 @@ class WebApi:
         self._admin = AdminApi(base_dir, self.apk_dir)
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner)
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
+        self._update = UpdateApi(base_dir)
 
     # -- метаданные окна ------------------------------------------------
     def app_get_info(self) -> dict:
-        return {"admin_mode": self.admin_mode}
+        return {"admin_mode": self.admin_mode, "debug_mode": self.debug_mode, "client_id": self.client_id}
 
     # -- sync_api -----------------------------------------------------------
     def sync_startup(self) -> dict:
         return self._sync.startup_sync()
+
+    # -- update_api -----------------------------------------------------------
+    def update_check(self) -> dict:
+        return self._update.check()
+
+    def update_install(self, download_url: str) -> dict:
+        return self._update.install(download_url)
 
     # -- scanner_api ------------------------------------------------------
     def scanner_list_cars(self) -> dict:

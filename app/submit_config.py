@@ -31,6 +31,13 @@ class SubmitConfig:
     def ping_url(self) -> str:
         return self.submit_url.rsplit("/", 1)[0] + "/ping"
 
+    @property
+    def diagnostics_url(self) -> str:
+        # DEBUG-сборка (см. main_web.py:_start_debug_uploader) — тот же
+        # сервер/ключ, путь "/submit" -> "/diagnostics" (см.
+        # server/backend.py: DIAGNOSTICS_DIR).
+        return self.submit_url.rsplit("/", 1)[0] + "/diagnostics"
+
 
 def get_submit_config(base_dir: Path) -> SubmitConfig | None:
     path = base_dir / "submit.json"

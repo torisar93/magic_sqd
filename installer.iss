@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.3.5-alpha"
+#define MyAppVersion "0.3.6-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -29,6 +29,13 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+; Подстраховка для автообновления (см. app/web/api/update_api.py): наш
+; процесс сам закрывается перед тем, как спавнить этот инсталлятор, но если
+; вдруг не успеет — Restart Manager сам закроет magic_sqd.exe, держащий
+; файлы, вместо ошибки "файл занят другим процессом". В /VERYSILENT диалог
+; закрытия приложений не показывается, закрывает молча.
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
@@ -57,4 +64,8 @@ Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Запустить {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; БЕЗ skipifsilent (в отличие от admin_installer.iss/installer_debug.iss) —
+; автообновление (app/web/api/update_api.py) ставит /VERYSILENT именно
+; затем, чтобы программа сама перезапустилась после тихой установки; это
+; сейчас единственный сценарий силент-установки в проекте.
+Filename: "{app}\{#MyAppExeName}"; Description: "Запустить {#MyAppName}"; Flags: nowait postinstall

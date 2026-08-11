@@ -106,6 +106,30 @@ function onCarCreated(brand, modelName, modification) {
   window.mainPicker.reload();
 }
 
+// Автообновление ПРОГРАММЫ (не путать с showUpdatesNotice ниже — та про
+// содержимое cars/, эта про саму программу, см. app/web/api/update_api.py).
+// Проверяется при каждом запуске (не блокирует остальной старт, см. вызов
+// ниже), диалог с чейнджлогом появляется, только если версия новее найдена.
+async function checkForUpdate() {
+  let update;
+  try {
+    update = await window.pywebview.api.update_check();
+  } catch (err) {
+    return;
+  }
+  if (!update.available) return;
+  const message = `Доступна новая версия: ${update.version}\n\n`
+    + `Что нового:\n${update.changelog || "—"}\n\n`
+    + `Скачать и установить сейчас? Программа закроется и перезапустится после установки.`;
+  const confirmed = await window.confirmDialog(message, { title: "Обновление Magic SQD" });
+  if (!confirmed) return;
+  const result = await window.pywebview.api.update_install(update.download_url);
+  if (!result.ok) {
+    await window.notice(result.error || "Не удалось начать обновление.",
+      { title: "Обновление", danger: true });
+  }
+}
+
 // Сводка "Что нового" после автообновления cars/ с сервера при старте (см.
 // app/web/api/sync_api.py: startup_sync/app/update_tracker.py) — пусто на
 // первом запуске программы и когда server.json не настроен.
@@ -149,6 +173,29 @@ window.addEventListener("pywebviewready", async () => {
     document.getElementById("admin-upload-btn").style.display = "";
     document.getElementById("admin-add-apk-btn").style.display = "";
     document.getElementById("admin-browse-btn").style.display = "";
+  }
+  // DEBUG-сборка (см. main_web.py:_enable_debug_log_all) — показываем
+  // client_id в углу, чтобы можно было сверить с папкой debug_logs/<id>/,
+  // если дебаг-сборку поставили нескольким людям одновременно.
+  if (info.debug_mode) {
+    const badge = document.getElementById("debug-id-badge");
+    badge.textContent = `DEBUG · ${info.client_id}`;
+    badge.style.display = "";
+  }
+
+  // Автообновление — только техническая сборка (не admin, не debug, см.
+  // "Область" в плане/checkForUpdate выше).
+  window.events.on("update_log", (event) => log(event.text));
+  window.events.on("update_finished", (event) => {
+    if (!event.success) {
+      window.notice(event.message || "Не удалось установить обновление.",
+        { title: "Обновление", danger: true });
+    }
+    // при успехе окно скоро закроется само (см. update_api.py:_close_app) —
+    // показывать больше нечего
+  });
+  if (!info.admin_mode && !info.debug_mode) {
+    checkForUpdate(); // fire-and-forget, не блокирует остальной старт
   }
 
   document.getElementById("add-car-btn").addEventListener("click", () =>

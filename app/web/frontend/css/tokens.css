@@ -92,6 +92,25 @@ button.danger:hover {
   background: var(--danger-hover);
 }
 
+/* DEBUG-сборка (см. main_web.py:_enable_debug_log_all, app.js) — метка с
+   client_id в углу окна, только когда рядом с exe лежит DEBUG_LOG_ALL.
+   Не влияет на обычную сборку — элемент скрыт (display:none в разметке)
+   и включается только явно из JS. */
+#debug-id-badge {
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  z-index: 9999;
+  padding: 3px 8px;
+  border-radius: var(--corner-radius);
+  background: var(--danger);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
 /* inset, не outline — outline на фокусируемом элементе внутри контейнера
    с overflow:auto (списки, прокручиваемые формы) обрезается по границе
    скролла, box-shadow inset всегда остаётся внутри рамки самого элемента. */
