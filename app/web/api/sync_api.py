@@ -9,6 +9,7 @@ _start_heartbeat), которые не пережили переход на pywe
 ModelInfo.revision/changelog, app/car_generator.py: version.json,
 записывается мастером "Добавить/Изменить машину" при каждом сохранении) с
 тем, что техник уже видел (см. app/update_tracker.py)."""
+import shutil
 import threading
 import time
 
@@ -44,6 +45,7 @@ class SyncApi:
         server.json не настроен, ничего не изменилось, или это вообще первый
         запуск программы (нет базовой линии для сравнения — см.
         update_tracker.compute_changes)."""
+        self._remove_demo_car()
         changes: list[dict] = []
         base_url = get_base_url(self.base_dir)
         if base_url:
@@ -91,6 +93,17 @@ class SyncApi:
 
         self._start_heartbeat()
         return {"changes": changes}
+
+    def _remove_demo_car(self) -> None:
+        """cars/Demo/ (демо-модель для примера) убрана из продукта насовсем
+        — путалась с настоящими машинами в списке у техников. Установки со
+        старым инсталлятором (бандлившим её в dist/) всё ещё несут её на
+        диске — сервер про неё ничего не знает и не пришлёт (её никогда не
+        было в content/), поэтому обычный sync не тронет, только явное
+        удаление здесь, один раз при каждом запуске, пока она не исчезнет."""
+        demo_dir = self.cars_dir / "Demo"
+        if demo_dir.exists():
+            shutil.rmtree(demo_dir, ignore_errors=True)
 
     def _start_heartbeat(self) -> None:
         if self._heartbeat_started:

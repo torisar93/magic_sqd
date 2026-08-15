@@ -12,7 +12,7 @@
 ; crash.log, cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD Admin"
-#define MyAppVersion "0.3.7-alpha"
+#define MyAppVersion "0.3.8-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd_admin.exe"
 
@@ -61,6 +61,18 @@ Source: "admin.json"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[UninstallDelete]
+; См. installer.iss — та же причина: cars/apk докачиваются с сервера уже
+; после установки, логи/состояние тоже пишутся во время работы, Inno Setup
+; сам знает только про исходно установленные [Files].
+Type: filesandordirs; Name: "{app}\cars"
+Type: filesandordirs; Name: "{app}\apk"
+Type: filesandordirs; Name: "{app}\debug_logs"
+Type: files; Name: "{app}\*.log"
+Type: files; Name: "{app}\client_id.txt"
+Type: files; Name: "{app}\seen_versions.json"
+Type: files; Name: "{app}\DEBUG_LOG_ALL"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Запустить {#MyAppName}"; Flags: nowait postinstall skipifsilent

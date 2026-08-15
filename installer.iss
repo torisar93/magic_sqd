@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.3.7-alpha"
+#define MyAppVersion "0.3.8-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -62,6 +62,21 @@ Source: "submit.json"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[UninstallDelete]
+; Файлы, которые появляются УЖЕ ПОСЛЕ установки (content_sync.py качает
+; cars/apk с сервера, программа сама пишет логи/состояние рядом с exe) —
+; Inno Setup сам удаляет при uninstall только то, что перечислено в
+; [Files] (то есть исходно установленное), про докачанное и порождённое
+; во время работы ничего не знает. Без этого списка после удаления
+; оставались папки cars/apk (иногда гигабайты) и служебные файлы.
+Type: filesandordirs; Name: "{app}\cars"
+Type: filesandordirs; Name: "{app}\apk"
+Type: filesandordirs; Name: "{app}\debug_logs"
+Type: files; Name: "{app}\*.log"
+Type: files; Name: "{app}\client_id.txt"
+Type: files; Name: "{app}\seen_versions.json"
+Type: files; Name: "{app}\DEBUG_LOG_ALL"
 
 [Run]
 ; БЕЗ skipifsilent (в отличие от admin_installer.iss/installer_debug.iss) —

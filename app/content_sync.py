@@ -37,6 +37,15 @@ CHUNK_SIZE = 1024 * 1024
 # бомбардировать маленький VPS/nginx сотней одновременных соединений сразу.
 _LISTING_WORKERS = 16
 
+# Собственно скачивание файлов (см. sync_tree) — при первом запуске
+# программы (пустой cars/) это сотни мелких файлов (stages.py/install.py/
+# instruction.html на модель), каждый — отдельное HTTP-соединение. Раньше
+# качались строго по одному — при round-trip до VPS в 100-200мс это и
+# давало те самые 30-40 секунд первого запуска, хотя сам объём данных
+# крошечный. Тот же пул, что и для листинга, по той же причине (не больше
+# одновременных соединений, чем нужно, чтобы не забить маленький nginx).
+_DOWNLOAD_WORKERS = 16
+
 
 class ContentSyncError(RuntimeError):
     def __init__(self, message: str, code: int | None = None) -> None:
@@ -218,6 +227,22 @@ def download_file(base_url: str, remote_path: str, dest: Path,
     tmp_dest.replace(dest)
 
 
+def _download_one(base_url: str, remote_path: str, local_path: Path,
+                   log, check_cancelled) -> bool:
+    """Один файл для параллельного скачивания в sync_tree — обёртка над
+    download_file с логом и обработкой ошибки конкретно этого файла (не
+    должна рушить скачивание остальных, см. вызов через ThreadPoolExecutor
+    ниже)."""
+    check_cancelled()
+    log(f"Скачиваю {remote_path}...")
+    try:
+        download_file(base_url, remote_path, local_path, log=log, check_cancelled=check_cancelled)
+        return True
+    except ContentSyncError as exc:
+        log(f"Не удалось скачать {remote_path}: {exc}")
+        return False
+
+
 def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
               log=lambda m: None, check_cancelled=lambda: None, skip_dirs: tuple = (),
               no_recurse_dirs: tuple = (), manifest: dict[str, int] | None = None) -> int:
@@ -253,7 +278,7 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
                 log(f"Не удалось получить список файлов с сервера ({remote_subpath}): {exc}")
             return 0
 
-    downloaded = 0
+    to_download: list[tuple[str, Path]] = []
     for item in items:
         check_cancelled()
         rel = item["path"][len(remote_subpath):].lstrip("/") if remote_subpath else item["path"]
@@ -262,13 +287,21 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
         local_path = local_dir / rel
         if local_path.exists() and local_path.stat().st_size == item.get("size", -1):
             continue
-        log(f"Скачиваю {item['path']}...")
-        try:
-            download_file(base_url, item["path"], local_path, log=log,
-                          check_cancelled=check_cancelled)
-            downloaded += 1
-        except ContentSyncError as exc:
-            log(f"Не удалось скачать {item['path']}: {exc}")
+        to_download.append((item["path"], local_path))
+
+    downloaded = 0
+    if to_download:
+        # Параллельно (см. _DOWNLOAD_WORKERS) — иначе первый запуск на
+        # пустом cars/ качает сотни мелких файлов по одному, каждый со
+        # своим round-trip до VPS. check_cancelled() внутри _download_one
+        # при отмене бросает исключение в future — оно всплывёт наружу из
+        # цикла ниже, как и раньше прерывая sync_tree.
+        with ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as executor:
+            futures = [executor.submit(_download_one, base_url, path, local_path, log, check_cancelled)
+                       for path, local_path in to_download]
+            for future in futures:
+                if future.result():
+                    downloaded += 1
     if downloaded:
         log(f"Скачано файлов ({remote_subpath}): {downloaded}.")
     return downloaded
