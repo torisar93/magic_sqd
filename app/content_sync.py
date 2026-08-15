@@ -22,12 +22,20 @@ sync_shared_apks/ensure_apks_downloaded). Исключение — список 
 import json
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
 from .content_config import get_base_url
 
 CHUNK_SIZE = 1024 * 1024
+
+# Обход дерева cars/ на сервере — сколько параллельных запросов листинга
+# папок держим одновременно (см. list_files_recursive). cars/ у нас всего
+# 2 уровня вложенности (марка/модель), так что обход идёт волнами по
+# уровням, а не рекурсивно по потокам — ограничение здесь просто чтобы не
+# бомбардировать маленький VPS/nginx сотней одновременных соединений сразу.
+_LISTING_WORKERS = 16
 
 
 class ContentSyncError(RuntimeError):
@@ -64,37 +72,126 @@ def list_files_recursive(base_url: str, subpath: str = "", skip_dirs: tuple = ()
     cars/_shared/ — лёгкие *.py-хелперы лежат прямо в ней, а тяжёлые
     payload-наборы техника — в её подпапках, см. usb_shared_folder).
     Каждый элемент: {"path": "<путь от корня content/>", "size": int}.
+
+    Обход идёт ВОЛНАМИ по уровням вложенности (level-order), а не строго
+    рекурсивно по одной папке за раз: все листинги очередного уровня (все
+    марки разом, потом все модели разом и т.д.) запрашиваются параллельно
+    через пул потоков (см. _LISTING_WORKERS) — при паре десятков марок и
+    ~сотне моделей это ~100 листингов, и последовательно (старое поведение,
+    по HTTP-запросу за раз) обход cars/ при старте программы становится
+    заметно долгим по мере роста каталога моделей. cars/ у нас всего 2
+    уровня вложенности (марка/модель), так что этот подход почти всегда
+    укладывается в 2-3 волны запросов вместо ~100 запросов подряд.
     log получает по одной строке на папку ВЕРХНЕГО уровня (например каждую
-    марку внутри cars/) — сам обход рекурсивный и на десятках марок/моделей
-    может занять заметное время (отдельный HTTP-запрос на каждую подпапку),
-    а до этого коммита список файлов возвращался только по завершении ВСЕГО
-    обхода — в логе был один "Проверяю файлы..." и потом долгая тишина,
-    выглядевшая как зависание при первом запуске на пустом cars/."""
-    files: list[dict] = []
+    марку внутри cars/), как и раньше, просто теперь пачкой перед началом
+    следующей волны, а не по одной непосредственно перед заходом в неё."""
     top = subpath.strip("/")
     top_depth = top.count("/") + 1 if top else 0
-    _walk(base_url, top, files, skip_dirs, no_recurse_dirs, log, top_depth)
+    files: list[dict] = []
+
+    # Листинг САМОГО subpath — как и раньше, ошибка (в т.ч. 404 "такой папки
+    # на сервере нет вовсе") пробрасывается вызывающему как есть (см.
+    # sync_tree: различает 404 корня от прочих ошибок). Ошибки где-то ГЛУБЖЕ
+    # дерева (одна подпапка недоступна) — уже не повод обрывать весь обход,
+    # см. _list_one ниже, это не было принципиальной гарантией и раньше
+    # такое поведение (одна плохая подпапка рушит весь sync_tree) было скорее
+    # побочным эффектом рекурсии, чем осознанным решением.
+    root_entries = _get_json(f"{base_url}/{_encode_path(top)}/" if top else f"{base_url}/")
+
+    def _consume(rel_path: str, entries: list[dict], next_level: list[str]) -> None:
+        no_recurse = rel_path in no_recurse_dirs
+        for entry in entries:
+            name = entry.get("name", "")
+            if not name:
+                continue
+            child_rel = f"{rel_path}/{name}" if rel_path else name
+            if entry.get("type") == "directory":
+                if name in skip_dirs or no_recurse:
+                    continue
+                next_level.append(child_rel)
+            else:
+                files.append({"path": child_rel, "size": entry.get("size", -1)})
+
+    level_dirs: list[str] = []
+    _consume(top, root_entries, level_dirs)
+
+    with ThreadPoolExecutor(max_workers=_LISTING_WORKERS) as executor:
+        while level_dirs:
+            if top_depth and level_dirs[0].count("/") + 1 == top_depth + 1:
+                for rel_path in level_dirs:
+                    log(f"Проверяю {rel_path}...")
+            next_level: list[str] = []
+            listings = executor.map(lambda rp: _list_one(base_url, rp), level_dirs)
+            for rel_path, entries in zip(level_dirs, listings):
+                if entries is None:
+                    continue  # 404/сетевая ошибка на этой подпапке — просто пропускаем её
+                _consume(rel_path, entries, next_level)
+            level_dirs = next_level
     return files
 
 
-def _walk(base_url: str, rel_path: str, files: list[dict], skip_dirs: tuple,
-          no_recurse_dirs: tuple, log, top_depth: int) -> None:
+def _list_one(base_url: str, rel_path: str) -> list[dict] | None:
+    """Листинг одной папки — None при 404/сетевой ошибке (папки может не
+    быть на сервере вовсе, это не повод рушить обход остального дерева,
+    см. list_files_recursive/sync_tree: 404 самого корня — отдельный
+    случай "такой папки нет", а 404 где-то в глубине дерева просто
+    пропускаем, как и раньше делал бы вызывающий на верхнем уровне)."""
     url = f"{base_url}/{_encode_path(rel_path)}/" if rel_path else f"{base_url}/"
-    for entry in _get_json(url):
-        name = entry.get("name", "")
-        if not name:
+    try:
+        return _get_json(url)
+    except ContentSyncError:
+        return None
+
+
+def fetch_manifest(base_url: str) -> dict[str, int] | None:
+    """Скачивает единый манифест content/manifest.json (см. server/backend.py:
+    write_manifest) — ОДИН HTTP-запрос вместо рекурсивного обхода директорий
+    через nginx autoindex (см. list_files_recursive), который иначе
+    приходится повторять для каждого вида синхронизации отдельно (cars-
+    скрипты при старте, files/usb_files конкретной модели перед установкой,
+    cars/_shared/<набор> перед USB-этапом, каталог apk/ и его *.json
+    сайдкары) — на разросшемся дереве моделей это было десятки-сотни
+    запросов на один запуск программы. Возвращает {"<путь от content/>":
+    size} или None, если манифеста на сервере нет (старый бэкенд, ещё не
+    обновлённый) или сеть недоступна — тогда вызывающий код откатывается на
+    list_files_recursive для конкретно нужного ему поддерева, как раньше."""
+    try:
+        with urllib.request.urlopen(f"{base_url}/manifest.json", timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    files = data.get("files")
+    if not isinstance(files, dict):
+        return None
+    result = {}
+    for path, entry in files.items():
+        if isinstance(entry, dict) and isinstance(entry.get("size"), int):
+            result[path] = entry["size"]
+    return result
+
+
+def filter_manifest(manifest: dict[str, int], subpath: str, skip_dirs: tuple = (),
+                     no_recurse_dirs: tuple = ()) -> list[dict]:
+    """То же самое, что list_files_recursive(base_url, subpath, skip_dirs,
+    no_recurse_dirs), но без единого сетевого запроса — берёт срез уже
+    скачанного манифеста (см. fetch_manifest). skip_dirs — имя ЛЮБОГО
+    компонента пути (кроме самого файла) исключает запись, где бы он ни
+    встретился на пути к файлу. no_recurse_dirs — точные пути (от корня
+    content/), у которых в результат попадают только файлы ПРЯМО в них, но
+    не из более глубоких подпапок — семантика идентична list_files_recursive,
+    манифест просто уже содержит всё дерево целиком, фильтрация локальная."""
+    prefix = subpath.strip("/")
+    result = []
+    for path, size in manifest.items():
+        if prefix and path != prefix and not path.startswith(f"{prefix}/"):
             continue
-        if entry.get("type") == "directory" and name in skip_dirs:
+        dir_segments = path.split("/")[:-1]
+        if any(seg in skip_dirs for seg in dir_segments):
             continue
-        child_rel = f"{rel_path}/{name}" if rel_path else name
-        if entry.get("type") == "directory":
-            if rel_path in no_recurse_dirs:
-                continue  # payload-подпапка (например cars/_shared/<набор>/) — не разворачиваем
-            if child_rel.count("/") + 1 == top_depth + 1:
-                log(f"Проверяю {child_rel}...")
-            _walk(base_url, child_rel, files, skip_dirs, no_recurse_dirs, log, top_depth)
-        else:
-            files.append({"path": child_rel, "size": entry.get("size", -1)})
+        if any(path.startswith(f"{nr}/") and "/" in path[len(nr) + 1:] for nr in no_recurse_dirs):
+            continue
+        result.append({"path": path, "size": size})
+    return result
 
 
 def download_file(base_url: str, remote_path: str, dest: Path,
@@ -123,7 +220,7 @@ def download_file(base_url: str, remote_path: str, dest: Path,
 
 def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
               log=lambda m: None, check_cancelled=lambda: None, skip_dirs: tuple = (),
-              no_recurse_dirs: tuple = ()) -> int:
+              no_recurse_dirs: tuple = (), manifest: dict[str, int] | None = None) -> int:
     """Скачивает из remote_subpath в local_dir всё, чего там ещё нет (или
     что отличается по размеру). skip_dirs/no_recurse_dirs — см.
     list_files_recursive. Возвращает число скачанных файлов; сетевые ошибки
@@ -135,16 +232,26 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
     засоряет лог. Логирует ход дела (запрос списка, каждый реально
     скачиваемый файл, итог) — раньше молчала при успехе от начала до конца,
     из-за чего в момент первой закачки файлов модели/общей библиотеки
-    технику казалось, что программа зависла, хотя она просто тихо качала."""
+    технику казалось, что программа зависла, хотя она просто тихо качала.
+
+    manifest — уже скачанный content/manifest.json (см. fetch_manifest),
+    если он есть у вызывающего — тогда список получаем локальной фильтрацией
+    (filter_manifest) вместо отдельного сетевого обхода remote_subpath.
+    None (по умолчанию) — старое поведение, обходим сами через
+    list_files_recursive (для старых серверов без манифеста и как фолбэк)."""
     remote_subpath = remote_subpath.strip("/")
-    log(f"Проверяю файлы на сервере ({remote_subpath})...")
-    try:
-        items = list_files_recursive(base_url, remote_subpath, skip_dirs=skip_dirs,
-                                      no_recurse_dirs=no_recurse_dirs, log=log)
-    except ContentSyncError as exc:
-        if exc.code != 404:
-            log(f"Не удалось получить список файлов с сервера ({remote_subpath}): {exc}")
-        return 0
+    if manifest is not None:
+        items = filter_manifest(manifest, remote_subpath, skip_dirs=skip_dirs,
+                                 no_recurse_dirs=no_recurse_dirs)
+    else:
+        log(f"Проверяю файлы на сервере ({remote_subpath})...")
+        try:
+            items = list_files_recursive(base_url, remote_subpath, skip_dirs=skip_dirs,
+                                          no_recurse_dirs=no_recurse_dirs, log=log)
+        except ContentSyncError as exc:
+            if exc.code != 404:
+                log(f"Не удалось получить список файлов с сервера ({remote_subpath}): {exc}")
+            return 0
 
     downloaded = 0
     for item in items:
@@ -167,7 +274,8 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
     return downloaded
 
 
-def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None) -> int:
+def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
+                  manifest: dict[str, int] | None = None) -> int:
     """Автообновление скриптов/инструкций всех моделей (cars/) при
     запуске программы — install.py/stages.py/instruction.html и т.п., но
     БЕЗ содержимого files/ и usb_files/ (там как раз и лежат тяжёлые
@@ -188,11 +296,11 @@ def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None) -> int:
     if not url:
         return 0
     return sync_tree(url, "cars", cars_dir, log=log, skip_dirs=("files", "usb_files"),
-                      no_recurse_dirs=("cars/_shared",))
+                      no_recurse_dirs=("cars/_shared",), manifest=manifest)
 
 
 def sync_shared_folder(base_dir: Path, name: str, log=lambda m: None,
-                        check_cancelled=lambda: None) -> int:
+                        check_cancelled=lambda: None, manifest: dict[str, int] | None = None) -> int:
     """Подтягивает cars/_shared/<name>/ целиком с сервера — точечно, прямо
     перед выполнением USB-этапа, который на неё ссылается (см.
     StepSpec.usb_shared_folder, app/web/api/usb_api.py), а НЕ при каждом
@@ -203,8 +311,10 @@ def sync_shared_folder(base_dir: Path, name: str, log=lambda m: None,
     url = get_base_url(base_dir)
     if not url:
         return 0
+    if manifest is None:
+        manifest = fetch_manifest(url)
     return sync_tree(url, f"cars/_shared/{name}", base_dir / "cars" / "_shared" / name,
-                      log=log, check_cancelled=check_cancelled)
+                      log=log, check_cancelled=check_cancelled, manifest=manifest)
 
 
 def _model_wants_own_files(model_dir: Path) -> tuple[bool, bool]:
@@ -253,16 +363,25 @@ def _model_wants_own_files(model_dir: Path) -> tuple[bool, bool]:
     return needs_files, needs_usb_files
 
 
-def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=lambda: None) -> int:
+def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=lambda: None,
+                      manifest: dict[str, int] | None = None) -> int:
     """Подтягивает files/ и usb_files/ конкретной модели с сервера — по
     кнопке "Скачать файлы модели" (gui.py) и на всякий случай ещё раз прямо
     перед установкой этой модели. Молча ничего не делает (возвращает 0),
     если server.json не настроен. Подпапку, которую модель по своей спеке
     вообще не использует (см. _model_wants_own_files), даже не запрашивает —
-    иначе на сервере, где её никогда не было, каждый раз получали бы 404."""
+    иначе на сервере, где её никогда не было, каждый раз получали бы 404.
+
+    manifest — см. sync_tree; если не передан, сами один раз запрашиваем
+    content/manifest.json (см. fetch_manifest) — так files/ и usb_files/
+    (когда нужны оба) достаются из одного запроса вместо двух отдельных
+    обходов, а на сервере без манифеста (старый бэкенд) fetch_manifest
+    вернёт None и sync_tree сам откатится на обход по HTTP, как раньше."""
     url = get_base_url(base_dir)
     if not url:
         return 0
+    if manifest is None:
+        manifest = fetch_manifest(url)
     # Путь строим из model.dir (а не brand+name), чтобы одинаково работать
     # и для обычных моделей (cars/<Марка>/<Модель>/), и для модификаций
     # (cars/<Марка>/<Модель>/<Модификация>/, см. scanner.py:ModelGroup) —
@@ -276,11 +395,12 @@ def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=
             continue
         local_dir = model.dir / subfolder
         downloaded += sync_tree(url, f"{remote_base}/{subfolder}", local_dir, log=log,
-                                 check_cancelled=check_cancelled)
+                                 check_cancelled=check_cancelled, manifest=manifest)
     return downloaded
 
 
-def sync_shared_apk_metadata(base_dir: Path, apk_dir: Path, log=lambda m: None) -> int:
+def sync_shared_apk_metadata(base_dir: Path, apk_dir: Path, log=lambda m: None,
+                              items: list[dict] | None = None) -> int:
     """Скачивает только *.json сайдкары общей библиотеки apk/ (имя/описание,
     см. app/scanner.py:_read_apk_meta) — лёгкие текстовые файлы, тянутся при
     каждом запуске вместе с list_shared_apk_catalog, в отличие от самих
@@ -288,15 +408,23 @@ def sync_shared_apk_metadata(base_dir: Path, apk_dir: Path, log=lambda m: None) 
     ensure_apks_downloaded). Без этого список ещё не скачанных общих
     приложений показывал бы голое имя файла вместо "красивого" имени из
     JSON (см. scanner.scan_apks: remote_only). Молча ничего не делает при
-    сетевой ошибке или ненастроенном server.json."""
+    сетевой ошибке или ненастроенном server.json.
+
+    items — уже полученный список файлов apk/ (см. list_files_recursive),
+    если он у вызывающего уже есть (см. sync_api.startup_sync: та же папка
+    иначе обходилась бы ПОВТОРНО следом за list_shared_apk_catalog — на
+    крупной библиотеке apk/ это удваивает время обхода при каждом запуске
+    программы без всякой пользы). None — обойти самостоятельно, как раньше
+    (сохраняет обратную совместимость для остальных вызывающих)."""
     url = get_base_url(base_dir)
     if not url:
         return 0
-    try:
-        items = list_files_recursive(url, "apk")
-    except ContentSyncError as exc:
-        log(f"Не удалось получить список файлов с сервера (apk метаданные): {exc}")
-        return 0
+    if items is None:
+        try:
+            items = list_files_recursive(url, "apk")
+        except ContentSyncError as exc:
+            log(f"Не удалось получить список файлов с сервера (apk метаданные): {exc}")
+            return 0
     downloaded = 0
     for item in items:
         if not item["path"].lower().endswith(".json"):
@@ -326,7 +454,7 @@ def sync_shared_apks(base_dir: Path, apk_dir: Path, log=lambda m: None,
     return sync_tree(url, "apk", apk_dir, log=log, check_cancelled=check_cancelled)
 
 
-def list_shared_apk_catalog(base_dir: Path) -> list[dict]:
+def list_shared_apk_catalog(base_dir: Path, items: list[dict] | None = None) -> list[dict]:
     """Список файлов общей библиотеки apk/ на сервере — ИМЕНА/РАЗМЕРЫ,
     без скачивания (лёгкий обход через autoindex_format json, см.
     list_files_recursive). Вызывается при каждом запуске (см. gui.py), в
@@ -336,14 +464,18 @@ def list_shared_apk_catalog(base_dir: Path) -> list[dict]:
     для ещё не скачанных APK. Каждый элемент — {"rel_path": "<путь
     относительно apk/, например 'Категория/файл.apk'>", "size": int}.
     Молча возвращает [] при сетевой ошибке или ненастроенном server.json —
-    отсутствие удалённого каталога не должно ломать запуск."""
+    отсутствие удалённого каталога не должно ломать запуск.
+
+    items — уже полученный список файлов apk/, см. sync_shared_apk_metadata
+    (та же папка при старте программы иначе обходилась бы дважды подряд)."""
     url = get_base_url(base_dir)
     if not url:
         return []
-    try:
-        items = list_files_recursive(url, "apk")
-    except ContentSyncError:
-        return []
+    if items is None:
+        try:
+            items = list_files_recursive(url, "apk")
+        except ContentSyncError:
+            return []
     catalog = []
     for item in items:
         rel = item["path"][len("apk"):].lstrip("/")

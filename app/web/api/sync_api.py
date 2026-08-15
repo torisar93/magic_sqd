@@ -15,7 +15,8 @@ import time
 from ..events import event_bridge
 from ... import update_tracker
 from ...content_config import get_base_url
-from ...content_sync import list_shared_apk_catalog, sync_scripts, sync_shared_apk_metadata
+from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
+                              list_shared_apk_catalog, sync_scripts, sync_shared_apk_metadata)
 from ...ping_client import PingError, get_or_create_client_id, send_ping
 from ...scanner import flatten_models, scan_cars
 from ...submit_config import get_submit_config
@@ -44,9 +45,21 @@ class SyncApi:
         запуск программы (нет базовой линии для сравнения — см.
         update_tracker.compute_changes)."""
         changes: list[dict] = []
-        if get_base_url(self.base_dir):
+        base_url = get_base_url(self.base_dir)
+        if base_url:
+            # Один манифест на весь запуск (см. content_sync.fetch_manifest/
+            # server/backend.py: write_manifest) — раньше и cars/, и apk/
+            # обходились отдельными рекурсивными сериями HTTP-запросов через
+            # nginx autoindex (десятки-сотни на разросшемся дереве моделей),
+            # теперь это один запрос, а cars-скрипты и каталог apk/ ниже
+            # просто фильтруют уже скачанный список локально. None — сервер
+            # ещё не обновлён (старый бэкенд без /content/manifest.json) или
+            # сеть недоступна: всё ниже само откатывается на обход по HTTP,
+            # как было раньше (см. content_sync.sync_tree: manifest=None).
+            manifest = fetch_manifest(base_url)
+
             try:
-                sync_scripts(self.base_dir, self.cars_dir, log=self._log)
+                sync_scripts(self.base_dir, self.cars_dir, log=self._log, manifest=manifest)
             except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
                 self._log(f"Не удалось проверить обновления моделей на сервере: {exc}")
             else:
@@ -55,20 +68,26 @@ class SyncApi:
                 update_tracker.save_seen(self.base_dir, new_state)
 
             try:
-                catalog = list_shared_apk_catalog(self.base_dir)
-            except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
+                if manifest is not None:
+                    apk_items = filter_manifest(manifest, "apk")
+                else:
+                    apk_items = list_files_recursive(base_url, "apk")
+            except ContentSyncError as exc:
+                apk_items = None
                 self._log(f"Не удалось получить список общей библиотеки приложений: {exc}")
-            else:
+
+            if apk_items is not None:
+                catalog = list_shared_apk_catalog(self.base_dir, items=apk_items)
                 if catalog:
                     self._scanner_api.set_remote_apk_catalog(catalog)
 
-            try:
-                # Лёгкие *.json сайдкары (имя/описание) — чтобы ещё не
-                # скачанные APK в общей библиотеке показывали "красивое"
-                # имя, а не голое имя файла (см. scanner.scan_apks).
-                sync_shared_apk_metadata(self.base_dir, self.apk_dir, log=self._log)
-            except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
-                self._log(f"Не удалось получить метаданные общей библиотеки приложений: {exc}")
+                try:
+                    # Лёгкие *.json сайдкары (имя/описание) — чтобы ещё не
+                    # скачанные APK в общей библиотеке показывали "красивое"
+                    # имя, а не голое имя файла (см. scanner.scan_apks).
+                    sync_shared_apk_metadata(self.base_dir, self.apk_dir, log=self._log, items=apk_items)
+                except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
+                    self._log(f"Не удалось получить метаданные общей библиотеки приложений: {exc}")
 
         self._start_heartbeat()
         return {"changes": changes}
