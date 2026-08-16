@@ -8,7 +8,7 @@
 
   const BLOCK_TYPE_LABELS = {
     h1: "Заголовок", h2: "Подзаголовок", p: "Текст", steps: "Шаги",
-    warn: "Важно", danger: "Осторожно", photo: "Фото",
+    warn: "Важно", danger: "Осторожно", photo: "Фото", html: "HTML-код",
   };
 
   let dialog, listEl, previewFrame;
@@ -86,6 +86,23 @@
       row.appendChild(textarea);
     } else if (block.type === "p" || block.type === "warn" || block.type === "danger") {
       const textarea = el("textarea");
+      textarea.value = block.text || "";
+      textarea.addEventListener("input", () => { block.text = textarea.value; });
+      row.appendChild(textarea);
+    } else if (block.type === "html") {
+      // Вставляется в instruction.html КАК ЕСТЬ, без экранирования (см.
+      // app/instruction_html.py:_render_block) — единственный тип блока,
+      // где можно вписать произвольную разметку/<script> (например,
+      // виджет с генерацией кода инженерного меню по текущей дате — до
+      // этого блока такое можно было вставить только руками прямо в файл,
+      // в обход редактора, и следующее сохранение через редактор стирало
+      // вставку, см. freetuga-модели). Ответственность за корректность
+      // HTML — на том, кто его пишет, редактор ничего не проверяет.
+      row.appendChild(el("div", {
+        class: "app-desc",
+        text: "Вставляется как есть, без экранирования — html/css/script на ваш страх и риск.",
+      }));
+      const textarea = el("textarea", { class: "html-code-textarea" });
       textarea.value = block.text || "";
       textarea.addEventListener("input", () => { block.text = textarea.value; });
       row.appendChild(textarea);

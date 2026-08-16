@@ -281,12 +281,17 @@
     const html = stage.instruction_html;
     const block = el("div", { class: "instruction-block", style: fullPage ? "flex: 1; display: flex; flex-direction: column" : "" });
     if (html) {
-      // allow-popups(-to-escape-sandbox) — только чтобы ссылки на источники
+      // allow-popups(-to-escape-sandbox) — чтобы ссылки на источники
       // ("Источники: drive2.ru/...", см. app/instruction_html.py:_linkify)
       // открывались в системном браузере по клику, а не заменяли собой
-      // саму инструкцию в этом iframe. Скрипты/формы/top-navigation по
-      // прежнему запрещены — песочница остаётся, просто не полностью пустая.
-      const iframe = el("iframe", { sandbox: "allow-popups allow-popups-to-escape-sandbox" });
+      // саму инструкцию в этом iframe. allow-scripts — чтобы работали
+      // "html"-блоки со своим JS (см. instruction_editor.js: калькулятор
+      // кода инженерного меню по текущей дате во freetuga-моделях и т.п.)
+      // — БЕЗ allow-same-origin, поэтому у srcdoc-документа всегда opaque
+      // origin: скрипт может делать что угодно ВНУТРИ себя, но не видит
+      // window.parent/pywebview.api, куки или что-либо ещё хоста. Формы и
+      // top-navigation по прежнему запрещены.
+      const iframe = el("iframe", { sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox" });
       if (fullPage) iframe.style.height = "100%";
       block.appendChild(iframe);
       // srcdoc не всегда успевает попасть в атрибут при быстрой пересборке — пишем через contentWindow.

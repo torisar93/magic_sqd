@@ -640,6 +640,12 @@ dialog.dialog-large[open] {
   background: var(--danger-bg-hover);
 }
 
+.html-code-textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  min-height: 120px;
+}
+
 .block-row-header [data-block-type] {
   background: none;
   border: none;

@@ -252,12 +252,13 @@
       <button data-block-type="warn">+ Важно</button>
       <button data-block-type="danger">+ Осторожно</button>
       <button data-block-type="photo">+ Фото</button>
+      <button data-block-type="html">+ HTML-код</button>
     </div>
     <div class="instruction-editor-body">
       <div class="instruction-block-list" id="instruction-block-list"></div>
       <div class="instruction-preview" style="display: flex; flex-direction: column">
         <button id="instruction-refresh-preview" style="margin-bottom: 6px">Обновить предпросмотр</button>
-        <iframe id="instruction-preview-frame" sandbox="allow-popups allow-popups-to-escape-sandbox" style="flex: 1"></iframe>
+        <iframe id="instruction-preview-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" style="flex: 1"></iframe>
       </div>
     </div>
     <div class="dialog-actions">
