@@ -12,7 +12,7 @@
 ; crash.log, cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD Admin"
-#define MyAppVersion "0.3.9-alpha"
+#define MyAppVersion "0.3.10-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd_admin.exe"
 

@@ -169,13 +169,26 @@ class UpdateApi:
         скоро сам завершится (см. _close_app), и daemon-потоки умрут вместе
         с ним, не успев ничего доспавнить. /VERYSILENT — без окон мастера
         (installer.iss:CloseApplications=yes — подстраховка на Restart
-        Manager, если наш процесс всё же не успеет закрыться первым)."""
-        command = (
-            f'timeout /t 3 /nobreak >nul & '
-            f'start "" "{installer_path}" /VERYSILENT /SUPPRESSMSGBOX /NORESTART'
+        Manager, если наш процесс всё же не успеет закрыться первым).
+
+        Команда пишется во ВРЕМЕННЫЙ .bat-файл, а не передаётся строкой в
+        Popen(["cmd", "/c", "...с кавычками и &..."]) — раньше было именно
+        так, и subprocess на Windows заново экранирует ЦЕЛИКОМ через
+        list2cmdline() любой элемент списка со спецсимволами, из-за чего
+        cmd.exe получал ДВАЖДЫ проэкранированную строку и разваливал путь к
+        инсталлятору (реальный случай — окно "Windows не удается найти
+        "\\""). Содержимое .bat-файла не подвергается этой повторной
+        обёртке в кавычки — cmd.exe читает его как обычный текстовый скрипт
+        построчно, а не как один аргумент командной строки."""
+        bat_path = Path(tempfile.gettempdir()) / "magicsqd_update.bat"
+        bat_path.write_text(
+            "@echo off\r\n"
+            "timeout /t 3 /nobreak >nul\r\n"
+            f'start "" "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n',
+            encoding="utf-8",
         )
         subprocess.Popen(
-            ["cmd", "/c", command],
+            ["cmd", "/c", str(bat_path)],
             creationflags=subprocess.DETACHED_PROCESS,
             close_fds=True,
         )
