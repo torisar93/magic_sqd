@@ -68,6 +68,53 @@ INSTRUCTION_CSS = f"""
 _BLOCKS_RE = re.compile(
     r'<script type="application/json" id="magicsqd-blocks">(.*?)</script>', re.DOTALL)
 
+# Ссылки на источники ("Источники: drive2.ru/l/..., t.me/...") в блоках
+# набираются просто текстом (см. instruction_editor.py — там нет отдельного
+# поля/кнопки "вставить ссылку"), поэтому кликабельными их делает только
+# сам рендер — распознаём URL/голые домены прямо в тексте и заворачиваем в
+# <a>. Список доменных зон — по факту уже встречающимся в текстах инструкций
+# проекта (drive2.ru, t.me, 4pda.to, github.com и т.п.), не общий белый
+# список TLD — так словосочетания вроде "install.bat"/"GeelyTool.exe" не
+# принимаются за домен.
+_URL_RE = re.compile(
+    r'(?:https?://)?'
+    r'(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+'
+    r'(?:ru|com|to|me|su|net|org|io|by)'
+    r'(?:/[^\s,]*)?',
+    re.IGNORECASE,
+)
+_URL_TRAILING_PUNCT = '.,;:)'
+
+
+def _linkify(text: str) -> str:
+    """html.escape(text), но с настоящими <a target="_blank"> вместо
+    голого текста там, где похоже на URL/домен (см. _URL_RE). target=_blank
+    открывается в системном браузере, а не подменяет саму инструкцию в
+    iframe — см. sandbox="allow-popups allow-popups-to-escape-sandbox" в
+    stage_wizard.js/instruction_editor.js/index.html (без allow-popups
+    клик по такой ссылке в песочнице iframe просто ничего не делает)."""
+    parts = []
+    pos = 0
+    for m in _URL_RE.finditer(text):
+        start, end = m.span()
+        url = m.group(0)
+        trail = ""
+        while url and url[-1] in _URL_TRAILING_PUNCT:
+            trail = url[-1] + trail
+            url = url[:-1]
+            end -= 1
+        if not url:
+            continue
+        parts.append(html.escape(text[pos:start]))
+        href = url if url.lower().startswith(("http://", "https://")) else f"https://{url}"
+        parts.append(
+            f'<a href="{html.escape(href)}" target="_blank" rel="noopener noreferrer">'
+            f"{html.escape(url)}</a>{html.escape(trail)}"
+        )
+        pos = end
+    parts.append(html.escape(text[pos:]))
+    return "".join(parts)
+
 
 def default_blocks(brand: str, model: str) -> list[dict]:
     title = f"{brand} {model}".strip() or "Новая модель"
@@ -79,7 +126,7 @@ def default_blocks(brand: str, model: str) -> list[dict]:
 
 
 def _escape_multiline(text: str) -> str:
-    return html.escape(text).replace("\n", "<br>")
+    return _linkify(text).replace("\n", "<br>")
 
 
 def _render_block(block: dict, href_fn) -> str:
@@ -94,7 +141,7 @@ def _render_block(block: dict, href_fn) -> str:
         items = [line.strip() for line in block.get("text", "").splitlines() if line.strip()]
         if not items:
             return ""
-        lis = "".join(f"<li>{html.escape(line)}</li>" for line in items)
+        lis = "".join(f"<li>{_linkify(line)}</li>" for line in items)
         return f"<ol>{lis}</ol>"
     if block_type == "warn":
         return f'<p class="warn">{_escape_multiline(block.get("text", ""))}</p>'

@@ -281,7 +281,12 @@
     const html = stage.instruction_html;
     const block = el("div", { class: "instruction-block", style: fullPage ? "flex: 1; display: flex; flex-direction: column" : "" });
     if (html) {
-      const iframe = el("iframe", { sandbox: "" });
+      // allow-popups(-to-escape-sandbox) — только чтобы ссылки на источники
+      // ("Источники: drive2.ru/...", см. app/instruction_html.py:_linkify)
+      // открывались в системном браузере по клику, а не заменяли собой
+      // саму инструкцию в этом iframe. Скрипты/формы/top-navigation по
+      // прежнему запрещены — песочница остаётся, просто не полностью пустая.
+      const iframe = el("iframe", { sandbox: "allow-popups allow-popups-to-escape-sandbox" });
       if (fullPage) iframe.style.height = "100%";
       block.appendChild(iframe);
       // srcdoc не всегда успевает попасть в атрибут при быстрой пересборке — пишем через contentWindow.
