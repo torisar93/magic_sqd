@@ -69,18 +69,30 @@ function sendAdbConsoleCommand() {
 // стоит для случая, который нужен нечасто.
 async function connectAdbWifi() {
   const btn = document.getElementById("adb-console-wifi-connect");
+  // Порт — не всегда 5555 (например Cityray со значком Wi-Fi — 7777), поэтому
+  // берём из поля рядом с кнопкой, а не хардкодим (см. index.html:
+  // #adb-console-wifi-port).
+  const portInput = document.getElementById("adb-console-wifi-port");
+  const port = parseInt(portInput.value, 10) || 5555;
   btn.disabled = true;
   try {
-    let result = await window.pywebview.api.install_wifi_connect(5555, null);
+    let result = await window.pywebview.api.install_wifi_connect(port, null);
     if (!result.ok) {
-      const ip = (await window.promptDialog(
-        result.auto
-          ? "Не удалось подключиться автоматически. Введите IP магнитолы:"
-          : `Не удалось подключиться к ${result.ip}:5555. Введите другой IP:`,
-        { title: "Wi-Fi ADB", initialValue: result.ip || "" }
+      // Автоопределение по шлюзу не сработало — сканируем локальную сеть на
+      // тот же порт (случай, когда магнитола сама подключилась к сети/точке
+      // доступа ноутбука, см. install_api.py:scan_wifi) и предлагаем выбрать
+      // из найденного; пункт "Ввести вручную..." в этом диалоге есть всегда,
+      // даже если скан ничего не нашёл.
+      const candidates = await window.pywebview.api.install_scan_wifi(port);
+      const ip = (await window.selectDialog(
+        candidates.length
+          ? `Не удалось подключиться автоматически. Выберите IP магнитолы (порт ${port}):`
+          : `Не удалось подключиться автоматически и скан сети ничего не нашёл (порт ${port}). Введите IP магнитолы:`,
+        candidates,
+        { title: "Wi-Fi ADB" }
       ))?.trim();
       if (!ip) return;
-      result = await window.pywebview.api.install_wifi_connect(5555, ip);
+      result = await window.pywebview.api.install_wifi_connect(port, ip);
       if (!result.ok) {
         await window.notice(result.message || result.error || "Не удалось подключиться.",
           { title: "Wi-Fi ADB", danger: true });

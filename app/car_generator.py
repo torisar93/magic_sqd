@@ -40,7 +40,7 @@ class StepVariant:
 
 @dataclass
 class StepSpec:
-    type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check" | "instruction"
+    type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check" | "instruction" | "uart" | "telnet"
     title: str = ""
     description: str = ""
     # "instruction" — часть общей инструкции (заголовки/шаги/плашки/фото),
@@ -75,11 +75,26 @@ class StepSpec:
     # #reboot, #root, #push, ...) вперемешку с обычными adb shell командами
     # ИЛИ "сырыми" строками прямо из .bat/.sh автора набора (adb root/push/
     # install/..., TIMEOUT /T N) — парсер понимает оба варианта.
+    # "uart" — тот же список, но БЕЗ мини-DSL adb: каждая строка отправляется
+    # как есть (+ "\r\n") через открытое серийное соединение (см.
+    # cars/_shared/uart_adb.py:open_uart), ответ (если есть) логируется.
+    # "telnet" — тоже без мини-DSL: каждая строка — отдельный вызов
+    # cars/_shared/telnet_adb.py:enable_adb_via_telnet(ctx, command=строка)
+    # (IPv6-адрес находится автоматически или предлагается выбрать/ввести
+    # заново на каждый вызов). Пусто — используется command по умолчанию
+    # этой функции ("setprop persist.service.adb.button.visible ON").
     commands: list[str] = field(default_factory=list)
     adb_install_selected_apks: bool = False
     # Файлы, прикреплённые к ADB-этапу — на них ссылаются команды #push/
     # #install (или их "сырые" аналоги adb push/adb install) по имени файла.
     adb_files: list[Path] = field(default_factory=list)
+    # "uart" — скорость порта (бод); разные магнитолы используют разные
+    # значения (например 921600 у Haval M6 2026), поэтому настраивается за
+    # этап, а не хардкодится в uart_adb.py. Порт (COM-имя) НЕ настраивается
+    # здесь — выбирается техником на месте через ctx.ask_choice (см.
+    # open_uart), т.к. заранее неизвестен и может быть разным на разных
+    # компьютерах.
+    uart_baudrate: int = 115200
     # "apps" — используется, только если variants (см. ниже) пуст
     standard_apks: list[Path] = field(default_factory=list)
     # "exe" — готовый установщик, который производитель магнитолы даёт
@@ -278,6 +293,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             variants=variants,
             pos_x=step_data.get("pos_x", 0.0),
             pos_y=step_data.get("pos_y", 0.0),
+            uart_baudrate=step_data.get("uart_baudrate", 115200),
         ))
 
     return NewCarSpec(
@@ -454,6 +470,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "condition_values": step.condition_values,
                 "pos_x": step.pos_x,
                 "pos_y": step.pos_y,
+                "uart_baudrate": step.uart_baudrate,
                 "variants": [
                     {
                         "name": v.name,
@@ -583,6 +600,13 @@ def _render_install_py(spec: NewCarSpec) -> str:
         'Отредактируйте вручную, если нужно что-то сложнее, чем список ADB-команд',
         'и файлы для флешки."""',
     ]
+    if any(step.type == "uart" for step in spec.steps):
+        # sys.path на _shared/ уже расширен в stages.py (см. _render_stages_py)
+        # ДО того, как оно вызывает load_sibling.load_install(__file__) и тем
+        # самым исполняет этот файл — поэтому импорт здесь уже видит uart_adb.
+        lines.append("from uart_adb import open_uart  # noqa: E402")
+    if any(step.type == "telnet" for step in spec.steps):
+        lines.append("from telnet_adb import enable_adb_via_telnet  # noqa: E402")
 
     for i, step in enumerate(spec.steps, start=1):
         if step.type == "adb":
@@ -657,6 +681,32 @@ def _render_install_py(spec: NewCarSpec) -> str:
                     "    if shared_dir and shared_dir.exists():",
                     '        ctx.copy_dir(shared_dir, "")',
                 ]
+        elif step.type == "telnet":
+            lines += ["", "", f"def telnet_step_{i}(ctx):"]
+            lines += [f'    """{step.title or f"Этап {i}"}."""']
+            for raw_line in (step.commands or [None]):
+                if raw_line:
+                    lines.append(f"    enable_adb_via_telnet(ctx, command={raw_line!r})")
+                else:
+                    lines.append("    enable_adb_via_telnet(ctx)")
+        elif step.type == "uart":
+            lines += ["", "", f"def uart_step_{i}(ctx):"]
+            lines += [f'    """{step.title or f"Этап {i}"}."""']
+            lines.append(f"    ser = open_uart(ctx, baudrate={step.uart_baudrate})")
+            lines.append("    try:")
+            if step.commands:
+                for raw_line in step.commands:
+                    cmd_bytes = (raw_line + "\r\n").encode()
+                    lines.append(f"        ctx.log({('UART >> ' + raw_line)!r})")
+                    lines.append(f"        ser.write({cmd_bytes!r})")
+                    lines.append("        ctx.sleep(1.0)")
+                    lines.append('        response = ser.read(4096).decode(errors="replace")')
+                    lines.append("        if response:")
+                    lines.append('            ctx.log(f"UART << {response}")')
+            else:
+                lines.append("        pass")
+            lines.append("    finally:")
+            lines.append("        ser.close()")
 
     return "\n".join(lines) + "\n"
 
@@ -737,6 +787,10 @@ def _render_stages_py(spec: NewCarSpec) -> str:
         elif step.type == "adb":
             run_expr = f"_with_connect(m.adb_step_{i})" if spec.wifi else f"m.adb_step_{i}"
             entry.append(f'        "run": {run_expr},')
+        elif step.type == "uart":
+            entry.append(f'        "run": m.uart_step_{i},')
+        elif step.type == "telnet":
+            entry.append(f'        "run": m.telnet_step_{i},')
         elif step.type == "exe" and step.exe_file:
             entry.append(
                 f'        "exe_path": Path(__file__).resolve().parent / "files" / "exe_{i}" '

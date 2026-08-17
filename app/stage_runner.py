@@ -2,7 +2,7 @@
 import importlib.util
 from pathlib import Path
 
-STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction")
+STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction", "uart", "telnet")
 
 
 class StageDefinitionError(RuntimeError):
@@ -27,7 +27,7 @@ def load_stages(model) -> list[dict]:
             )
         if not stage.get("title"):
             raise StageDefinitionError(f"Этап {i}: не задан title")
-        if stage_type in ("usb", "adb") and not callable(stage.get("run")):
+        if stage_type in ("usb", "adb", "uart", "telnet") and not callable(stage.get("run")):
             raise StageDefinitionError(f"Этап {i} ({stage_type}): не задан run(ctx)")
         if stage_type == "exe" and not stage.get("exe_path"):
             raise StageDefinitionError(f"Этап {i} (exe): не задан exe_path")

@@ -70,13 +70,22 @@ class InputBroker:
         self._bridge = bridge
         self._pending: dict[str, tuple[dict, threading.Event]] = {}
 
-    def request(self, prompt: str, title: str = "") -> str | None:
-        """Вызывается на воркер-потоке install/usb-этапа. БЛОКИРУЕТ до ответа."""
+    def request(self, prompt: str, title: str = "", choices: list[str] | None = None,
+                allow_manual: bool = True) -> str | None:
+        """Вызывается на воркер-потоке install/usb-этапа. БЛОКИРУЕТ до ответа.
+        choices — необязательный список готовых вариантов (см. ctx.ask_choice
+        в install_context.py) — тот же event "ask_input", просто с полем
+        choices, JS-сторона сама решает по нему, показать select или
+        обычное текстовое поле (см. showAskInputDialog в stage_wizard.js)."""
         req_id = uuid.uuid4().hex
         holder: dict = {}
         ev = threading.Event()
         self._pending[req_id] = (holder, ev)
-        self._bridge.push({"kind": "ask_input", "id": req_id, "prompt": prompt, "title": title})
+        event = {"kind": "ask_input", "id": req_id, "prompt": prompt, "title": title}
+        if choices:
+            event["choices"] = choices
+            event["allow_manual"] = allow_manual
+        self._bridge.push(event)
         ev.wait()
         holder, _ev = self._pending.pop(req_id)
         return holder.get("value")

@@ -46,8 +46,10 @@
                  placeholder="команда... (shell по умолчанию, connect/pair/tcpip — как есть)"
                  title="Обычный текст выполняется как «adb shell <команда>» на выбранном устройстве. connect/disconnect/pair/tcpip/devices/reboot/root/push/pull/install/uninstall и т.п. — как сама команда adb, без обёртки в shell (например: connect 192.168.1.1:5555)." />
           <button id="adb-console-send">Отправить</button>
+          <input type="number" id="adb-console-wifi-port" value="5555" min="1" max="65535"
+                 style="width: 70px" title="Порт Wi-Fi ADB — не всегда 5555 (например 7777 у некоторых моделей)." />
           <button id="adb-console-wifi-connect"
-                  title="Сначала пробует определить IP магнитолы автоматически (по шлюзу текущей Wi-Fi-сети); если не получится — предложит ввести IP вручную.">Подключить Wi-Fi</button>
+                  title="Сначала пробует определить IP магнитолы автоматически (по шлюзу текущей Wi-Fi-сети); если не получится — сканирует сеть и предложит выбрать/ввести IP вручную.">Подключить Wi-Fi</button>
         </div>
       </div>
     </div>

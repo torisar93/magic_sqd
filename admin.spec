@@ -1,13 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Админ-сборка (см. admin_main_web.py) — тот же app/web/, отдельный .exe/
 # папка, чтобы не путаться с обычной сборкой для техников (magic_sqd.spec).
-# См. комментарии там же про datas/hiddenimports — причина та же.
+# См. комментарии там же про datas/hiddenimports (collect_submodules('serial')
+# для cars/_shared/uart_adb.py) — причина та же.
+from PyInstaller.utils.hooks import collect_submodules
+
 a = Analysis(
     ['admin_main_web.py'],
     pathex=[],
     binaries=[],
     datas=[('app/web/frontend', 'app/web/frontend')],
-    hiddenimports=[],
+    hiddenimports=collect_submodules('serial'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

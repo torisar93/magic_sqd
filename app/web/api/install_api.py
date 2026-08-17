@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
-                           list_devices)
+                           list_devices, scan_for_adb_hosts)
 from ...content_sync import sync_model_files
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir
@@ -199,6 +199,20 @@ class InstallApi:
         output = ((result.stdout or "") + (result.stderr or "")).strip()
         ok = "connected to" in output.lower() or "already connected" in output.lower()
         return {"ok": ok, "auto": auto, "ip": ip, "message": output}
+
+    # Скан локальной подсети на открытый port — для случая, когда шлюз (см.
+    # wifi_connect выше) не помог: магнитола сама подключилась к сети/точке
+    # доступа ноутбука, поэтому IP не совпадает с гейтвеем. Синхронный, как и
+    # wifi_connect — JS-сторона (см. app.js:connectAdbWifi) ждёт результат,
+    # чтобы сразу показать список найденного техникy.
+    def scan_wifi(self, port: int) -> list[str]:
+        self._console_log(f"Сканирую локальную сеть на открытый порт {port}...")
+        found = scan_for_adb_hosts(port)
+        if found:
+            self._console_log(f"Найдены устройства с открытым портом {port}: {', '.join(found)}")
+        else:
+            self._console_log(f"Не нашёл в сети устройств с открытым портом {port}.")
+        return found
 
     def start_stage(self, model_key: str, stage_index: int, device_serial: str | None,
                      selected_apk_paths: list[str]) -> dict:

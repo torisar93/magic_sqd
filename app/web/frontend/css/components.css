@@ -429,7 +429,7 @@ dialog .dialog-actions.spread {
   justify-content: space-between;
 }
 
-dialog input[type="text"], dialog input[type="password"], dialog textarea {
+dialog input[type="text"], dialog input[type="password"], dialog textarea, dialog select {
   width: 100%;
   background: var(--bg);
   color: var(--text);
@@ -439,6 +439,7 @@ dialog input[type="text"], dialog input[type="password"], dialog textarea {
   font-family: inherit;
   font-size: inherit;
   box-sizing: border-box;
+  margin-bottom: 10px;
 }
 
 dialog textarea {

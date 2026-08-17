@@ -46,6 +46,7 @@
   const STEP_TYPE_LABELS = {
     adb: "ADB-команды", usb: "USB-флешка", manual: "Ручной шаг", apps: "Выбор приложений",
     exe: "Готовый установщик (.exe)", check: "Проверка/выбор", instruction: "Инструкция",
+    uart: "UART-команды", telnet: "Telnet (IPv6)",
   };
 
   const MIN_ZOOM = 0.4;
@@ -84,7 +85,7 @@
       type, title: "", description: "", instruction_blocks: [],
       usb_files: [], usb_copy_selected_apks: false, usb_apks_dest: "", usb_shared_folder: "",
       commands: [], adb_install_selected_apks: false, adb_files: [],
-      standard_apks: [], exe_file: null,
+      standard_apks: [], exe_file: null, uart_baudrate: 115200,
       check_var: type === "check" ? generateCheckVar() : "", check_options: [],
       condition_var: "", condition_values: [],
       variants: [],

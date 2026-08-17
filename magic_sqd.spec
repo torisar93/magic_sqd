@@ -8,12 +8,22 @@
 # в установленном пакете. Onedir (не onefile) сохраняется по прежней
 # причине (см. историю этого файла) — не единственная больше, но менять
 # нет смысла: onedir проще для докачки cars/apk рядом с exe.
+#
+# collect_submodules('serial') — pyserial нужен ТОЛЬКО cars/_shared/
+# uart_adb.py, который сам никогда не импортируется из app/ (грузится
+# динамически через importlib из stages.py конкретной модели, см.
+# cars/_shared/load_sibling.py) — статический анализ PyInstaller его не
+# видит и, оставленный сам по себе, не положил бы serial/ в сборку вовсе:
+# на машине техника это стало бы ModuleNotFoundError только на первом
+# UART-этапе, а не на старте программы.
+from PyInstaller.utils.hooks import collect_submodules
+
 a = Analysis(
     ['main_web.py'],
     pathex=[],
     binaries=[],
     datas=[('app/web/frontend', 'app/web/frontend')],
-    hiddenimports=[],
+    hiddenimports=collect_submodules('serial'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

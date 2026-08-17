@@ -62,6 +62,7 @@ def _step_to_dict(step: StepSpec) -> dict:
         "condition_var": step.condition_var, "condition_values": step.condition_values,
         "variants": [_variant_to_dict(v) for v in step.variants],
         "pos_x": step.pos_x, "pos_y": step.pos_y,
+        "uart_baudrate": step.uart_baudrate,
     }
 
 
@@ -93,6 +94,7 @@ def _step_from_dict(data: dict) -> StepSpec:
         condition_var=data.get("condition_var", ""), condition_values=data.get("condition_values") or [],
         variants=[_variant_from_dict(v) for v in (data.get("variants") or [])],
         pos_x=data.get("pos_x", 0.0), pos_y=data.get("pos_y", 0.0),
+        uart_baudrate=data.get("uart_baudrate", 115200),
     )
 
 

@@ -88,6 +88,9 @@ class WebApi:
     def install_wifi_connect(self, port: int, ip: str | None = None) -> dict:
         return self._install.wifi_connect(port, ip)
 
+    def install_scan_wifi(self, port: int) -> list:
+        return self._install.scan_wifi(port)
+
     def install_start_stage(self, model_key: str, stage_index: int, device_serial, selected_apk_paths: list) -> dict:
         return self._install.start_stage(model_key, stage_index, device_serial, selected_apk_paths)
 

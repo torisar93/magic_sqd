@@ -10,7 +10,7 @@
   const TYPE_LABELS = {
     usb: "USB-флешка", adb: "ADB", manual: "Вручную на магнитоле",
     apps: "Выбор приложений", exe: "Готовый установщик (.exe)",
-    check: "Проверка/выбор", instruction: "Инструкция",
+    check: "Проверка/выбор", instruction: "Инструкция", uart: "UART", telnet: "Telnet",
   };
 
   let containerEl, contentEl, navBackBtn, navNextBtn, navLabelEl;
@@ -67,6 +67,7 @@
       <dialog id="ask-input-dialog">
         <form method="dialog" id="ask-input-form">
           <p id="ask-input-prompt"></p>
+          <select id="ask-input-choices" style="width: 100%; margin-bottom: 10px; display: none"></select>
           <input type="text" id="ask-input-value" style="width: 100%; margin-bottom: 10px" />
           <div style="display: flex; justify-content: flex-end; gap: 6px">
             <button type="button" id="ask-input-cancel">Отмена</button>
@@ -84,13 +85,28 @@
     setupAskInputDialog(container);
   }
 
+  // Значение <option>, ведущее к ручному вводу — рядом со списком найденных
+  // сканом вариантов (см. ctx.ask_choice в install_context.py) всегда есть
+  // возможность вписать своё, на случай если нужного нет в списке.
+  const MANUAL_CHOICE_VALUE = "__manual__";
+
   function setupAskInputDialog(container) {
     const dialog = container.querySelector("#ask-input-dialog");
     const form = container.querySelector("#ask-input-form");
     const cancelBtn = container.querySelector("#ask-input-cancel");
+    const select = container.querySelector("#ask-input-choices");
+    const valueInput = container.querySelector("#ask-input-value");
+    select.addEventListener("change", () => {
+      const manual = select.value === MANUAL_CHOICE_VALUE;
+      valueInput.style.display = manual ? "" : "none";
+      if (manual) valueInput.focus();
+    });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
-      const value = container.querySelector("#ask-input-value").value;
+      const usingChoices = select.style.display !== "none";
+      const value = (usingChoices && select.value !== MANUAL_CHOICE_VALUE)
+        ? select.value
+        : valueInput.value;
       const reqId = dialog.dataset.reqId;
       dialog.close();
       window.pywebview.api.install_answer_input(reqId, value || null);
@@ -106,7 +122,32 @@
     const dialog = document.getElementById("ask-input-dialog");
     dialog.dataset.reqId = event.id;
     document.getElementById("ask-input-prompt").textContent = event.prompt;
-    document.getElementById("ask-input-value").value = "";
+    const select = document.getElementById("ask-input-choices");
+    const valueInput = document.getElementById("ask-input-value");
+    valueInput.value = "";
+    const choices = event.choices || [];
+    if (choices.length) {
+      select.innerHTML = "";
+      for (const choice of choices) {
+        const opt = document.createElement("option");
+        opt.value = choice;
+        opt.textContent = choice;
+        select.appendChild(opt);
+      }
+      if (event.allow_manual !== false) {
+        const manualOpt = document.createElement("option");
+        manualOpt.value = MANUAL_CHOICE_VALUE;
+        manualOpt.textContent = "Ввести вручную...";
+        select.appendChild(manualOpt);
+      }
+      select.style.display = "";
+      select.value = choices[0];
+      valueInput.style.display = "none";
+    } else {
+      select.style.display = "none";
+      select.innerHTML = "";
+      valueInput.style.display = "";
+    }
     dialog.showModal();
   }
 
@@ -271,7 +312,8 @@
 
     const builders = {
       check: renderCheckStage, apps: renderAppsStage, manual: renderManualStage,
-      usb: renderUsbStage, exe: renderExeStage, adb: renderAdbStage,
+      usb: renderUsbStage, exe: renderExeStage, adb: renderAdbStage, uart: renderUartStage,
+      telnet: renderTelnetStage,
     };
     (builders[stage.type] || (() => {}))(panel, stage);
     contentEl.appendChild(panel);
@@ -518,6 +560,69 @@
       stopBtn.disabled = false;
       runnerBusy = true;
       const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selectedApkPaths());
+      if (!result.ok) {
+        runnerBusy = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        log(result.error);
+      }
+    });
+    stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
+  }
+
+  // -- uart -------------------------------------------------------------
+  // В отличие от adb-этапа, тут не нужен выбор ADB-устройства — подключение
+  // идёт по последовательному порту (COM), который сам этап (см.
+  // cars/_shared/uart_adb.py:open_uart, ctx.ask_choice) находит
+  // автоматически или предлагает выбрать во время выполнения.
+  function renderUartStage(panel, stage) {
+    panel.appendChild(el("p", {
+      text: "COM-порт для UART определяется автоматически (или предлагается выбрать, если их несколько) во время выполнения этого этапа — устройство ADB для него не требуется.",
+    }));
+    const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
+    const startBtn = el("button", { class: "accent", text: "Начать этот этап" });
+    const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });
+    if (runnerBusy) startBtn.disabled = true;
+    btnRow.appendChild(startBtn);
+    btnRow.appendChild(stopBtn);
+    panel.appendChild(btnRow);
+
+    startBtn.addEventListener("click", async () => {
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      runnerBusy = true;
+      const result = await window.pywebview.api.install_start_stage(model.key, stage.index, null, selectedApkPaths());
+      if (!result.ok) {
+        runnerBusy = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        log(result.error);
+      }
+    });
+    stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
+  }
+
+  // -- telnet -------------------------------------------------------------
+  // Как и uart-этап — без выбора ADB-устройства: IPv6-адрес находится сам
+  // (см. cars/_shared/telnet_adb.py:scan_ipv6_neighbors, ctx.ask_choice)
+  // или предлагается выбрать/ввести во время выполнения этапа.
+  function renderTelnetStage(panel, stage) {
+    panel.appendChild(el("p", {
+      text: "IPv6-адрес магнитолы определяется автоматически (или предлагается выбрать/ввести) во время выполнения этого этапа — устройство ADB для него не требуется.",
+    }));
+    const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
+    const startBtn = el("button", { class: "accent", text: "Начать этот этап" });
+    const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });
+    if (runnerBusy) startBtn.disabled = true;
+    btnRow.appendChild(startBtn);
+    btnRow.appendChild(stopBtn);
+    panel.appendChild(btnRow);
+
+    startBtn.addEventListener("click", async () => {
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      runnerBusy = true;
+      const result = await window.pywebview.api.install_start_stage(model.key, stage.index, null, selectedApkPaths());
       if (!result.ok) {
         runnerBusy = false;
         startBtn.disabled = false;

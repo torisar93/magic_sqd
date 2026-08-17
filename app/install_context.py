@@ -54,6 +54,23 @@ class InstallContext:
             raise InstallCancelled("Ввод отменён пользователем.")
         return value
 
+    def ask_choice(self, prompt, choices, title="Выбор", allow_manual=True):
+        """Как ask_input, но предлагает выбрать из готового списка вариантов
+        (например IP-адреса, найденные сканом сети, см. cars/_shared/
+        wifi_adb.py/telnet_adb.py) — рядом всегда есть пункт "Ввести
+        вручную...", если allow_manual=True (по умолчанию), на случай, если
+        нужного варианта в списке нет или скан ничего не нашёл. Тот же
+        ask_input_fn обслуживает оба диалога — JS-сторона сама решает,
+        показывать select или текстовое поле, по наличию choices в event."""
+        self.check_cancelled()
+        if not self._ask_input_fn:
+            raise RuntimeError("В этом режиме запуска ask_choice недоступен")
+        value = self._ask_input_fn(prompt, title, choices=choices, allow_manual=allow_manual)
+        self.check_cancelled()
+        if not value:
+            raise InstallCancelled("Выбор отменён пользователем.")
+        return value
+
     def sleep(self, seconds):
         end = time.time() + seconds
         while time.time() < end:

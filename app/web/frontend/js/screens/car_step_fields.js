@@ -124,6 +124,63 @@
       container.appendChild(installRow);
     }
 
+    // -- uart ---------------------------------------------------------------
+    function renderUartFields(step) {
+      container.appendChild(el("p", {
+        class: "app-desc",
+        text: "Подключение по UART (последовательный порт, например через USB-UART переходник) — "
+          + "аналог PuTTY. COM-порт выбирается техником на месте во время установки (или "
+          + "определяется сам, если он один) — здесь настраивается только скорость порта.",
+      }));
+      container.appendChild(el("span", { class: "field-label", text: "Скорость порта (бод)" }));
+      const baudInput = el("input", { type: "number", style: "width: 120px; margin-bottom: 10px" });
+      baudInput.value = String(step.uart_baudrate);
+      baudInput.addEventListener("input", () => {
+        step.uart_baudrate = parseInt(baudInput.value, 10) || 115200;
+      });
+      container.appendChild(baudInput);
+
+      container.appendChild(el("span", {
+        class: "field-label",
+        text: "Команды (по одной на строку, по порядку) — отправляются как есть, без обработки",
+      }));
+      const commandsArea = el("textarea", { style: "min-height: 100px; font-family: var(--font-mono)" });
+      commandsArea.value = step.commands.join("\n");
+      commandsArea.addEventListener("input", () => {
+        step.commands = commandsArea.value.split("\n").map((l) => l.trim()).filter(Boolean);
+      });
+      container.appendChild(commandsArea);
+      container.appendChild(el("p", {
+        class: "app-desc",
+        text: "Каждая строка отправляется в порт как есть (с добавлением \\r\\n в конце), "
+          + "ответ устройства (если есть) выводится в лог установки.",
+      }));
+    }
+
+    // -- telnet ---------------------------------------------------------------
+    function renderTelnetFields(step) {
+      container.appendChild(el("p", {
+        class: "app-desc",
+        text: "Подключение по telnet к IPv6-адресу магнитолы (для моделей, где ADB изначально "
+          + "скрыт) — адрес находится автоматически (сканирование соседей в сети) или "
+          + "предлагается выбрать/ввести на месте во время установки, порт 23.",
+      }));
+      container.appendChild(el("span", {
+        class: "field-label",
+        text: "Команды (по одной на строку) — каждая отправляется отдельным telnet-подключением",
+      }));
+      const commandsArea = el("textarea", { style: "min-height: 80px; font-family: var(--font-mono)" });
+      commandsArea.value = step.commands.join("\n");
+      commandsArea.addEventListener("input", () => {
+        step.commands = commandsArea.value.split("\n").map((l) => l.trim()).filter(Boolean);
+      });
+      container.appendChild(commandsArea);
+      container.appendChild(el("p", {
+        class: "app-desc",
+        text: 'Пусто — используется команда по умолчанию: "setprop persist.service.adb.button.visible ON" (включает кнопку ADB в настройках Android).',
+      }));
+    }
+
     // -- usb/apps: одиночный набор ИЛИ несколько именованных вариантов -------
     function renderUsbFields(step) {
       renderVariantToggle(step, "usb_files", "Файлы всех вариантов будут потеряны.");
@@ -455,6 +512,7 @@
     const typeBuilders = {
       adb: renderAdbFields, usb: renderUsbFields, apps: renderAppsFields,
       exe: renderExeFields, check: renderCheckFields, instruction: renderInstructionFields,
+      uart: renderUartFields, telnet: renderTelnetFields,
     };
 
     function renderTypeFields(step) {

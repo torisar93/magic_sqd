@@ -1,5 +1,8 @@
 """Низкоуровневые обёртки над adb.exe."""
+import concurrent.futures
+import ipaddress
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -54,6 +57,53 @@ def get_default_gateway_ip() -> str | None:
         return None
     ip = (result.stdout or "").strip()
     return ip or None
+
+
+def scan_for_adb_hosts(port: int, timeout: float = 0.25) -> list[str]:
+    """Независимая копия cars/_shared/wifi_adb.py:scan_for_adb_hosts — для
+    кнопки "Подключить Wi-Fi" под логом главного окна (см.
+    app/web/api/install_api.py:scan_wifi), которая не привязана к
+    конкретной модели и не может импортировать cars/_shared (тот
+    подгружается отдельно, только при установке конкретной модели). Ищет
+    хосты локальной подсети с открытым port — нужен, когда магнитола сама
+    подключается к сети/точке доступа ноутбука (её IP тогда заранее
+    неизвестен, в отличие от случая, покрытого get_default_gateway_ip)."""
+    try:
+        result = subprocess.run(
+            [find_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
+             "$c = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
+             "| Select-Object -First 1; "
+             "if ($c) { \"$($c.IPv4Address.IPAddress)/$($c.IPv4Address.PrefixLength)\" }"],
+            capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    output = (result.stdout or "").strip()
+    if not output:
+        return []
+    try:
+        iface = ipaddress.ip_interface(output)
+    except ValueError:
+        return []
+    # Не крупнее /24 — см. обоснование в wifi_adb.py:_get_local_ipv4_and_subnet.
+    prefix = max(iface.network.prefixlen, 24)
+    network = ipaddress.ip_network(f"{iface.ip}/{prefix}", strict=False)
+    own_ip = str(iface.ip)
+    hosts = [str(h) for h in network.hosts() if str(h) != own_ip]
+
+    def probe(ip: str) -> str | None:
+        try:
+            with socket.create_connection((ip, port), timeout=timeout):
+                return ip
+        except OSError:
+            return None
+
+    found = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=128) as pool:
+        for ip in pool.map(probe, hosts):
+            if ip:
+                found.append(ip)
+    return sorted(found, key=lambda ip: tuple(int(part) for part in ip.split(".")))
 
 
 class AdbError(RuntimeError):
