@@ -46,6 +46,7 @@ class SyncApi:
         запуск программы (нет базовой линии для сравнения — см.
         update_tracker.compute_changes)."""
         self._remove_demo_car()
+        self._remove_stale_merged_models()
         changes: list[dict] = []
         base_url = get_base_url(self.base_dir)
         if base_url:
@@ -104,6 +105,50 @@ class SyncApi:
         demo_dir = self.cars_dir / "Demo"
         if demo_dir.exists():
             shutil.rmtree(demo_dir, ignore_errors=True)
+
+    # Плоские модели (например Geely/Cityray (со значком Wi-Fi)), объединённые
+    # в v0.4.0-alpha в группы с модификациями (Geely/Cityray/со значком Wi-Fi
+    # (до 2026)) — sync_scripts только докачивает новое, никогда не удаляет
+    # то, чего больше нет на сервере (см. content_sync.sync_tree), поэтому у
+    # техника, уже видевшего старые плоские папки, остались бы ОБА варианта
+    # разом (видимое задвоение машины в списке). Тот же приём, что и
+    # _remove_demo_car — явное разовое удаление старых путей при каждом
+    # запуске, пока они не исчезнут.
+    _STALE_MERGED_DIRS = (
+        ("Belgee", "X70 - Atlas Pro"), ("Belgee", "X70 после дек 2025"), ("Belgee", "X70 рест"),
+        ("Changan", "CS75 Plus 1gen 3gen"), ("Changan", "CS75 Plus 4gen"),
+        ("Chery", "Tiggo 7 Pro Max 2023"), ("Chery", "Tiggo 7 Pro Max 2024"),
+        ("Exeed", "TXL 2020"), ("Exeed", "TXL 2024"),
+        ("Exeed", "VX дорест"), ("Exeed", "VX рест 3 экрана"),
+        ("GAC", "GS8 Carplay"), ("GAC", "GS8 II"),
+        ("Geely", "Cityray (со значком Wi-Fi)"), ("Geely", "Cityray после 2026 (без Wi-Fi, Monji)"),
+        ("Geely", "Monjaro 2026"), ("Geely", "Monjaro SE"),
+        ("Haval", "F7 1рест"), ("Haval", "F7 New - F7x New"),
+        ("Jetour", "Dashing 10 Android"),
+        ("Omoda", "C5 2026"),
+        ("Voyah", "Free NXP"),
+    )
+    # Тут имя старой плоской модели СОВПАДАЕТ с именем новой группы (папка
+    # та же самая) — нельзя удалить папку целиком, там теперь ещё и
+    # подпапки-модификации лежат (уже докачанные обычным sync). Убираем
+    # только СВОИ файлы верхнего уровня старой плоской модели.
+    _STALE_SELF_NAMED = (
+        ("Geely", "Monjaro"), ("Jetour", "Dashing"), ("Omoda", "C5"), ("Voyah", "Free"),
+    )
+
+    def _remove_stale_merged_models(self) -> None:
+        for brand, name in self._STALE_MERGED_DIRS:
+            d = self.cars_dir / brand / name
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+        for brand, name in self._STALE_SELF_NAMED:
+            d = self.cars_dir / brand / name
+            if not d.exists() or not (d / "stages.py").exists():
+                continue
+            for fname in ("install.py", "stages.py", "version.json", "_wizard_spec.json"):
+                (d / fname).unlink(missing_ok=True)
+            for dname in ("files", "usb_files", "__pycache__"):
+                shutil.rmtree(d / dname, ignore_errors=True)
 
     def _start_heartbeat(self) -> None:
         if self._heartbeat_started:
