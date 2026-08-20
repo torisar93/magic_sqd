@@ -76,7 +76,7 @@ class WebApi:
     def install_load_stages(self, model_key: str) -> dict:
         return self._install.load_stages(model_key)
 
-    def install_standard_apks(self, model_key: str, stage_index: int, variant) -> list:
+    def install_standard_apks(self, model_key: str, stage_index: int, variant) -> dict:
         return self._install.standard_apks(model_key, stage_index, variant)
 
     def install_list_devices(self) -> list:
@@ -96,6 +96,10 @@ class WebApi:
 
     def install_cancel_stage(self) -> dict:
         return self._install.cancel_stage()
+
+    def install_run_action(self, model_key: str, stage_index: int, action_index: int, device_serial,
+                            selected_apk_paths: list) -> dict:
+        return self._install.run_action(model_key, stage_index, action_index, device_serial, selected_apk_paths)
 
     def install_answer_input(self, req_id: str, value) -> dict:
         return self._install.answer_input(req_id, value)

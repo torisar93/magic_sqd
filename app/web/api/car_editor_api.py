@@ -19,7 +19,7 @@ from ..events import event_bridge
 from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cached_session,
                               get_cached_session, login, set_cached_session, upload_model)
 from ...admin_config import get_admin_base_url
-from ...car_generator import (INVALID_NAME_CHARS, CarGenerationError, NewCarSpec, StepSpec,
+from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec, StepSpec,
                                StepVariant, create_car, load_car_spec, update_car)
 from ...instruction_html import default_blocks, render_document
 from ...ping_client import get_or_create_client_id
@@ -42,7 +42,8 @@ def _files_to_dicts(paths: list[Path]) -> list[dict]:
 
 def _variant_to_dict(v: StepVariant) -> dict:
     return {"name": v.name, "usb_files": _files_to_dicts(v.usb_files),
-            "standard_apks": _files_to_dicts(v.standard_apks)}
+            "standard_apks": _files_to_dicts(v.standard_apks),
+            "standard_apks_optional": _files_to_dicts(v.standard_apks_optional)}
 
 
 def _step_to_dict(step: StepSpec) -> dict:
@@ -57,12 +58,14 @@ def _step_to_dict(step: StepSpec) -> dict:
         "adb_install_selected_apks": step.adb_install_selected_apks,
         "adb_files": _files_to_dicts(step.adb_files),
         "standard_apks": _files_to_dicts(step.standard_apks),
+        "standard_apks_optional": _files_to_dicts(step.standard_apks_optional),
         "exe_file": _file_dict(step.exe_file) if step.exe_file else None,
         "check_var": step.check_var, "check_options": step.check_options,
         "condition_var": step.condition_var, "condition_values": step.condition_values,
         "variants": [_variant_to_dict(v) for v in step.variants],
         "pos_x": step.pos_x, "pos_y": step.pos_y,
         "uart_baudrate": step.uart_baudrate,
+        "actions": [{"label": a.label, "kind": a.kind, "commands": a.commands} for a in step.actions],
     }
 
 
@@ -73,7 +76,8 @@ def _files_from_dicts(items: list[dict]) -> list[Path]:
 def _variant_from_dict(data: dict) -> StepVariant:
     return StepVariant(name=data.get("name", ""),
                         usb_files=_files_from_dicts(data.get("usb_files")),
-                        standard_apks=_files_from_dicts(data.get("standard_apks")))
+                        standard_apks=_files_from_dicts(data.get("standard_apks")),
+                        standard_apks_optional=_files_from_dicts(data.get("standard_apks_optional")))
 
 
 def _step_from_dict(data: dict) -> StepSpec:
@@ -89,12 +93,17 @@ def _step_from_dict(data: dict) -> StepSpec:
         adb_install_selected_apks=data.get("adb_install_selected_apks", False),
         adb_files=_files_from_dicts(data.get("adb_files")),
         standard_apks=_files_from_dicts(data.get("standard_apks")),
+        standard_apks_optional=_files_from_dicts(data.get("standard_apks_optional")),
         exe_file=Path(exe_file["path"]) if exe_file else None,
         check_var=data.get("check_var", ""), check_options=data.get("check_options") or [],
         condition_var=data.get("condition_var", ""), condition_values=data.get("condition_values") or [],
         variants=[_variant_from_dict(v) for v in (data.get("variants") or [])],
         pos_x=data.get("pos_x", 0.0), pos_y=data.get("pos_y", 0.0),
         uart_baudrate=data.get("uart_baudrate", 115200),
+        actions=[
+            ActionSpec(label=a.get("label", ""), kind=a.get("kind", "command"), commands=a.get("commands") or [])
+            for a in (data.get("actions") or [])
+        ],
     )
 
 

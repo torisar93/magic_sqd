@@ -181,6 +181,94 @@
       }));
     }
 
+    // -- actions --------------------------------------------------------
+    const ACTION_KIND_LABELS = {
+      command: "Команда(ы) ADB",
+      grant_permissions: "Выдать разрешения приложению",
+      mock_location: "Приложение для фиктивных местоположений",
+    };
+
+    const ACTION_COMMAND_HELP_TEXT =
+      'По одной команде на строку — обычные "adb shell"-команды. Также доступны спецкоманды:\n' +
+      "#sleep 5 — пауза 5 секунд\n#reboot — перезагрузить магнитолу и дождаться загрузки\n" +
+      "#reboot_nowait — перезагрузить, не дожидаясь\n#root — adb root\n" +
+      "#ask Введите значение — спросить у пользователя, ответ можно подставить в следующую команду " +
+      "через {ask}.\n\n#push/#install здесь не поддерживаются (нет прикреплённых файлов) — для " +
+      "установки/закачки файлов используйте отдельный этап «ADB».";
+
+    function renderActionsFields(step) {
+      container.appendChild(el("p", {
+        class: "app-desc",
+        text: "Кнопки, которые техник сможет нажимать в любом порядке и по несколько раз на этом "
+          + "этапе (например запустить приложение, выдать ему разрешения, назначить приложение для "
+          + "фиктивных местоположений) — не обязательны для перехода «Далее».",
+      }));
+      const listWrap = el("div");
+      container.appendChild(listWrap);
+      renderActionsList(step, listWrap);
+      container.appendChild(el("button", {
+        text: "Добавить действие",
+        onclick: () => { step.actions.push({ label: "", kind: "command", commands: [] }); rerender(); },
+      }));
+    }
+
+    function renderActionsList(step, wrap) {
+      clear(wrap);
+      if (!step.actions.length) {
+        wrap.appendChild(el("p", { class: "app-desc", text: "Действий пока нет — добавьте хотя бы одно ниже." }));
+        return;
+      }
+      step.actions.forEach((action, i) => {
+        const card = el("div", { class: "instruction-block-row" });
+        card.appendChild(el("div", { class: "block-row-header" }, [
+          el("span", { text: `Действие ${i + 1}` }),
+          el("button", {
+            class: "danger icon-btn", text: "✕",
+            onclick: () => { step.actions.splice(i, 1); rerender(); },
+          }),
+        ]));
+
+        card.appendChild(el("span", { class: "field-label", text: "Название кнопки (что увидит техник)" }));
+        const labelInput = el("input", { type: "text", placeholder: 'например "Запустить приложение"' });
+        labelInput.value = action.label;
+        labelInput.addEventListener("input", () => { action.label = labelInput.value; });
+        card.appendChild(labelInput);
+
+        card.appendChild(el("span", { class: "field-label", style: "margin-top: 6px", text: "Тип действия" }));
+        const kindSelect = el("select", {}, Object.entries(ACTION_KIND_LABELS).map(([value, text]) =>
+          el("option", { value, text, selected: value === action.kind ? "" : null })));
+        kindSelect.addEventListener("change", () => { action.kind = kindSelect.value; rerender(); });
+        card.appendChild(kindSelect);
+
+        if (action.kind === "command") {
+          card.appendChild(el("span", { class: "field-label", style: "margin-top: 6px", text: "Команды (по одной на строку)" }));
+          const commandsArea = el("textarea", { style: "min-height: 70px; font-family: var(--font-mono)" });
+          commandsArea.value = action.commands.join("\n");
+          commandsArea.addEventListener("input", () => {
+            action.commands = commandsArea.value.split("\n").map((l) => l.trim()).filter(Boolean);
+          });
+          card.appendChild(commandsArea);
+          card.appendChild(buildSpoiler("Справка по командам", ACTION_COMMAND_HELP_TEXT));
+        } else if (action.kind === "grant_permissions") {
+          card.appendChild(el("p", {
+            class: "app-desc", style: "margin-top: 4px",
+            text: "Во время установки техник выберет приложение из списка, установленного на магнитоле "
+              + "— программа сама выдаст ему все доступные через ADB разрешения, включая специальные "
+              + "(изменение системных настроек, показ поверх других окон, спецвозможности), которые "
+              + "нельзя выдать обычным способом на многих магнитолах.",
+          }));
+        } else if (action.kind === "mock_location") {
+          card.appendChild(el("p", {
+            class: "app-desc", style: "margin-top: 4px",
+            text: "Во время установки техник выберет приложение из списка, установленного на магнитоле "
+              + "— оно будет назначено приложением для фиктивных местоположений (имитация GPS), и эта "
+              + "возможность будет включена.",
+          }));
+        }
+        wrap.appendChild(card);
+      });
+    }
+
     // -- usb/apps: одиночный набор ИЛИ несколько именованных вариантов -------
     function renderUsbFields(step) {
       renderVariantToggle(step, "usb_files", "Файлы всех вариантов будут потеряны.");
@@ -261,10 +349,19 @@
       renderVariantToggle(step, "standard_apks", "APK всех вариантов будут потеряны.");
       if (step.variants.length) {
         renderVariantSelector(step);
-        renderVariantFileList(step, "standard_apks", "apk", "APK варианта «{name}»");
+        renderVariantFileList(step, "standard_apks", "apk", "Обязательные APK варианта «{name}»");
+        renderVariantFileList(step, "standard_apks_optional", "apk", "Необязательные APK варианта «{name}» (техник выбирает сам)");
       } else {
-        container.appendChild(el("span", { class: "field-label", text: "APK стандартного набора для этого этапа" }));
+        container.appendChild(el("span", {
+          class: "field-label",
+          text: "Обязательные APK (ставятся всегда, без чекбокса и права отключить)",
+        }));
         container.appendChild(buildFileList(step.standard_apks, "apk", true, () => rerender()));
+        container.appendChild(el("span", {
+          class: "field-label", style: "margin-top: 8px",
+          text: "Необязательные APK (техник выбирает сам при установке)",
+        }));
+        container.appendChild(buildFileList(step.standard_apks_optional, "apk", true, () => rerender()));
       }
     }
 
@@ -274,7 +371,15 @@
       checkbox.checked = step.variants.length > 0;
       checkbox.addEventListener("change", async () => {
         if (checkbox.checked && !step.variants.length) {
-          step.variants = [{ name: "Вариант 1", usb_files: singleField === "usb_files" ? step[singleField] : [], standard_apks: singleField === "standard_apks" ? step[singleField] : [] }];
+          const variant = { name: "Вариант 1", usb_files: [], standard_apks: [], standard_apks_optional: [] };
+          if (singleField === "usb_files") {
+            variant.usb_files = step.usb_files;
+          } else if (singleField === "standard_apks") {
+            variant.standard_apks = step.standard_apks;
+            variant.standard_apks_optional = step.standard_apks_optional;
+            step.standard_apks_optional = [];
+          }
+          step.variants = [variant];
           step[singleField] = [];
         } else if (!checkbox.checked && step.variants.length) {
           if (!(await window.confirmDialog(`Убрать варианты и вернуться к одному набору файлов? ${warnText}`))) {
@@ -320,7 +425,7 @@
         await window.notice("Название должно быть непустым и уникальным.");
         return;
       }
-      step.variants.push({ name, usb_files: [], standard_apks: [] });
+      step.variants.push({ name, usb_files: [], standard_apks: [], standard_apks_optional: [] });
       editingVariantIndex = step.variants.length - 1;
       rerender();
     }
@@ -512,7 +617,7 @@
     const typeBuilders = {
       adb: renderAdbFields, usb: renderUsbFields, apps: renderAppsFields,
       exe: renderExeFields, check: renderCheckFields, instruction: renderInstructionFields,
-      uart: renderUartFields, telnet: renderTelnetFields,
+      uart: renderUartFields, telnet: renderTelnetFields, actions: renderActionsFields,
     };
 
     function renderTypeFields(step) {

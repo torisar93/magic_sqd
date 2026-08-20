@@ -11,6 +11,7 @@
     usb: "USB-флешка", adb: "ADB", manual: "Вручную на магнитоле",
     apps: "Выбор приложений", exe: "Готовый установщик (.exe)",
     check: "Проверка/выбор", instruction: "Инструкция", uart: "UART", telnet: "Telnet",
+    actions: "Доп. команды",
   };
 
   let containerEl, contentEl, navBackBtn, navNextBtn, navLabelEl;
@@ -155,6 +156,14 @@
     runnerBusy = false;
     log(event.message);
     if (event.stage_index !== currentIndex) return; // ушли с этой страницы, пока этап работал в фоне
+    // "actions" — кнопки необязательны и нажимаются в любом порядке/сколько
+    // угодно раз, поэтому в отличие от остальных типов этапов ни успех, ни
+    // ошибка одного действия не переводят на следующий этап сами по себе —
+    // технику решает об этом сам, нажав "Далее".
+    if (stages[currentIndex] && stages[currentIndex].type === "actions") {
+      render();
+      return;
+    }
     if (event.success) {
       advanceAfter(currentIndex);
     } else {
@@ -190,7 +199,11 @@
     for (const stage of stages) {
       if (stage.type !== "apps") continue;
       const standard = await window.pywebview.api.install_standard_apks(model.key, stage.index, null);
-      for (const apk of standard) {
+      // required — не чекбокс вовсе (см. buildAppRow), но appSelection всё
+      // равно держит их как true — этим же словарём собирается финальный
+      // список APK на установку (см. selectedApkPaths), не отдельным путём.
+      for (const apk of standard.required) appSelection[apk.path] = true;
+      for (const apk of standard.optional) {
         if (!(apk.path in appSelection)) appSelection[apk.path] = true;
       }
     }
@@ -313,7 +326,7 @@
     const builders = {
       check: renderCheckStage, apps: renderAppsStage, manual: renderManualStage,
       usb: renderUsbStage, exe: renderExeStage, adb: renderAdbStage, uart: renderUartStage,
-      telnet: renderTelnetStage,
+      telnet: renderTelnetStage, actions: renderActionsStage,
     };
     (builders[stage.type] || (() => {}))(panel, stage);
     contentEl.appendChild(panel);
@@ -367,7 +380,8 @@
       chosenVariants[index] = select.value;
       if (stage.type === "apps") {
         const standard = await window.pywebview.api.install_standard_apks(model.key, index, select.value);
-        for (const apk of standard) {
+        for (const apk of standard.required) appSelection[apk.path] = true;
+        for (const apk of standard.optional) {
           if (!(apk.path in appSelection)) appSelection[apk.path] = true;
         }
       }
@@ -411,12 +425,22 @@
   async function buildAppsTree(stage) {
     const tree = el("div", { class: "apps-tree" });
 
+    // Сверху вниз: обязательные (всегда ставятся, без чекбокса) →
+    // необязательные этой машины (чекбоксом, техник решает сам) →
+    // дополнительные из общей библиотеки apk/ (см. buildAppRow/
+    // buildCollapsibleSection ниже — required=true рисует уже отмеченный и
+    // задизейбленный чекбокс, чтобы визуально было видно, что это тоже
+    // приложение, просто без права его снять).
     const standard = await window.pywebview.api.install_standard_apks(model.key, stage.index, chosenVariants[stage.index]);
-    for (const apk of standard) {
+    for (const apk of standard.required) appSelection[apk.path] = true;
+    for (const apk of standard.optional) {
       if (!(apk.path in appSelection)) appSelection[apk.path] = true;
     }
-    if (standard.length) {
-      tree.appendChild(buildCollapsibleSection("standard", stage.standard_label || "Стандартные приложения", standard));
+    if (standard.required.length) {
+      tree.appendChild(buildCollapsibleSection("standard-required", "Обязательные приложения", standard.required, null, true));
+    }
+    if (standard.optional.length) {
+      tree.appendChild(buildCollapsibleSection("standard-optional", "Необязательные приложения", standard.optional));
     }
 
     const shared = await sharedApks();
@@ -436,7 +460,7 @@
     return tree;
   }
 
-  function buildCollapsibleSection(key, title, apks, presetBody) {
+  function buildCollapsibleSection(key, title, apks, presetBody, required) {
     const collapsed = sectionCollapsed[key] || false;
     const wrap = el("div");
     const header = el("div", { class: "apps-section-header" }, [
@@ -454,16 +478,26 @@
     wrap.appendChild(header);
     wrap.appendChild(body);
     if (apks) {
-      for (const apk of apks) body.appendChild(buildAppRow(apk));
+      for (const apk of apks) body.appendChild(buildAppRow(apk, required));
     }
     return wrap;
   }
 
-  function buildAppRow(apk) {
+  // required — обязательное приложение этой машины (StepSpec.standard_apks,
+  // см. car_generator.py): чекбокс показывается уже отмеченным и
+  // задизейбленным — техник видит, что оно будет установлено, но не может
+  // его снять (appSelection для него и так всегда true — выставляется в
+  // buildAppsTree/initAppSelectionDefaults, не через этот чекбокс).
+  function buildAppRow(apk, required) {
     const row = el("div", { class: "app-row" });
     const checkbox = el("input", { type: "checkbox" });
-    checkbox.checked = !!appSelection[apk.path];
-    checkbox.addEventListener("change", () => { appSelection[apk.path] = checkbox.checked; });
+    if (required) {
+      checkbox.checked = true;
+      checkbox.disabled = true;
+    } else {
+      checkbox.checked = !!appSelection[apk.path];
+      checkbox.addEventListener("change", () => { appSelection[apk.path] = checkbox.checked; });
+    }
     const label = apk.name + (apk.remote_only ? "  ⬇ (будет скачан)" : "");
     const wrap = el("div", {}, [
       el("label", { class: "row" }, [checkbox, el("span", { text: label, style: apk.remote_only ? "color: var(--text-dim)" : "" })]),
@@ -631,6 +665,70 @@
       }
     });
     stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
+  }
+
+  // -- actions --------------------------------------------------------------
+  // В отличие от остальных этапов с run — тут не одна кнопка "Начать этап", а
+  // по кнопке на каждое действие (StepSpec.actions в car_generator.py),
+  // технику можно нажимать их в любом порядке и по несколько раз (см.
+  // onInstallFinished — успех/ошибка действия не переводит на следующий этап
+  // сами по себе). Нужно ADB-устройство, как и у "adb"-этапа — команды/выдача
+  // разрешений/фиктивные местоположения все идут через ctx.shell.
+  async function renderActionsStage(panel, stage) {
+    panel.appendChild(el("span", { class: "field-label", text: "Устройство" }));
+    const row = el("div", { class: "row" });
+    const select = el("select", { style: "flex: 1" });
+    row.appendChild(select);
+    const refreshBtn = el("button", { text: "Обновить" });
+    row.appendChild(refreshBtn);
+    panel.appendChild(row);
+
+    let deviceByLabel = {};
+    async function refreshDevices() {
+      const devices = await window.pywebview.api.install_list_devices();
+      deviceByLabel = {};
+      clear(select);
+      for (const d of devices) {
+        let label = d.serial;
+        if (d.model) label += `  (${d.model})`;
+        if (d.state !== "device") label += `  [${d.state}]`;
+        deviceByLabel[label] = d.state === "device" ? d.serial : null;
+        select.appendChild(el("option", { value: label, text: label }));
+      }
+    }
+    refreshBtn.addEventListener("click", refreshDevices);
+    await refreshDevices();
+
+    const actions = stage.actions || [];
+    const list = el("div", { style: "display: flex; flex-direction: column; gap: 6px; margin-top: 12px" });
+    if (!actions.length) {
+      list.appendChild(el("p", { class: "placeholder-text", text: "Для этого этапа не задано ни одного действия." }));
+    }
+    const buttons = [];
+    const setButtonsDisabled = (disabled) => { for (const b of buttons) b.disabled = disabled; };
+    actions.forEach((action, i) => {
+      const btn = el("button", { class: "accent", text: action.label || `Действие ${i + 1}` });
+      btn.disabled = runnerBusy;
+      buttons.push(btn);
+      btn.addEventListener("click", async () => {
+        const device = deviceByLabel[select.value];
+        if (!device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
+        runnerBusy = true;
+        setButtonsDisabled(true);
+        const result = await window.pywebview.api.install_run_action(model.key, stage.index, i, device, selectedApkPaths());
+        if (!result.ok) {
+          runnerBusy = false;
+          setButtonsDisabled(false);
+          log(result.error);
+        }
+      });
+      list.appendChild(btn);
+    });
+    panel.appendChild(list);
+    panel.appendChild(el("p", {
+      class: "app-desc", style: "margin-top: 10px",
+      text: "Эти кнопки необязательны — можно нажимать в любом порядке и по несколько раз. Когда закончите, нажмите «Далее».",
+    }));
   }
 
   window.stageWizard = { init, open };

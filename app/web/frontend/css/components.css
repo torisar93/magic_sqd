@@ -486,9 +486,9 @@ dialog .field {
    редактор инструкции (js/screens/instruction_editor.js) — большие
    диалоги, занимают почти всё окно, с внутренней прокруткой. ---- */
 dialog.dialog-large {
-  width: min(1100px, 95vw);
-  height: 88vh;
-  max-height: 88vh;
+  width: min(1300px, 96vw);
+  height: 92vh;
+  max-height: 92vh;
   flex-direction: column;
 }
 

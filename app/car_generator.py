@@ -35,12 +35,38 @@ class StepVariant:
     типу этапа-владельца."""
     name: str = ""
     usb_files: list[Path] = field(default_factory=list)
+    # "apps" — обязательные (всегда устанавливаются, без чекбокса) и
+    # необязательные (техник выбирает сам, чекбоксом — см. StepSpec ниже)
+    # APK этого варианта.
     standard_apks: list[Path] = field(default_factory=list)
+    standard_apks_optional: list[Path] = field(default_factory=list)
+
+
+@dataclass
+class ActionSpec:
+    """Одна кнопка "actions"-этапа (StepSpec.actions ниже) — необязательные
+    ADB-команды/спецдействия, которые техник может нажать после установки
+    (или в любой другой момент, куда поставили этот этап) в любом порядке
+    и по несколько раз: запустить приложение, выдать разрешения, включить
+    фиктивные местоположения и т.п."""
+    label: str = ""
+    # "command" — commands ниже (тот же мини-DSL, что и у "adb"-этапа, см.
+    # _parse_adb_line/_render_command_body, но без прикреплённых файлов —
+    # #push/#install тут не поддерживаются). "grant_permissions" —
+    # список приложений магнитолы предлагается выбрать во время установки
+    # (ctx.ask_choice), дальше cars/_shared/adb_permissions.py.
+    # grant_all_permissions сам выдаёт все обычные и специальные разрешения
+    # (в т.ч. недоступные через штатный экран настроек на многих магнитолах).
+    # "mock_location" — то же самое, но cars/_shared/adb_permissions.py.
+    # set_mock_location_app назначает выбранное приложение приложением для
+    # фиктивных местоположений и включает саму возможность.
+    kind: str = "command"
+    commands: list[str] = field(default_factory=list)
 
 
 @dataclass
 class StepSpec:
-    type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check" | "instruction" | "uart" | "telnet"
+    type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check" | "instruction" | "uart" | "telnet" | "actions"
     title: str = ""
     description: str = ""
     # "instruction" — часть общей инструкции (заголовки/шаги/плашки/фото),
@@ -95,8 +121,19 @@ class StepSpec:
     # open_uart), т.к. заранее неизвестен и может быть разным на разных
     # компьютерах.
     uart_baudrate: int = 115200
-    # "apps" — используется, только если variants (см. ниже) пуст
+    # "actions" — см. ActionSpec выше.
+    actions: list[ActionSpec] = field(default_factory=list)
+    # "apps" — используется, только если variants (см. ниже) пуст.
+    # standard_apks — обязательные: устанавливаются всегда, без чекбокса и
+    # без возможности отключить техником (см. app/stage_wizard.js:
+    # buildAppRow(apk, required=true) — чекбокс показывается уже отмеченным
+    # и задизейбленным). standard_apks_optional — необязательные: отдельным
+    # разделом с обычными чекбоксами, техник решает сам. Оба показываются
+    # ВЫШЕ выбора из общей библиотеки apk/ (см. install_api.py:
+    # standard_apks — читает их из подпапок files/pack*/required и
+    # .../optional соответственно).
     standard_apks: list[Path] = field(default_factory=list)
+    standard_apks_optional: list[Path] = field(default_factory=list)
     # "exe" — готовый установщик, который производитель магнитолы даёт
     # только собранным .exe без исходных скриптов/инструкций; этап просто
     # даёт пользователю его запустить и завершить установку в нём самому
@@ -229,6 +266,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         step_type = step_data.get("type", "manual")
         usb_files: list[Path] = []
         standard_apks: list[Path] = []
+        standard_apks_optional: list[Path] = []
         exe_file: Path | None = None
         variants: list[StepVariant] = []
         variant_data = step_data.get("variants") or []
@@ -251,10 +289,14 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
                     v_dir = pack_dir / v.get("name", "")
                     variants.append(StepVariant(
                         name=v.get("name", ""),
-                        standard_apks=[v_dir / name for name in v.get("standard_apks", [])],
+                        standard_apks=[v_dir / "required" / name for name in v.get("standard_apks", [])],
+                        standard_apks_optional=[
+                            v_dir / "optional" / name for name in v.get("standard_apks_optional", [])],
                     ))
             else:
-                standard_apks = [pack_dir / name for name in step_data.get("standard_apks", [])]
+                standard_apks = [pack_dir / "required" / name for name in step_data.get("standard_apks", [])]
+                standard_apks_optional = [
+                    pack_dir / "optional" / name for name in step_data.get("standard_apks_optional", [])]
         elif step_type == "exe" and step_data.get("exe_file"):
             exe_file = files_dir / f"exe_{i}" / step_data["exe_file"]
         adb_files: list[Path] = []
@@ -272,6 +314,10 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             # пути фото-блоков в этом файле считаются от instr_step_dir/images/
             # (см. instruction_html.save_instruction/_write_model_files).
             instruction_blocks = instruction_html.parse_blocks(text, instr_step_dir) or []
+        actions = [
+            ActionSpec(label=a.get("label", ""), kind=a.get("kind", "command"), commands=a.get("commands") or [])
+            for a in step_data.get("actions", [])
+        ]
         steps.append(StepSpec(
             type=step_type,
             title=step_data.get("title", ""),
@@ -285,6 +331,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             adb_install_selected_apks=step_data.get("adb_install_selected_apks", False),
             adb_files=adb_files,
             standard_apks=standard_apks,
+            standard_apks_optional=standard_apks_optional,
             exe_file=exe_file,
             check_var=step_data.get("check_var", ""),
             check_options=step_data.get("check_options", []),
@@ -294,6 +341,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             pos_x=step_data.get("pos_x", 0.0),
             pos_y=step_data.get("pos_y", 0.0),
             uart_baudrate=step_data.get("uart_baudrate", 115200),
+            actions=actions,
         ))
 
     return NewCarSpec(
@@ -354,19 +402,29 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
             if step.variants:
                 for variant in step.variants:
                     variant_dir = pack_dir / variant.name
-                    variant_dir.mkdir(parents=True, exist_ok=True)
-                    for apk in variant.standard_apks:
-                        dst = (variant_dir / apk.name).resolve()
+                    for subdir_name, apks in (("required", variant.standard_apks),
+                                               ("optional", variant.standard_apks_optional)):
+                        if not apks:
+                            continue
+                        sub_dir = variant_dir / subdir_name
+                        sub_dir.mkdir(parents=True, exist_ok=True)
+                        for apk in apks:
+                            dst = (sub_dir / apk.name).resolve()
+                            if apk.resolve() != dst:
+                                shutil.copy2(apk, dst)
+                            keep_paths.add(dst)
+            else:
+                for subdir_name, apks in (("required", step.standard_apks),
+                                           ("optional", step.standard_apks_optional)):
+                    if not apks:
+                        continue
+                    sub_dir = pack_dir / subdir_name
+                    sub_dir.mkdir(parents=True, exist_ok=True)
+                    for apk in apks:
+                        dst = (sub_dir / apk.name).resolve()
                         if apk.resolve() != dst:
                             shutil.copy2(apk, dst)
                         keep_paths.add(dst)
-            elif step.standard_apks:
-                pack_dir.mkdir(parents=True, exist_ok=True)
-                for apk in step.standard_apks:
-                    dst = (pack_dir / apk.name).resolve()
-                    if apk.resolve() != dst:
-                        shutil.copy2(apk, dst)
-                    keep_paths.add(dst)
         elif step.type == "usb":
             usb_step_dir = usb_root / f"step_{i}"
             if step.variants:
@@ -463,6 +521,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "adb_install_selected_apks": step.adb_install_selected_apks,
                 "adb_files": [f.name for f in step.adb_files],
                 "standard_apks": [f.name for f in step.standard_apks],
+                "standard_apks_optional": [f.name for f in step.standard_apks_optional],
                 "exe_file": step.exe_file.name if step.exe_file else None,
                 "check_var": step.check_var,
                 "check_options": step.check_options,
@@ -471,11 +530,16 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "pos_x": step.pos_x,
                 "pos_y": step.pos_y,
                 "uart_baudrate": step.uart_baudrate,
+                "actions": [
+                    {"label": a.label, "kind": a.kind, "commands": a.commands}
+                    for a in step.actions
+                ],
                 "variants": [
                     {
                         "name": v.name,
                         "usb_files": [f.name for f in v.usb_files],
                         "standard_apks": [f.name for f in v.standard_apks],
+                        "standard_apks_optional": [f.name for f in v.standard_apks_optional],
                     }
                     for v in step.variants
                 ],
@@ -591,6 +655,53 @@ def _parse_adb_line(line: str) -> tuple[str, object]:
     return "shell", line
 
 
+def _render_command_body(commands: list[str], files_rel_prefix: str) -> list[str]:
+    """Тело функции для списка ADB-команд (см. _parse_adb_line выше) — общее
+    для "adb"-этапа и командных действий "actions"-этапа (ActionSpec.kind ==
+    "command"), чтобы не дублировать разбор мини-DSL дважды. files_rel_prefix
+    — подпапка files/ с прикреплёнными файлами для #push/#install (у
+    "actions"-действий их нет — там этот путь просто не встретится, если
+    техник не использует #push/#install в командах кнопки)."""
+    lines = ["    _ask = None"]
+    for raw_line in commands:
+        kind, payload = _parse_adb_line(raw_line)
+        if kind == "skip":
+            continue
+        elif kind == "sleep":
+            lines.append(f"    ctx.sleep({payload})")
+        elif kind == "reboot":
+            lines.append("    ctx.reboot(wait=True)")
+        elif kind == "reboot_nowait":
+            lines.append("    ctx.reboot(wait=False)")
+        elif kind == "wait_device":
+            if payload is not None:
+                lines.append(f"    ctx.wait_for_device(timeout={payload})")
+            else:
+                lines.append("    ctx.wait_for_device()")
+        elif kind == "ask":
+            lines.append(f"    _ask = ctx.ask_input({payload!r})")
+        elif kind == "root":
+            lines.append('    ctx.adb("root", check=False)')
+        elif kind == "disable_verity":
+            lines.append('    ctx.adb("disable-verity", check=False)')
+        elif kind == "remount":
+            lines.append('    ctx.adb("remount", check=False)')
+        elif kind == "push":
+            name, remote = payload
+            rel = f"{files_rel_prefix}/{name}"
+            lines.append(f"    ctx.push(ctx.file({rel!r}), {remote!r})")
+        elif kind == "install":
+            rel = f"{files_rel_prefix}/{payload}"
+            lines.append(f"    ctx.install_apk(ctx.file({rel!r}))")
+        else:
+            if "{ask}" in payload:
+                lines.append(
+                    f"    ctx.shell({payload!r}.replace('{{ask}}', str(_ask)), check=False)")
+            else:
+                lines.append(f"    ctx.shell({payload!r}, check=False)")
+    return lines
+
+
 # ----------------------------------------------------------------------
 # install.py
 # ----------------------------------------------------------------------
@@ -607,50 +718,37 @@ def _render_install_py(spec: NewCarSpec) -> str:
         lines.append("from uart_adb import open_uart  # noqa: E402")
     if any(step.type == "telnet" for step in spec.steps):
         lines.append("from telnet_adb import enable_adb_via_telnet  # noqa: E402")
+    if any(step.type == "actions" and a.kind in ("grant_permissions", "mock_location")
+           for step in spec.steps for a in step.actions):
+        lines.append(
+            "from adb_permissions import grant_all_permissions, list_installed_packages, "
+            "set_mock_location_app  # noqa: E402"
+        )
 
     for i, step in enumerate(spec.steps, start=1):
         if step.type == "adb":
             lines += ["", "", f"def adb_step_{i}(ctx):"]
             lines += [f'    """{step.title or f"Этап {i}"}."""']
-            lines.append("    _ask = None")
-            for raw_line in step.commands:
-                kind, payload = _parse_adb_line(raw_line)
-                if kind == "skip":
-                    continue
-                elif kind == "sleep":
-                    lines.append(f"    ctx.sleep({payload})")
-                elif kind == "reboot":
-                    lines.append("    ctx.reboot(wait=True)")
-                elif kind == "reboot_nowait":
-                    lines.append("    ctx.reboot(wait=False)")
-                elif kind == "wait_device":
-                    if payload is not None:
-                        lines.append(f"    ctx.wait_for_device(timeout={payload})")
-                    else:
-                        lines.append("    ctx.wait_for_device()")
-                elif kind == "ask":
-                    lines.append(f"    _ask = ctx.ask_input({payload!r})")
-                elif kind == "root":
-                    lines.append('    ctx.adb("root", check=False)')
-                elif kind == "disable_verity":
-                    lines.append('    ctx.adb("disable-verity", check=False)')
-                elif kind == "remount":
-                    lines.append('    ctx.adb("remount", check=False)')
-                elif kind == "push":
-                    name, remote = payload
-                    rel = f"adb_{i}/{name}"
-                    lines.append(f"    ctx.push(ctx.file({rel!r}), {remote!r})")
-                elif kind == "install":
-                    rel = f"adb_{i}/{payload}"
-                    lines.append(f"    ctx.install_apk(ctx.file({rel!r}))")
-                else:
-                    if "{ask}" in payload:
-                        lines.append(
-                            f"    ctx.shell({payload!r}.replace('{{ask}}', str(_ask)), check=False)")
-                    else:
-                        lines.append(f"    ctx.shell({payload!r}, check=False)")
+            lines += _render_command_body(step.commands, f"adb_{i}")
             if step.adb_install_selected_apks:
                 lines.append('    ctx.install_selected_apks(extra_args=["-g"])')
+        elif step.type == "actions":
+            for j, action in enumerate(step.actions, start=1):
+                action_title = action.label or f"Действие {j}"
+                lines += ["", "", f"def action_step_{i}_{j}(ctx):"]
+                lines += [f'    """{action_title}."""']
+                if action.kind == "grant_permissions":
+                    lines.append("    packages = list_installed_packages(ctx)")
+                    lines.append(
+                        f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
+                    lines.append("    grant_all_permissions(ctx, package)")
+                elif action.kind == "mock_location":
+                    lines.append("    packages = list_installed_packages(ctx)")
+                    lines.append(
+                        f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
+                    lines.append("    set_mock_location_app(ctx, package)")
+                else:
+                    lines += _render_command_body(action.commands, f"actions_{i}_{j}")
         elif step.type == "usb":
             lines += ["", "", f"def usb_step_{i}(ctx):"]
             lines += [f'    """{step.title or f"Этап {i}"}."""']
@@ -791,6 +889,16 @@ def _render_stages_py(spec: NewCarSpec) -> str:
             entry.append(f'        "run": m.uart_step_{i},')
         elif step.type == "telnet":
             entry.append(f'        "run": m.telnet_step_{i},')
+        elif step.type == "actions":
+            entry.append('        "actions": [')
+            for j, action in enumerate(step.actions, start=1):
+                action_title = action.label or f"Действие {j}"
+                entry.append("            {")
+                entry.append(f'                "label": {action_title!r},')
+                entry.append(f'                "kind": {action.kind!r},')
+                entry.append(f'                "run": m.action_step_{i}_{j},')
+                entry.append("            },")
+            entry.append("        ],")
         elif step.type == "exe" and step.exe_file:
             entry.append(
                 f'        "exe_path": Path(__file__).resolve().parent / "files" / "exe_{i}" '

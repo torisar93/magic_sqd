@@ -14,10 +14,44 @@
   margin-top: 10px;
 }
 
+/* align-items: stretch (умолчание flex, поэтому просто не переопределяем
+   center) — единственный способ выровнять высоту select и button, который
+   реально сработал: select в WebView2 у пользователя игнорирует и
+   appearance: none, и явный height (только ломает его родную вёрстку —
+   текст/стрелка съезжают, обрезка через overflow: hidden после этого рвёт
+   рамку). stretch ничего не обрезает и не форсирует конкретную цифру — оба
+   элемента просто дорастают до высоты самой высокой строки тулбара
+   (обычно select), сохраняя свою родную внутреннюю разметку как есть —
+   button корректно центрирует текст при любой высоте, а select больше не
+   трогаем вообще. */
 .graph-toolbar {
   display: flex;
-  align-items: center;
   gap: 6px;
+}
+
+/* button/select без этого сжимаются вместе с тулбаром (flex-basis по
+   умолчанию — auto, min-width — auto), из-за чего сначала переносится
+   текст ВНУТРИ кнопки (button.height растёт на 2 строки), а не сам select —
+   воспроизвелось на длинной подписи нового типа этапа в graph-new-node-type
+   (см. graph_wizard.js: STEP_TYPE_LABELS). select ужимается первым (у него
+   есть min-width:0 — см. tokens.css: .row > select), кнопки держат свою
+   ширину и не переносят текст. */
+.graph-toolbar button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.graph-toolbar select {
+  min-width: 0;
+  /* dialog select (components.css) даёт всем select/input/textarea внутри
+     любого <dialog> margin-bottom: 10px — рассчитано на вертикальный список
+     полей формы, где это нужный отступ ДО следующего поля. В этом тулбаре
+     select лежит в одной ГОРИЗОНТАЛЬНОЙ строке с кнопками (без такого
+     отступа), и с align-items: stretch этот margin-bottom буквально отъедал
+     10px от высоты select относительно кнопок без отступов — из-за него
+     select оставался ниже кнопок, даже когда сама высота строки стала
+     общей. */
+  margin-bottom: 0;
 }
 
 .graph-main {
@@ -277,7 +311,8 @@
 }
 
 .graph-props {
-  width: 320px;
+  width: 400px;
+  flex-shrink: 0;
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;

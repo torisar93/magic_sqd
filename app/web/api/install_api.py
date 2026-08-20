@@ -106,16 +106,24 @@ class InstallApi:
             "exe_path": exe_path,
             "exe_name": Path(exe_path).name if exe_path else None,
             "exe_exists": Path(exe_path).exists() if exe_path else None,
+            "actions": [{"label": a.get("label", ""), "kind": a.get("kind", "command")}
+                        for a in (stage.get("actions") or [])],
         }
 
     # ------------------------------------------------------------------
-    def standard_apks(self, model_key: str, stage_index: int, variant: str | None) -> list[dict]:
+    _EMPTY_STANDARD_APKS = {"required": [], "optional": []}
+
+    def standard_apks(self, model_key: str, stage_index: int, variant: str | None) -> dict:
         """Соответствует _standard_apks() в старом stage_wizard.py — APK
         "Стандартных приложений" этапа, с поправкой на выбранный вариант
-        (Full/Lite/...) для этапов с standard_dir_base+variant_names."""
+        (Full/Lite/...) для этапов с standard_dir_base+variant_names.
+        Разделены на обязательные (files/pack*/required — устанавливаются
+        всегда, без чекбокса) и необязательные (.../optional — техник
+        выбирает сам) — см. app/car_generator.py: StepSpec.standard_apks/
+        standard_apks_optional за тем, как эти подпапки формируются."""
         model = self._scanner_api.get_model(model_key)
         if model is None:
-            return []
+            return dict(self._EMPTY_STANDARD_APKS)
         stages = load_stages(model)
         stage = stages[stage_index]
         standard_dir = stage.get("standard_dir")
@@ -123,14 +131,15 @@ class InstallApi:
             variant_names = stage.get("variant_names") or []
             variant = variant or (variant_names[0] if variant_names else None)
             if not variant:
-                return []
+                return dict(self._EMPTY_STANDARD_APKS)
             standard_dir = Path(stage["standard_dir_base"]) / variant
         if not standard_dir:
-            return []
+            return dict(self._EMPTY_STANDARD_APKS)
         standard_dir = Path(standard_dir)
-        if not standard_dir.exists():
-            return []
-        return [apk_to_dict(apk) for apk in scan_apk_dir(standard_dir)]
+        return {
+            "required": [apk_to_dict(apk) for apk in scan_apk_dir(standard_dir / "required")],
+            "optional": [apk_to_dict(apk) for apk in scan_apk_dir(standard_dir / "optional")],
+        }
 
     # ------------------------------------------------------------------
     def list_devices(self) -> list[dict]:
@@ -235,6 +244,35 @@ class InstallApi:
         if self._runner.running:
             self._runner.cancel()
             event_bridge.push({"kind": "install_log", "text": "Останавливаю этап..."})
+        return {"ok": True}
+
+    # -- "actions"-этап: в отличие от start_stage выше, у самого этапа нет
+    # единого run — техник может нажать любую из кнопок (см. StepSpec.actions
+    # в car_generator.py) в любом порядке и по несколько раз, поэтому запуск
+    # идёт по (stage_index, action_index), а не только по stage_index. Тот же
+    # InstallRunner (один запущенный run_fn одновременно), тот же поток
+    # событий install_log/install_finished — JS-сторона (см. stage_wizard.js:
+    # renderActionsStage) отличает "этап выполняется" от "действие
+    # выполняется" только тем, что не переходит на следующий этап по success.
+    def run_action(self, model_key: str, stage_index: int, action_index: int,
+                    device_serial: str | None, selected_apk_paths: list[str]) -> dict:
+        if self._runner.running:
+            return {"ok": False, "error": "Установка уже выполняется."}
+        model = self._scanner_api.get_model(model_key)
+        if model is None:
+            return {"ok": False, "error": "unknown model key"}
+        stages = load_stages(model)
+        stage = stages[stage_index]
+        actions = stage.get("actions") or []
+        if not (0 <= action_index < len(actions)):
+            return {"ok": False, "error": "unknown action index"}
+        action = actions[action_index]
+        self._pending_stage_index = stage_index
+        event_bridge.push({"kind": "install_log", "text": f"--- {action.get('label') or 'Действие'} ---"})
+        try:
+            self._runner.start(model, device_serial, selected_apk_paths, run_fn=action["run"])
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc)}
         return {"ok": True}
 
     def answer_input(self, req_id: str, value: str | None) -> dict:

@@ -2,7 +2,7 @@
 import importlib.util
 from pathlib import Path
 
-STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction", "uart", "telnet")
+STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction", "uart", "telnet", "actions")
 
 
 class StageDefinitionError(RuntimeError):
@@ -33,6 +33,13 @@ def load_stages(model) -> list[dict]:
             raise StageDefinitionError(f"Этап {i} (exe): не задан exe_path")
         if stage_type == "check" and not stage.get("check_options"):
             raise StageDefinitionError(f"Этап {i} (check): не заданы check_options")
+        if stage_type == "actions":
+            actions = stage.get("actions")
+            if not actions:
+                raise StageDefinitionError(f"Этап {i} (actions): не задано ни одного действия")
+            for j, action in enumerate(actions, start=1):
+                if not callable(action.get("run")):
+                    raise StageDefinitionError(f"Этап {i} (actions), действие {j}: не задан run(ctx)")
 
     return list(stages)
 
