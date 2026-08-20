@@ -9,6 +9,22 @@ class InstallCancelled(RuntimeError):
     """Пользователь нажал "Стоп"."""
 
 
+# Подписи для лога/сообщения об ошибке — по индексу в install_apk_auto ниже.
+_INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm install -S (поток)")
+
+
+def _check_pm_install_result(result) -> None:
+    """pm install через adb shell (в отличие от "adb install" целиком) не
+    всегда даёт надёжный код возврата — старые прошивки/adb используют shell
+    протокол, который вообще не пробрасывает код завершения удалённой
+    команды. Реальный результат смотрим в тексте, как выводит сама pm
+    ("Success"/"Failure [...]") — тот же приём, что и везде в проекте, где
+    нужно проверить именно вывод, а не полагаться на код возврата adb shell."""
+    text = ((result.stdout or "") + (result.stderr or "")).strip()
+    if "success" not in text.lower() or "failure" in text.lower():
+        raise AdbError(text or "pm install не подтвердил успех (пустой вывод)")
+
+
 class InstallContext:
     def __init__(self, adb_path, device_serial, model_dir: Path, selected_apks,
                  log_fn, cancel_flag, ask_input_fn=None, shared_dir: Path | None = None):
@@ -29,6 +45,11 @@ class InstallContext:
         self._cancel_flag = cancel_flag
         self._ask_input_fn = ask_input_fn
         self._adb = Adb(adb_path, device_serial, log=self._log_fn)
+        # Способ установки APK, определённый install_apk_auto на первом же
+        # файле (индекс в _INSTALL_METHOD_LABELS) — держится в рамках ОДНОГО
+        # запуска install.py (один InstallContext на запуск, см. runner.py),
+        # чтобы не перебирать все три способа заново на каждом следующем APK.
+        self._install_method: int | None = None
 
     # --- служебное -------------------------------------------------
     def log(self, message):
@@ -98,7 +119,89 @@ class InstallContext:
 
     def install_selected_apks(self, extra_args=None):
         for apk in self.selected_apks:
-            self.install_apk(apk, extra_args=extra_args)
+            self.install_apk_auto(apk, extra_args=extra_args)
+
+    def install_apk_auto(self, path, extra_args=None):
+        """Устанавливает APK, автоматически подбирая рабочий способ — по
+        очереди adb install → adb push + pm install → adb push + pm install
+        -S (поток, см. install_apk_stream). Часть магнитол не тянет обычный
+        "adb install" целиком (обрезанный/сломанный протокол install у
+        adbd), но всё равно ставит через push+pm install на устройстве, а
+        часть — только потоковым способом (реальные случаи: Jetour Dashing
+        на Android 9, Soueast S09).
+
+        Способ определяется ОДИН раз за весь запуск install.py — на первом
+        же APK (используется install_selected_apks для всего списка
+        выбранных приложений) — и запоминается в self._install_method для
+        всех следующих файлов без повторного перебора: если что-то сработало
+        один раз на этой магнитоле, нет смысла заново пробовать более
+        медленные/ненадёжные способы на каждом файле. Если не сработал НИ
+        ОДИН из трёх способов — останавливает установку (InstallCancelled) —
+        плохой знак сразу для всего оставшегося списка, продолжать нет
+        смысла."""
+        self.check_cancelled()
+        if self._install_method is not None:
+            self._install_with_method(self._install_method, path, extra_args)
+            return
+        errors = []
+        for method in range(len(_INSTALL_METHOD_LABELS)):
+            try:
+                self._install_with_method(method, path, extra_args)
+            except AdbError as exc:
+                errors.append(f"{_INSTALL_METHOD_LABELS[method]}: {exc}")
+                continue
+            self._install_method = method
+            if method > 0:
+                self.log(f"Сработал способ установки APK: {_INSTALL_METHOD_LABELS[method]} — "
+                         "дальше буду использовать его же для остальных приложений.")
+            return
+        raise InstallCancelled(
+            f"Не удалось установить {Path(path).name} ни одним из способов "
+            "(adb install / pm install / pm install -S):\n" + "\n".join(errors)
+        )
+
+    def _install_with_method(self, method: int, path, extra_args) -> None:
+        if method == 0:
+            self.install_apk(path, extra_args=extra_args)
+        elif method == 1:
+            self.install_apk_pm(path, extra_args=extra_args)
+        else:
+            self.install_apk_stream(path, extra_args=extra_args)
+
+    def install_apk_pm(self, path, remote_dir="/sdcard/Download", extra_args=None):
+        """Установка через adb push + "pm install" по пути на устройстве
+        (без -r файла целиком через сам adb) — промежуточный способ между
+        install_apk (adb install целиком) и install_apk_stream (поток): для
+        магнитол, где протокол install у adbd не работает, но обычный push
+        файла + запуск pm install на устройстве — работает."""
+        self.check_cancelled()
+        path = Path(path)
+        remote_path = f"{remote_dir.rstrip('/')}/{path.name}"
+        self.log(f"Установка APK (adb push + pm install): {path.name}")
+        self.push(path, remote_path)
+        extra = (" " + " ".join(extra_args)) if extra_args else ""
+        result = self.shell(f"pm install -r {remote_path}{extra}", check=False)
+        _check_pm_install_result(result)
+
+    def install_apk_stream(self, path, remote_dir="/sdcard/Download", extra_args=None):
+        """Установка APK через "cat <файл на устройстве> | pm install -S
+        <размер>" вместо обычного install_apk (adb install) — для магнитол,
+        где штатный adb install не работает (обрезанный/сломанный протокол
+        install у adbd — реальный случай на Jetour Dashing на Android 9 и
+        Soueast S09), но обычный adb push + adb shell с пайпами работает.
+        -S <размер> обязателен для pm install в потоковом режиме (сколько
+        байт читать из stdin, у пайпа нет своего EOF-сигнала для него) —
+        берём его сами с локального файла, а не храним числом в коде
+        модели: не отвяжется от файла, если его когда-нибудь заменят."""
+        self.check_cancelled()
+        path = Path(path)
+        remote_path = f"{remote_dir.rstrip('/')}/{path.name}"
+        self.log(f"Установка APK (потоком через pm install -S): {path.name}")
+        self.push(path, remote_path)
+        size = path.stat().st_size
+        extra = (" " + " ".join(extra_args)) if extra_args else ""
+        result = self.shell(f"cat {remote_path} | pm install -S {size}{extra}", check=False)
+        _check_pm_install_result(result)
 
     def uninstall(self, package, check=False):
         return self._adb.uninstall(package, check=check)

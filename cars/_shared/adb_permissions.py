@@ -1,10 +1,13 @@
-"""Список установленных приложений + выдача разрешений/спецдоступов через ADB
-для "actions"-этапа (см. app/car_generator.py: StepSpec.actions,
-ActionSpec.kind == "grant_permissions"/"mock_location"). На многих китайских
-магнитолах нет стандартного экрана "Разрешения приложения" в настройках —
-единственный способ дать приложению доступ (камера, местоположение,
-показ поверх других окон, спецвозможности и т.п.) — руками через adb shell,
-что и делает этот модуль вместо техника."""
+"""Список установленных приложений + выдача разрешений/спецдоступов и
+включение/отключение приложений через ADB для "actions"-этапа (см.
+app/car_generator.py: StepSpec.actions, ActionSpec.kind ==
+"grant_permissions"/"mock_location"/"disable_app"/"enable_app"). На многих
+китайских магнитолах нет стандартного экрана "Разрешения приложения" в
+настройках — единственный способ дать приложению доступ (камера,
+местоположение, показ поверх других окон, спецвозможности и т.п.) или
+отключить мешающее предустановленное приложение (конкурирующая навигация,
+голосовой ассистент) — руками через adb shell, что и делает этот модуль
+вместо техника."""
 import re
 
 # Полный список разрешений на устройстве заранее неизвестен, поэтому
@@ -54,6 +57,16 @@ _APPOPS = {
     "android.permission.WRITE_SETTINGS": "WRITE_SETTINGS",
     "android.permission.PACKAGE_USAGE_STATS": "GET_USAGE_STATS",
 }
+
+# Доп. appops без прямого аналога в списке "запрошенных разрешений" из
+# манифеста (не permission, а именно op) — выдаются безусловно всем, не
+# только по совпадению с requested-permissions, как и _APPOPS выше:
+#   REQUEST_INSTALL_PACKAGES — приложению можно ставить APK без диалога
+#   "Установка из неизвестных источников" (актуально для магазинов вроде
+#   RuStore, которые сами ставят другие приложения).
+#   ACTIVATE_VPN — VPN-клиент может поднять соединение без системного
+#   диалога подтверждения VPN.
+_EXTRA_APPOPS = ["REQUEST_INSTALL_PACKAGES", "ACTIVATE_VPN"]
 
 # WRITE_SECURE_SETTINGS — обычное (не appops) разрешение, но с protection
 # level signature|privileged — недоступно приложению через диалог, зато
@@ -139,9 +152,12 @@ def grant_all_permissions(ctx, package: str) -> None:
     """Выдаёт приложению все разрешения, которые оно запрашивает в
     манифесте (обычные runtime + WRITE_SECURE_SETTINGS), плюс "спецдоступы"
     через AppOps (показ поверх других окон, изменение системных настроек,
-    статистика использования) и, если удалось найти, включает его службу
-    специальных возможностей — то, что на большинстве магнитол нельзя
-    сделать штатным экраном настроек."""
+    статистика использования, установка APK без диалога, активация VPN без
+    диалога) и, если удалось найти, включает его службу специальных
+    возможностей — то, что на большинстве магнитол нельзя сделать штатным
+    экраном настроек. Плюс освобождает приложение от ограничений
+    энергосбережения (Doze/App Standby) — иначе Android рано или поздно
+    убивает его в фоне, частая жалоба именно на магнитолах."""
     ctx.log(f"Выдаю разрешения: {package}")
     dumpsys_output = ctx.shell(f"dumpsys package {package}", check=False).stdout or ""
     requested = _parse_requested_permissions(dumpsys_output)
@@ -155,7 +171,10 @@ def grant_all_permissions(ctx, package: str) -> None:
 
     for op in _APPOPS.values():
         ctx.shell(f"appops set {package} {op} allow", check=False)
+    for op in _EXTRA_APPOPS:
+        ctx.shell(f"appops set {package} {op} allow", check=False)
     ctx.shell(f"pm grant {package} {_WRITE_SECURE_SETTINGS}", check=False)
+    ctx.shell(f"dumpsys deviceidle whitelist +{package}", check=False)
 
     _enable_accessibility_service(ctx, package, dumpsys_output)
     ctx.log("Разрешения выданы.")
@@ -170,4 +189,24 @@ def set_mock_location_app(ctx, package: str) -> None:
     ctx.log(f"Приложение для фиктивных местоположений: {package}")
     ctx.shell(f"appops set {package} android:mock_location allow", check=False)
     ctx.shell("settings put secure mock_location 1", check=False)
+    ctx.log("Готово.")
+
+
+def disable_app(ctx, package: str) -> None:
+    """Отключает приложение (--user 0 — на всех наблюдавшихся магнитолах
+    единственный профиль, id 0) — для предустановленных программ, которые
+    мешают (конкурирующая навигация, голосовой ассистент и т.п.) и которые
+    нельзя просто удалить (системные, pm uninstall для них не работает без
+    root). Не путать с pm uninstall — приложение остаётся установленным,
+    просто не запускается и пропадает из лаунчера, обратимо через
+    enable_app ниже."""
+    ctx.log(f"Отключаю приложение: {package}")
+    ctx.shell(f"pm disable-user --user 0 {package}", check=False)
+    ctx.log("Готово.")
+
+
+def enable_app(ctx, package: str) -> None:
+    """Обратное disable_app — включает ранее отключённое приложение."""
+    ctx.log(f"Включаю приложение: {package}")
+    ctx.shell(f"pm enable {package}", check=False)
     ctx.log("Готово.")

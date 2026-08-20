@@ -60,6 +60,13 @@ class ActionSpec:
     # "mock_location" — то же самое, но cars/_shared/adb_permissions.py.
     # set_mock_location_app назначает выбранное приложение приложением для
     # фиктивных местоположений и включает саму возможность.
+    # "disable_app"/"enable_app" — тот же выбор приложения (но из ПОЛНОГО
+    # списка, не только сторонних — third_party_only=False, см.
+    # _render_install_py: обычно это как раз предустановленные системные
+    # программы, которые нельзя удалить, только отключить), дальше
+    # cars/_shared/adb_permissions.py.disable_app/enable_app — pm
+    # disable-user/pm enable. Для мешающих предустановленных приложений
+    # (конкурирующая навигация, голосовой ассистент и т.п.).
     kind: str = "command"
     commands: list[str] = field(default_factory=list)
 
@@ -575,6 +582,12 @@ _ADB_DISABLE_VERITY_RE = re.compile(r"^#disable_verity\s*$", re.IGNORECASE)
 _ADB_REMOUNT_RE = re.compile(r"^#remount\s*$", re.IGNORECASE)
 _ADB_PUSH_RE = re.compile(r"^#push\s+(\S+)\s+(.+)$", re.IGNORECASE)
 _ADB_INSTALL_RE = re.compile(r"^#install\s+(\S+)\s*$", re.IGNORECASE)
+# "cat file | pm install -S size" — потоковая установка (adb push + pm
+# install из stdin) на магнитолах, где обычный adb install не работает (см.
+# InstallContext.install_apk_stream) — числа для -S у автора набора почти
+# всегда точный размер конкретного файла на ЕГО машине, поэтому просто
+# отбрасываем их и берём размер на месте, актуальный для текущего файла.
+_ADB_INSTALL_STREAM_RE = re.compile(r"^#install_stream\s+(\S+)\s*$", re.IGNORECASE)
 
 # "Сырые" строки прямо из .bat/.sh — необязательный "-s <serial>" после adb
 # (техник мог скопировать команду вместе с указанием устройства).
@@ -587,6 +600,15 @@ _RAW_ADB_WAIT_DEVICE_RE = re.compile(rf"^adb{_DEV}\s+wait-for-device\s*$", re.IG
 _RAW_ADB_SHELL_RE = re.compile(rf"^adb{_DEV}\s+shell\s+(.+)$", re.IGNORECASE)
 _RAW_ADB_PUSH_RE = re.compile(rf"^adb{_DEV}\s+push\s+(\S+)\s+(\S+)\s*$", re.IGNORECASE)
 _RAW_ADB_INSTALL_RE = re.compile(rf"^adb{_DEV}\s+install\s+(?:-[a-zA-Z]+\s+)*(\S+)\s*$", re.IGNORECASE)
+# То же самое, что #install_stream, но узнаём его прямо из "сырой" команды,
+# скопированной из чужого набора как есть, — например Jetour Dashing на
+# Android 9/Soueast S09, где принято ставить именно так, а не adb install:
+#   cat /sdcard/Download/rustore.apk | pm install -S 33999540
+# Путь на устройстве и число после -S не используются — только имя файла
+# (ищем среди adb_files по basename, как и остальные raw-команды), число
+# отбрасывается (см. _ADB_INSTALL_STREAM_RE выше).
+_RAW_CAT_PM_INSTALL_STREAM_RE = re.compile(
+    r"^cat\s+(?:\S*/)?(\S+)\s*\|\s*pm\s+install\s+-S\s+\d+\s*$", re.IGNORECASE)
 
 # Batch-специфика без прямого аналога на устройстве — пауза для техника,
 # читающего консоль ноутбука ("TIMEOUT"), и чисто декоративный/управляющий
@@ -629,6 +651,8 @@ def _parse_adb_line(line: str) -> tuple[str, object]:
         return "push", (_adb_basename(m.group(1)), m.group(2).strip())
     if m := _ADB_INSTALL_RE.match(line):
         return "install", _adb_basename(m.group(1))
+    if m := _ADB_INSTALL_STREAM_RE.match(line):
+        return "install_stream", _adb_basename(m.group(1))
 
     # "Сырые" строки прямо из .bat/.sh автора набора (см. пояснение выше).
     if _RAW_ADB_ROOT_RE.match(line):
@@ -645,6 +669,8 @@ def _parse_adb_line(line: str) -> tuple[str, object]:
         return "push", (_adb_basename(m.group(1)), m.group(2).strip())
     if m := _RAW_ADB_INSTALL_RE.match(line):
         return "install", _adb_basename(m.group(1))
+    if m := _RAW_CAT_PM_INSTALL_STREAM_RE.match(line):
+        return "install_stream", _adb_basename(m.group(1))
     if m := _RAW_ADB_SHELL_RE.match(line):
         return "shell", m.group(1).strip()
     if m := _BAT_TIMEOUT_RE.match(line):
@@ -693,6 +719,9 @@ def _render_command_body(commands: list[str], files_rel_prefix: str) -> list[str
         elif kind == "install":
             rel = f"{files_rel_prefix}/{payload}"
             lines.append(f"    ctx.install_apk(ctx.file({rel!r}))")
+        elif kind == "install_stream":
+            rel = f"{files_rel_prefix}/{payload}"
+            lines.append(f"    ctx.install_apk_stream(ctx.file({rel!r}))")
         else:
             if "{ask}" in payload:
                 lines.append(
@@ -718,11 +747,13 @@ def _render_install_py(spec: NewCarSpec) -> str:
         lines.append("from uart_adb import open_uart  # noqa: E402")
     if any(step.type == "telnet" for step in spec.steps):
         lines.append("from telnet_adb import enable_adb_via_telnet  # noqa: E402")
-    if any(step.type == "actions" and a.kind in ("grant_permissions", "mock_location")
+    _ACTION_KINDS_NEEDING_ADB_PERMISSIONS = (
+        "grant_permissions", "mock_location", "disable_app", "enable_app")
+    if any(step.type == "actions" and a.kind in _ACTION_KINDS_NEEDING_ADB_PERMISSIONS
            for step in spec.steps for a in step.actions):
         lines.append(
-            "from adb_permissions import grant_all_permissions, list_installed_packages, "
-            "set_mock_location_app  # noqa: E402"
+            "from adb_permissions import disable_app, enable_app, grant_all_permissions, "
+            "list_installed_packages, set_mock_location_app  # noqa: E402"
         )
 
     for i, step in enumerate(spec.steps, start=1):
@@ -747,6 +778,18 @@ def _render_install_py(spec: NewCarSpec) -> str:
                     lines.append(
                         f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
                     lines.append("    set_mock_location_app(ctx, package)")
+                elif action.kind == "disable_app":
+                    # third_party_only=False — обычно это как раз системное
+                    # предустановленное приложение (см. ActionSpec.kind).
+                    lines.append("    packages = list_installed_packages(ctx, third_party_only=False)")
+                    lines.append(
+                        f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
+                    lines.append("    disable_app(ctx, package)")
+                elif action.kind == "enable_app":
+                    lines.append("    packages = list_installed_packages(ctx, third_party_only=False)")
+                    lines.append(
+                        f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
+                    lines.append("    enable_app(ctx, package)")
                 else:
                     lines += _render_command_body(action.commands, f"actions_{i}_{j}")
         elif step.type == "usb":
