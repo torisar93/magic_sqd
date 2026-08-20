@@ -11,6 +11,7 @@ instruction_blocks). Общей instruction.html на всю модель бол
 load_sibling.load_install, wifi_adb.connect_wifi, UsbContext.usb_file()/
 copy_dir()/copy_selected_apks(), ctx.install_selected_apks()) уже есть в
 проекте и используется как есть."""
+from __future__ import annotations
 import json
 import re
 import shutil

@@ -1,4 +1,5 @@
 """Работа со съёмными USB-флешками: список дисков и безопасное форматирование."""
+from __future__ import annotations
 import ctypes
 import os
 import string
@@ -165,7 +166,7 @@ def format_drive(letter: str, filesystem: str, label: str, base_dir: Path, log=l
     result = subprocess.run(
         [find_powershell_path(), "-NoProfile", "-NonInteractive", "-Command", ps_command],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=600, creationflags=CREATE_NO_WINDOW,
+        timeout=600, creationflags=CREATE_NO_WINDOW, stdin=subprocess.DEVNULL,
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()

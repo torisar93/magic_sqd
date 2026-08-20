@@ -1,4 +1,5 @@
 """Низкоуровневые обёртки над adb.exe."""
+from __future__ import annotations
 import concurrent.futures
 import ipaddress
 import os
@@ -52,6 +53,7 @@ def get_default_gateway_ip() -> str | None:
              "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
              "| Select-Object -First 1 -ExpandProperty IPv4DefaultGateway).NextHop"],
             capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -75,6 +77,7 @@ def scan_for_adb_hosts(port: int, timeout: float = 0.25) -> list[str]:
              "| Select-Object -First 1; "
              "if ($c) { \"$($c.IPv4Address.IPAddress)/$($c.IPv4Address.PrefixLength)\" }"],
             capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
     except (subprocess.TimeoutExpired, OSError):
         return []
@@ -155,6 +158,7 @@ class Adb:
                 errors="replace",
                 timeout=timeout,
                 creationflags=CREATE_NO_WINDOW,
+                stdin=subprocess.DEVNULL,
             )
         except FileNotFoundError as exc:
             raise AdbError(
@@ -223,6 +227,7 @@ def kill_server(adb_path: str) -> None:
             capture_output=True,
             timeout=15,
             creationflags=CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
@@ -239,6 +244,7 @@ def list_devices(adb_path: str) -> list[dict]:
             errors="replace",
             timeout=15,
             creationflags=CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError:
         return []

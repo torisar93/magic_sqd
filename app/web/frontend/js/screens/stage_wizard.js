@@ -446,7 +446,10 @@
     const shared = await sharedApks();
     const byCategory = {};
     for (const apk of shared) {
-      (byCategory[apk.category] ||= []).push(apk);
+      // Не ||= — см. events.js за тем же обоснованием (старый Chromium в
+      // Qt5/PySide2-сборке не умеет логические операторы присваивания).
+      if (!byCategory[apk.category]) byCategory[apk.category] = [];
+      byCategory[apk.category].push(apk);
     }
     const extraBody = el("div");
     if (!Object.keys(byCategory).length) {

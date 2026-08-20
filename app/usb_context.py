@@ -1,5 +1,6 @@
 """Объект ctx, передаваемый в run(ctx) "usb"-этапа stages.py модели (режим
 "USB-флешка", см. stage_wizard.py/usb_dialog.py)."""
+from __future__ import annotations
 import shutil
 from pathlib import Path
 

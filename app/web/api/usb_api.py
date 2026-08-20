@@ -3,6 +3,7 @@ stage wizard (этап type="usb"). Портировано из app/usb_dialog.p
 воркер-поток и порядок операций (докачка files/выбранных APK, опциональное
 форматирование, затем run_fn(ctx)), только прогресс идёт через
 app/web/events.py вместо queue.Queue+self.after(100, ...)."""
+from __future__ import annotations
 import threading
 import traceback
 from pathlib import Path

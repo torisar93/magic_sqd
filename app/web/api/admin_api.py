@@ -15,6 +15,7 @@ _publish_apk_async/upload_single_apk) — не всю apk/ целиком: ра�
 добавление одного APK перезаливало всю библиотеку архивом (upload_dir), и
 с ростом библиотеки каждая следующая загрузка становилась тяжелее и
 дольше предыдущей."""
+from __future__ import annotations
 import json
 import shutil
 import threading

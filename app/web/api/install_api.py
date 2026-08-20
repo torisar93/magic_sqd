@@ -6,6 +6,7 @@ stage_index через install_load_stages(model_key), а сам run_fn дост
 идут через app/web/events.py — тот же приём, что раньше был queue.Queue +
 self.after(100, ...) в stage_wizard.py, только транспорт — evaluate_js вместо
 Tk-виджетов (см. план миграции)."""
+from __future__ import annotations
 import base64
 import mimetypes
 import re

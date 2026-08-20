@@ -12,6 +12,7 @@ IPv6-адрес — link-local (fe80::...), поэтому телефон/ПК �
 имя интерфейса ("wlan0" — андроидное/линуксовое), а его числовой ifIndex,
 поэтому берём ifIndex активного сетевого адаптера (того же, что и для
 Wi-Fi ADB в cars/_shared/wifi_adb.py)."""
+from __future__ import annotations
 import os
 import socket
 import subprocess
@@ -43,6 +44,7 @@ def get_active_interface_index() -> str:
          "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
          "| Select-Object -First 1 -ExpandProperty InterfaceIndex)"],
         capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
+        stdin=subprocess.DEVNULL,
     )
     index = (result.stdout or "").strip()
     if not index:
@@ -70,6 +72,7 @@ def scan_ipv6_neighbors() -> list[tuple[str, str]]:
          "| ForEach-Object { \"$($_.IPAddress)|$($_.LinkLayerAddress)\" } "
          "| Select-Object -Unique"],
         capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
+        stdin=subprocess.DEVNULL,
     )
     seen = []
     pairs = []

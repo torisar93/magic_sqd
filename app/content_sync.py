@@ -19,6 +19,7 @@ sync_shared_apks/ensure_apks_downloaded). Исключение — список 
 файлы) общей библиотеки apk/: его лёгкий обход (list_shared_apk_catalog)
 тоже идёт при каждом запуске, как и cars/-скрипты, — иначе дерево выбора
 приложений было бы пустым, пока пользователь не нажмёт "Скачать" сам."""
+from __future__ import annotations
 import json
 import urllib.error
 import urllib.request

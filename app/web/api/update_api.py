@@ -13,6 +13,7 @@ server/README.md §9.
 app/content_sync.py:download_file, но без зависимости от него (тот модуль
 завязан на server.json/content_config.py и свой протокол листинга, тут
 источники — GitHub API и простой version.json)."""
+from __future__ import annotations
 import concurrent.futures
 import json
 import re

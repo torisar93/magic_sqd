@@ -4,6 +4,7 @@ gui.py. Единственное место, вызывающее webview.evalua
 этого вызова из ПРОИЗВОЛЬНОГО потока не гарантирована во всех бэкендах
 pywebview, поэтому все события идут через один выделенный поток-насос, а не
 напрямую из воркер-потоков install/usb-этапов (см. план миграции)."""
+from __future__ import annotations
 import json
 import queue
 import threading

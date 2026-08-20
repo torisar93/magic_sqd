@@ -7,6 +7,7 @@ changelog, app/car_generator.py: version.json.
 неё, чтобы автообновление cars/ с сервера (content_sync.sync_scripts) не
 могло его перезаписать (сервер ничего не знает про этот файл и не пришлёт
 его, sync_tree трогает только то, что есть в удалённом листинге)."""
+from __future__ import annotations
 import json
 from pathlib import Path
 

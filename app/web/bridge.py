@@ -5,6 +5,7 @@ JSON-совместимые dict/list/str/bool/number/None. Каждая гру�
 тонкая обёртка над своим app/web/api/*_api.py, который сам оборачивает
 существующий бизнес-код (scanner.py, runner.py, ...) — см. критичные файлы в
 плане миграции."""
+from __future__ import annotations
 from pathlib import Path
 
 from .api.admin_api import AdminApi

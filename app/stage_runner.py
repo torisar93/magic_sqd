@@ -1,4 +1,5 @@
 """Динамическая загрузка stages.py модели (режим "Мастер установки по этапам")."""
+from __future__ import annotations
 import importlib.util
 from pathlib import Path
 

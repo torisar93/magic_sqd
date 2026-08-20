@@ -9,6 +9,7 @@ admin_main.py, app/admin_gui.py) — использует ровно тот же
 та же причина, что и в app/submit_client.py: стримим архив кусками с
 сокета, гигабайтные cars/apk не должны разбухать в памяти целиком, и есть
 возможность проверять отмену между кусками."""
+from __future__ import annotations
 import http.client
 import json
 import shutil

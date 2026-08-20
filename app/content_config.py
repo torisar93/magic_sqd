@@ -20,6 +20,7 @@ site/download/, что и старая раздача MagicSQD_Setup.exe вру�
 просто молча пропускается, программа работает как обычно с локальными
 файлами.
 """
+from __future__ import annotations
 import json
 from pathlib import Path
 

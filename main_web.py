@@ -5,6 +5,7 @@
 
 Запуск: python main_web.py (собранный вариант — magic_sqd.exe, см.
 magic_sqd.spec)."""
+from __future__ import annotations
 import ssl
 import sys
 import time

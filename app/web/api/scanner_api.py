@@ -5,6 +5,7 @@ brand -> ModelGroup -> ModelInfo в JSON-совместимый словарь. 
 admin_api, когда нужно что-то сделать с конкретной моделью (тот же принцип,
 что self.current_model в старом gui.py, только без скрытого состояния на
 стороне Python — какая модель выбрана, помнит JS)."""
+from __future__ import annotations
 import base64
 
 from ..events import event_bridge

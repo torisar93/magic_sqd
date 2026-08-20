@@ -5,7 +5,12 @@
   const listeners = {};
 
   function on(kind, handler) {
-    (listeners[kind] ||= []).push(handler);
+    // Не ||= — старый Chromium в Qt5/PySide2 (см. installer_win7_x86.iss)
+    // не умеет логические операторы присваивания (||=/&&=/??=, V8 85+),
+    // падает синтаксической ошибкой уже на парсинге файла. Равнозначная
+    // запись без него — тот же результат в любом движке.
+    if (!listeners[kind]) listeners[kind] = [];
+    listeners[kind].push(handler);
   }
 
   function off(kind, handler) {

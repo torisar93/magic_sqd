@@ -1,4 +1,5 @@
 """Запуск одного ADB-этапа stages.py (функция run(ctx)) в фоновом потоке."""
+from __future__ import annotations
 import threading
 import traceback
 

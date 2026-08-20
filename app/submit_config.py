@@ -13,6 +13,7 @@ report_url/ping_url отдельно в файле не хранятся — т�
 все три — top-level location на одном хосте). Без submit.json программа
 также не шлёт пульс (см. app/ping_client.py, gui.py) — счётчик пользователей
 в админке в этом случае не увидит эту установку, это ожидаемо."""
+from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path

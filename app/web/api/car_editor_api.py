@@ -7,6 +7,7 @@ Path<->str на границе, (2) открывает нативные диал
 (webview.create_file_dialog — обычный JS/HTML не имеет доступа к реальным
 путям файловой системы), и (3) выполняет запись на диск + публикацию на
 сервер в фоновом потоке (см. _CreateCarProgressDialog в старом коде)."""
+from __future__ import annotations
 import base64
 import mimetypes
 import shutil

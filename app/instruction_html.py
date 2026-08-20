@@ -25,6 +25,7 @@ model_dir/images/); относительным ("images/имя.jpg") оно ст
 на диске — и в src=, и в блоках, встроенных в сам HTML (см.
 save_instruction/parse_blocks) — так инструкция остаётся переносимой сама
 по себе."""
+from __future__ import annotations
 import html
 import json
 import re
