@@ -5,9 +5,29 @@
 
 Запуск: python main_web.py (собранный вариант — magic_sqd.exe, см.
 magic_sqd.spec)."""
+import ssl
 import sys
 import time
 from pathlib import Path
+
+import certifi
+
+# Реальный случай в поле: на машине техника (заблокированной политикой
+# администратора — см. app/webview2_check.py) все HTTPS-запросы программы
+# (проверка обновлений, докачка контента, качание резервного Qt-движка)
+# падали с "certificate has expired", хотя сам сертификат magicsqd.ru
+# действителен и в браузере на той же машине открывается нормально —
+# у Windows на этой машине не обновлён системный список корневых
+# сертификатов (тот же класс политики, что блокирует WebView2/Windows
+# Update), а Python по умолчанию на Windows проверяет цепочку именно через
+# него. certifi — независимый, регулярно обновляемый набор доверенных
+# корней (тот же, что использует pip/requests) — переключаем на него ssl-
+# контекст по умолчанию ОДИН РАЗ здесь, до того как что-либо успеет открыть
+# HTTPS-соединение (urllib.request И http.client.HTTPSConnection оба берут
+# контекст по умолчанию именно через ssl._create_default_https_context,
+# если не передан свой — значит одной правки хватает на весь процесс,
+# менять каждый вызов по отдельности не нужно).
+ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
 
 APP_TITLE = "Magic SQD — установщик приложений для мультимедиа"
 
