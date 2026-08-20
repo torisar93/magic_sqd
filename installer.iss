@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.4.1-alpha"
+#define MyAppVersion "0.4.2-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -58,6 +58,20 @@ Source: "dist\magic_sqd\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__p
 Source: "server.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "submit.json"; DestDir: "{app}"; Flags: ignoreversion
 
+; WebView2 Runtime Bootstrapper (официальный, ~2 МБ, качает подходящую под
+; архитектуру машины Evergreen-версию рантайма с серверов Microsoft) — без
+; него на части машин (Windows без встроенного/предустановленного WebView2,
+; реальный случай — клиент техника с "чистой" Windows 10 без WebView2)
+; главное окно открывается ПУСТЫМ БЕЛЫМ (сам pywebview/WinForms успешно
+; создаёт окно, а вот встроенный Chromium-рендерер (msedgewebview2.exe) не
+; запускается вовсе — ни один JS в этом окне не выполняется, поэтому и
+; startup.log, и debug_all.log выглядят чисто, без единой ошибки). В
+; tools/, а не во временную папку — сама программа тоже умеет предложить
+; поставить WebView2 при следующем запуске (см. app/webview2_check.py,
+; main_web.py:_ensure_webview2), если этот шаг установки почему-то не
+; сработал (не было интернета и т.п.), и для этого ей нужна своя копия.
+Source: "assets\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
@@ -78,7 +92,37 @@ Type: files; Name: "{app}\client_id.txt"
 Type: files; Name: "{app}\seen_versions.json"
 Type: files; Name: "{app}\DEBUG_LOG_ALL"
 
+[Code]
+// См. официальную документацию Microsoft (Detect if a WebView2 Runtime is
+// already installed, learn.microsoft.com/microsoft-edge/webview2/concepts/
+// distribution) — при per-machine или per-user установке WebView2 версия
+// пишется в один из этих двух путей реестра (ключ "pv"); отсутствие ключа
+// или значение "" / "0.0.0.0" значит рантайма нет. Проверяем оба варианта
+// установки, не только HKLM, — на части машин техников не бывает прав
+// администратора, и WebView2 мог встать как per-user.
+function IsWebView2Installed(): Boolean;
+var
+  Version: String;
+begin
+  Result := False;
+  if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
+    if (Version <> '') and (Version <> '0.0.0.0') then
+      Result := True;
+  if not Result then
+    if RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
+      if (Version <> '') and (Version <> '0.0.0.0') then
+        Result := True;
+end;
+
 [Run]
+; Молча ставит WebView2 Runtime, если его ещё нет (см. IsWebView2Installed
+; выше и комментарий у Source: MicrosoftEdgeWebview2Setup.exe) — САМЫЙ
+; первый Run, до запуска самой программы: без рантайма она всё равно
+; откроется пустым белым окном. /silent /install — официальный ключ
+; бутстраппера (см. документацию Microsoft), сам решает per-machine или
+; per-user исходя из прав, с которыми запущен инсталлятор.
+Filename: "{app}\tools\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Устанавливаю компонент WebView2 Runtime..."; Check: not IsWebView2Installed; Flags: waituntilterminated
+
 ; БЕЗ skipifsilent (в отличие от admin_installer.iss/installer_debug.iss) —
 ; автообновление (app/web/api/update_api.py) ставит /VERYSILENT именно
 ; затем, чтобы программа сама перезапустилась после тихой установки; это

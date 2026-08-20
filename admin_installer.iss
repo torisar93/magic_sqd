@@ -12,7 +12,7 @@
 ; crash.log, cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD Admin"
-#define MyAppVersion "0.4.1-alpha"
+#define MyAppVersion "0.4.2-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd_admin.exe"
 
@@ -57,6 +57,10 @@ Source: "server.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "submit.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "admin.json"; DestDir: "{app}"; Flags: ignoreversion
 
+; WebView2 Runtime Bootstrapper — см. installer.iss за полным обоснованием
+; (без него окно программы открывается пустым белым).
+Source: "assets\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
@@ -74,5 +78,22 @@ Type: files; Name: "{app}\client_id.txt"
 Type: files; Name: "{app}\seen_versions.json"
 Type: files; Name: "{app}\DEBUG_LOG_ALL"
 
+[Code]
+// См. installer.iss за полным обоснованием.
+function IsWebView2Installed(): Boolean;
+var
+  Version: String;
+begin
+  Result := False;
+  if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
+    if (Version <> '') and (Version <> '0.0.0.0') then
+      Result := True;
+  if not Result then
+    if RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
+      if (Version <> '') and (Version <> '0.0.0.0') then
+        Result := True;
+end;
+
 [Run]
+Filename: "{app}\tools\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Устанавливаю компонент WebView2 Runtime..."; Check: not IsWebView2Installed; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "Запустить {#MyAppName}"; Flags: nowait postinstall skipifsilent

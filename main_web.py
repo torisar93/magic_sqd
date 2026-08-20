@@ -233,6 +233,56 @@ def _fix_window_position_win32(window) -> None:
         _log_step(f"_fix_window_position_win32 failed: {exc}")
 
 
+def _ensure_webview2(base_dir: Path, title: str) -> bool:
+    """Без WebView2 Runtime окно pywebview открывается пустым белым — сам
+    рендерер (msedgewebview2.exe) не запускается вовсе, ни один JS не
+    выполняется, и ни startup.log, ни debug-лог это не ловят как ошибку
+    (реальный случай на машине техника без WebView2 — см. app/
+    webview2_check.py). Инсталлятор уже сам молча ставит рантайм при
+    установке/обновлении (installer.iss/admin_installer.iss) — эта проверка
+    здесь на случай уже установленных копий без этого шага (старые версии)
+    или если у инсталлятора в момент установки не было интернета. Диалоги —
+    tkinter, а не наш собственный UI: он не зависит от WebView2, поэтому
+    единственный, кто гарантированно способен что-то показать именно в этой
+    ситуации. Возвращает False, если продолжать нельзя (пользователь
+    отказался или установка не удалась) — тогда run() выходит, не пытаясь
+    создать окно, которое всё равно будет пустым."""
+    from app.webview2_check import install_silently, is_installed
+    if is_installed():
+        return True
+
+    import tkinter as tk
+    import tkinter.messagebox as messagebox
+
+    root = tk.Tk()
+    root.withdraw()
+    proceed = messagebox.askyesno(
+        title,
+        "Не найден компонент WebView2 Runtime — без него окно программы "
+        "останется пустым белым.\n\nУстановить сейчас? Нужен интернет, "
+        "займёт около минуты.",
+    )
+    root.destroy()
+    if not proceed:
+        return False
+
+    _log_step("устанавливаю WebView2...")
+    bootstrapper = base_dir / "tools" / "MicrosoftEdgeWebview2Setup.exe"
+    ok = install_silently(bootstrapper)
+    _log_step(f"webview2 install ok={ok}")
+    if not ok:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            title,
+            "Не удалось установить WebView2 Runtime автоматически.\n\n"
+            "Установите его вручную с сайта Microsoft "
+            "(WebView2 Runtime) и запустите программу заново.",
+        )
+        root.destroy()
+    return ok
+
+
 def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     """Общая точка входа technician/admin сборок — main_web.py и
     admin_main_web.py вызывают её с разными admin_mode/log_prefix/title,
@@ -259,6 +309,11 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     api = WebApi(base_dir, admin_mode=admin_mode)
     debug_upload_once = _enable_debug_log_all(base_dir, api)
     frontend_dir = get_frontend_dir(base_dir)
+
+    _log_step("webview2 check")
+    if not _ensure_webview2(base_dir, title):
+        _log_step("webview2 недоступен, выходим без создания окна")
+        return
 
     debug = "--debug" in sys.argv  # DevTools — только по явному флагу, не в обычном запуске
 
