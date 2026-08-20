@@ -233,7 +233,7 @@ def _fix_window_position_win32(window) -> None:
         _log_step(f"_fix_window_position_win32 failed: {exc}")
 
 
-def _ensure_webview2(base_dir: Path, title: str) -> bool:
+def _ensure_renderer(base_dir: Path, title: str) -> dict | None:
     """Без WebView2 Runtime окно pywebview открывается пустым белым — сам
     рендерер (msedgewebview2.exe) не запускается вовсе, ни один JS не
     выполняется, и ни startup.log, ни debug-лог это не ловят как ошибку
@@ -241,15 +241,34 @@ def _ensure_webview2(base_dir: Path, title: str) -> bool:
     webview2_check.py). Инсталлятор уже сам молча ставит рантайм при
     установке/обновлении (installer.iss/admin_installer.iss) — эта проверка
     здесь на случай уже установленных копий без этого шага (старые версии)
-    или если у инсталлятора в момент установки не было интернета. Диалоги —
-    tkinter, а не наш собственный UI: он не зависит от WebView2, поэтому
-    единственный, кто гарантированно способен что-то показать именно в этой
-    ситуации. Возвращает False, если продолжать нельзя (пользователь
-    отказался или установка не удалась) — тогда run() выходит, не пытаясь
-    создать окно, которое всё равно будет пустым."""
+    или если у инсталлятора в момент установки не было интернета.
+
+    Если и это не помогло (или техник отказался) — предлагаем резервный
+    движок отображения на Qt WebEngine (см. app/qt_fallback.py): свой
+    встроенный Chromium, вообще не зависящий от WebView2, интерфейс тот же
+    самый (app/web/frontend/ как есть). Скачивается один раз (~200 МБ), при
+    следующих запусках уже стоит — проверяем это ПЕРВЫМ делом, до WebView2,
+    чтобы машина, которая уже прошла этот путь, не проходила его заново.
+
+    Диалоги — tkinter, а не наш собственный UI: он не зависит ни от
+    WebView2, ни от Qt, поэтому единственный, кто гарантированно способен
+    что-то показать именно в этой ситуации.
+
+    Возвращает {"gui": None} (обычный WebView2/winforms-путь), {"gui": "qt"}
+    (резервный Qt-движок — уже готов к использованию, sys.path настроен) или
+    None, если продолжать нельзя (отказ или ни один вариант не сработал) —
+    тогда run() выходит, не пытаясь создать окно, которое всё равно будет
+    пустым."""
+    from app import qt_fallback
     from app.webview2_check import install_silently, is_installed
+
+    if qt_fallback.is_downloaded(base_dir):
+        _log_step("резервный Qt-движок уже установлен, использую его")
+        qt_fallback.prepare_sys_path(base_dir)
+        return {"gui": "qt"}
+
     if is_installed():
-        return True
+        return {"gui": None}
 
     import tkinter as tk
     import tkinter.messagebox as messagebox
@@ -263,24 +282,42 @@ def _ensure_webview2(base_dir: Path, title: str) -> bool:
         "займёт около минуты.",
     )
     root.destroy()
-    if not proceed:
-        return False
+    if proceed:
+        _log_step("устанавливаю WebView2...")
+        bootstrapper = base_dir / "tools" / "MicrosoftEdgeWebview2Setup.exe"
+        ok = install_silently(bootstrapper)
+        _log_step(f"webview2 install ok={ok}")
+        if ok:
+            return {"gui": None}
 
-    _log_step("устанавливаю WebView2...")
-    bootstrapper = base_dir / "tools" / "MicrosoftEdgeWebview2Setup.exe"
-    ok = install_silently(bootstrapper)
-    _log_step(f"webview2 install ok={ok}")
+    root = tk.Tk()
+    root.withdraw()
+    proceed = messagebox.askyesno(
+        title,
+        "WebView2 Runtime поставить не удалось.\n\nУстановить резервный "
+        "движок отображения (~200 МБ, устанавливается один раз)? Это "
+        "позволит запустить программу без WebView2.",
+    )
+    root.destroy()
+    if not proceed:
+        return None
+
+    _log_step("скачиваю резервный Qt-движок...")
+    ok = qt_fallback.download_and_extract(base_dir, log=_log_step)
+    _log_step(f"qt fallback install ok={ok}")
     if not ok:
         root = tk.Tk()
         root.withdraw()
         messagebox.showerror(
             title,
-            "Не удалось установить WebView2 Runtime автоматически.\n\n"
-            "Установите его вручную с сайта Microsoft "
-            "(WebView2 Runtime) и запустите программу заново.",
+            "Не удалось установить резервный движок отображения.\n\n"
+            "Проверьте подключение к интернету и запустите программу заново.",
         )
         root.destroy()
-    return ok
+        return None
+
+    qt_fallback.prepare_sys_path(base_dir)
+    return {"gui": "qt"}
 
 
 def run(admin_mode: bool, log_prefix: str, title: str) -> None:
@@ -310,14 +347,15 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     debug_upload_once = _enable_debug_log_all(base_dir, api)
     frontend_dir = get_frontend_dir(base_dir)
 
-    _log_step("webview2 check")
-    if not _ensure_webview2(base_dir, title):
-        _log_step("webview2 недоступен, выходим без создания окна")
+    _log_step("renderer check")
+    renderer = _ensure_renderer(base_dir, title)
+    if renderer is None:
+        _log_step("ни WebView2, ни резервный движок недоступны, выходим без создания окна")
         return
 
     debug = "--debug" in sys.argv  # DevTools — только по явному флагу, не в обычном запуске
 
-    _log_step("webview.create_window()")
+    _log_step(f"webview.create_window() gui={renderer['gui']!r}")
     window = webview.create_window(
         title,
         str(frontend_dir / "index.html"),
@@ -326,13 +364,19 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
         height=990,
         min_size=(1040, 740),
     )
-    window.events.shown += lambda: _fix_window_position_win32(window)
+    if renderer["gui"] is None:
+        # _fix_window_position_win32 читает window.native.Handle — это
+        # WinForms/.NET-специфика (см. саму функцию), у Qt-окна (PySide6)
+        # такого атрибута нет вовсе. Функция и так безопасна (except
+        # Exception внутри), но при резервном движке просто нечего чинить
+        # (мультимониторный DPI-сдвиг — особенность именно WinForms-бэкенда).
+        window.events.shown += lambda: _fix_window_position_win32(window)
     events.set_window(window)
     events.event_bridge.start_pump()
 
     _log_step("webview.start()")
     try:
-        webview.start(debug=debug)
+        webview.start(debug=debug, **({"gui": renderer["gui"]} if renderer["gui"] else {}))
     finally:
         _log_step("webview.start() returned (normal close)")
         # adb.exe запускает свой собственный фоновый сервер-процесс при

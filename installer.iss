@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.4.2-alpha"
+#define MyAppVersion "0.4.3-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -87,6 +87,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Type: filesandordirs; Name: "{app}\cars"
 Type: filesandordirs; Name: "{app}\apk"
 Type: filesandordirs; Name: "{app}\debug_logs"
+; Резервный Qt-движок отображения (см. app/qt_fallback.py) — качается и
+; распаковывается уже во время работы программы, не через [Files], та же
+; причина, что и у cars/apk выше.
+Type: filesandordirs; Name: "{app}\_qt_fallback"
 Type: files; Name: "{app}\*.log"
 Type: files; Name: "{app}\client_id.txt"
 Type: files; Name: "{app}\seen_versions.json"

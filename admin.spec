@@ -5,10 +5,12 @@
 # для cars/_shared/uart_adb.py) — причина та же.
 from PyInstaller.utils.hooks import collect_submodules
 
+# python3.dll — см. magic_sqd.spec за полным обоснованием (нужен резервному
+# Qt-движку, app/qt_fallback.py).
 a = Analysis(
     ['admin_main_web.py'],
     pathex=[],
-    binaries=[],
+    binaries=[('assets/python3.dll', '.')],
     datas=[('app/web/frontend', 'app/web/frontend')],
     hiddenimports=collect_submodules('serial'),
     hookspath=[],

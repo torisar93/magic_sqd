@@ -18,10 +18,17 @@
 # UART-этапе, а не на старте программы.
 from PyInstaller.utils.hooks import collect_submodules
 
+# python3.dll (стабильный ABI-редирект, ~70 КБ) — PyInstaller сам его не
+# бандлит (нужен только abi3-модулям, а из статических импортов main_web.py
+# такого не видно), но именно на него линкуется shiboken6 в резервном
+# Qt-движке (см. app/qt_fallback.py, скачивается отдельно и ставится уже
+# после установки) — без него загрузка PySide6 падает с "DLL load failed"
+# на любой чистой заморозке. Кладём здесь один раз, а не только в
+# installer.iss, чтобы не забыть при следующей пересборке.
 a = Analysis(
     ['main_web.py'],
     pathex=[],
-    binaries=[],
+    binaries=[('assets/python3.dll', '.')],
     datas=[('app/web/frontend', 'app/web/frontend')],
     hiddenimports=collect_submodules('serial'),
     hookspath=[],
