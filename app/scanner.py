@@ -1,7 +1,20 @@
 """Сканирование папок cars/ и apk/."""
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
+
+# Статус модели (см. ModelInfo.status ниже, app/car_generator.py:
+# NewCarSpec.status) — ставится вручную в редакторе (визуальный граф,
+# см. app/web/frontend/js/screens/graph_wizard.js: renderHeader), а не
+# выводится автоматически. "ok" — по умолчанию для моделей без явного
+# статуса (в т.ч. написанных руками, без version.json вовсе).
+MODEL_STATUSES = ("ok", "needs_review", "broken")
+
+# Сколько времени модель считается "недавно обновлённой" (синяя метка,
+# см. model_status_color) после последнего сохранения в редакторе (version.
+# json: updated_at) — дальше молча становится обычным цветом по статусу.
+_RECENTLY_UPDATED_HOURS = 24
 
 
 # Маркер "для этой модели/модификации пока нет известного способа
@@ -32,6 +45,12 @@ class ModelInfo:
     # показывать ли модель в сводке "Что нового" при старте программы.
     revision: int = 0
     changelog: str = ""
+    # Статус, вручную выставленный в редакторе (см. MODEL_STATUSES выше) +
+    # время последнего сохранения — вместе используются model_status_color
+    # ниже, чтобы решить, каким цветом пометить модель в списке марок/
+    # моделей (см. app/web/frontend/js/screens/main_picker.js).
+    status: str = "ok"
+    updated_at: str = ""
 
     @property
     def display_label(self) -> str:
@@ -130,7 +149,7 @@ def _model_sub_dirs(model_dir: Path) -> list[Path]:
 
 def _build_model_info(brand: str, name: str, modification: str | None, leaf_dir: Path) -> ModelInfo:
     stages_script = leaf_dir / "stages.py"
-    revision, changelog = _read_version(leaf_dir)
+    revision, changelog, status, updated_at = _read_version(leaf_dir)
     return ModelInfo(
         brand=brand,
         name=name,
@@ -140,19 +159,75 @@ def _build_model_info(brand: str, name: str, modification: str | None, leaf_dir:
         no_instruction=(leaf_dir / NO_INSTRUCTION_MARKER).exists(),
         revision=revision,
         changelog=changelog,
+        status=status,
+        updated_at=updated_at,
     )
 
 
-def _read_version(model_dir: Path) -> tuple[int, str]:
+def _read_version(model_dir: Path) -> tuple[int, str, str, str]:
     try:
         data = json.loads((model_dir / VERSION_FILENAME).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return 0, ""
+        return 0, "", "ok", ""
     try:
         revision = int(data.get("revision", 0))
     except (TypeError, ValueError):
         revision = 0
-    return revision, str(data.get("changelog") or "")
+    status = str(data.get("status") or "ok")
+    if status not in MODEL_STATUSES:
+        status = "ok"
+    return revision, str(data.get("changelog") or ""), status, str(data.get("updated_at") or "")
+
+
+def read_status(model_dir: Path) -> str:
+    """Текущий статус модели (см. MODEL_STATUSES) — для car_generator.py:
+    load_car_spec, которому нужно предзаполнить текущее значение в форме
+    редактора при повторном открытии (в отличие от changelog, статус не
+    "одноразовая заметка к сохранению", а держащееся значение)."""
+    return _read_version(model_dir)[2]
+
+
+def model_status_color(model: ModelInfo) -> str:
+    """Цвет метки модели в списке марок/моделей (см. main_picker.js) —
+    красный (сломано) побеждает всегда, иначе недавнее обновление временно
+    перекрашивает в синий (см. _RECENTLY_UPDATED_HOURS), иначе цвет решает
+    сам статус: жёлтый ("требует обновления" — техник ещё не проверял этот
+    способ/инструкция черновая) или зелёный (по умолчанию, "актуально")."""
+    if model.status == "broken":
+        return "red"
+    if model.updated_at:
+        try:
+            updated = datetime.fromisoformat(model.updated_at)
+        except ValueError:
+            updated = None
+        if updated is not None and datetime.now() - updated < timedelta(hours=_RECENTLY_UPDATED_HOURS):
+            return "blue"
+    if model.status == "needs_review":
+        return "yellow"
+    return "green"
+
+
+def rollup_status_color(colors: list[str]) -> str:
+    """Цвет для марки/зонтика модификаций (см. app/web/api/scanner_api.py)
+    — не просто "берём самый плохой цвет": все модели зелёные — зелёный;
+    иначе хотя бы одна недавно обновлена (синяя) — синий, это самое
+    "свежее" событие, стоит внимания даже на фоне жёлтых/красных где-то
+    ещё; иначе смотрим, каких моделей больше — с жёлтым статусом или с
+    красным — и красим в цвет большинства (при равенстве — красный, он
+    серьёзнее). Зелёный, если моделей нет вовсе."""
+    if not colors:
+        return "green"
+    if all(c == "green" for c in colors):
+        return "green"
+    if any(c == "blue" for c in colors):
+        return "blue"
+    red_count = colors.count("red")
+    yellow_count = colors.count("yellow")
+    if red_count >= yellow_count and red_count > 0:
+        return "red"
+    if yellow_count > 0:
+        return "yellow"
+    return "green"
 
 
 def flatten_models(brands: dict[str, list[ModelGroup]]) -> list[ModelInfo]:

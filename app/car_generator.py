@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import instruction_html
-from .scanner import VERSION_FILENAME
+from .scanner import VERSION_FILENAME, read_status
 
 INVALID_NAME_CHARS = set('<>:"/\\|?*')
 SPEC_FILENAME = "_wizard_spec.json"
@@ -187,6 +187,12 @@ class NewCarSpec:
     # вместе с автоинкрементным revision — см. _write_version_file,
     # app/update_tracker.py (сводка "Что нового" у техника при старте).
     changelog: str = ""
+    # Статус модели (см. app/scanner.py: MODEL_STATUSES/model_status_color)
+    # — ставится вручную в редакторе (в отличие от changelog, держащееся
+    # значение, не разовая заметка: при повторном открытии редактора
+    # подставляется текущее, см. load_car_spec ниже). Красит модель в
+    # списке марок/моделей — "ok"/"needs_review"/"broken".
+    status: str = "ok"
 
 
 class CarGenerationError(RuntimeError):
@@ -358,6 +364,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         wifi=data.get("wifi", False),
         wifi_port=data.get("wifi_port", 5555),
         steps=steps,
+        status=read_status(model_dir),
     )
 
 
@@ -482,17 +489,19 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     (model_dir / "install.py").write_text(_render_install_py(spec), encoding="utf-8")
     (model_dir / "stages.py").write_text(_render_stages_py(spec), encoding="utf-8")
     (model_dir / SPEC_FILENAME).write_text(_render_spec_json(spec), encoding="utf-8")
-    _write_version_file(model_dir, spec.changelog)
+    _write_version_file(model_dir, spec.changelog, spec.status)
 
 
-def _write_version_file(model_dir: Path, changelog: str) -> None:
+def _write_version_file(model_dir: Path, changelog: str, status: str = "ok") -> None:
     """revision — просто счётчик сохранений этой модели через мастер,
     +1 к тому, что уже лежало в version.json (0, если файла ещё нет —
     первое сохранение новой модели даёт revision=1). Не привязан к
     какой-либо внешней схеме версионирования (semver и т.п.) — единственная
     цель: у клиента (см. app/update_tracker.py) есть монотонно растущее
     число, чтобы отличить "видел уже" от "появилось новое", а changelog —
-    что показать техническому в сводке при этом."""
+    что показать техническому в сводке при этом. status — см.
+    app/scanner.py: MODEL_STATUSES/model_status_color, вместе с updated_at
+    ниже красит модель в списке марок/моделей."""
     version_path = model_dir / VERSION_FILENAME
     revision = 0
     try:
@@ -503,6 +512,7 @@ def _write_version_file(model_dir: Path, changelog: str) -> None:
     data = {
         "revision": revision + 1,
         "changelog": changelog.strip(),
+        "status": status,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     version_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

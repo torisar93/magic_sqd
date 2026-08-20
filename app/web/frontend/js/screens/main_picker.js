@@ -4,6 +4,16 @@
 // breadcrumb над списком, а не подделанная первая строка списка (см. план
 // миграции) — сама модель навигации (шаги/данные) перенесена как есть.
 (function () {
+  // Подсказка при наведении на цветную метку (см. app/scanner.py:
+  // model_status_color) — сама метка ставится вручную в редакторе,
+  // здесь только текст всплывающей подсказки по уже готовому цвету.
+  const STATUS_COLOR_TITLES = {
+    green: "Актуально",
+    yellow: "Требует обновления — способ не проверен/черновой",
+    blue: "Недавно обновлено",
+    red: "Способ не работает",
+  };
+
   let data = null; // {brands: [...]}, см. app/web/api/scanner_api.py
   let step = "brand"; // "brand" | "model" | "modification"
   let selectedBrand = null;
@@ -33,7 +43,7 @@
     selectedGroup = null;
     renderBreadcrumb();
     renderList(
-      data.brands.map((b) => ({ label: b.name, logo: b.logo, onClick: () => showModelStep(b) }))
+      data.brands.map((b) => ({ label: b.name, logo: b.logo, color: b.status_color, onClick: () => showModelStep(b) }))
     );
   }
 
@@ -45,6 +55,7 @@
     renderList(
       brand.groups.map((group) => ({
         label: group.has_modifications ? `${group.name}  ▸` : group.name,
+        color: group.status_color,
         onClick: () => (group.has_modifications ? showModificationStep(brand, group) : selectModel(group.leaf)),
       }))
     );
@@ -56,7 +67,7 @@
     selectedGroup = group;
     renderBreadcrumb();
     renderList(
-      group.modifications.map((mod) => ({ label: mod.modification, onClick: () => selectModel(mod) }))
+      group.modifications.map((mod) => ({ label: mod.modification, color: mod.status_color, onClick: () => selectModel(mod) }))
     );
   }
 
@@ -108,8 +119,15 @@
         li.appendChild(img);
       }
       const span = document.createElement("span");
+      span.style.flex = "1";
       span.textContent = item.label;
       li.appendChild(span);
+      if (item.color) {
+        const dot = document.createElement("span");
+        dot.className = `status-dot status-dot-${item.color}`;
+        dot.title = STATUS_COLOR_TITLES[item.color] || "";
+        li.appendChild(dot);
+      }
       li.addEventListener("click", item.onClick);
       listEl.appendChild(li);
     }

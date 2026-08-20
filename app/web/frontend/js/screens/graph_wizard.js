@@ -59,6 +59,7 @@
   let steps = [];
   let selectedIndex = null;
   let brand = "", model = "", modification = "", wifi = false, wifiPort = 5555, changelog = "";
+  let status = "ok"; // см. app/scanner.py: MODEL_STATUSES/model_status_color
   let isEditing = false;
   let editModelKey = null;
   let onCreatedCb = null;
@@ -207,9 +208,10 @@
       }
       brand = spec.brand; model = spec.model; modification = spec.modification || "";
       wifi = spec.wifi; wifiPort = spec.wifi_port;
+      status = spec.status || "ok";
       steps = spec.steps;
     } else {
-      brand = ""; model = ""; modification = ""; wifi = false; wifiPort = 5555;
+      brand = ""; model = ""; modification = ""; wifi = false; wifiPort = 5555; status = "ok";
       steps = [{ ...newStep("instruction"), title: "Этап 1" }];
     }
     changelog = "";
@@ -310,6 +312,29 @@
     changelogInput.addEventListener("input", () => { changelog = changelogInput.value; });
     changelogField.appendChild(changelogInput);
     headerEl.appendChild(changelogField);
+
+    // Статус — цветная метка у марки/модели в списке техника (см.
+    // app/scanner.py: MODEL_STATUSES/model_status_color). В отличие от
+    // changelog выше — держащееся значение, не разовая заметка: остаётся,
+    // пока сюда же не поменяют. "Недавно обновлено" тут не выбор — она
+    // сама на несколько часов перекрашивает ЛЮБОЙ статус сразу после
+    // сохранения (см. renderStatusHint ниже), поэтому в списке только те
+    // статусы, которые техник должен осознанно выбрать.
+    const statusField = el("div", { class: "field", style: "margin-top: 8px" });
+    statusField.appendChild(el("span", { class: "field-label", text: "Статус (метка в списке машин)" }));
+    const statusSelect = el("select", {}, [
+      el("option", { value: "ok", text: "🟢 Актуально", selected: status === "ok" ? "" : null }),
+      el("option", { value: "needs_review", text: "🟡 Требует обновления (черновик/не проверено)", selected: status === "needs_review" ? "" : null }),
+      el("option", { value: "broken", text: "🔴 Способ не работает", selected: status === "broken" ? "" : null }),
+    ]);
+    statusSelect.addEventListener("change", () => { status = statusSelect.value; });
+    statusField.appendChild(statusSelect);
+    statusField.appendChild(el("p", {
+      class: "app-desc", style: "margin-top: 4px",
+      text: "Сразу после сохранения метка на несколько часов станет синей (\"недавно обновлено\") "
+        + "независимо от выбора выше, потом сама вернётся к нему.",
+    }));
+    headerEl.appendChild(statusField);
   }
 
   // ------------------------------------------------------------------
@@ -976,7 +1001,7 @@
   // Сохранение — идентично car_wizard.js (тот же bridge-метод car_save).
   // ------------------------------------------------------------------
   function specToJson() {
-    return { brand, model, modification, wifi, wifi_port: Number(wifiPort) || 5555, steps, changelog };
+    return { brand, model, modification, wifi, wifi_port: Number(wifiPort) || 5555, steps, changelog, status };
   }
 
   async function onSave() {

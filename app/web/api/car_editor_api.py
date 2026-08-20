@@ -129,7 +129,7 @@ class CarEditorApi:
             )}
         return {
             "brand": spec.brand, "model": spec.model, "modification": spec.modification,
-            "wifi": spec.wifi, "wifi_port": spec.wifi_port,
+            "wifi": spec.wifi, "wifi_port": spec.wifi_port, "status": spec.status,
             "steps": [_step_to_dict(s) for s in spec.steps],
         }
 
@@ -256,6 +256,7 @@ class CarEditorApi:
             wifi=spec_data.get("wifi", False), wifi_port=spec_data.get("wifi_port", 5555),
             steps=[_step_from_dict(s) for s in spec_data.get("steps", [])],
             changelog=spec_data.get("changelog", ""),
+            status=spec_data.get("status") or "ok",
         )
 
         self._cancel_flag = threading.Event()

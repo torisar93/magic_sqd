@@ -8,7 +8,7 @@ admin_api, когда нужно что-то сделать с конкретн�
 import base64
 
 from ..events import event_bridge
-from ...scanner import scan_cars, scan_apks, ModelInfo
+from ...scanner import scan_cars, scan_apks, model_status_color, rollup_status_color, ModelInfo
 
 BRAND_LOGO_FILENAMES = ("logo.png", "logo.jpg", "logo.jpeg")
 _LOGO_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
@@ -51,10 +51,12 @@ class ScannerApi:
         self._models_by_key = {}
         brands = []
         for brand, groups in brands_tree.items():
+            group_dicts = [self._group_to_dict(group) for group in groups]
             brands.append({
                 "name": brand,
                 "logo": self._brand_logo_data_uri(brand),
-                "groups": [self._group_to_dict(group) for group in groups],
+                "groups": group_dicts,
+                "status_color": rollup_status_color([g["status_color"] for g in group_dicts]),
             })
         return {"brands": brands}
 
@@ -80,11 +82,15 @@ class ScannerApi:
         return self._model_to_dict(model)
 
     def _group_to_dict(self, group) -> dict:
+        leaf_dict = self._model_to_dict(group.leaf) if group.leaf else None
+        mod_dicts = [self._model_to_dict(m) for m in group.modifications]
+        colors = ([leaf_dict["status_color"]] if leaf_dict else []) + [m["status_color"] for m in mod_dicts]
         return {
             "name": group.name,
             "has_modifications": group.has_modifications,
-            "leaf": self._model_to_dict(group.leaf) if group.leaf else None,
-            "modifications": [self._model_to_dict(m) for m in group.modifications],
+            "leaf": leaf_dict,
+            "modifications": mod_dicts,
+            "status_color": rollup_status_color(colors),
         }
 
     def _model_to_dict(self, model: ModelInfo) -> dict:
@@ -98,6 +104,8 @@ class ScannerApi:
             "display_label": model.display_label,
             "no_instruction": model.no_instruction,
             "has_wizard_spec": (model.dir / "_wizard_spec.json").exists(),
+            "status": model.status,
+            "status_color": model_status_color(model),
         }
 
     def _brand_logo_data_uri(self, brand: str) -> str | None:

@@ -142,6 +142,35 @@
   object-fit: contain;
 }
 
+/* Метка статуса марки/модели (см. app/scanner.py: model_status_color) —
+   зелёная (актуально)/жёлтая (требует обновления, см. MODEL_STATUSES)/
+   синяя (недавно обновлено, временная — см. _RECENTLY_UPDATED_HOURS)/
+   красная (способ не работает) — ставится вручную в редакторе, здесь
+   только отрисовка уже готового цвета с бэкенда, без своей логики. */
+.status-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot-green {
+  background: var(--accent);
+}
+
+.status-dot-yellow {
+  background: var(--accent-2);
+}
+
+.status-dot-blue {
+  background: var(--info);
+}
+
+.status-dot-red {
+  background: var(--danger);
+}
+
 .picker-list .empty {
   padding: 10px;
   color: var(--text-dim);
