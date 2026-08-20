@@ -233,7 +233,7 @@ def _fix_window_position_win32(window) -> None:
         _log_step(f"_fix_window_position_win32 failed: {exc}")
 
 
-def _ensure_renderer(base_dir: Path, title: str) -> dict | None:
+def _ensure_renderer(base_dir: Path, title: str, force_qt: bool = False) -> dict | None:
     """Без WebView2 Runtime окно pywebview открывается пустым белым — сам
     рендерер (msedgewebview2.exe) не запускается вовсе, ни один JS не
     выполняется, и ни startup.log, ни debug-лог это не ловят как ошибку
@@ -250,6 +250,16 @@ def _ensure_renderer(base_dir: Path, title: str) -> dict | None:
     следующих запусках уже стоит — проверяем это ПЕРВЫМ делом, до WebView2,
     чтобы машина, которая уже прошла этот путь, не проходила его заново.
 
+    force_qt — флаг --qt-fallback (см. run()): реальный случай — WebView2
+    ЕСТЬ в реестре (is_installed() честно отвечает True), но администратор
+    домена заблокировал сам процесс msedgewebview2.exe политикой — окно всё
+    равно пустое, а наша проверка реестра в принципе не может отличить
+    "не установлен" от "установлен, но заблокирован". Штатный путь такую
+    машину никогда сам не поймает (is_installed() ведь не соврал), поэтому
+    нужен ручной обход — техник (или тот, кто ему помогает удалённо)
+    запускает `magic_sqd.exe --qt-fallback`, пропуская проверку WebView2
+    целиком.
+
     Диалоги — tkinter, а не наш собственный UI: он не зависит ни от
     WebView2, ни от Qt, поэтому единственный, кто гарантированно способен
     что-то показать именно в этой ситуации.
@@ -264,6 +274,14 @@ def _ensure_renderer(base_dir: Path, title: str) -> dict | None:
 
     if qt_fallback.is_downloaded(base_dir):
         _log_step("резервный Qt-движок уже установлен, использую его")
+        qt_fallback.prepare_sys_path(base_dir)
+        return {"gui": "qt"}
+
+    if force_qt:
+        _log_step("--qt-fallback: пропускаю проверку WebView2, качаю резервный движок")
+        ok = qt_fallback.download_and_extract(base_dir, log=_log_step)
+        if not ok:
+            return None
         qt_fallback.prepare_sys_path(base_dir)
         return {"gui": "qt"}
 
@@ -348,7 +366,7 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     frontend_dir = get_frontend_dir(base_dir)
 
     _log_step("renderer check")
-    renderer = _ensure_renderer(base_dir, title)
+    renderer = _ensure_renderer(base_dir, title, force_qt="--qt-fallback" in sys.argv)
     if renderer is None:
         _log_step("ни WebView2, ни резервный движок недоступны, выходим без создания окна")
         return
