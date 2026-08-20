@@ -7,6 +7,14 @@ __pycache__/
 build/
 dist/
 
+# То же самое, для 32-битной (x86, Windows 7+) сборки — см. installer_x86.iss,
+# .venv-x86 собирается 32-битным Python (py -3.12-32 -m venv .venv-x86),
+# PyInstaller запускается с --distpath dist_x86 --workpath build_x86, чтобы
+# не смешивать с обычной x64-сборкой в dist/build.
+.venv-x86/
+build_x86/
+dist_x86/
+
 # platform-tools (adb.exe и спутники) — качаются отдельно, см. tools/README.txt
 tools/*.exe
 tools/*.dll
