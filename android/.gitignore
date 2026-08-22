@@ -1,0 +1,20 @@
+*.iml
+.gradle/
+/local.properties
+.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuildFolder
+*.apk
+*.aab
+/app/build
+/app/release
+
+# Ключ подписи релиза — не должен попадать в git ни при каких обстоятельствах.
+/keystore/
+
+# Черновые скриншоты/видео для стора и собранные .apk для раздачи —
+# рабочие артефакты, не исходники (сами релизные APK живут в GitHub
+# Releases, см. gh release upload).
+/store/

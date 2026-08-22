@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="true" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Для MulticastLock (см. MdnsResolve.kt) — без него система тихо
+         фильтрует входящие multicast-пакеты для приложения. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Без этих двух ConnectivityManager.getLinkProperties()/allNetworks()
+         и WifiManager.createMulticastLock() либо бросают SecurityException,
+         либо тихо возвращают пусто — ИМЕННО так и ломался скан сети
+         (NetworkScan.kt/MdnsResolve.kt), без единой строчки в логе, потому
+         что вызовы обёрнуты в try/catch без логирования. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.MagicSqdMobile"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Не launcher — доступен через
+             adb shell am start -n ru.magicsqd.mobile/.DiagnosticsActivity -->
+        <activity
+            android:name=".DiagnosticsActivity"
+            android:exported="true" />
+    </application>
+
+</manifest>

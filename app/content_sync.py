@@ -21,6 +21,7 @@ sync_shared_apks/ensure_apks_downloaded). Исключение — список 
 приложений было бы пустым, пока пользователь не нажмёт "Скачать" сам."""
 from __future__ import annotations
 import json
+import os
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -153,7 +154,7 @@ def _list_one(base_url: str, rel_path: str) -> list[dict] | None:
         return None
 
 
-def fetch_manifest(base_url: str) -> dict[str, int] | None:
+def fetch_manifest(base_url: str) -> dict[str, dict] | None:
     """Скачивает единый манифест content/manifest.json (см. server/backend.py:
     write_manifest) — ОДИН HTTP-запрос вместо рекурсивного обхода директорий
     через nginx autoindex (см. list_files_recursive), который иначе
@@ -162,9 +163,10 @@ def fetch_manifest(base_url: str) -> dict[str, int] | None:
     cars/_shared/<набор> перед USB-этапом, каталог apk/ и его *.json
     сайдкары) — на разросшемся дереве моделей это было десятки-сотни
     запросов на один запуск программы. Возвращает {"<путь от content/>":
-    size} или None, если манифеста на сервере нет (старый бэкенд, ещё не
-    обновлённый) или сеть недоступна — тогда вызывающий код откатывается на
-    list_files_recursive для конкретно нужного ему поддерева, как раньше."""
+    {"size": int, "mtime": float | None}} или None, если манифеста на
+    сервере нет (старый бэкенд, ещё не обновлённый) или сеть недоступна —
+    тогда вызывающий код откатывается на list_files_recursive для конкретно
+    нужного ему поддерева, как раньше."""
     try:
         with urllib.request.urlopen(f"{base_url}/manifest.json", timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -176,11 +178,11 @@ def fetch_manifest(base_url: str) -> dict[str, int] | None:
     result = {}
     for path, entry in files.items():
         if isinstance(entry, dict) and isinstance(entry.get("size"), int):
-            result[path] = entry["size"]
+            result[path] = {"size": entry["size"], "mtime": entry.get("mtime")}
     return result
 
 
-def filter_manifest(manifest: dict[str, int], subpath: str, skip_dirs: tuple = (),
+def filter_manifest(manifest: dict[str, dict], subpath: str, skip_dirs: tuple = (),
                      no_recurse_dirs: tuple = ()) -> list[dict]:
     """То же самое, что list_files_recursive(base_url, subpath, skip_dirs,
     no_recurse_dirs), но без единого сетевого запроса — берёт срез уже
@@ -192,7 +194,7 @@ def filter_manifest(manifest: dict[str, int], subpath: str, skip_dirs: tuple = (
     манифест просто уже содержит всё дерево целиком, фильтрация локальная."""
     prefix = subpath.strip("/")
     result = []
-    for path, size in manifest.items():
+    for path, entry in manifest.items():
         if prefix and path != prefix and not path.startswith(f"{prefix}/"):
             continue
         dir_segments = path.split("/")[:-1]
@@ -200,13 +202,31 @@ def filter_manifest(manifest: dict[str, int], subpath: str, skip_dirs: tuple = (
             continue
         if any(path.startswith(f"{nr}/") and "/" in path[len(nr) + 1:] for nr in no_recurse_dirs):
             continue
-        result.append({"path": path, "size": size})
+        result.append({"path": path, "size": entry["size"], "mtime": entry.get("mtime")})
     return result
+
+
+def _is_stale(local_path: Path, item: dict) -> bool:
+    """Файл нужно перекачать, если его нет локально, отличается размер,
+    либо (при известном mtime с сервера) сохранённая при прошлой закачке
+    mtime не совпадает с текущей mtime на сервере — раньше сверяли только
+    size, из-за чего правка файла без изменения байтовой длины (например
+    правка instruction.html той же длины) тихо не перекачивалась, см.
+    download_file (штампует mtime сервера на скачанный файл)."""
+    if not local_path.exists():
+        return True
+    st = local_path.stat()
+    if st.st_size != item.get("size", -1):
+        return True
+    remote_mtime = item.get("mtime")
+    if remote_mtime is not None and abs(st.st_mtime - remote_mtime) > 2:
+        return True
+    return False
 
 
 def download_file(base_url: str, remote_path: str, dest: Path,
                    log=lambda m: None, chunk_size: int = CHUNK_SIZE,
-                   check_cancelled=lambda: None) -> None:
+                   check_cancelled=lambda: None, mtime: float | None = None) -> None:
     """Скачивает один файл в dest (атомарно — через .part)."""
     url = f"{base_url}/{_encode_path(remote_path)}"
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -226,10 +246,17 @@ def download_file(base_url: str, remote_path: str, dest: Path,
         tmp_dest.unlink(missing_ok=True)
         raise
     tmp_dest.replace(dest)
+    if mtime is not None:
+        # Штампуем mtime сервера на локальный файл — это то, с чем следующий
+        # sync сравнит manifest.json (см. _is_stale), а не время скачивания.
+        try:
+            os.utime(dest, (mtime, mtime))
+        except OSError:
+            pass
 
 
 def _download_one(base_url: str, remote_path: str, local_path: Path,
-                   log, check_cancelled) -> bool:
+                   log, check_cancelled, mtime: float | None = None) -> bool:
     """Один файл для параллельного скачивания в sync_tree — обёртка над
     download_file с логом и обработкой ошибки конкретно этого файла (не
     должна рушить скачивание остальных, см. вызов через ThreadPoolExecutor
@@ -237,7 +264,7 @@ def _download_one(base_url: str, remote_path: str, local_path: Path,
     check_cancelled()
     log(f"Скачиваю {remote_path}...")
     try:
-        download_file(base_url, remote_path, local_path, log=log, check_cancelled=check_cancelled)
+        download_file(base_url, remote_path, local_path, log=log, check_cancelled=check_cancelled, mtime=mtime)
         return True
     except ContentSyncError as exc:
         log(f"Не удалось скачать {remote_path}: {exc}")
@@ -246,7 +273,7 @@ def _download_one(base_url: str, remote_path: str, local_path: Path,
 
 def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
               log=lambda m: None, check_cancelled=lambda: None, skip_dirs: tuple = (),
-              no_recurse_dirs: tuple = (), manifest: dict[str, int] | None = None) -> int:
+              no_recurse_dirs: tuple = (), manifest: dict[str, dict] | None = None) -> int:
     """Скачивает из remote_subpath в local_dir всё, чего там ещё нет (или
     что отличается по размеру). skip_dirs/no_recurse_dirs — см.
     list_files_recursive. Возвращает число скачанных файлов; сетевые ошибки
@@ -279,16 +306,16 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
                 log(f"Не удалось получить список файлов с сервера ({remote_subpath}): {exc}")
             return 0
 
-    to_download: list[tuple[str, Path]] = []
+    to_download: list[tuple[str, Path, float | None]] = []
     for item in items:
         check_cancelled()
         rel = item["path"][len(remote_subpath):].lstrip("/") if remote_subpath else item["path"]
         if not rel:
             continue
         local_path = local_dir / rel
-        if local_path.exists() and local_path.stat().st_size == item.get("size", -1):
+        if not _is_stale(local_path, item):
             continue
-        to_download.append((item["path"], local_path))
+        to_download.append((item["path"], local_path, item.get("mtime")))
 
     downloaded = 0
     if to_download:
@@ -298,8 +325,8 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
         # при отмене бросает исключение в future — оно всплывёт наружу из
         # цикла ниже, как и раньше прерывая sync_tree.
         with ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as executor:
-            futures = [executor.submit(_download_one, base_url, path, local_path, log, check_cancelled)
-                       for path, local_path in to_download]
+            futures = [executor.submit(_download_one, base_url, path, local_path, log, check_cancelled, mtime)
+                       for path, local_path, mtime in to_download]
             for future in futures:
                 if future.result():
                     downloaded += 1
@@ -309,7 +336,7 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
 
 
 def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
-                  manifest: dict[str, int] | None = None) -> int:
+                  manifest: dict[str, dict] | None = None) -> int:
     """Автообновление скриптов/инструкций всех моделей (cars/) при
     запуске программы — install.py/stages.py/instruction.html и т.п., но
     БЕЗ содержимого files/ и usb_files/ (там как раз и лежат тяжёлые
@@ -334,7 +361,7 @@ def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
 
 
 def sync_shared_folder(base_dir: Path, name: str, log=lambda m: None,
-                        check_cancelled=lambda: None, manifest: dict[str, int] | None = None) -> int:
+                        check_cancelled=lambda: None, manifest: dict[str, dict] | None = None) -> int:
     """Подтягивает cars/_shared/<name>/ целиком с сервера — точечно, прямо
     перед выполнением USB-этапа, который на неё ссылается (см.
     StepSpec.usb_shared_folder, app/web/api/usb_api.py), а НЕ при каждом
@@ -398,7 +425,7 @@ def _model_wants_own_files(model_dir: Path) -> tuple[bool, bool]:
 
 
 def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=lambda: None,
-                      manifest: dict[str, int] | None = None) -> int:
+                      manifest: dict[str, dict] | None = None) -> int:
     """Подтягивает files/ и usb_files/ конкретной модели с сервера — по
     кнопке "Скачать файлы модели" (gui.py) и на всякий случай ещё раз прямо
     перед установкой этой модели. Молча ничего не делает (возвращает 0),
@@ -467,10 +494,10 @@ def sync_shared_apk_metadata(base_dir: Path, apk_dir: Path, log=lambda m: None,
         if not rel:
             continue
         local_path = apk_dir / rel
-        if local_path.exists() and local_path.stat().st_size == item.get("size", -1):
+        if not _is_stale(local_path, item):
             continue
         try:
-            download_file(url, item["path"], local_path, log=log)
+            download_file(url, item["path"], local_path, log=log, mtime=item.get("mtime"))
             downloaded += 1
         except ContentSyncError as exc:
             log(f"Не удалось скачать {item['path']}: {exc}")

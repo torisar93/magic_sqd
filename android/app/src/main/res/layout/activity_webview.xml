@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WebView обёрнут в FrameLayout, чтобы отступ под системные бары применялся
+     к обычному View (root), а не к самому WebView — у WebView свой Chromium-
+     компоузитор, который может переопределить/сбросить padding, применённый
+     напрямую на него, при внутренних релэйаутах (например при переключении
+     между экранами picker/wizard, где сильно меняется высота DOM). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#14161a">
+
+    <WebView
+        android:id="@+id/webView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+</FrameLayout>

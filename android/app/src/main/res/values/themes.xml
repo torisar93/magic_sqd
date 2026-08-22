@@ -1,0 +1,12 @@
+<resources>
+    <!-- Приложение всегда тёмное (свой CSS-стиль в assets/css/style.css, без
+         light-варианта) — DayNight-родитель тут не нужен и вреден: его
+         windowBackground следует СИСТЕМНОЙ теме (белый в светлом режиме),
+         и это "не тот" цвет просвечивал в отступе под системные бары
+         (см. activity_webview.xml — там теперь тоже явный фон, задаём и
+         тут для консистентности и чтобы не мелькал системный фон до
+         инфляции разметки). -->
+    <style name="Theme.MagicSqdMobile" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="android:windowBackground">#14161a</item>
+    </style>
+</resources>

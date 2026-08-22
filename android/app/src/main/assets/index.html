@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Magic SQD</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <div class="topbar">
+      <button class="back" id="top-back" style="visibility: hidden">Марки</button>
+      <span class="title" id="top-title">Magic SQD</span>
+    </div>
+
+    <div class="screen active" id="screen-picker">
+      <div class="breadcrumb" id="picker-breadcrumb"></div>
+      <div class="sync-status" id="picker-sync-status" style="display: none"></div>
+      <ul class="list" id="picker-list"></ul>
+    </div>
+
+    <div class="screen" id="screen-wizard">
+      <div class="adb-bar" id="adb-bar">
+        <span id="adb-status">ADB: не подключено</span>
+        <button id="adb-connect-btn">Подключить ADB</button>
+      </div>
+      <div class="adb-bar" id="usb-bar">
+        <span id="usb-status">Флешка: не подключена</span>
+        <button id="usb-connect-btn">Подключить флешку</button>
+        <button id="usb-format-btn" class="danger">Форматировать</button>
+      </div>
+      <div id="wizard-content" style="flex: 1; overflow-y: auto"></div>
+      <div class="log-bar" id="log-bar">
+        <span id="log-last-line" class="log-last-line">Лог</span>
+        <button id="log-expand-btn">▲</button>
+      </div>
+      <div class="log-overlay" id="log-overlay">
+        <div class="log-card">
+          <div class="log-card-header">
+            <span>Лог</span>
+            <button id="log-collapse-btn">Свернуть ▼</button>
+          </div>
+          <div class="log-panel" id="log-panel"></div>
+          <div class="log-cmd-row">
+            <input type="text" id="log-cmd-input" placeholder="shell-команда вручную (adb)" />
+            <button id="log-cmd-run" class="accent">▶</button>
+          </div>
+        </div>
+      </div>
+      <div class="wizard-nav">
+        <button id="wizard-back">Назад</button>
+        <span class="page-label" id="wizard-page-label"></span>
+        <button id="wizard-next" class="accent">Далее</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/dom.js"></script>
+  <script src="js/bridge.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
