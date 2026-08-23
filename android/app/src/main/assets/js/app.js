@@ -47,9 +47,16 @@
   }
 
   function log(text) {
-    const line = el("div", { text, class: `log-line log-line-${classifyLogLevel(text)}` });
+    const level = classifyLogLevel(text);
+    const line = el("div", { text, class: `log-line log-line-${level}` });
     logPanelEl.appendChild(line);
     logPanelEl.scrollTop = logPanelEl.scrollHeight;
+    // Свёрнутая нижняя полоса лога раньше всегда показывала статичное "Лог"
+    // — последняя строка была видна, только раскрыв лог целиком. Теперь
+    // сворачивание просто прячет ПОЛНУЮ историю, а не сам факт "что-то
+    // происходит" — та же логика, что и в desktop-версии (нижняя строка).
+    logLastLineEl.textContent = text;
+    logLastLineEl.className = `log-last-line log-line-${level}`;
   }
 
   function setLogOpen(open) {

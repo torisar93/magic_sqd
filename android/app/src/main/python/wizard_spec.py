@@ -274,11 +274,13 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             "standard_apks": standard_apks,
             "standard_apks_optional": standard_apks_optional,
             # "wired"/"wifi"/"ask" — только для type == "apps" (см.
-            # car_generator.py: StepSpec.apps_connection). До этого поля
-            # мобильная версия вообще не знала про него и всегда пыталась
-            # подключиться по проводу, даже если автор явно указал Wi-Fi —
-            # см. app.js: connectionModeFor.
-            "apps_connection": step_data.get("apps_connection", "wired"),
+            # car_generator.py: StepSpec.apps_connection). Если поля нет
+            # вовсе (этап сохранён до его появления) — берём "wifi" для
+            # wifi-only моделей (data["wifi"]) вместо слепого "wired",
+            # иначе apps-этап без проводного ADB вообще пытался бы
+            # подключиться по USB (реальный баг: Geely Cityray "со значком
+            # Wi-Fi" — см. app.js: connectionModeFor).
+            "apps_connection": step_data.get("apps_connection") or ("wifi" if data.get("wifi") else "wired"),
             "exe_file": exe_file,
             "check_var": step_data.get("check_var", ""),
             "check_options": step_data.get("check_options", []),

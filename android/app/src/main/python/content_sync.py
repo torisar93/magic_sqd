@@ -188,6 +188,25 @@ def sync_scripts(base_url: str, cars_dir: Path, log=lambda m: None,
                       on_progress=on_progress)
 
 
+def sync_model_subfolder(base_url: str, cars_dir: Path, local_dir: Path, log=lambda m: None,
+                          on_progress=lambda done, total: None, manifest=None) -> int:
+    """Синхронизирует ОДНУ конкретную подпапку модели (например
+    files/instruction_N) — не всю files/+usb_files разом (см.
+    sync_model_payload ниже). Портовая копия desktop app/content_sync.py:
+    sync_model_subfolder — вызывается при ОТКРЫТИИ модели (см.
+    mobile_bridge.sync_payload) для того, что нужно показать сразу
+    (инструкции); остальное (APK apps-этапа, usb_files, прикреплённые к
+    adb/actions файлы) качается по клику на соответствующем этапе — см.
+    apk_library.ensure_apks_downloaded, вызывается из WebBridge.kt."""
+    if manifest is None:
+        manifest = fetch_manifest(base_url)
+        if manifest is None:
+            log("Не удалось получить manifest.json с сервера — работаем с тем, что уже скачано локально.")
+            return 0
+    remote_subpath = "cars/" + local_dir.relative_to(cars_dir).as_posix()
+    return sync_tree(base_url, remote_subpath, local_dir, manifest, log=log, on_progress=on_progress)
+
+
 def sync_model_payload(base_url: str, cars_dir: Path, model_dir: Path, log=lambda m: None,
                         on_progress=lambda done, total: None) -> int:
     """Точечно скачивает files/ и usb_files/ КОНКРЕТНОЙ модели (APK, файлы

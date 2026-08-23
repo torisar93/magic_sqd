@@ -167,13 +167,35 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         }.start()
     }
 
-    /** Докачивает те .apk из общей библиотеки, которых ещё нет на диске —
-     * вызывается перед реальным использованием отмеченных техником путей. */
+    /** Докачивает те файлы из paths, которых ещё нет на диске — общую
+     * библиотеку (apk/) И "свои" файлы конкретной модели (APK apps-этапа,
+     * файлы usb-этапа, прикреплённые к adb/actions команды) одинаково, см.
+     * apk_library.ensure_apks_downloaded — вызывается перед реальным
+     * использованием отмеченных техником/прикреплённых в этапе путей
+     * (модель больше не докачивается целиком при открытии, см.
+     * mobile_bridge.sync_payload). */
     private fun ensureApksDownloaded(paths: List<String>) {
         if (paths.isEmpty()) return
         val pathsArr = JSONArray(paths)
         val resultJson = try {
-            pyModule("mobile_bridge").callAttr("ensure_apks_downloaded", apkDir, BASE_URL, pathsArr.toString()).toString()
+            pyModule("mobile_bridge").callAttr(
+                "ensure_apks_downloaded", apkDir, carsDir, BASE_URL, pathsArr.toString()
+            ).toString()
+        } catch (e: Exception) {
+            return
+        }
+        val result = JSONObject(resultJson)
+        val logLines = result.optJSONArray("log") ?: JSONArray()
+        for (i in 0 until logLines.length()) pushAdbLog(logLines.getString(i))
+    }
+
+    /** cars/_shared/<folderName>/ целиком (см. mobile_bridge.sync_shared_folder_for)
+     * — вызывается прямо перед записью usb-этапа с usb_shared_folder, а не
+     * при открытии модели (см. usbRunStage). */
+    private fun syncSharedFolder(folderName: String) {
+        if (folderName.isBlank()) return
+        val resultJson = try {
+            pyModule("mobile_bridge").callAttr("sync_shared_folder_for", carsDir, BASE_URL, folderName).toString()
         } catch (e: Exception) {
             return
         }
@@ -342,6 +364,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 if (!AdbSession.isConnected) {
                     StageRunResult.Failed("ADB не подключён — сначала подключись к устройству")
                 } else {
+                    // Прикреплённые к команде файлы (files/adb_N/... или
+                    // files/actions_i_j/..., см. #push/#install) качаются
+                    // точечно прямо здесь — модель больше не докачивается
+                    // целиком при открытии (см. mobile_bridge.sync_payload).
+                    ensureApksDownloaded(filesByName.values.toList())
                     installEngine().runAdbCommands(commands, filesByName)
                 }
             } catch (e: Exception) {
@@ -424,7 +451,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 if (!UsbFlashSession.isMounted) {
                     StageRunResult.Failed("Флешка не подключена — сначала подключись к ней")
                 } else {
-                    ensureApksDownloaded(selectedApks) // общая библиотека — байты качаются только на этом шаге
+                    // Файлы этапа (files/usb_files/step_N/...) и отмеченные
+                    // техником APK качаются точечно прямо здесь — модель
+                    // больше не докачивается целиком при открытии (см.
+                    // mobile_bridge.sync_payload).
+                    ensureApksDownloaded(files + selectedApks)
+                    if (sharedFolder.isNotBlank()) syncSharedFolder(sharedFolder)
                     writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog)
                 }
             } catch (e: Exception) {

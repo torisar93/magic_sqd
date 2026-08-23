@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from urllib.parse import quote
 
-from content_sync import sync_scripts, sync_model_payload, sync_shared_folder
+from content_sync import sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version
 from wizard_spec import load_wizard_spec
 from apk_library import list_apks as _list_apks, ensure_apks_downloaded as _ensure_apks_downloaded
@@ -116,25 +116,52 @@ def select_model(key: str, brand: str, name: str, modification: str = None) -> s
 
 
 def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
-    """Точечно скачивает files/usb_files выбранной модели (см.
-    content_sync.sync_model_payload), а также cars/_shared/<folder>/ для
-    каждого usb_shared_folder, на который ссылаются её "usb"-этапы (эти
-    общие наборы sync_scripts пропускает — см. content_sync.sync_tree) —
-    вызывается перед открытием мастера установки."""
+    """Точечно скачивает ТОЛЬКО то, что нужно сразу при открытии модели —
+    свои files/instruction_N/ подпапки (текст+картинки инструкций), а не всю
+    files/+usb_files модели разом, как было раньше (портовая копия desktop
+    app/web/api/install_api.py: load_stages() — тот же переход на ленивую
+    докачку по этапам). APK apps-этапа/файлы usb-этапа/прикреплённые к
+    adb-actions файлы качаются точечно прямо перед запуском соответствующего
+    этапа (см. apk_library.ensure_apks_downloaded и sync_shared_folder_for
+    ниже, вызываются из WebBridge.kt: adbInstallApks/usbRunStage/
+    adbRunStage) — здесь их разом больше не трогаем."""
     lines = []
     log = lambda m: lines.append(m)
     cars_path = Path(cars_dir)
     model_dir = Path(model_key)
-    downloaded = sync_model_payload(base_url, cars_path, model_dir, log=log,
+    downloaded = 0
+
+    manifest = fetch_manifest(base_url)
+    if manifest is None:
+        log("Не удалось получить manifest.json с сервера — работаем с тем, что уже скачано локально.")
+        return json.dumps({"downloaded": 0, "log": lines})
+
+    # Читаем _wizard_spec.json напрямую (не через load_wizard_spec — та сама
+    # читает содержимое instruction.html, то есть требует, чтобы файл уже
+    # был на диске; здесь наоборот, решаем, что докачать, ДО чтения).
+    try:
+        raw = json.loads((model_dir / "_wizard_spec.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = {"steps": []}
+
+    files_dir = model_dir / "files"
+    for i, step_data in enumerate(raw.get("steps", []), start=1):
+        if step_data.get("type") == "instruction":
+            instr_dir = files_dir / f"instruction_{i}"
+            downloaded += sync_model_subfolder(base_url, cars_path, instr_dir, log=log,
+                                                on_progress=_progress_cb("model"), manifest=manifest)
+
+    return json.dumps({"downloaded": downloaded, "log": lines})
+
+
+def sync_shared_folder_for(cars_dir: str, base_url: str, folder_name: str) -> str:
+    """cars/_shared/<folder_name>/ целиком (см. content_sync.sync_shared_folder)
+    — вызывается прямо перед записью usb-этапа с usb_shared_folder (см.
+    WebBridge.kt: usbRunStage), а не при открытии модели."""
+    lines = []
+    log = lambda m: lines.append(m)
+    downloaded = sync_shared_folder(base_url, Path(cars_dir), folder_name, log=log,
                                      on_progress=_progress_cb("model"))
-
-    spec = load_wizard_spec(model_dir)
-    if spec:
-        shared_folders = {s["usb_shared_folder"] for s in spec["steps"] if s.get("usb_shared_folder")}
-        for folder in shared_folders:
-            downloaded += sync_shared_folder(base_url, cars_path, folder, log=log,
-                                              on_progress=_progress_cb("model"))
-
     return json.dumps({"downloaded": downloaded, "log": lines})
 
 
@@ -158,12 +185,16 @@ def list_apks(apk_dir: str, base_url: str) -> str:
     return _list_apks(Path(apk_dir), base_url)
 
 
-def ensure_apks_downloaded(apk_dir: str, base_url: str, paths_json: str) -> str:
-    """Докачивает отмеченные техником .apk из общей библиотеки, которых ещё
-    нет на диске — вызывается перед adb_install_apks/usb_run_stage.
-    paths_json — JSON-массив абсолютных локальных путей (как и весь
-    остальной мост, строка, не нативный список — см. WebBridge.kt)."""
+def ensure_apks_downloaded(apk_dir: str, cars_dir: str, base_url: str, paths_json: str) -> str:
+    """Докачивает то, чего ещё нет на диске, из paths_json — общую
+    библиотеку (apk/) И "свои" файлы конкретной модели (files/pack*/...,
+    files/adb_N/..., files/actions_i_j/...) теперь одинаково — см.
+    apk_library.ensure_apks_downloaded. Вызывается перед adb_run_stage/
+    adb_install_apks/usb_run_stage, для любых путей, которые этап реально
+    использует. paths_json — JSON-массив абсолютных локальных путей (как и
+    весь остальной мост, строка, не нативный список — см. WebBridge.kt)."""
     lines = []
     paths = json.loads(paths_json)
-    downloaded = _ensure_apks_downloaded(Path(apk_dir), base_url, paths, log=lambda m: lines.append(m))
+    downloaded = _ensure_apks_downloaded(Path(apk_dir), Path(cars_dir), base_url, paths,
+                                          log=lambda m: lines.append(m))
     return json.dumps({"downloaded": downloaded, "log": lines})

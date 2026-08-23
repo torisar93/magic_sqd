@@ -21,7 +21,8 @@ from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_de
 from ...content_sync import fetch_manifest, filter_manifest, get_base_url, sync_model_subfolder
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir_with_remote
-from ...stage_runner import StageDefinitionError, load_stages, load_wifi_port, stage_instruction_html_path
+from ...stage_runner import (StageDefinitionError, load_model_wifi, load_stages, load_wifi_port,
+                              stage_instruction_html_path)
 from .scanner_api import apk_to_dict
 
 _MANIFEST_CACHE_TTL_SECONDS = 60
@@ -120,15 +121,17 @@ class InstallApi:
         finally:
             self._on_sync_progress(0, 0)  # скрыть бар, даже если качать было нечего
 
+        model_wifi = load_model_wifi(model)
         return {
-            "stages": [self._stage_to_dict(model, i, s, manifest) for i, s in enumerate(stages)],
+            "stages": [self._stage_to_dict(model, i, s, manifest, model_wifi) for i, s in enumerate(stages)],
             # Порт Wi-Fi ADB для apps-этапов с apps_connection="wifi"/"ask"
             # (см. stage_wizard.js: buildTransportBar) — читается один раз
             # здесь, а не на каждый рендер этапа.
             "wifi_port": load_wifi_port(model),
         }
 
-    def _stage_to_dict(self, model, index: int, stage: dict, manifest: dict | None = None) -> dict:
+    def _stage_to_dict(self, model, index: int, stage: dict, manifest: dict | None = None,
+                        model_wifi: bool = False) -> dict:
         html_path = stage_instruction_html_path(model, stage)
         exe_path = stage.get("exe_path")
         exe_exists = None
@@ -157,7 +160,12 @@ class InstallApi:
             "variant_names": stage.get("variant_names"),
             "standard_label": stage.get("standard_label", "Стандартные приложения"),
             "usb_copy_selected_apks": stage.get("usb_copy_selected_apks", False),
-            "apps_connection": stage.get("apps_connection", "wired"),
+            # Явный apps_connection побеждает; если его нет вовсе (этап
+            # сохранён до появления этого поля), берём "wifi" для
+            # wifi-only моделей вместо слепого "wired" — иначе apps-этап
+            # без проводного ADB вообще пытался бы подключиться по USB
+            # (реальный баг: Geely Cityray "со значком Wi-Fi").
+            "apps_connection": stage.get("apps_connection") or ("wifi" if model_wifi else "wired"),
             "check_var": stage.get("check_var", ""),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,

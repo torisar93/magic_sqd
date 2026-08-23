@@ -115,23 +115,38 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
     return json.dumps(result)
 
 
-def ensure_apks_downloaded(apk_dir: Path, base_url: str, paths, log=lambda m: None) -> int:
-    """Докачивает те .apk из paths (абсолютные локальные пути к общей
-    библиотеке), которых ещё нет на диске — вызывается прямо перед
-    исполнением apps/usb-этапа, использующего отмеченные техником
-    приложения (см. WebBridge.kt: adbInstallApks/usbRunStage)."""
+def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, log=lambda m: None) -> int:
+    """Докачивает из paths (абсолютные локальные пути) только то, чего ещё
+    нет на диске — вызывается прямо перед исполнением apps/usb/adb/actions-
+    этапа, использующего отмеченные техником или прикреплённые файлы (см.
+    WebBridge.kt: adbInstallApks/usbRunStage/adbRunStage). Понимает и общую
+    библиотеку apk/, и "свои" файлы конкретной модели (files/pack*/...,
+    files/adb_N/..., files/actions_i_j/... — любой путь под cars/) — портовая
+    копия desktop app/content_sync.py:ensure_apks_downloaded (та же
+    двухуровневая резолюция apk_dir/cars_dir). Раньше model-specific пути
+    молча пропускались (считалось, что sync_model_payload уже всё скачал при
+    открытии модели) — с переходом на ленивую докачку по этапам (см.
+    mobile_bridge.sync_payload) это уже не так, поэтому и здесь нужен тот же
+    fallback на cars_dir, что и на desktop."""
+    apk_dir = apk_dir.resolve()
+    cars_dir = cars_dir.resolve()
     downloaded = 0
     for p in paths:
-        local_path = Path(p)
+        local_path = Path(p).resolve()
         if local_path.exists():
             continue
         try:
             rel = local_path.relative_to(apk_dir).as_posix()
+            remote_path = f"apk/{rel}"
         except ValueError:
-            continue  # не из общей библиотеки (например model-specific apk, уже должен быть на диске)
+            try:
+                rel = local_path.relative_to(cars_dir).as_posix()
+                remote_path = f"cars/{rel}"
+            except ValueError:
+                continue
         log(f"Скачиваю {local_path.name}...")
         try:
-            download_file(base_url, f"apk/{rel}", local_path)
+            download_file(base_url, remote_path, local_path)
             downloaded += 1
         except ContentSyncError as exc:
             log(f"Не удалось скачать {local_path.name}: {exc}")

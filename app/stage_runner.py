@@ -56,6 +56,18 @@ def load_wifi_port(model) -> int:
     return getattr(module, "WIFI_PORT", 5555)
 
 
+def load_model_wifi(model) -> bool:
+    """Есть ли у модели вообще проводной ADB — WIFI_PORT (см. load_wifi_port)
+    пишется в stages.py ТОЛЬКО если spec.wifi=True (car_generator.py:
+    _render_stages_py), поэтому его наличие как атрибута модуля — тот же
+    самый признак, без отдельной генерируемой константы. Нужен, чтобы верно
+    достраивать apps_connection по умолчанию (см. install_api.py:
+    _stage_to_dict) для моделей, чей apps-этап был сохранён ДО появления
+    этого поля — иначе wifi-only модель молча по умолчанию "wired"."""
+    module = _load_module(model.stages_script)
+    return hasattr(module, "WIFI_PORT")
+
+
 def stage_instruction_html_path(model, stage: dict) -> Path | None:
     """Путь к html-инструкции этапа, если она указана и существует."""
     rel = stage.get("instruction")
