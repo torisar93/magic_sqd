@@ -37,10 +37,17 @@
         </activity>
 
         <!-- Не launcher — доступен через
-             adb shell am start -n ru.magicsqd.mobile/.DiagnosticsActivity -->
+             adb shell am start -n ru.magicsqd.mobile/.DiagnosticsActivity
+             exported=false: "adb shell am start" по-прежнему работает (shell
+             UID имеет отдельное системное разрешение запускать неэкспортированные
+             компоненты), а вот ЛЮБОЕ ДРУГОЕ приложение на телефоне — уже нет.
+             С exported=true этот экран (кнопки "стереть флешку"/"поставить
+             APK по ADB", без единого подтверждения) был доступен по имени
+             компонента вообще любому установленному на устройстве приложению
+             — нашли при аудите проекта, не было умышленно. -->
         <activity
             android:name=".DiagnosticsActivity"
-            android:exported="true" />
+            android:exported="false" />
     </application>
 
 </manifest>
