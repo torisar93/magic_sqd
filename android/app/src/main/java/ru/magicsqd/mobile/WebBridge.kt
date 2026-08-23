@@ -75,6 +75,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val args = JSONObject(argsJson)
         return try {
             when (method) {
+                // versionName из PackageManager (см. build.gradle.kts) — само
+                // приложение раньше нигде не показывало свою версию, только
+                // Google Play/RuStore её знали (см. аудит проекта).
+                "app_version" -> JSONObject().put(
+                    "version",
+                    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+                ).toString()
                 "start_sync" -> { startSync(); "{}" }
                 "get_sync_progress" -> pyModule("mobile_bridge").callAttr("get_sync_progress").toString()
                 "scanner_list_cars" -> pyModule("mobile_bridge").callAttr("list_cars", carsDir).toString()

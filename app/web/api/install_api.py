@@ -168,6 +168,12 @@ class InstallApi:
             # type == "apps" — поле не имеет смысла для остальных типов.
             "apps_connection": ((stage.get("apps_connection") or ("wifi" if model_wifi else "wired"))
                                  if stage["type"] == "apps" else stage.get("apps_connection", "wired")),
+            # Свой порт ИМЕННО этого apps-этапа (см. car_generator.py:
+            # StepSpec.apps_wifi_port) — независим от общего wifi_port
+            # модели (тот для adb/actions-этапов, см. "wifi_port" в
+            # load_stages() ниже). None — заранее не известен, техник
+            # вписывает сам на этапе (см. stage_wizard.js: buildTransportBar).
+            "apps_wifi_port": stage.get("apps_wifi_port"),
             "check_var": stage.get("check_var", ""),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,

@@ -175,6 +175,12 @@ class StepSpec:
     # доступного проводного ADB — обычно там же и spec.wifi=True); "ask" —
     # технику предлагается выбрать способ на месте.
     apps_connection: str = "wired"
+    # Порт Wi-Fi ADB именно ДЛЯ ЭТОГО apps-этапа (apps_connection
+    # "wifi"/"ask") — независим от spec.wifi_port ниже (тот общий на всю
+    # модель, для adb/actions-этапов): один apps-этап может ставить по
+    # Wi-Fi на своём порту, пока другой этап модели работает по проводу.
+    # None — заранее не известен, техник вписывает его сам на самом этапе.
+    apps_wifi_port: int | None = None
     # "exe" — готовый установщик, который производитель магнитолы даёт
     # только собранным .exe без исходных скриптов/инструкций; этап просто
     # даёт пользователю его запустить и завершить установку в нём самому
@@ -408,6 +414,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             # просто потому, что модель в целом wifi-only.
             apps_connection=(step_data.get("apps_connection") or ("wifi" if data.get("wifi") else "wired"))
             if step_type == "apps" else step_data.get("apps_connection", "wired"),
+            apps_wifi_port=step_data.get("apps_wifi_port"),
             exe_file=exe_file,
             check_var=step_data.get("check_var", ""),
             check_options=step_data.get("check_options", []),
@@ -635,6 +642,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "standard_apks": [_apk_entry_to_json(a) for a in step.standard_apks],
                 "standard_apks_optional": [_apk_entry_to_json(a) for a in step.standard_apks_optional],
                 "apps_connection": step.apps_connection,
+                "apps_wifi_port": step.apps_wifi_port,
                 "exe_file": step.exe_file.name if step.exe_file else None,
                 "check_var": step.check_var,
                 "check_options": step.check_options,
@@ -1033,6 +1041,7 @@ def _render_stages_py(spec: NewCarSpec) -> str:
             else:
                 entry.append(f'        "standard_dir": {pack_expr},')
             entry.append(f'        "apps_connection": {step.apps_connection!r},')
+            entry.append(f'        "apps_wifi_port": {step.apps_wifi_port!r},')
         elif step.type == "usb":
             run_expr = f"m.usb_step_{i}"
             entry.append(f'        "run": {run_expr},')

@@ -183,6 +183,14 @@ html, body {
    в это время скрыт, см. js/app.js: startSync/onSyncFinished), а не тонкая
    полоска сверху над карточкой "Пусто" — раньше выглядело так, будто
    каталог реально пуст, хотя он просто ещё не скачался. */
+.app-version-label {
+  flex-shrink: 0;
+  padding: 6px 12px 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .sync-status {
   flex: 1;
   display: flex;

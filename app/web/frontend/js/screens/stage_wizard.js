@@ -420,11 +420,18 @@
     const wiredRow = el("div", { class: "row" }, [select, refreshBtn]);
 
     const wifiStatus = el("span", { style: "color: var(--text-dim)", text: "Wi-Fi: не подключено" });
-    // Порт из модели — только предзаполненное значение, не жёсткое:
-    // техник может вручную поменять, если конкретная магнитола настроена
-    // иначе (реальный запрос — раньше порт вообще нельзя было
+    // Порт САМОГО ЭТАПА (apps_wifi_port, задаётся в редакторе на самом
+    // apps-этапе — не общий на модель modelWifiPort, тот для adb/actions)
+    // — если известен заранее, предзаполняем; если нет, поле пустое и
+    // техник вписывает порт сам, увидев его на магнитоле. В любом случае
+    // редактируется — не жёсткое значение (раньше порт вообще нельзя было
     // переопределить на ПК, только увидеть в редакторе).
-    const portInput = el("input", { type: "text", value: String(modelWifiPort), style: "width: 60px" });
+    const stagePort = stage.type === "apps" ? stage.apps_wifi_port : null;
+    const portInput = el("input", {
+      type: "text", style: "width: 60px",
+      placeholder: stagePort == null ? String(modelWifiPort) : undefined,
+    });
+    portInput.value = stagePort != null ? String(stagePort) : "";
     const wifiConnectBtn = el("button", { text: "Подключить Wi-Fi" });
     async function doWifiConnect() {
       const port = Number(portInput.value) || modelWifiPort;

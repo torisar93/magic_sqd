@@ -30,7 +30,13 @@ import certifi
 # менять каждый вызов по отдельности не нужно).
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
 
-APP_TITLE = "Magic SQD — установщик приложений для мультимедиа"
+from app.version import APP_VERSION  # noqa: E402 — лёгкий модуль без зависимостей, безопасно тут
+
+# Версия — в заголовке окна (единственное место, где её вообще было видно
+# раньше — нигде: ни в интерфейсе, ни в диалоге "О программе", которого
+# просто нет; реальный запрос — не понять, что установлено, без похода в
+# файл version.json рядом с exe).
+APP_TITLE = f"Magic SQD — установщик приложений для мультимедиа (v{APP_VERSION})"
 
 _STARTUP_LOG_PATH = None  # выставляется в main() — путь к startup.log рядом с программой
 

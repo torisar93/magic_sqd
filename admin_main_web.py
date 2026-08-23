@@ -6,9 +6,10 @@ main_web.py, только admin_mode=True (прячет adb-консоль, по
 
 Запуск: python admin_main_web.py (собранный вариант — magic_sqd_admin.exe,
 см. admin.spec)."""
+from app.version import APP_VERSION
 from main_web import _run_with_crash_log
 
-ADMIN_APP_TITLE = "Magic SQD — админ-панель контента"
+ADMIN_APP_TITLE = f"Magic SQD — админ-панель контента (v{APP_VERSION})"
 
 if __name__ == "__main__":
     _run_with_crash_log(admin_mode=True, log_prefix="admin_", title=ADMIN_APP_TITLE)

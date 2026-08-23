@@ -430,8 +430,36 @@
       container.appendChild(el("span", { class: "field-label", text: "Способ подключения для установки" }));
       const connectionSelect = el("select", {}, Object.entries(APPS_CONNECTION_LABELS).map(([value, text]) =>
         el("option", { value, text, selected: value === (step.apps_connection || "wired") ? "" : null })));
-      connectionSelect.addEventListener("change", () => { step.apps_connection = connectionSelect.value; });
       container.appendChild(connectionSelect);
+
+      // Порт — свой у ЭТОГО этапа, не общий на всю модель: одна и та же
+      // модель может ставить приложения по Wi-Fi на этом этапе, а другой
+      // adb/actions-этап при этом идёт по проводу (см. "Порт Wi-Fi ADB" в
+      // шапке редактора — тот вариант общий на модель, для старых
+      // adb/actions-этапов, здесь — независимо от него). Пусто — порт
+      // заранее не известен, техник впишет его сам при подключении на
+      // самом этапе установки.
+      const portRow = el("div", { class: "row", style: "margin-top: 4px" });
+      portRow.appendChild(el("span", { text: "Порт Wi-Fi:" }));
+      const portInput = el("input", {
+        type: "text", style: "width: 90px",
+        placeholder: "неизвестен — впишет техник",
+      });
+      portInput.value = step.apps_wifi_port != null ? String(step.apps_wifi_port) : "";
+      portInput.addEventListener("input", () => {
+        const v = portInput.value.trim();
+        step.apps_wifi_port = v ? (Number(v) || null) : null;
+      });
+      portRow.appendChild(portInput);
+      function updatePortVisibility() {
+        portRow.style.display = connectionSelect.value === "wired" ? "none" : "flex";
+      }
+      connectionSelect.addEventListener("change", () => {
+        step.apps_connection = connectionSelect.value;
+        updatePortVisibility();
+      });
+      updatePortVisibility();
+      container.appendChild(portRow);
 
       renderVariantToggle(step, "standard_apks", "APK всех вариантов будут потеряны.");
       if (step.variants.length) {

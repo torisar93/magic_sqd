@@ -443,11 +443,21 @@
     return modelWifi ? "wifi" : "wired";
   }
 
+  // Порт для ТЕКУЩЕГО этапа — apps-этап несёт свой (apps_wifi_port,
+  // задаётся в редакторе на самом этапе), independent от общего
+  // modelWifiPort (тот для adb/actions). null — заранее не известен, поле
+  // в promptHostPicker останется пустым, техник впишет сам.
+  function connectionPortFor(stage) {
+    if (stage && stage.type === "apps") return stage.apps_wifi_port;
+    return modelWifiPort;
+  }
+
   function onAdbConnect() {
-    if (connectionModeFor(stages[currentIndex]) === "wifi") {
+    const stage = stages[currentIndex];
+    if (connectionModeFor(stage) === "wifi") {
       promptHostPicker(
         "IP-адрес магнитолы для Wi-Fi ADB:",
-        modelWifiPort,
+        connectionPortFor(stage),
         (host, port) => {
           lastWifiHost = host;
           modelWifiPort = port; // на случай переподключения в рамках того же мастера
@@ -600,7 +610,11 @@
   // актуален на момент выбора адреса (изменённый техником или дефолтный).
   function promptHostPicker(title, port, onSubmit, opts) {
     opts = opts || {};
-    let currentPort = port;
+    // port может быть null (заранее не известен — см. connectionPortFor) —
+    // для реального скана/подключения всё равно нужно с чего-то начать,
+    // но само поле ниже покажется пустым с подсказкой, а не "5555" молча
+    // выданным за реальный порт магнитолы.
+    let currentPort = port || 5555;
     const overlay = el("div", { class: "modal-overlay dismissible" });
     overlay.addEventListener("click", (e) => { if (e.target === overlay) closeDismissibleModal(); });
     const listWrap = el("div", { class: "host-scan-list" });
@@ -653,8 +667,11 @@
 
     const boxChildren = [el("p", { class: "stage-text", text: title })];
     if (opts.editablePort) {
-      const portInput = el("input", { type: "number", class: "host-port-input" });
-      portInput.value = String(port);
+      const portInput = el("input", {
+        type: "number", class: "host-port-input",
+        placeholder: port == null ? String(currentPort) : undefined,
+      });
+      portInput.value = port != null ? String(port) : "";
       const rescan = () => {
         const p = parseInt(portInput.value, 10);
         if (!p || p === currentPort) return;
@@ -1215,6 +1232,12 @@
     breadcrumbEl = document.getElementById("picker-breadcrumb");
     syncStatusEl = document.getElementById("picker-sync-status");
     listEl = document.getElementById("picker-list");
+    const appVersionLabelEl = document.getElementById("app-version-label");
+    try {
+      appVersionLabelEl.textContent = `v${Bridge.call("app_version", {}).version}`;
+    } catch (e) {
+      appVersionLabelEl.textContent = "";
+    }
     wizardContentEl = document.getElementById("wizard-content");
     wizardBackBtn = document.getElementById("wizard-back");
     wizardNextBtn = document.getElementById("wizard-next");
