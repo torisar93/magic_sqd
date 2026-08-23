@@ -84,7 +84,13 @@ object AdbSession {
     fun connectWifiBlocking(host: String, port: Int, context: Context, log: (String) -> Unit): AdbHandshakeResult {
         disconnect()
         val socket = try {
-            Socket().apply { connect(InetSocketAddress(host, port), 5000) }
+            // Явная привязка к Wi-Fi-сети — иначе при активном VPN на
+            // телефоне (даже "по приложениям", даже если Magic SQD в него не
+            // включена) сокет нередко следует системному default route,
+            // который VPN подменяет на свой tun, и до магнитолы в локальной
+            // сети просто не долетает (см. NetworkScan.bindToWifi — тот же
+            // фикс для скана сети, реальный баг пользователя с NekoBox).
+            Socket().apply { NetworkScan.bindToWifi(context, this); connect(InetSocketAddress(host, port), 5000) }
         } catch (e: Exception) {
             return AdbHandshakeResult.Failed("Не удалось подключиться по TCP к $host:$port: ${e.javaClass.simpleName}: ${e.message}")
         }

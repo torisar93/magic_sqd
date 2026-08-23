@@ -6,6 +6,7 @@ import android.net.NetworkCapabilities
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.Socket
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -55,6 +56,30 @@ object NetworkScan {
         return null
     }
 
+    /** java.net.NetworkInterface для Wi-Fi-сети (по имени из LinkProperties) —
+     * нужен, чтобы принудительно слать ICMP/TCP именно через неё. Без этого,
+     * пока на телефоне активен VPN (даже режим "по приложениям", даже если
+     * сам Magic SQD в него не включён), обычные непривязанные к сети сокеты
+     * нередко следуют системному default route, который VPN-клиент подменяет
+     * на свой tun — исходящие пакеты к соседям в локальной подсети магнитолы
+     * либо уходят не туда, либо просто не долетают (multicast/broadcast в
+     * VPN-туннель почти никогда не форвардится). Реальный случай пользователя:
+     * NekoBox с "VPN по приложениям", Magic SQD не в списке — а скан сети всё
+     * равно ничего не находил, без единой ошибки в логе. */
+    fun wifiNetworkInterface(context: Context): NetworkInterface? {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+        val network = wifiNetwork(context) ?: return null
+        val ifaceName = cm.getLinkProperties(network)?.interfaceName ?: return null
+        return try { NetworkInterface.getByName(ifaceName) } catch (_: Exception) { null }
+    }
+
+    /** Привязывает TCP-сокет к Wi-Fi-сети явно (см. wifiNetworkInterface) —
+     * та же причина, аналог для Socket.connect(), которому NetworkInterface
+     * не подсунуть напрямую (в отличие от InetAddress.isReachable). */
+    fun bindToWifi(context: Context, socket: Socket) {
+        wifiNetwork(context)?.bindSocket(socket)
+    }
+
     /** Все адреса подсети (без своего) — не крупнее /24, как и на desktop
      * (см. cars/_shared/wifi_adb.py:scan_for_adb_hosts): сети точек доступа/
      * хотспотов таких магнитол почти всегда /24 и меньше, а сканировать
@@ -96,10 +121,13 @@ object NetworkScan {
      * зависящий от того, какой порт у них открыт. */
     fun pingSweep(context: Context, timeoutMs: Int = 400): List<String> {
         val (_, hosts) = subnetHosts(context) ?: return emptyList()
+        val iface = wifiNetworkInterface(context)
         val found = Collections.synchronizedList(mutableListOf<String>())
         parallelForEach(hosts) { ip ->
             try {
-                if (InetAddress.getByName(ip).isReachable(timeoutMs)) found.add(ip)
+                val addr = InetAddress.getByName(ip)
+                val reachable = if (iface != null) addr.isReachable(iface, 0, timeoutMs) else addr.isReachable(timeoutMs)
+                if (reachable) found.add(ip)
             } catch (_: Exception) {
             }
         }
@@ -115,7 +143,11 @@ object NetworkScan {
         val found = Collections.synchronizedList(mutableListOf<String>())
         parallelForEach(hosts) { ip ->
             try {
-                Socket().use { s -> s.connect(InetSocketAddress(ip, port), timeoutMs); found.add(ip) }
+                Socket().use { s ->
+                    bindToWifi(context, s)
+                    s.connect(InetSocketAddress(ip, port), timeoutMs)
+                    found.add(ip)
+                }
             } catch (_: Exception) {
             }
         }

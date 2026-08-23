@@ -43,8 +43,8 @@ object MdnsResolve {
         lock?.acquire()
         return try {
             val iface = activeNetworkInterface(context)
-            val ipv4 = tryQuery(TYPE_A, InetAddress.getByName("224.0.0.251"), null, timeoutMs)
-            val ipv6Raw = tryQuery(TYPE_AAAA, InetAddress.getByName("ff02::fb"), iface, timeoutMs)
+            val ipv4 = tryQuery(context, TYPE_A, InetAddress.getByName("224.0.0.251"), null, timeoutMs)
+            val ipv6Raw = tryQuery(context, TYPE_AAAA, InetAddress.getByName("ff02::fb"), iface, timeoutMs)
             // fe80::... линк-локальный — без zone id ("%wlan0") сокет на
             // конкретный интерфейс не подключить (см. TelnetAdb.kt), сразу
             // подставляем сюда, чтобы промптHostPicker мог отдать готовый
@@ -78,6 +78,11 @@ object MdnsResolve {
             val iface = activeNetworkInterface(context) ?: return emptyList()
             MulticastSocket(MDNS_PORT).use { socket ->
                 socket.reuseAddress = true
+                // См. NetworkScan.bindToWifi — networkInterface ниже выбирает
+                // исходящий интерфейс для multicast-пакетов, но при активном
+                // VPN этого недостаточно: явная привязка к Network нужна на
+                // уровне политики маршрутизации Android, а не только сокета.
+                NetworkScan.wifiNetwork(context)?.bindSocket(socket)
                 socket.networkInterface = iface
                 val groupAddr = InetSocketAddress(
                     Inet6Address.getByAddress(null, InetAddress.getByName("ff02::fb").address, iface), MDNS_PORT
@@ -128,9 +133,14 @@ object MdnsResolve {
         return try { NetworkInterface.getByName(ifaceName) } catch (_: Exception) { null }
     }
 
-    private fun tryQuery(qtype: Int, mcastAddr: InetAddress, iface: NetworkInterface?, timeoutMs: Int): String? {
+    private fun tryQuery(context: Context, qtype: Int, mcastAddr: InetAddress, iface: NetworkInterface?, timeoutMs: Int): String? {
         return try {
             DatagramSocket().use { socket ->
+                // См. NetworkScan.bindToWifi — без явной привязки к Wi-Fi-сети
+                // активный VPN на телефоне (даже "по приложениям", даже если
+                // Magic SQD не включена в него) может увести этот multicast-
+                // запрос в свой tun вместо локальной подсети магнитолы.
+                NetworkScan.wifiNetwork(context)?.bindSocket(socket)
                 socket.soTimeout = timeoutMs
                 val dest = if (mcastAddr is Inet6Address && iface != null) {
                     Inet6Address.getByAddress(null, mcastAddr.address, iface)

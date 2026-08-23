@@ -171,7 +171,7 @@ class InstallEngine(
     fun runTelnetCommands(host: String, commands: List<String>): StageRunResult {
         for (command in commands) {
             if (command.isBlank()) continue
-            when (val r = enableAdbViaTelnet(host, command = command, log = log)) {
+            when (val r = enableAdbViaTelnet(context, host, command = command, log = log)) {
                 is TelnetResult.Failed -> return StageRunResult.Failed(r.reason)
                 TelnetResult.Success -> {}
             }

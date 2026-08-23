@@ -1,5 +1,6 @@
 package ru.magicsqd.mobile.usb
 
+import android.content.Context
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -22,6 +23,7 @@ sealed class TelnetResult {
 }
 
 fun enableAdbViaTelnet(
+    context: Context,
     host: String,
     command: String = "setprop persist.service.adb.button.visible ON",
     port: Int = 23,
@@ -34,6 +36,11 @@ fun enableAdbViaTelnet(
     log("Подключаюсь по telnet к [$trimmedHost]:$port")
     return try {
         Socket().use { socket ->
+            // См. AdbSession.connectWifiBlocking/NetworkScan.bindToWifi —
+            // без явной привязки к Wi-Fi-сети активный VPN на телефоне может
+            // увести это TCP-соединение в свой tun вместо локальной подсети
+            // магнитолы, даже если Magic SQD не включена в VPN.
+            NetworkScan.bindToWifi(context, socket)
             socket.connect(InetSocketAddress(trimmedHost, port), timeoutMs)
             socket.soTimeout = timeoutMs
             Thread.sleep(500)
