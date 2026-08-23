@@ -1191,22 +1191,31 @@
     ]);
   }
 
-  // Значок "?" в шапке (только на списке марок) — версия приложения
-  // (раньше нигде не была видна вовсе, см. WebBridge.kt: app_version читает
-  // versionName из PackageManager) и расшифровка цветных меток статуса у
-  // моделей (те же формулировки, что и в самом списке — STATUS_TITLES).
+  // Значок "?" в шапке (только на списке марок) — что за приложение,
+  // версия (раньше нигде не была видна вовсе, см. WebBridge.kt: app_version
+  // читает versionName из PackageManager) и расшифровка цветных меток
+  // статуса у моделей (те же формулировки, что и в самом списке —
+  // STATUS_TITLES; название цвета пишем текстом рядом с точкой — одного
+  // цвета точки мало, если цвет плохо различим на экране/для человека).
+  const STATUS_COLOR_NAMES = { green: "Зелёный", blue: "Синий", yellow: "Жёлтый", red: "Красный" };
+
   function showAboutModal() {
     let overlay;
     let version = "?";
     try { version = Bridge.call("app_version", {}).version; } catch (e) { /* см. фолбэк выше */ }
     const legendRow = (color) => el("div", { class: "row", style: "gap: 8px; margin: 6px 0" }, [
       el("span", { class: `status-dot status-dot-${color}` }),
-      el("span", { class: "stage-text", text: STATUS_TITLES[color] }),
+      el("span", { class: "stage-text", text: `${STATUS_COLOR_NAMES[color]} — ${STATUS_TITLES[color]}` }),
     ]);
     overlay = showModal([
       el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
-      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px", text: `Версия ${version}` }),
-      el("p", { class: "stage-text", style: "color: var(--text-dim); margin-top: 8px", text: "Цветные метки у моделей:" }),
+      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px", text: `Magic SQD — версия ${version}` }),
+      el("p", {
+        class: "stage-text", style: "color: var(--text-dim); margin-top: 4px",
+        text: "Ставит приложения на Android-магнитолы китайских авто — по ADB " +
+          "(провод или Wi-Fi) или через USB-флешку, прямо с телефона, без компьютера рядом.",
+      }),
+      el("p", { class: "stage-text", style: "color: var(--text-dim); margin-top: 12px", text: "Цветные метки у моделей:" }),
       legendRow("green"),
       legendRow("blue"),
       legendRow("yellow"),
