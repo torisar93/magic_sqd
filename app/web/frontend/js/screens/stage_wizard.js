@@ -9,10 +9,18 @@
 
   const TYPE_LABELS = {
     usb: "USB-флешка", adb: "ADB", manual: "Вручную на магнитоле",
-    apps: "Выбор приложений", exe: "Готовый установщик (.exe)",
+    apps: "Установка приложений", exe: "Готовый установщик (.exe)",
     check: "Проверка/выбор", instruction: "Инструкция", uart: "UART", telnet: "Telnet",
-    actions: "Доп. команды",
+    actions: "ADB-команды",
   };
+
+  // Каким типам этапов реально нужен ADB — верхний бар подключения (см.
+  // buildTransportBar) показывается только для них, а не постоянно на весь
+  // мастер (раньше "Подключить Wi-Fi" висела внизу окна вообще всегда, не
+  // привязана к этапу) — тот же приём, что уже есть в мобильном приложении
+  // (android/app/src/main/assets/js/app.js: ADB_STAGE_TYPES, #adb-bar над
+  // #wizard-content).
+  const TRANSPORT_STAGE_TYPES = new Set(["adb", "apps", "actions"]);
 
   let containerEl, contentEl, navBackBtn, navNextBtn, navLabelEl;
   let mounted = false;
@@ -31,6 +39,7 @@
   let nextAction = () => advanceAfter(currentIndex);
   let sharedApksPromise = null;
   let runnerBusy = false;
+  let modelWifiPort = 5555;
 
   function log(message) {
     logFn(`[${model.display_label}] ${message}`);
@@ -48,6 +57,27 @@
     window.events.on("install_log", (event) => log(event.text));
     window.events.on("install_finished", onInstallFinished);
     window.events.on("ask_input", (event) => showAskInputDialog(event));
+    window.events.on("sync_progress", (event) => updateSyncProgress(event.done, event.total));
+  }
+
+  // -- прогресс синхронизации файлов модели перед показом инструкции -------
+  // (см. app/content_sync.py: sync_tree on_progress) — раньше вместо этого
+  // в лог сыпалась строка "Скачиваю <файл>..." на КАЖДЫЙ файл модели (сотни
+  // на первой синхронизации), теперь — обычный прогресс-бар с "N из M".
+  function updateSyncProgress(done, total) {
+    const bar = document.getElementById("main-progress");
+    const fill = document.getElementById("main-progress-fill");
+    const label = document.getElementById("main-progress-label");
+    if (total <= 0) {
+      bar.style.display = "none";
+      label.style.display = "none";
+      return;
+    }
+    bar.style.display = "";
+    bar.classList.remove("indeterminate");
+    fill.style.width = `${Math.min(100, Math.round((done / total) * 100))}%`;
+    label.style.display = "";
+    label.textContent = `Скачиваю файлы модели (${done} из ${total})...`;
   }
 
   // -- построение разметки (один раз, лениво — при первом open(), чтобы
@@ -182,16 +212,28 @@
     hasIntro = model.no_instruction;
     loadError = null;
     stages = [];
+    modelWifiPort = 5555;
 
     const result = await window.pywebview.api.install_load_stages(model.key);
     if (result.error) {
       loadError = result.error;
     } else {
       stages = result.stages;
+      modelWifiPort = result.wifi_port || 5555;
       await initAppSelectionDefaults();
     }
 
     currentIndex = hasIntro ? -1 : 0;
+    // Сброс на дефолтный обработчик — иначе, если до этого была открыта
+    // другая модель и текник дошёл до этапа "check" (см. renderCheckStage
+    // ниже, единственный, кто переопределяет nextAction на свой
+    // stage.index), этот чужой nextAction оставался бы активным и здесь:
+    // "Далее" на первом же этапе НОВОЙ модели срабатывал бы с индексом
+    // СТАРОЙ модели — advanceAfter(старый_index) на новом, часто более
+    // коротком stages, сразу считал бы все этапы пройденными. show() ниже
+    // уже делает такой сброс при обычной навигации внутри одной модели —
+    // здесь то же самое нужно при смене самой модели.
+    nextAction = () => advanceAfter(currentIndex);
     render();
   }
 
@@ -311,6 +353,17 @@
       return;
     }
 
+    // Бар подключения (устройство/Wi-Fi) — ТОЛЬКО для этапов, которым он
+    // реально нужен (см. TRANSPORT_STAGE_TYPES), и НАД остальным
+    // содержимым этапа — раньше был общей строкой внизу окна на весь
+    // мастер, независимо от текущего этапа.
+    let getDevice = () => null;
+    if (TRANSPORT_STAGE_TYPES.has(stage.type)) {
+      const transport = buildTransportBar(stage);
+      contentEl.appendChild(transport.element);
+      getDevice = transport.getDevice;
+    }
+
     if (stage.instruction_html || stage.description) {
       contentEl.appendChild(buildInstructionBlock(stage, false));
     }
@@ -328,8 +381,113 @@
       usb: renderUsbStage, exe: renderExeStage, adb: renderAdbStage, uart: renderUartStage,
       telnet: renderTelnetStage, actions: renderActionsStage,
     };
-    (builders[stage.type] || (() => {}))(panel, stage);
+    (builders[stage.type] || (() => {}))(panel, stage, getDevice);
     contentEl.appendChild(panel);
+  }
+
+  // -- верхний бар подключения (устройство/Wi-Fi) --------------------------
+  // Провод — выпадающий список "adb devices" (как раньше). Wi-Fi — тот же
+  // коннект, что раньше жил в app.js:connectAdbWifi под нижней консолью:
+  // сначала автоопределение IP по шлюзу, если не вышло — скан сети,
+  // если и это не нашло — ручной ввод. apps-этап сам решает, что показывать
+  // (stage.apps_connection: "wired"/"wifi"/"ask" — см. car_generator.py);
+  // adb/actions всегда только провод (Wi-Fi для них решается на уровне
+  // всей модели через spec.wifi, см. _with_connect в car_generator.py).
+  function buildTransportBar(stage) {
+    // "action-panel", не "card" — .card это display:flex;flex-direction:
+    // column для панелей верхнего уровня самого окна (лог, инструкция), тут
+    // ломало высоту/обтекание при вложении внутрь обычного потока этапа.
+    // action-panel — просто закруглённый фон+паддинг, без flex-эффектов.
+    const bar = el("div", { class: "action-panel", style: "margin-bottom: 12px" });
+    let deviceByLabel = {};
+    let wifiSerial = null;
+
+    const select = el("select", { style: "flex: 1" });
+    const refreshBtn = el("button", { text: "Обновить" });
+    async function refreshDevices() {
+      const devices = await window.pywebview.api.install_list_devices();
+      deviceByLabel = {};
+      clear(select);
+      for (const d of devices) {
+        let label = d.serial;
+        if (d.model) label += `  (${d.model})`;
+        if (d.state !== "device") label += `  [${d.state}]`;
+        deviceByLabel[label] = d.state === "device" ? d.serial : null;
+        select.appendChild(el("option", { value: label, text: label }));
+      }
+    }
+    refreshBtn.addEventListener("click", refreshDevices);
+    const wiredRow = el("div", { class: "row" }, [select, refreshBtn]);
+
+    const wifiStatus = el("span", { style: "color: var(--text-dim)", text: "Wi-Fi: не подключено" });
+    const wifiConnectBtn = el("button", { text: "Подключить Wi-Fi" });
+    async function doWifiConnect() {
+      wifiConnectBtn.disabled = true;
+      wifiStatus.textContent = "Wi-Fi: подключаюсь...";
+      try {
+        let result = await window.pywebview.api.install_wifi_connect(modelWifiPort, null);
+        let ip = result.ip;
+        if (!result.ok) {
+          const candidates = await window.pywebview.api.install_scan_wifi(modelWifiPort);
+          ip = (await window.selectDialog(
+            candidates.length
+              ? `Не удалось подключиться автоматически. Выберите IP магнитолы (порт ${modelWifiPort}):`
+              : `Не удалось подключиться автоматически и скан сети ничего не нашёл (порт ${modelWifiPort}). Введите IP магнитолы:`,
+            candidates,
+            { title: "Wi-Fi ADB" }
+          ))?.trim();
+          if (!ip) {
+            wifiStatus.textContent = "Wi-Fi: не подключено";
+            return;
+          }
+          result = await window.pywebview.api.install_wifi_connect(modelWifiPort, ip);
+        }
+        if (!result.ok) {
+          wifiSerial = null;
+          wifiStatus.textContent = "Wi-Fi: не удалось подключиться";
+          await window.notice(result.message || result.error || "Не удалось подключиться.",
+            { title: "Wi-Fi ADB", danger: true });
+          return;
+        }
+        wifiSerial = `${ip}:${modelWifiPort}`;
+        wifiStatus.textContent = `Wi-Fi: подключено (${wifiSerial})`;
+      } finally {
+        wifiConnectBtn.disabled = false;
+      }
+    }
+    wifiConnectBtn.addEventListener("click", doWifiConnect);
+    const wifiRow = el("div", { class: "row" }, [wifiStatus, wifiConnectBtn]);
+
+    const connection = stage.type === "apps" ? (stage.apps_connection || "wired") : "wired";
+    if (connection === "wired") {
+      bar.appendChild(wiredRow);
+      refreshDevices();
+    } else if (connection === "wifi") {
+      bar.appendChild(wifiRow);
+    } else {
+      // "ask" — технику предлагается выбрать способ прямо здесь.
+      const toggleRow = el("div", { class: "row" });
+      const wiredBtn = el("button", { class: "accent", text: "Провод" });
+      const wifiBtn = el("button", { text: "Wi-Fi" });
+      const body = el("div", { style: "margin-top: 8px" });
+      function showWired() {
+        wiredBtn.className = "accent"; wifiBtn.className = "";
+        clear(body); body.appendChild(wiredRow); refreshDevices();
+      }
+      function showWifi() {
+        wifiBtn.className = "accent"; wiredBtn.className = "";
+        clear(body); body.appendChild(wifiRow);
+      }
+      wiredBtn.addEventListener("click", showWired);
+      wifiBtn.addEventListener("click", showWifi);
+      toggleRow.appendChild(wiredBtn);
+      toggleRow.appendChild(wifiBtn);
+      bar.appendChild(toggleRow);
+      bar.appendChild(body);
+      showWired();
+    }
+
+    return { element: bar, getDevice: () => wifiSerial || deviceByLabel[select.value] || null };
   }
 
   function buildInstructionBlock(stage, fullPage) {
@@ -412,9 +570,17 @@
   }
 
   // -- apps ----------------------------------------------------------------
-  async function renderAppsStage(panel, stage) {
+  async function renderAppsStage(panel, stage, getDevice) {
     buildVariantPicker(panel, stage, stage.index);
     panel.appendChild(await buildAppsTree(stage));
+    // Раньше этап apps был только выбором галочек, а установку делал
+    // отдельный следующий "adb"-этап — теперь ставит сам, тем же блоком
+    // "Начать/Стоп", что и adb-этап (см. buildStartStopButtons ниже и
+    // install_api.py:start_stage, который для apps без своего run в
+    // stages.py подставляет ctx.install_selected_apks() по умолчанию).
+    // Устройство/Wi-Fi — уже выбраны в баре над этапом (см.
+    // buildTransportBar/getDevice), здесь их не выбирают заново.
+    buildStartStopButtons(panel, stage, getDevice, { startLabel: "Начать установку" });
   }
 
   // Общее дерево "Стандартные приложения этого этапа" + "Дополнительные
@@ -557,33 +723,14 @@
   }
 
   // -- adb ------------------------------------------------------------------
-  async function renderAdbStage(panel, stage) {
-    panel.appendChild(el("span", { class: "field-label", text: "Устройство" }));
-    const row = el("div", { class: "row" });
-    const select = el("select", { style: "flex: 1" });
-    row.appendChild(select);
-    const refreshBtn = el("button", { text: "Обновить" });
-    row.appendChild(refreshBtn);
-    panel.appendChild(row);
-
-    let deviceByLabel = {};
-    async function refreshDevices() {
-      const devices = await window.pywebview.api.install_list_devices();
-      deviceByLabel = {};
-      clear(select);
-      for (const d of devices) {
-        let label = d.serial;
-        if (d.model) label += `  (${d.model})`;
-        if (d.state !== "device") label += `  [${d.state}]`;
-        deviceByLabel[label] = d.state === "device" ? d.serial : null;
-        select.appendChild(el("option", { value: label, text: label }));
-      }
-    }
-    refreshBtn.addEventListener("click", refreshDevices);
-    await refreshDevices();
-
+  // Общий блок "Начать/Стоп" — используется и здесь, и apps-этапом (см.
+  // renderAppsStage выше). Устройство/Wi-Fi выбираются в баре НАД этапом
+  // (см. buildTransportBar/renderStagePage), сюда приходит готовым через
+  // getDevice() — этот блок больше не строит свой собственный список
+  // устройств (раньше дублировался в каждом типе этапа по отдельности).
+  function buildStartStopButtons(panel, stage, getDevice, { startLabel } = {}) {
     const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
-    const startBtn = el("button", { class: "accent", text: "Начать этот этап" });
+    const startBtn = el("button", { class: "accent", text: startLabel || "Начать этот этап" });
     const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });
     if (runnerBusy) startBtn.disabled = true;
     btnRow.appendChild(startBtn);
@@ -591,7 +738,7 @@
     panel.appendChild(btnRow);
 
     startBtn.addEventListener("click", async () => {
-      const device = deviceByLabel[select.value];
+      const device = getDevice();
       if (!device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
       startBtn.disabled = true;
       stopBtn.disabled = false;
@@ -605,6 +752,10 @@
       }
     });
     stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
+  }
+
+  function renderAdbStage(panel, stage, getDevice) {
+    buildStartStopButtons(panel, stage, getDevice);
   }
 
   // -- uart -------------------------------------------------------------
@@ -677,31 +828,7 @@
   // onInstallFinished — успех/ошибка действия не переводит на следующий этап
   // сами по себе). Нужно ADB-устройство, как и у "adb"-этапа — команды/выдача
   // разрешений/фиктивные местоположения все идут через ctx.shell.
-  async function renderActionsStage(panel, stage) {
-    panel.appendChild(el("span", { class: "field-label", text: "Устройство" }));
-    const row = el("div", { class: "row" });
-    const select = el("select", { style: "flex: 1" });
-    row.appendChild(select);
-    const refreshBtn = el("button", { text: "Обновить" });
-    row.appendChild(refreshBtn);
-    panel.appendChild(row);
-
-    let deviceByLabel = {};
-    async function refreshDevices() {
-      const devices = await window.pywebview.api.install_list_devices();
-      deviceByLabel = {};
-      clear(select);
-      for (const d of devices) {
-        let label = d.serial;
-        if (d.model) label += `  (${d.model})`;
-        if (d.state !== "device") label += `  [${d.state}]`;
-        deviceByLabel[label] = d.state === "device" ? d.serial : null;
-        select.appendChild(el("option", { value: label, text: label }));
-      }
-    }
-    refreshBtn.addEventListener("click", refreshDevices);
-    await refreshDevices();
-
+  function renderActionsStage(panel, stage, getDevice) {
     const actions = stage.actions || [];
     const list = el("div", { style: "display: flex; flex-direction: column; gap: 6px; margin-top: 12px" });
     if (!actions.length) {
@@ -714,7 +841,7 @@
       btn.disabled = runnerBusy;
       buttons.push(btn);
       btn.addEventListener("click", async () => {
-        const device = deviceByLabel[select.value];
+        const device = getDevice();
         if (!device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
         runnerBusy = true;
         setButtonsDisabled(true);

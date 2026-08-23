@@ -52,6 +52,7 @@
 
     function log(text) {
       const line = document.createElement("div");
+      line.className = `log-line log-line-${window.classifyLogLevel(text)}`;
       line.textContent = text;
       logEl.appendChild(line);
       logEl.scrollTop = logEl.scrollHeight;
@@ -212,37 +213,86 @@
   })();
 
   // ==================================================================
-  // Войти в админку (только admin_mode, открывается из js/app.js) — только
-  // логин, без выгрузки cars/apk (см. app/web/api/admin_api.py:
-  // login_only) — чтобы получить кешированную сессию для "Добавить APK..."/
-  // "Файлы на сервере..." без похода в тяжёлую "Выгрузить на сервер...".
+  // Войти в админку (только admin_mode, открывается из js/app.js) — либо
+  // необязательно (кнопка "Войти в админку..." — просто логин без выгрузки
+  // cars/apk, см. app/web/api/admin_api.py:login_only, чтобы получить
+  // кешированную сессию для "Добавить APK.../Файлы на сервере..." без
+  // похода в тяжёлую "Выгрузить на сервер..."), либо ОБЯЗАТЕЛЬНО при самом
+  // старте admin-сборки — см. requireLogin() ниже, вызывается из app.js
+  // раньше показа остального интерфейса, диалог в этом режиме нельзя
+  // закрыть без успешного входа (кнопка "Закрыть" прячется, Escape
+  // подавлен через событие "cancel" у <dialog>).
   // ==================================================================
   const adminLogin = (() => {
-    let dialog, usernameEl, passwordEl, statusEl, startBtn;
+    let dialog, usernameEl, passwordEl, rememberEl, statusEl, startBtn, closeBtn, forgetBtn, titleEl, hintEl;
+    let mandatory = false;
+    let resolveRequire = null;
 
     function init() {
       dialog = document.getElementById("admin-login-dialog");
       usernameEl = document.getElementById("admin-login-username");
       passwordEl = document.getElementById("admin-login-password");
+      rememberEl = document.getElementById("admin-login-remember");
       statusEl = document.getElementById("admin-login-status");
       startBtn = document.getElementById("admin-login-start");
+      closeBtn = document.getElementById("admin-login-close");
+      forgetBtn = document.getElementById("admin-login-forget");
+      titleEl = document.getElementById("admin-login-title");
+      hintEl = document.getElementById("admin-login-hint");
 
       startBtn.addEventListener("click", onStart);
-      document.getElementById("admin-login-close").addEventListener("click", () => dialog.close());
+      closeBtn.addEventListener("click", () => dialog.close());
+      forgetBtn.addEventListener("click", onForget);
+      // native <dialog> закрывается по Escape через событие "cancel" — в
+      // обязательном режиме гасим его, чтобы техник не мог обойти вход.
+      dialog.addEventListener("cancel", (e) => { if (mandatory) e.preventDefault(); });
     }
 
     async function open() {
+      mandatory = false;
       const info = await window.pywebview.api.admin_get_info();
       if (!info.available) {
         await window.notice("Не найден admin.json рядом с программой — без него неизвестно, куда входить.");
         return;
       }
+      titleEl.textContent = "Войти в админку";
+      hintEl.style.display = "";
+      closeBtn.style.display = "";
+      forgetBtn.style.display = "";
       document.getElementById("admin-login-server-label").textContent = `Сервер: ${info.base_url}`;
       usernameEl.value = "";
       passwordEl.value = "";
+      rememberEl.checked = false;
       statusEl.textContent = "";
       startBtn.disabled = false;
       dialog.showModal();
+    }
+
+    // Обязательный вход при старте admin-сборки (см. app.js) — сначала там
+    // уже сделана тихая попытка admin_try_saved_login(), сюда попадаем,
+    // только если сохранённого входа нет или он не сработал. Возвращает
+    // Promise, который резолвится только по успешному входу — app.js ждёт
+    // его перед тем, как показать остальной интерфейс.
+    function requireLogin() {
+      return new Promise((resolve) => {
+        mandatory = true;
+        resolveRequire = resolve;
+        (async () => {
+          const info = await window.pywebview.api.admin_get_info();
+          titleEl.textContent = "Вход в админку";
+          hintEl.style.display = "none";
+          closeBtn.style.display = "none";
+          forgetBtn.style.display = "none";
+          document.getElementById("admin-login-server-label").textContent =
+            info.available ? `Сервер: ${info.base_url}` : "";
+          usernameEl.value = "";
+          passwordEl.value = "";
+          rememberEl.checked = false;
+          statusEl.textContent = info.available ? "" : "Не найден admin.json рядом с программой.";
+          startBtn.disabled = !info.available;
+          dialog.showModal();
+        })();
+      });
     }
 
     async function onStart() {
@@ -254,7 +304,7 @@
       }
       startBtn.disabled = true;
       statusEl.textContent = "Вхожу...";
-      const result = await window.pywebview.api.admin_login(username, password);
+      const result = await window.pywebview.api.admin_login(username, password, rememberEl.checked);
       startBtn.disabled = false;
       if (!result.ok) {
         statusEl.textContent = result.error;
@@ -262,9 +312,20 @@
       }
       statusEl.textContent = "Вход выполнен.";
       dialog.close();
+      if (mandatory && resolveRequire) {
+        const resolve = resolveRequire;
+        resolveRequire = null;
+        resolve();
+      }
     }
 
-    return { init, open };
+    async function onForget() {
+      await window.pywebview.api.admin_forget_saved_login();
+      rememberEl.checked = false;
+      statusEl.textContent = "Сохранённый вход забыт.";
+    }
+
+    return { init, open, requireLogin };
   })();
 
   // ==================================================================
@@ -291,6 +352,7 @@
 
     function log(text) {
       const line = document.createElement("div");
+      line.className = `log-line log-line-${window.classifyLogLevel(text)}`;
       line.textContent = text;
       logEl.appendChild(line);
       logEl.scrollTop = logEl.scrollHeight;
@@ -386,6 +448,7 @@
 
     function log(text) {
       const line = document.createElement("div");
+      line.className = `log-line log-line-${window.classifyLogLevel(text)}`;
       line.textContent = text;
       logEl.appendChild(line);
       logEl.scrollTop = logEl.scrollHeight;

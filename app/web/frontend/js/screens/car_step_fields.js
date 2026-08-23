@@ -105,6 +105,53 @@
       return wrap;
     }
 
+    // -- обязательные/необязательные APK этапа "Выбор приложений" — как
+    // buildFileList, но с полями "красивого" названия/описания на каждый
+    // APK (см. app/car_generator.py: StandardApkSpec) — их видит техник
+    // во время установки вместо голого имени файла (см.
+    // stage_wizard.js: buildAppRow), тот же смысл, что у карточки APK в
+    // общей библиотеке apk/ (см. dialogs.js: adminApkDialog).
+    function buildApkList(apkArray, onChange) {
+      const wrap = el("div");
+      const addBtn = el("button", {
+        text: "Добавить APK...",
+        onclick: async () => {
+          const picked = await window.pywebview.api.car_pick_files("apk", true);
+          if (!picked.length) return;
+          for (const p of picked) apkArray.push({ ...p, display_name: "", description: "" });
+          onChange();
+        },
+      });
+      const list = el("div", { style: "margin: 6px 0" });
+      apkArray.forEach((apk, i) => {
+        const row = el("div", { class: "card", style: "padding: 6px 8px; margin-bottom: 6px" });
+        const top = el("div", { style: "display: flex; align-items: center; gap: 6px" });
+        top.appendChild(el("span", {
+          style: "flex: 1; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim)",
+          text: apk.name,
+        }));
+        top.appendChild(el("button", {
+          class: "danger", text: "Убрать",
+          onclick: () => { apkArray.splice(i, 1); onChange(); },
+        }));
+        row.appendChild(top);
+        const nameInput = el("input", { type: "text", placeholder: "Красивое название (по умолчанию — имя файла)" });
+        nameInput.value = apk.display_name || "";
+        nameInput.addEventListener("input", () => { apk.display_name = nameInput.value; });
+        const descInput = el("input", {
+          type: "text", placeholder: "Описание (необязательно)", style: "margin-top: 4px",
+        });
+        descInput.value = apk.description || "";
+        descInput.addEventListener("input", () => { apk.description = descInput.value; });
+        row.appendChild(nameInput);
+        row.appendChild(descInput);
+        list.appendChild(row);
+      });
+      wrap.appendChild(addBtn);
+      wrap.appendChild(list);
+      return wrap;
+    }
+
     // -- adb --------------------------------------------------------------
     function renderAdbFields(step) {
       container.appendChild(el("span", { class: "field-label", text: "Команды (по одной на строку, по порядку)" }));
@@ -198,9 +245,10 @@
       'По одной команде на строку — обычные "adb shell"-команды. Также доступны спецкоманды:\n' +
       "#sleep 5 — пауза 5 секунд\n#reboot — перезагрузить магнитолу и дождаться загрузки\n" +
       "#reboot_nowait — перезагрузить, не дожидаясь\n#root — adb root\n" +
+      "#push ИмяФайла /remote/path — закачать прикреплённый файл (см. ниже)\n" +
+      "#install ИмяФайла — установить прикреплённый APK\n" +
       "#ask Введите значение — спросить у пользователя, ответ можно подставить в следующую команду " +
-      "через {ask}.\n\n#push/#install здесь не поддерживаются (нет прикреплённых файлов) — для " +
-      "установки/закачки файлов используйте отдельный этап «ADB».";
+      "через {ask}.";
 
     function renderActionsFields(step) {
       container.appendChild(el("p", {
@@ -214,7 +262,7 @@
       renderActionsList(step, listWrap);
       container.appendChild(el("button", {
         text: "Добавить действие",
-        onclick: () => { step.actions.push({ label: "", kind: "command", commands: [] }); rerender(); },
+        onclick: () => { step.actions.push({ label: "", kind: "command", commands: [], files: [] }); rerender(); },
       }));
     }
 
@@ -255,6 +303,13 @@
           });
           card.appendChild(commandsArea);
           card.appendChild(buildSpoiler("Справка по командам", ACTION_COMMAND_HELP_TEXT));
+
+          card.appendChild(el("span", {
+            class: "field-label", style: "margin-top: 6px",
+            text: "Прикреплённые файлы (для #push/#install и adb push/adb install)",
+          }));
+          if (!action.files) action.files = [];
+          card.appendChild(buildFileList(action.files, "any", true, () => rerender()));
         } else if (action.kind === "grant_permissions") {
           card.appendChild(el("p", {
             class: "app-desc", style: "margin-top: 4px",
@@ -367,7 +422,17 @@
       container.appendChild(sharedButtons);
     }
 
+    const APPS_CONNECTION_LABELS = {
+      wired: "Провод (USB)", wifi: "Wi-Fi", ask: "Спросить технику на месте",
+    };
+
     function renderAppsFields(step) {
+      container.appendChild(el("span", { class: "field-label", text: "Способ подключения для установки" }));
+      const connectionSelect = el("select", {}, Object.entries(APPS_CONNECTION_LABELS).map(([value, text]) =>
+        el("option", { value, text, selected: value === (step.apps_connection || "wired") ? "" : null })));
+      connectionSelect.addEventListener("change", () => { step.apps_connection = connectionSelect.value; });
+      container.appendChild(connectionSelect);
+
       renderVariantToggle(step, "standard_apks", "APK всех вариантов будут потеряны.");
       if (step.variants.length) {
         renderVariantSelector(step);
@@ -378,12 +443,12 @@
           class: "field-label",
           text: "Обязательные APK (ставятся всегда, без чекбокса и права отключить)",
         }));
-        container.appendChild(buildFileList(step.standard_apks, "apk", true, () => rerender()));
+        container.appendChild(buildApkList(step.standard_apks, () => rerender()));
         container.appendChild(el("span", {
           class: "field-label", style: "margin-top: 8px",
           text: "Необязательные APK (техник выбирает сам при установке)",
         }));
-        container.appendChild(buildFileList(step.standard_apks_optional, "apk", true, () => rerender()));
+        container.appendChild(buildApkList(step.standard_apks_optional, () => rerender()));
       }
     }
 
@@ -437,7 +502,9 @@
     function renderVariantFileList(step, field, pickKind, headingTpl) {
       const variant = step.variants[editingVariantIndex];
       container.appendChild(el("span", { class: "field-label", text: headingTpl.replace("{name}", variant.name) }));
-      container.appendChild(buildFileList(variant[field], pickKind, true, () => rerender()));
+      container.appendChild(pickKind === "apk"
+        ? buildApkList(variant[field], () => rerender())
+        : buildFileList(variant[field], pickKind, true, () => rerender()));
     }
 
     async function addVariant(step) {

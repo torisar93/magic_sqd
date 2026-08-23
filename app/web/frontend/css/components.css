@@ -27,6 +27,9 @@
   display: flex;
   flex-direction: column;
   min-height: 0; /* иначе flex-ребёнок с overflow не сжимается внутри grid-колонки */
+  min-width: 0; /* тот же смысл по горизонтали — иначе широкий контент (см.
+    #log-panel: длинная строка лога без пробелов, например ADB-стектрейс)
+    раздвигает grid-колонку 1fr шире доступного окна вместо переноса. */
 }
 
 .card {
@@ -37,6 +40,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0; /* см. .panel выше — тот же принцип на следующем уровне вложенности */
 }
 
 .card-header {
@@ -210,7 +214,20 @@
   font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
+  /* Длинные строки без пробелов (ADB-стектрейсы вроде "выдать разрешения")
+     иначе не переносятся даже при pre-wrap (он переносит только по пробелам)
+     и раздвигают окно вширь — см. .panel/.card выше за остальной частью
+     этого же исправления. */
+  overflow-wrap: anywhere;
 }
+
+/* Уровни строк лога (см. js/log_format.js: classifyLogLevel) — те же
+   токены, что и везде в проекте (.callout.danger, [data-block-type=...]),
+   новых цветов не заводим. .log-line-info намеренно без переопределения —
+   обычный цвет текста, как и раньше. */
+.log-line-success { color: var(--accent); }
+.log-line-error { color: var(--danger-text); }
+.log-line-warn { color: var(--warn-text); }
 
 /* Мини-консоль ADB под логом (была в tkinter-версии до перехода на
    pywebview — см. историю app/gui.py) — свободная "adb shell <команда>" на
@@ -249,11 +266,6 @@
   border-radius: var(--corner-radius);
   padding: 6px 8px;
   box-sizing: border-box;
-}
-
-#adb-console-wifi-connect {
-  flex: 0 0 auto;
-  white-space: nowrap;
 }
 
 /* ---- Stage wizard (см. js/screens/stage_wizard.js) ---- */
@@ -440,6 +452,7 @@ dialog .dialog-log {
   font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere; /* см. #log-panel в этом же файле — та же причина */
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--corner-radius);
@@ -491,6 +504,18 @@ dialog .field {
   overflow: hidden;
   position: relative;
   margin: 8px 0;
+}
+
+/* Заполнение по реальному проценту (см. js/screens/stage_wizard.js:
+   updateSyncProgress) — используется только когда известен total (синхронизация
+   файлов модели перед показом инструкции), иначе остаётся width:0 и бар
+   показывает обычную бегущую полосу через .indeterminate::after ниже. */
+.progress-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent-2);
+  border-radius: 2px;
+  transition: width 0.2s ease;
 }
 
 .progress-bar.indeterminate::after {

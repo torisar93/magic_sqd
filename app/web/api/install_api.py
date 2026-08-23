@@ -12,16 +12,19 @@ import mimetypes
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
                            list_devices, scan_for_adb_hosts)
-from ...content_sync import sync_model_files
+from ...content_sync import fetch_manifest, filter_manifest, get_base_url, sync_model_subfolder
 from ...runner import InstallRunner
-from ...scanner import scan_apk_dir
-from ...stage_runner import StageDefinitionError, load_stages, stage_instruction_html_path
+from ...scanner import scan_apk_dir_with_remote
+from ...stage_runner import StageDefinitionError, load_stages, load_wifi_port, stage_instruction_html_path
 from .scanner_api import apk_to_dict
+
+_MANIFEST_CACHE_TTL_SECONDS = 60
 
 _IMG_SRC_RE = re.compile(r'(<img\b[^>]*\bsrc=")([^"]+)(")', re.IGNORECASE)
 
@@ -61,35 +64,87 @@ class InstallApi:
             base_dir=base_dir, ask_input_fn=input_broker.request,
         )
         self._pending_stage_index: int | None = None
+        self._manifest_cache: dict | None = None
+        self._manifest_cache_time: float = 0.0
 
     # ------------------------------------------------------------------
+    def _get_manifest(self) -> dict | None:
+        """Кэширует content/manifest.json на несколько секунд — иначе он
+        (весь каталог cars/+apk/, не только текущая модель) перекачивался бы
+        заново при каждом рендере каждого apps-этапа за один проход мастера
+        (load_stages -> потом несколько вызовов standard_apks на том же
+        экране). TTL короткий — не для оффлайн-работы, только чтобы не
+        дублировать сетевые запросы в пределах одной "сессии" открытой
+        модели."""
+        url = get_base_url(self.base_dir)
+        if not url:
+            return None
+        now = time.monotonic()
+        if self._manifest_cache is None or now - self._manifest_cache_time > _MANIFEST_CACHE_TTL_SECONDS:
+            self._manifest_cache = fetch_manifest(url)
+            self._manifest_cache_time = now
+        return self._manifest_cache
+
     def load_stages(self, model_key: str) -> dict:
         model = self._scanner_api.get_model(model_key)
         if model is None:
             return {"error": "unknown model key"}
         if not model.stages_script:
             return {"stages": []}
-        # Свои files/usb_files модели (в т.ч. instruction.html — см.
-        # stage_instruction_html_path) синхронизируются JIT прямо перед
-        # установкой (runner.py) — но техник должен УВИДЕТЬ инструкцию уже
-        # на экране этапов, до нажатия "Установка", иначе на свежем клиенте
-        # (files/ ещё не скачаны) шаги показываются без текста инструкций,
-        # хотя в админке она уже загружена на сервер.
-        try:
-            sync_model_files(self.base_dir, model, log=self._on_log)
-        except Exception as exc:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
-            self._on_log(f"Не удалось проверить обновления файлов модели: {exc}")
         try:
             stages = load_stages(model)
         except StageDefinitionError as exc:
             return {"error": f"Ошибка в stages.py: {exc}"}
         except Exception as exc:  # noqa: BLE001 - показать пользователю любую ошибку загрузки скрипта
             return {"error": f"Не удалось загрузить stages.py: {exc}"}
-        return {"stages": [self._stage_to_dict(model, i, s) for i, s in enumerate(stages)]}
 
-    def _stage_to_dict(self, model, index: int, stage: dict) -> dict:
+        # Только файлы, нужные ПРЯМО СЕЙЧАС для показа списка этапов —
+        # instruction (текст/картинки видны сразу, до "Установки") — своя
+        # маленькая подпапка files/instruction_N, а не вся files/+usb_files
+        # модели разом (как было раньше, см. sync_model_files ниже в
+        # runner.py/usb_api.py — та по-прежнему тянет модель целиком, но
+        # только прямо перед запуском конкретного этапа). "apps" — см.
+        # standard_apks() (список строится по манифесту, без докачки);
+        # "usb"/"adb"/"exe" — свои файлы качаются по клику на соответствующем
+        # этапе, не здесь.
+        manifest = self._get_manifest()
+        try:
+            for stage in stages:
+                if stage["type"] == "instruction" and stage.get("instruction"):
+                    instr_dir = (model.dir / stage["instruction"]).parent
+                    try:
+                        sync_model_subfolder(self.base_dir, instr_dir, log=self._on_log,
+                                              manifest=manifest, on_progress=self._on_sync_progress)
+                    except Exception as exc:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
+                        self._on_log(f"Не удалось проверить обновления инструкции: {exc}")
+        finally:
+            self._on_sync_progress(0, 0)  # скрыть бар, даже если качать было нечего
+
+        return {
+            "stages": [self._stage_to_dict(model, i, s, manifest) for i, s in enumerate(stages)],
+            # Порт Wi-Fi ADB для apps-этапов с apps_connection="wifi"/"ask"
+            # (см. stage_wizard.js: buildTransportBar) — читается один раз
+            # здесь, а не на каждый рендер этапа.
+            "wifi_port": load_wifi_port(model),
+        }
+
+    def _stage_to_dict(self, model, index: int, stage: dict, manifest: dict | None = None) -> dict:
         html_path = stage_instruction_html_path(model, stage)
         exe_path = stage.get("exe_path")
+        exe_exists = None
+        if exe_path:
+            # Локально уже есть — ИЛИ значится в манифесте сервера (ленивая
+            # докачка, см. run_exe — сам файл при этом не качаем, только
+            # проверяем, что он в принципе где-то есть, чтобы не показывать
+            # ложное "файл не найден" тому, что просто ещё не скачано).
+            exe_exists = Path(exe_path).exists()
+            if not exe_exists and manifest is not None:
+                try:
+                    remote = "cars/" + Path(exe_path).resolve().relative_to(self.base_dir / "cars").as_posix()
+                except ValueError:
+                    remote = None
+                if remote:
+                    exe_exists = remote in manifest
         return {
             "index": index,
             "type": stage["type"],
@@ -102,11 +157,12 @@ class InstallApi:
             "variant_names": stage.get("variant_names"),
             "standard_label": stage.get("standard_label", "Стандартные приложения"),
             "usb_copy_selected_apks": stage.get("usb_copy_selected_apks", False),
+            "apps_connection": stage.get("apps_connection", "wired"),
             "check_var": stage.get("check_var", ""),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,
             "exe_name": Path(exe_path).name if exe_path else None,
-            "exe_exists": Path(exe_path).exists() if exe_path else None,
+            "exe_exists": exe_exists,
             "actions": [{"label": a.get("label", ""), "kind": a.get("kind", "command")}
                         for a in (stage.get("actions") or [])],
         }
@@ -121,7 +177,13 @@ class InstallApi:
         Разделены на обязательные (files/pack*/required — устанавливаются
         всегда, без чекбокса) и необязательные (.../optional — техник
         выбирает сам) — см. app/car_generator.py: StepSpec.standard_apks/
-        standard_apks_optional за тем, как эти подпапки формируются."""
+        standard_apks_optional за тем, как эти подпапки формируются.
+
+        Список строится по манифесту сервера (remote_only, см.
+        scanner.scan_apk_dir_with_remote), БЕЗ докачки самих APK — реальные
+        файлы подтягиваются позже, прямо перед установкой этого этапа (см.
+        runner.py: InstallRunner._run -> sync_model_files), а не просто от
+        открытия модели/этой страницы мастера."""
         model = self._scanner_api.get_model(model_key)
         if model is None:
             return dict(self._EMPTY_STANDARD_APKS)
@@ -137,9 +199,24 @@ class InstallApi:
         if not standard_dir:
             return dict(self._EMPTY_STANDARD_APKS)
         standard_dir = Path(standard_dir)
+
+        manifest = self._get_manifest()
+
+        def remote_items(folder: Path) -> list[dict]:
+            if manifest is None:
+                return []
+            try:
+                remote_subpath = "cars/" + folder.relative_to(self.base_dir / "cars").as_posix()
+            except ValueError:
+                return []
+            return filter_manifest(manifest, remote_subpath)
+
+        required_dir, optional_dir = standard_dir / "required", standard_dir / "optional"
         return {
-            "required": [apk_to_dict(apk) for apk in scan_apk_dir(standard_dir / "required")],
-            "optional": [apk_to_dict(apk) for apk in scan_apk_dir(standard_dir / "optional")],
+            "required": [apk_to_dict(apk) for apk in
+                         scan_apk_dir_with_remote(required_dir, remote_items(required_dir))],
+            "optional": [apk_to_dict(apk) for apk in
+                         scan_apk_dir_with_remote(optional_dir, remote_items(optional_dir))],
         }
 
     # ------------------------------------------------------------------
@@ -233,13 +310,46 @@ class InstallApi:
             return {"ok": False, "error": "unknown model key"}
         stages = load_stages(model)
         stage = stages[stage_index]
+        # "apps" — единственный тип этапа без обязательного run(ctx) в
+        # stages.py (см. stage_runner.py: STAGE_TYPES с run обязателен только
+        # для usb/adb/uart/telnet): раньше он был чисто выбором галочек, а
+        # установку выполнял отдельный следующий "adb"-этап. Теперь кнопка
+        # "Начать установку" есть прямо на этапе apps (см. stage_wizard.js:
+        # renderAppsStage) — если модель не задала свой run для него, ставим
+        # отмеченные приложения тем же способом, что и обычный adb-этап
+        # (ctx.install_selected_apks, см. install_context.py).
+        run_fn = stage.get("run")
+        if run_fn is None and stage["type"] == "apps":
+            run_fn = lambda ctx: ctx.install_selected_apks()  # noqa: E731
+        if run_fn is None:
+            return {"ok": False, "error": f"Для этапа «{stage['title']}» не задан run(ctx)."}
         self._pending_stage_index = stage_index
         event_bridge.push({"kind": "install_log", "text": f"=== Этап {stage_index + 1}: {stage['title']} ==="})
         try:
-            self._runner.start(model, device_serial, selected_apk_paths, run_fn=stage["run"])
+            self._runner.start(model, device_serial, selected_apk_paths, run_fn=run_fn,
+                                own_dirs=self._stage_own_dirs(model, stage))
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
+
+    @staticmethod
+    def _stage_own_dirs(model, stage: dict) -> list[Path]:
+        """Локальные папки СВОИХ файлов конкретного этапа — синхронизируются
+        прямо перед запуском (см. runner.py: InstallRunner._run), вместо
+        того чтобы (как раньше) тянуть всю files/+usb_files модели разом при
+        запуске ЛЮБОГО её этапа (запуск telnet-этапа заодно качал APK
+        отдельного apps-этапа той же модели). "apps" сюда не входит — её
+        выбранные файлы докачивает ensure_apks_downloaded(...) по факту
+        отмеченных галочек, точнее, чем вся папка required/optional разом.
+        "usb" через этот путь не идёт вовсе (свой вызов в usb_api.py)."""
+        if stage.get("type") != "adb":
+            return []
+        # adb_files (StepSpec в car_generator.py) не сохраняется как ключ в
+        # скомпилированном STAGES-словаре — используется только при
+        # генерации, поэтому точную подпапку (files/adb_N) здесь узнать
+        # нельзя. Берём весь files/ модели (БЕЗ usb_files/ — прошивки для
+        # флешки сюда не относятся).
+        return [model.dir / "files"]
 
     def cancel_stage(self) -> dict:
         if self._runner.running:
@@ -271,7 +381,8 @@ class InstallApi:
         self._pending_stage_index = stage_index
         event_bridge.push({"kind": "install_log", "text": f"--- {action.get('label') or 'Действие'} ---"})
         try:
-            self._runner.start(model, device_serial, selected_apk_paths, run_fn=action["run"])
+            self._runner.start(model, device_serial, selected_apk_paths, run_fn=action["run"],
+                                own_dirs=self._stage_own_dirs(model, stage))
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
@@ -283,6 +394,19 @@ class InstallApi:
     # ------------------------------------------------------------------
     def run_exe(self, exe_path: str) -> dict:
         path = Path(exe_path)
+        if not path.exists():
+            # Ленивая докачка — этот .exe мог ещё не попасть на диск (см.
+            # load_stages: exe_exists теперь только проверяет манифест,
+            # реальный файл качается именно здесь, по факту клика "Запустить").
+            try:
+                sync_model_subfolder(self.base_dir, path.parent, log=self._on_log,
+                                      on_progress=self._on_sync_progress)
+            except Exception as exc:  # noqa: BLE001 - показываем понятную ошибку ниже
+                self._on_log(f"Не удалось скачать {path.name}: {exc}")
+            finally:
+                self._on_sync_progress(0, 0)
+        if not path.exists():
+            return {"ok": False, "error": f"Не удалось скачать {path.name} с сервера."}
         try:
             subprocess.Popen([str(path)], cwd=str(path.parent))
         except OSError as exc:
@@ -295,6 +419,13 @@ class InstallApi:
     # трогают в webview напрямую.
     def _on_log(self, message: str) -> None:
         event_bridge.push({"kind": "install_log", "text": message})
+
+    def _on_sync_progress(self, done: int, total: int) -> None:
+        # (0, 0) — сигнал "скрыть бар" (см. load_stages ниже) — sync_tree
+        # сам никогда так не вызывает on_progress (при total=0 скачивать
+        # нечего, on_progress вообще не вызывается), так что с реальным
+        # прогрессом не перепутается.
+        event_bridge.push({"kind": "sync_progress", "done": done, "total": total})
 
     def _on_finished(self, success: bool, message: str) -> None:
         event_bridge.push({

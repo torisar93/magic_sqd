@@ -24,7 +24,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote
 
@@ -260,9 +260,11 @@ def _download_one(base_url: str, remote_path: str, local_path: Path,
     """Один файл для параллельного скачивания в sync_tree — обёртка над
     download_file с логом и обработкой ошибки конкретно этого файла (не
     должна рушить скачивание остальных, см. вызов через ThreadPoolExecutor
-    ниже)."""
+    ниже). Раньше логировала "Скачиваю <файл>..." на КАЖДЫЙ файл — при
+    первой синхронизации модели (сотни мелких файлов) это превращало лог в
+    сплошной технический список; теперь ход дела показывает прогресс-бар
+    (см. on_progress в sync_tree), а не текст построчно."""
     check_cancelled()
-    log(f"Скачиваю {remote_path}...")
     try:
         download_file(base_url, remote_path, local_path, log=log, check_cancelled=check_cancelled, mtime=mtime)
         return True
@@ -273,7 +275,8 @@ def _download_one(base_url: str, remote_path: str, local_path: Path,
 
 def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
               log=lambda m: None, check_cancelled=lambda: None, skip_dirs: tuple = (),
-              no_recurse_dirs: tuple = (), manifest: dict[str, dict] | None = None) -> int:
+              no_recurse_dirs: tuple = (), manifest: dict[str, dict] | None = None,
+              on_progress=lambda done, total: None) -> int:
     """Скачивает из remote_subpath в local_dir всё, чего там ещё нет (или
     что отличается по размеру). skip_dirs/no_recurse_dirs — см.
     list_files_recursive. Возвращает число скачанных файлов; сетевые ошибки
@@ -282,10 +285,14 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
     означает "такой папки на сервере просто нет" (например, техник в этапе
     ничего своего не добавлял, только общую библиотеку — см.
     _model_wants_own_files) и не более ошибка, чем пустая папка, поэтому не
-    засоряет лог. Логирует ход дела (запрос списка, каждый реально
-    скачиваемый файл, итог) — раньше молчала при успехе от начала до конца,
-    из-за чего в момент первой закачки файлов модели/общей библиотеки
-    технику казалось, что программа зависла, хотя она просто тихо качала.
+    засоряет лог.
+
+    Ход дела — через on_progress(done, total), а не построчным логом на
+    каждый файл (раньше "Скачиваю <файл>..." на сотнях мелких файлов
+    превращало лог в стену технического текста — см. UI-слой, который рисует
+    по этому колбэку прогресс-бар, например app/web/api/install_api.py).
+    on_progress(0, total) вызывается один раз перед стартом скачивания (если
+    вообще есть что качать), дальше — после каждого завершённого файла.
 
     manifest — уже скачанный content/manifest.json (см. fetch_manifest),
     если он есть у вызывающего — тогда список получаем локальной фильтрацией
@@ -319,6 +326,8 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
 
     downloaded = 0
     if to_download:
+        total = len(to_download)
+        on_progress(0, total)
         # Параллельно (см. _DOWNLOAD_WORKERS) — иначе первый запуск на
         # пустом cars/ качает сотни мелких файлов по одному, каждый со
         # своим round-trip до VPS. check_cancelled() внутри _download_one
@@ -327,16 +336,25 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
         with ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as executor:
             futures = [executor.submit(_download_one, base_url, path, local_path, log, check_cancelled, mtime)
                        for path, local_path, mtime in to_download]
-            for future in futures:
+            # as_completed, а не порядок отправки — иначе один медленный файл
+            # в начале списка держит done на месте, пока десятки уже готовых
+            # за ним ждут своей очереди, и бар потом разом доскакивает до
+            # конца вместо равномерного хода (см. отчёт пользователя: "на
+            # половине долго стоит и потом резко доходит до конца").
+            done = 0
+            for future in as_completed(futures):
+                done += 1
                 if future.result():
                     downloaded += 1
+                on_progress(done, total)
     if downloaded:
         log(f"Скачано файлов ({remote_subpath}): {downloaded}.")
     return downloaded
 
 
 def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
-                  manifest: dict[str, dict] | None = None) -> int:
+                  manifest: dict[str, dict] | None = None,
+                  on_progress=lambda done, total: None) -> int:
     """Автообновление скриптов/инструкций всех моделей (cars/) при
     запуске программы — install.py/stages.py/instruction.html и т.п., но
     БЕЗ содержимого files/ и usb_files/ (там как раз и лежат тяжёлые
@@ -357,7 +375,7 @@ def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
     if not url:
         return 0
     return sync_tree(url, "cars", cars_dir, log=log, skip_dirs=("files", "usb_files"),
-                      no_recurse_dirs=("cars/_shared",), manifest=manifest)
+                      no_recurse_dirs=("cars/_shared",), manifest=manifest, on_progress=on_progress)
 
 
 def sync_shared_folder(base_dir: Path, name: str, log=lambda m: None,
@@ -425,7 +443,8 @@ def _model_wants_own_files(model_dir: Path) -> tuple[bool, bool]:
 
 
 def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=lambda: None,
-                      manifest: dict[str, dict] | None = None) -> int:
+                      manifest: dict[str, dict] | None = None,
+                      on_progress=lambda done, total: None) -> int:
     """Подтягивает files/ и usb_files/ конкретной модели с сервера — по
     кнопке "Скачать файлы модели" (gui.py) и на всякий случай ещё раз прямо
     перед установкой этой модели. Молча ничего не делает (возвращает 0),
@@ -456,8 +475,30 @@ def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=
             continue
         local_dir = model.dir / subfolder
         downloaded += sync_tree(url, f"{remote_base}/{subfolder}", local_dir, log=log,
-                                 check_cancelled=check_cancelled, manifest=manifest)
+                                 check_cancelled=check_cancelled, manifest=manifest,
+                                 on_progress=on_progress)
     return downloaded
+
+
+def sync_model_subfolder(base_dir: Path, local_dir: Path, log=lambda m: None,
+                          check_cancelled=lambda: None, manifest: dict[str, dict] | None = None,
+                          on_progress=lambda done, total: None) -> int:
+    """Синхронизирует ОДНУ конкретную подпапку модели (например
+    files/instruction_2, files/exe_1) — в отличие от sync_model_files (вся
+    files/+usb_files модели разом), для случаев, когда заранее известно, что
+    нужен только конкретный этап (см. app/web/api/install_api.py:
+    load_stages/run_exe — инструкция показывается сразу, .exe-инсталлятор
+    докачивается по клику "Запустить", а не вся модель целиком при простом
+    открытии — раньше "выбор приложений"/усб-этап/прошивка качались заодно,
+    даже если техник до них ещё не дошёл)."""
+    url = get_base_url(base_dir)
+    if not url:
+        return 0
+    if manifest is None:
+        manifest = fetch_manifest(url)
+    remote_subpath = "cars/" + local_dir.relative_to(base_dir / "cars").as_posix()
+    return sync_tree(url, remote_subpath, local_dir, log=log, check_cancelled=check_cancelled,
+                      manifest=manifest, on_progress=on_progress)
 
 
 def sync_shared_apk_metadata(base_dir: Path, apk_dir: Path, log=lambda m: None,
@@ -548,28 +589,36 @@ def list_shared_apk_catalog(base_dir: Path, items: list[dict] | None = None) -> 
 def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: None,
                             check_cancelled=lambda: None) -> int:
     """Докачивает из paths (обычно ctx.selected_apks) только те файлы,
-    которых ещё нет локально, — по одному, а не всю библиотеку apk/ разом
-    (см. list_shared_apk_catalog/scanner.scan_apks: ApkInfo.remote_only).
-    Вызывается прямо перед фактическим использованием — из runner.py и
-    usb_dialog.py, рядом с уже существующим sync_model_files. Пути вне
-    apk_dir (например, "стандартный набор" конкретного этапа — свои
-    файлы в files/pack, уже подтянутые sync_model_files) тихо пропускает.
+    которых ещё нет локально, — по одному, а не всю папку разом (см.
+    list_shared_apk_catalog/scanner.scan_apks/scan_apk_dir_with_remote:
+    ApkInfo.remote_only). Вызывается прямо перед фактическим использованием
+    — из runner.py и usb_api.py. Понимает пути и из общей библиотеки apk/,
+    и из "своих" файлов конкретного apps-этапа модели (files/pack*/..., см.
+    app/car_generator.py: StepSpec.standard_apks) — качает именно то, что
+    отмечено галочками, а не всю папку required/optional разом (см.
+    app/web/api/install_api.py: standard_apks — список строится по
+    манифесту, без докачки, реальные файлы попадают на диск только здесь).
     Молча ничего не делает, если server.json не настроен."""
     url = get_base_url(base_dir)
     if not url:
         return 0
     apk_dir = apk_dir.resolve()
+    cars_dir = (base_dir / "cars").resolve()
     downloaded = 0
     for raw_path in paths:
         check_cancelled()
-        path = Path(raw_path)
+        path = Path(raw_path).resolve()
         if path.exists():
             continue
         try:
-            rel = path.resolve().relative_to(apk_dir)
+            rel = path.relative_to(apk_dir)
+            remote_path = f"apk/{rel.as_posix()}"
         except ValueError:
-            continue
-        remote_path = f"apk/{rel.as_posix()}"
+            try:
+                rel = path.relative_to(cars_dir)
+                remote_path = f"cars/{rel.as_posix()}"
+            except ValueError:
+                continue
         try:
             download_file(url, remote_path, path, log=log, check_cancelled=check_cancelled)
             downloaded += 1

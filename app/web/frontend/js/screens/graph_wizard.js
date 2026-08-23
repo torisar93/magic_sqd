@@ -43,11 +43,21 @@
   const { el, clear } = window.dom;
   const { svgEl } = window.svgDom;
 
+  // "adb" сюда сознательно не входит — как новый узел он больше не
+  // предлагается (слит с "actions", см. renderActionsFields в
+  // car_step_fields.js: теперь умеет и прикреплённые файлы). STAGE_LABELS
+  // ниже (не этот словарь) знает про "adb" отдельно — там нужно уметь
+  // отображать уже существующие старые узлы этого типа, если они
+  // встретятся при открытии старой модели.
   const STEP_TYPE_LABELS = {
-    adb: "ADB-команды", usb: "USB-флешка", manual: "Ручной шаг", apps: "Выбор приложений",
+    usb: "USB-флешка", manual: "Ручной шаг", apps: "Установка приложений",
     exe: "Готовый установщик (.exe)", check: "Проверка/выбор", instruction: "Инструкция",
-    uart: "UART-команды", telnet: "Telnet (IPv6)", actions: "Доп. команды",
+    uart: "UART-команды", telnet: "Telnet (IPv6)", actions: "ADB-команды",
   };
+  // Показ уже существующего узла типа "adb" (если такой встретится при
+  // открытии старой, ещё не мигрированной модели) — не в STEP_TYPE_LABELS
+  // выше, чтобы не предлагать его как ВЫБОР для нового узла.
+  const LEGACY_STEP_TYPE_LABELS = { ...STEP_TYPE_LABELS, adb: "ADB-команды (устар.)" };
 
   const MIN_ZOOM = 0.4;
   const MAX_ZOOM = 2;
@@ -64,6 +74,13 @@
   let editModelKey = null;
   let onCreatedCb = null;
   let logFn = () => {};
+  // Заявка клиента, застейдженная в app/web/api/submissions_api.py:stage
+  // (см. index.html: кнопки "Опубликовать"/"Отклонить заявку" в футере,
+  // видны только для неё) — тот же редактор, что и для обычных моделей,
+  // только "Сохранить" не публикует (см. car_editor_api.py:_worker), а
+  // публикация/отклонение — отдельные явные действия.
+  let isPendingModel = false;
+  let pendingSubmissionName = null;
 
   let panX = 40, panY = 40, zoom = 1;
   let panState = null;
@@ -86,7 +103,8 @@
       type, title: "", description: "", instruction_blocks: [],
       usb_files: [], usb_copy_selected_apks: false, usb_apks_dest: "", usb_shared_folder: "",
       commands: [], adb_install_selected_apks: false, adb_files: [],
-      standard_apks: [], standard_apks_optional: [], exe_file: null, uart_baudrate: 115200, actions: [],
+      standard_apks: [], standard_apks_optional: [], apps_connection: "wired",
+      exe_file: null, uart_baudrate: 115200, actions: [],
       check_var: type === "check" ? generateCheckVar() : "", check_options: [],
       condition_var: "", condition_values: [],
       variants: [],
@@ -126,6 +144,8 @@
     });
     document.getElementById("graph-wizard-cancel").addEventListener("click", () => dialog.close());
     document.getElementById("graph-wizard-save").addEventListener("click", onSave);
+    document.getElementById("graph-wizard-publish").addEventListener("click", onPublish);
+    document.getElementById("graph-wizard-reject").addEventListener("click", onReject);
 
     viewportEl.addEventListener("mousedown", onViewportMouseDown);
     viewportEl.addEventListener("wheel", onWheelZoom, { passive: false });
@@ -155,13 +175,13 @@
   // (перенесено из старого текстового мастера car_wizard.js — с переходом
   // на визуальный редактор как единственный он тут больше не нужен)
   function initAdminLoginDialog() {
-    const dlg = document.getElementById("admin-login-dialog");
-    const errorEl = document.getElementById("admin-login-error");
+    const dlg = document.getElementById("graph-admin-login-dialog");
+    const errorEl = document.getElementById("graph-admin-login-error");
     let resolveFn = null;
 
-    document.getElementById("admin-login-submit").addEventListener("click", async () => {
-      const username = document.getElementById("admin-login-username").value.trim();
-      const password = document.getElementById("admin-login-password").value;
+    document.getElementById("graph-admin-login-submit").addEventListener("click", async () => {
+      const username = document.getElementById("graph-admin-login-username").value.trim();
+      const password = document.getElementById("graph-admin-login-password").value;
       if (!username || !password) return;
       const baseUrl = dlg.dataset.baseUrl;
       const result = await window.pywebview.api.car_admin_login(baseUrl, username, password);
@@ -173,15 +193,15 @@
         errorEl.style.display = "";
       }
     });
-    document.getElementById("admin-login-cancel").addEventListener("click", () => {
+    document.getElementById("graph-admin-login-cancel").addEventListener("click", () => {
       dlg.close();
       resolveFn(false);
     });
 
     window._openAdminLoginDialog = (baseUrl) => {
       dlg.dataset.baseUrl = baseUrl;
-      document.getElementById("admin-login-username").value = "";
-      document.getElementById("admin-login-password").value = "";
+      document.getElementById("graph-admin-login-username").value = "";
+      document.getElementById("graph-admin-login-password").value = "";
       errorEl.style.display = "none";
       dlg.showModal();
       return new Promise((resolve) => { resolveFn = resolve; });
@@ -199,6 +219,8 @@
     onCreatedCb = onCreated;
     isEditing = !!editModel;
     editModelKey = editModel ? editModel.key : null;
+    isPendingModel = !!(editModel && editModel.is_pending);
+    pendingSubmissionName = editModel ? editModel.submission_name : null;
 
     if (isEditing) {
       const spec = await window.pywebview.api.car_load_spec(editModel.key);
@@ -224,8 +246,11 @@
       if (step.type === "check" && !step.check_var) step.check_var = generateCheckVar();
     });
 
-    document.getElementById("graph-wizard-title").textContent = isEditing ? "Изменить машину" : "Добавить машину";
+    document.getElementById("graph-wizard-title").textContent = isPendingModel
+      ? "Заявка клиента" : (isEditing ? "Изменить машину" : "Добавить машину");
     document.getElementById("graph-wizard-save").textContent = isEditing ? "Сохранить" : "Создать";
+    document.getElementById("graph-wizard-publish").style.display = isPendingModel ? "" : "none";
+    document.getElementById("graph-wizard-reject").style.display = isPendingModel ? "" : "none";
 
     renderHeader(existingBrands);
     selectedIndex = null;
@@ -403,7 +428,7 @@
 
     steps.forEach((step, i) => {
       const titleEl = el("div", { text: step.title || `Этап ${i + 1}` });
-      const typeLabelEl = el("div", { class: "graph-node-type-label", text: STEP_TYPE_LABELS[step.type] || step.type });
+      const typeLabelEl = el("div", { class: "graph-node-type-label", text: LEGACY_STEP_TYPE_LABELS[step.type] || step.type });
       const header = el("div", { class: "graph-node-header" }, [titleEl, typeLabelEl]);
       const body = el("div", { class: "graph-node-body", text: step.description || "" });
       const inSocket = el("div", { class: "graph-socket graph-socket-in" });
@@ -1029,6 +1054,88 @@
     logFn(`Сохраняю «${label}»...`);
     setMainProgressVisible(true);
     dialog.close();
+  }
+
+  // ------------------------------------------------------------------
+  // Публикация/отклонение заявки клиента (см. index.html: кнопки видны
+  // только когда isPendingModel, submissions_api.py:publish/reject).
+  // ------------------------------------------------------------------
+  function waitForEvent(kind) {
+    return new Promise((resolve) => {
+      function handler(event) {
+        window.events.off(kind, handler);
+        resolve(event);
+      }
+      window.events.on(kind, handler);
+    });
+  }
+
+  function setPendingButtonsDisabled(disabled) {
+    document.getElementById("graph-wizard-save").disabled = disabled;
+    document.getElementById("graph-wizard-publish").disabled = disabled;
+    document.getElementById("graph-wizard-reject").disabled = disabled;
+  }
+
+  async function onPublish() {
+    if (!brand.trim() || !model.trim()) {
+      await window.notice("Укажите марку и модель.");
+      return;
+    }
+    setPendingButtonsDisabled(true);
+    // Публикация заливает то, что сейчас лежит в застейдженной папке — если
+    // правки в редакторе ещё не сохранены, публикация уйдёт со старым
+    // содержимым, поэтому сначала обычное "Сохранить" и ждём его результата.
+    const saveResult = await window.pywebview.api.car_save(specToJson(), editModelKey);
+    if (!saveResult.ok) {
+      setPendingButtonsDisabled(false);
+      await window.notice(saveResult.error, { title: "Сохранение", danger: true });
+      return;
+    }
+    const savedEvent = await waitForEvent("car_save_finished");
+    if (!savedEvent.success) {
+      setPendingButtonsDisabled(false);
+      return; // общий обработчик car_save_finished уже показал причину
+    }
+    logFn("Публикую заявку...");
+    const publishResult = await window.pywebview.api.submissions_publish(editModelKey);
+    if (!publishResult.ok) {
+      setPendingButtonsDisabled(false);
+      await window.notice(publishResult.error, { title: "Публикация", danger: true });
+      return;
+    }
+    const finishedEvent = await waitForEvent("submissions_finished");
+    setPendingButtonsDisabled(false);
+    if (!finishedEvent.success) {
+      await window.notice(finishedEvent.message, { title: "Публикация", danger: true });
+      return;
+    }
+    logFn(finishedEvent.message);
+    dialog.close();
+    if (window.pendingList) window.pendingList.reload();
+    window.mainPicker.reload();
+  }
+
+  async function onReject() {
+    const label = modification ? `${brand} / ${model} — ${modification}` : `${brand} / ${model}`;
+    const ok = await window.confirmDialog(`Отклонить заявку «${label}»? Это необратимо.`,
+      { title: "Отклонить заявку" });
+    if (!ok) return;
+    setPendingButtonsDisabled(true);
+    const result = await window.pywebview.api.submissions_reject(pendingSubmissionName);
+    if (!result.ok) {
+      setPendingButtonsDisabled(false);
+      await window.notice(result.error, { title: "Отклонение", danger: true });
+      return;
+    }
+    const finishedEvent = await waitForEvent("submissions_finished");
+    setPendingButtonsDisabled(false);
+    if (!finishedEvent.success) {
+      await window.notice(finishedEvent.message, { title: "Отклонение", danger: true });
+      return;
+    }
+    logFn(finishedEvent.message);
+    dialog.close();
+    if (window.pendingList) window.pendingList.reload();
   }
 
   window.graphWizard = { init, open };

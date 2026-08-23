@@ -52,6 +52,15 @@ class ModelInfo:
     # моделей (см. app/web/frontend/js/screens/main_picker.js).
     status: str = "ok"
     updated_at: str = ""
+    # Заявка клиента с сайта, застейдженная локально для просмотра/правки в
+    # админ-сборке (см. app/pending_submissions.py, app/web/api/
+    # submissions_api.py) — не из cars/, поэтому не участвует в scan_cars() и
+    # хранится в ScannerApi отдельно от обычных моделей (см.
+    # scanner_api.py:_pending_by_key). submission_name — имя .zip заявки на
+    # сервере (см. server/backend.py:list_submissions), нужно для
+    # submissions_publish/submissions_reject.
+    is_pending: bool = False
+    submission_name: str = ""
 
     @property
     def display_label(self) -> str:
@@ -322,3 +331,25 @@ def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
         name, description = _read_apk_meta(apk_path)
         apks.append(ApkInfo(path=apk_path, name=name, description=description, category=category))
     return apks
+
+
+def scan_apk_dir_with_remote(folder: Path, remote_catalog: list[dict] | None = None) -> list[ApkInfo]:
+    """Как scan_apk_dir, плюс запись из remote_catalog (см. content_sync.
+    filter_manifest — список {"path", "size", "mtime"} под интересующей
+    поддиректорией на сервере), которой ещё нет локально — тот же приём
+    remote_only, что уже есть в scan_apks() для общей библиотеки apk/, здесь
+    для "своих" required/optional конкретного apps-этапа модели (см.
+    app/web/api/install_api.py: standard_apks). Реальный файл при этом НЕ
+    качается — только показывается технику с пометкой "будет скачан" (см.
+    stage_wizard.js: buildAppRow), докачка происходит позже, прямо перед
+    установкой (runner.py: InstallRunner._run -> sync_model_files)."""
+    apks: dict[str, ApkInfo] = {apk.path.name: apk for apk in scan_apk_dir(folder)}
+    for entry in remote_catalog or []:
+        filename = entry["path"].rsplit("/", 1)[-1]
+        if not filename.lower().endswith(".apk") or filename in apks:
+            continue
+        apk_path = folder / filename
+        name, description = _read_apk_meta(apk_path)
+        apks[filename] = ApkInfo(path=apk_path, name=name, description=description,
+                                  remote_only=True, size=entry.get("size", -1))
+    return sorted(apks.values(), key=lambda a: a.name.lower())

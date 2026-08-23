@@ -20,6 +20,14 @@
         <button id="admin-add-apk-btn" style="display: none">Добавить APK в общую библиотеку...</button>
         <button id="admin-browse-btn" style="display: none">Файлы на сервере...</button>
       </div>
+      <div id="pending-section" style="display: none">
+        <div class="card-header">
+          <span class="section-label">На модерации <span id="pending-count"></span></span>
+          <button id="pending-refresh-btn">Обновить</button>
+        </div>
+        <div class="progress-bar" id="pending-progress" style="display: none"></div>
+        <ul class="picker-list" id="pending-list"></ul>
+      </div>
     </div>
     <div id="resizer"></div>
     <div class="panel" id="right-panel">
@@ -36,7 +44,10 @@
       </div>
       <div class="card">
         <div class="card-header"><span class="section-label">Лог</span></div>
-        <div class="progress-bar" id="main-progress" style="display: none"></div>
+        <div class="progress-bar" id="main-progress" style="display: none">
+          <div class="progress-bar-fill" id="main-progress-fill"></div>
+        </div>
+        <div id="main-progress-label" style="display: none; color: var(--text-dim); font-size: 12px; margin: -4px 0 4px"></div>
         <div id="log-panel"></div>
         <div class="adb-console-row" id="adb-console-row">
           <select id="adb-console-device"></select>
@@ -46,10 +57,6 @@
                  placeholder="команда... (shell по умолчанию, connect/pair/tcpip — как есть)"
                  title="Обычный текст выполняется как «adb shell <команда>» на выбранном устройстве. connect/disconnect/pair/tcpip/devices/reboot/root/push/pull/install/uninstall и т.п. — как сама команда adb, без обёртки в shell (например: connect 192.168.1.1:5555)." />
           <button id="adb-console-send">Отправить</button>
-          <input type="number" id="adb-console-wifi-port" value="5555" min="1" max="65535"
-                 style="width: 70px" title="Порт Wi-Fi ADB — не всегда 5555 (например 7777 у некоторых моделей)." />
-          <button id="adb-console-wifi-connect"
-                  title="Сначала пробует определить IP магнитолы автоматически (по шлюзу текущей Wi-Fi-сети); если не получится — сканирует сеть и предложит выбрать/ввести IP вручную.">Подключить Wi-Fi</button>
         </div>
       </div>
     </div>
@@ -105,7 +112,7 @@
   </dialog>
 
   <dialog id="admin-login-dialog">
-    <h2>Войти в админку</h2>
+    <h2 id="admin-login-title">Войти в админку</h2>
     <div id="admin-login-server-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></div>
     <div class="field">
       <span class="field-label">Логин</span>
@@ -115,13 +122,18 @@
       <span class="field-label">Пароль</span>
       <input type="password" id="admin-login-password" />
     </div>
-    <p style="color: var(--text-dim); font-size: 12px">
+    <label class="row" style="margin: 4px 0">
+      <input type="checkbox" id="admin-login-remember" />
+      <span>Запомнить меня</span>
+    </label>
+    <p id="admin-login-hint" style="color: var(--text-dim); font-size: 12px">
       Только вход — ничего не выгружает. Сессия переиспользуется другими кнопками
       ("Добавить APK...", "Файлы на сервере..."), пока открыта программа.
     </p>
     <p id="admin-login-status" style="color: var(--text-dim); font-size: 12px"></p>
     <div class="dialog-actions spread">
       <button id="admin-login-start" class="accent">Войти</button>
+      <button id="admin-login-forget" style="display: none">Забыть сохранённый вход</button>
       <button id="admin-login-close">Закрыть</button>
     </div>
   </dialog>
@@ -222,27 +234,55 @@
       </div>
     </div>
     <div class="dialog-actions">
+      <button id="graph-wizard-reject" class="danger" style="display: none">Отклонить заявку</button>
+      <button id="graph-wizard-publish" class="accent" style="display: none">Опубликовать</button>
       <button id="graph-wizard-cancel">Отмена</button>
       <button id="graph-wizard-save" class="accent">Создать</button>
     </div>
   </dialog>
 
-  <dialog id="admin-login-dialog">
+  <!-- Вход в админку перед публикацией модели из визуального редактора (см.
+       graph_wizard.js: initAdminLoginDialog/_openAdminLoginDialog,
+       app/web/api/car_editor_api.py:admin_login) — отдельные id от диалога
+       "Войти в админку..." выше (dialogs.js:adminLogin): раньше оба диалога
+       делили id="admin-login-dialog" и часть внутренних полей, из-за чего
+       document.getElementById всегда попадал в ПЕРВЫЙ (dialogs.js), а кнопки
+       этого диалога оставались недостижимы — этот сценарий входа молча
+       зависал. -->
+  <dialog id="graph-admin-login-dialog">
     <h2>Вход в админку</h2>
     <div class="field">
       <span class="field-label">Логин</span>
-      <input type="text" id="admin-login-username" />
+      <input type="text" id="graph-admin-login-username" />
     </div>
     <div class="field">
       <span class="field-label">Пароль</span>
-      <input type="password" id="admin-login-password" />
+      <input type="password" id="graph-admin-login-password" />
     </div>
-    <div id="admin-login-error" class="callout danger" style="display: none"></div>
+    <div id="graph-admin-login-error" class="callout danger" style="display: none"></div>
     <div class="dialog-actions">
-      <button id="admin-login-cancel">Отмена</button>
-      <button id="admin-login-submit" class="accent">Войти</button>
+      <button id="graph-admin-login-cancel">Отмена</button>
+      <button id="graph-admin-login-submit" class="accent">Войти</button>
     </div>
   </dialog>
+
+  <dialog id="submission-files-dialog" class="dialog-large">
+    <h2>Заявка без мастера</h2>
+    <p style="color: var(--text-dim); font-size: 12px">
+      Эта заявка прислана не через мастер «Добавить машину» (нет
+      <code>_wizard_spec.json</code>) — визуальный редактор её открыть не может.
+      Список файлов ниже — то, что прислал клиент; правка возможна только вручную
+      на диске, здесь доступны публикация как есть или отклонение.
+    </p>
+    <div id="submission-files-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></div>
+    <div id="submission-files-list" style="max-height: 360px; overflow-y: auto"></div>
+    <div class="dialog-actions">
+      <button id="submission-files-reject" class="danger">Отклонить заявку</button>
+      <button id="submission-files-publish" class="accent">Опубликовать как есть</button>
+      <button id="submission-files-close">Закрыть</button>
+    </div>
+  </dialog>
+
 
   <dialog id="instruction-editor-dialog" class="dialog-large">
     <h2>Инструкция</h2>
@@ -271,6 +311,7 @@
 
   <script src="js/events.js"></script>
   <script src="js/dom.js"></script>
+  <script src="js/log_format.js"></script>
   <script src="js/graph/svg.js"></script>
   <script src="js/components/modal.js"></script>
   <script src="js/components/resizer.js"></script>
@@ -280,6 +321,7 @@
   <script src="js/screens/instruction_editor.js"></script>
   <script src="js/screens/car_step_fields.js"></script>
   <script src="js/screens/graph_wizard.js"></script>
+  <script src="js/screens/pending_list.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

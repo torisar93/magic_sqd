@@ -45,6 +45,17 @@ def load_stages(model) -> list[dict]:
     return list(stages)
 
 
+def load_wifi_port(model) -> int:
+    """WIFI_PORT — модуль-константа в сгенерированном stages.py (см.
+    car_generator.py: _render_stages_py, только для моделей с spec.wifi=True)
+    — порт, который apps-этап с apps_connection="wifi"/"ask" использует для
+    Wi-Fi ADB (см. app/web/frontend/js/screens/stage_wizard.js:
+    buildTransportBar), тот же, что уже используют adb-этапы через
+    _with_connect. 5555, если не задан (обычные проводные модели)."""
+    module = _load_module(model.stages_script)
+    return getattr(module, "WIFI_PORT", 5555)
+
+
 def stage_instruction_html_path(model, stage: dict) -> Path | None:
     """Путь к html-инструкции этапа, если она указана и существует."""
     rel = stage.get("instruction")

@@ -114,6 +114,16 @@ def parse_commands(commands) -> list:
     return [parse_adb_line(line) for line in (commands or []) if line and line.strip()]
 
 
+def _apk_filename(item) -> str:
+    """Элемент standard_apks/standard_apks_optional — старый формат (голая
+    строка-имя файла) ИЛИ новый (словарь {"filename","name","description"},
+    см. app/car_generator.py: _apk_entry_to_json/_parse_apk_entry — тот же
+    дуализм форматов, портирован сюда, иначе модели с "красивыми"
+    именами/описаниями APK (сохранённые через редактор) падали бы с
+    TypeError при разборе на телефоне."""
+    return item["filename"] if isinstance(item, dict) else item
+
+
 def _variant_dicts(variant_data, base_dir: Path, step_type: str) -> list:
     variants = []
     for v in variant_data or []:
@@ -127,8 +137,9 @@ def _variant_dicts(variant_data, base_dir: Path, step_type: str) -> list:
         elif step_type == "apps":
             variants.append({
                 "name": name,
-                "standard_apks": [str(v_dir / "required" / n) for n in v.get("standard_apks", [])],
-                "standard_apks_optional": [str(v_dir / "optional" / n) for n in v.get("standard_apks_optional", [])],
+                "standard_apks": [str(v_dir / "required" / _apk_filename(n)) for n in v.get("standard_apks", [])],
+                "standard_apks_optional": [str(v_dir / "optional" / _apk_filename(n))
+                                            for n in v.get("standard_apks_optional", [])],
             })
     return variants
 
@@ -197,9 +208,11 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             if variant_data:
                 variants = _variant_dicts(variant_data, pack_dir, "apps")
             else:
-                standard_apks = [str(pack_dir / "required" / name) for name in step_data.get("standard_apks", [])]
+                standard_apks = [str(pack_dir / "required" / _apk_filename(item))
+                                  for item in step_data.get("standard_apks", [])]
                 standard_apks_optional = [
-                    str(pack_dir / "optional" / name) for name in step_data.get("standard_apks_optional", [])]
+                    str(pack_dir / "optional" / _apk_filename(item))
+                    for item in step_data.get("standard_apks_optional", [])]
         elif step_type == "exe" and step_data.get("exe_file"):
             exe_file = str(files_dir / f"exe_{i}" / step_data["exe_file"])
 

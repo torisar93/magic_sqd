@@ -35,6 +35,11 @@ class ScannerApi:
         self.cars_dir = cars_dir
         self.apk_dir = apk_dir
         self._models_by_key: dict[str, ModelInfo] = {}
+        # Застейдженные заявки клиентов (см. app/web/api/submissions_api.py) —
+        # отдельно от _models_by_key, потому что list_cars() обнуляет и
+        # заново строит _models_by_key при каждом пересканировании cars/, а
+        # заявки живут вне cars/ и не должны от этого пропадать.
+        self._pending_by_key: dict[str, ModelInfo] = {}
         # Заполняется sync_api.SyncApi.startup_sync() при старте (список APK
         # на сервере, ещё не скачанных локально — см. content_sync.
         # list_shared_apk_catalog) — до этого просто пусто, list_apks()
@@ -64,8 +69,31 @@ class ScannerApi:
     def get_model(self, key: str) -> ModelInfo | None:
         """Для других *_api.py (install_api, car_editor_api, ...), которым
         нужен настоящий ModelInfo, а не JSON — единый источник вместо того,
-        чтобы каждый заново парсил cars/ по строке-ключу."""
-        return self._models_by_key.get(key)
+        чтобы каждый заново парсил cars/ по строке-ключу. Смотрит и в
+        обычные модели, и в застейдженные заявки (см. _pending_by_key)."""
+        return self._models_by_key.get(key) or self._pending_by_key.get(key)
+
+    def register_pending(self, model: ModelInfo) -> dict:
+        """Регистрирует застейдженную заявку (см. app/web/api/
+        submissions_api.py:stage) так, чтобы car_load_spec/car_save её
+        видели по тому же ключу (str(model.dir)), что и обычные модели —
+        визуальный редактор не отличает pending от обычной модели, кроме
+        is_pending в самом ModelInfo (см. car_editor_api.py:_worker)."""
+        key = str(model.dir)
+        self._pending_by_key[key] = model
+        return self._model_to_dict(model)
+
+    def unregister_pending(self, key: str) -> None:
+        self._pending_by_key.pop(key, None)
+
+    def unregister_pending_by_submission(self, submission_name: str) -> None:
+        """Как unregister_pending, но по имени заявки на сервере, а не по
+        ключу модели — для отклонения заявки прямо из списка (см.
+        submissions_api.py:reject), когда её, возможно, никто не открывал и
+        model_key фронтенду попросту неизвестен."""
+        for key, model in list(self._pending_by_key.items()):
+            if model.submission_name == submission_name:
+                del self._pending_by_key[key]
 
     def select_model(self, key: str) -> dict:
         """Тот же смысл, что _select_model() в старом gui.py: логирует
@@ -107,6 +135,8 @@ class ScannerApi:
             "has_wizard_spec": (model.dir / "_wizard_spec.json").exists(),
             "status": model.status,
             "status_color": model_status_color(model),
+            "is_pending": model.is_pending,
+            "submission_name": model.submission_name,
         }
 
     def _brand_logo_data_uri(self, brand: str) -> str | None:

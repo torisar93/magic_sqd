@@ -111,7 +111,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 else -> JSONObject().put("error", "Неизвестный метод: $method").toString()
             }
         } catch (e: Exception) {
-            JSONObject().put("error", "${e.javaClass.simpleName}: ${e.message}").toString()
+            JSONObject().put("error", (e.message ?: "неизвестная ошибка")).toString()
         }
     }
 
@@ -122,7 +122,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             val resultJson = try {
                 pyModule("mobile_bridge").callAttr("sync_cars", carsDir, BASE_URL).toString()
             } catch (e: Exception) {
-                JSONObject().put("error", "${e.javaClass.simpleName}: ${e.message}").toString()
+                JSONObject().put("error", (e.message ?: "неизвестная ошибка")).toString()
             }
             val event = JSONObject().put("kind", "sync_finished").put("result", JSONObject(resultJson))
             pushEvent(event)
@@ -146,7 +146,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             val resultJson = try {
                 pyModule("mobile_bridge").callAttr("sync_payload", carsDir, BASE_URL, modelKey).toString()
             } catch (e: Exception) {
-                JSONObject().put("error", "${e.javaClass.simpleName}: ${e.message}").toString()
+                JSONObject().put("error", (e.message ?: "неизвестная ошибка")).toString()
             }
             pushEvent(JSONObject().put("kind", "model_sync_finished").put("result", JSONObject(resultJson)))
         }.start()
@@ -225,7 +225,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             val result = try {
                 installEngine().runTelnetCommands(host, commands)
             } catch (e: Exception) {
-                StageRunResult.Failed("${e.javaClass.simpleName}: ${e.message}")
+                StageRunResult.Failed((e.message ?: "неизвестная ошибка"))
             }
             pushStageResult(stageIndex, result)
         }
@@ -274,12 +274,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 val ipv6 = try {
                     MdnsResolve.resolveAndroidLocal(context).ipv6
                 } catch (e: Exception) {
-                    pushAdbLog("Скан сети (android.local, IPv6): ${e.javaClass.simpleName}: ${e.message}"); null
+                    pushAdbLog("Скан сети (android.local, IPv6): ${e.message ?: "неизвестная ошибка"}"); null
                 }
                 val neighbors = try {
                     MdnsResolve.scanIpv6Neighbors(context)
                 } catch (e: Exception) {
-                    pushAdbLog("Скан сети (IPv6-соседи): ${e.javaClass.simpleName}: ${e.message}"); emptyList()
+                    pushAdbLog("Скан сети (IPv6-соседи): ${e.message ?: "неизвестная ошибка"}"); emptyList()
                 }
                 val hosts = (listOfNotNull(ipv6) + neighbors).distinct()
                 pushAdbLog("Скан сети (telnet, IPv6): найдено ${hosts.size}.")
@@ -289,17 +289,17 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 val mdns = try {
                     MdnsResolve.resolveAndroidLocal(context)
                 } catch (e: Exception) {
-                    pushAdbLog("Скан сети (android.local, IPv4): ${e.javaClass.simpleName}: ${e.message}"); MdnsResolve.Result(null, null)
+                    pushAdbLog("Скан сети (android.local, IPv4): ${e.message ?: "неизвестная ошибка"}"); MdnsResolve.Result(null, null)
                 }
                 val ping = try {
                     NetworkScan.pingSweep(context)
                 } catch (e: Exception) {
-                    pushAdbLog("Скан сети (ping): ${e.javaClass.simpleName}: ${e.message}"); emptyList()
+                    pushAdbLog("Скан сети (ping): ${e.message ?: "неизвестная ошибка"}"); emptyList()
                 }
                 val portOpen = try {
                     NetworkScan.scanSubnetForPort(context, port)
                 } catch (e: Exception) {
-                    pushAdbLog("Скан сети (порт $port): ${e.javaClass.simpleName}: ${e.message}"); emptyList()
+                    pushAdbLog("Скан сети (порт $port): ${e.message ?: "неизвестная ошибка"}"); emptyList()
                 }
                 val hosts = (listOfNotNull(mdns.ipv4) + ping + portOpen).distinct()
                 pushAdbLog("Скан сети (Wi-Fi ADB, IPv4): найдено ${hosts.size}.")
@@ -345,7 +345,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     installEngine().runAdbCommands(commands, filesByName)
                 }
             } catch (e: Exception) {
-                StageRunResult.Failed("${e.javaClass.simpleName}: ${e.message}")
+                StageRunResult.Failed((e.message ?: "неизвестная ошибка"))
             }
             pushStageResult(stageIndex, result)
         }
@@ -366,7 +366,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     installEngine().installApks(paths)
                 }
             } catch (e: Exception) {
-                StageRunResult.Failed("${e.javaClass.simpleName}: ${e.message}")
+                StageRunResult.Failed((e.message ?: "неизвестная ошибка"))
             }
             pushStageResult(stageIndex, result)
         }
@@ -428,7 +428,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog)
                 }
             } catch (e: Exception) {
-                StageRunResult.Failed("${e.javaClass.simpleName}: ${e.message}")
+                StageRunResult.Failed((e.message ?: "неизвестная ошибка"))
             }
             pushStageResult(stageIndex, result)
         }

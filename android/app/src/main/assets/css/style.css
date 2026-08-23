@@ -18,6 +18,10 @@
   --accent-text: #ffffff;
   --danger: #ff5c5c;
   --ok: #33c07a;
+  /* Для строк лога (см. js/app.js: classifyLogLevel) — тот же жёлто-
+     коричневый регистр, что и у --danger/--ok, отдельного тёплого акцента
+     в проекте раньше не было. */
+  --warn: #e0a83c;
   /* "Недавно обновлено" (синяя метка статуса) — раньше делили цвет с
      --accent, из-за смены акцента на зелёный статус-точка стала бы
      неотличима от "актуально"; desktop под это же держит отдельный
@@ -175,10 +179,26 @@ html, body {
   opacity: 1; /* переопределяет общий button:disabled{opacity:.4} — текущий уровень не "выключен", а просто не кликабелен */
 }
 
+/* Пока идёт синхронизация — на весь экран по центру (список маро/моделей
+   в это время скрыт, см. js/app.js: startSync/onSyncFinished), а не тонкая
+   полоска сверху над карточкой "Пусто" — раньше выглядело так, будто
+   каталог реально пуст, хотя он просто ещё не скачался. */
 .sync-status {
-  padding: 0 12px 8px;
-  font-size: 12px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  font-size: 14px;
   color: var(--text-dim);
+  text-align: center;
+}
+
+.sync-status .progress-bar {
+  width: 100%;
+  max-width: 280px;
 }
 
 .progress-bar {
@@ -607,6 +627,12 @@ button.danger {
 }
 
 .log-panel div { padding: 1px 0; }
+
+/* Уровни строк лога (см. js/app.js: classifyLogLevel) — .log-line-info
+   намеренно без переопределения, обычный --text-dim из .log-panel выше. */
+.log-line-success { color: var(--ok); }
+.log-line-error { color: var(--danger); }
+.log-line-warn { color: var(--warn); }
 
 .log-cmd-row {
   display: flex;

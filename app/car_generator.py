@@ -27,6 +27,24 @@ SPEC_FILENAME = "_wizard_spec.json"
 
 
 @dataclass
+class StandardApkSpec:
+    """Один APK в StepSpec.standard_apks/standard_apks_optional (или у
+    StepVariant, см. ниже) — в отличие от usb_files/adb_files, куда файл
+    просто прикладывают как есть, эти APK показываются технику отдельным
+    списком "Обязательные/Необязательные приложения" во время установки
+    (см. app/web/frontend/js/screens/stage_wizard.js: buildAppRow) —
+    name/description дают увидеть понятное название вместо голого имени
+    файла, тот же смысл, что и у <файл>.json общей библиотеки apk/ (см.
+    app/scanner.py: _read_apk_meta). Пусто — показывается имя файла, как
+    и раньше. Сайдкар <файл>.json пишется в files/pack*/... рядом с самим
+    APK при сохранении (см. _write_model_files) — install_api.py читает
+    его уже существующим кодом (scan_apk_dir), ничего менять не пришлось."""
+    path: Path
+    name: str = ""
+    description: str = ""
+
+
+@dataclass
 class StepVariant:
     """Один вариант содержимого "usb"/"apps" этапа (например Full/Lite) —
     техник выбирает нужный прямо на этапе установки (см. StepSpec.variants
@@ -39,8 +57,8 @@ class StepVariant:
     # "apps" — обязательные (всегда устанавливаются, без чекбокса) и
     # необязательные (техник выбирает сам, чекбоксом — см. StepSpec ниже)
     # APK этого варианта.
-    standard_apks: list[Path] = field(default_factory=list)
-    standard_apks_optional: list[Path] = field(default_factory=list)
+    standard_apks: list[StandardApkSpec] = field(default_factory=list)
+    standard_apks_optional: list[StandardApkSpec] = field(default_factory=list)
 
 
 @dataclass
@@ -70,6 +88,13 @@ class ActionSpec:
     # (конкурирующая навигация, голосовой ассистент и т.п.).
     kind: str = "command"
     commands: list[str] = field(default_factory=list)
+    # Файлы, прикреплённые к ЭТОМУ действию — на них ссылаются #push/
+    # #install (или их "сырые" аналоги adb push/adb install) по имени файла,
+    # тот же мини-DSL, что и был у отдельного типа этапа "adb" (см.
+    # StepSpec.adb_files ниже — сам тип "adb" больше не предлагается в
+    # редакторе как новый узел, "actions" ("ADB-команды") делает то же
+    # самое и для одиночных команд, и для батча с файлами).
+    files: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -140,8 +165,16 @@ class StepSpec:
     # ВЫШЕ выбора из общей библиотеки apk/ (см. install_api.py:
     # standard_apks — читает их из подпапок files/pack*/required и
     # .../optional соответственно).
-    standard_apks: list[Path] = field(default_factory=list)
-    standard_apks_optional: list[Path] = field(default_factory=list)
+    standard_apks: list[StandardApkSpec] = field(default_factory=list)
+    standard_apks_optional: list[StandardApkSpec] = field(default_factory=list)
+    # "apps" — как этап подключается к магнитоле для самой установки (см.
+    # app/web/frontend/js/screens/stage_wizard.js: verhний бар над этапом,
+    # buildDeviceStartStopControls) — "wired" — только выбор проводного
+    # ADB-устройства (как раньше был отдельный этап "adb"); "wifi" — сразу
+    # Wi-Fi-подключение, без списка проводных устройств (для магнитол без
+    # доступного проводного ADB — обычно там же и spec.wifi=True); "ask" —
+    # технику предлагается выбрать способ на месте.
+    apps_connection: str = "wired"
     # "exe" — готовый установщик, который производитель магнитолы даёт
     # только собранным .exe без исходных скриптов/инструкций; этап просто
     # даёт пользователю его запустить и завершить установку в нём самому
@@ -255,6 +288,18 @@ def update_car(model_dir: Path, spec: NewCarSpec) -> None:
     _write_model_files(model_dir, spec)
 
 
+def _parse_apk_entry(item, base_dir: Path) -> StandardApkSpec:
+    """Один элемент standard_apks/standard_apks_optional из _wizard_spec.json
+    — понимает и старый формат (голая строка-имя файла, все модели,
+    сохранённые до появления name/description), и новый (словарь
+    {"filename","name","description"}, см. _render_spec_json) — иначе
+    редактор упал бы на каждой уже существующей модели с этими полями."""
+    if isinstance(item, str):
+        return StandardApkSpec(path=base_dir / item)
+    return StandardApkSpec(path=base_dir / item["filename"],
+                            name=item.get("name", ""), description=item.get("description", ""))
+
+
 def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "") -> NewCarSpec | None:
     """Загружает _wizard_spec.json модели (если она была создана этим
     мастером) — для повторного открытия в редакторе. Пути в StepSpec
@@ -279,8 +324,8 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
     for i, step_data in enumerate(data.get("steps", []), start=1):
         step_type = step_data.get("type", "manual")
         usb_files: list[Path] = []
-        standard_apks: list[Path] = []
-        standard_apks_optional: list[Path] = []
+        standard_apks: list[StandardApkSpec] = []
+        standard_apks_optional: list[StandardApkSpec] = []
         exe_file: Path | None = None
         variants: list[StepVariant] = []
         variant_data = step_data.get("variants") or []
@@ -303,14 +348,16 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
                     v_dir = pack_dir / v.get("name", "")
                     variants.append(StepVariant(
                         name=v.get("name", ""),
-                        standard_apks=[v_dir / "required" / name for name in v.get("standard_apks", [])],
-                        standard_apks_optional=[
-                            v_dir / "optional" / name for name in v.get("standard_apks_optional", [])],
+                        standard_apks=[_parse_apk_entry(item, v_dir / "required")
+                                       for item in v.get("standard_apks", [])],
+                        standard_apks_optional=[_parse_apk_entry(item, v_dir / "optional")
+                                                 for item in v.get("standard_apks_optional", [])],
                     ))
             else:
-                standard_apks = [pack_dir / "required" / name for name in step_data.get("standard_apks", [])]
-                standard_apks_optional = [
-                    pack_dir / "optional" / name for name in step_data.get("standard_apks_optional", [])]
+                standard_apks = [_parse_apk_entry(item, pack_dir / "required")
+                                  for item in step_data.get("standard_apks", [])]
+                standard_apks_optional = [_parse_apk_entry(item, pack_dir / "optional")
+                                           for item in step_data.get("standard_apks_optional", [])]
         elif step_type == "exe" and step_data.get("exe_file"):
             exe_file = files_dir / f"exe_{i}" / step_data["exe_file"]
         adb_files: list[Path] = []
@@ -329,8 +376,11 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             # (см. instruction_html.save_instruction/_write_model_files).
             instruction_blocks = instruction_html.parse_blocks(text, instr_step_dir) or []
         actions = [
-            ActionSpec(label=a.get("label", ""), kind=a.get("kind", "command"), commands=a.get("commands") or [])
-            for a in step_data.get("actions", [])
+            ActionSpec(
+                label=a.get("label", ""), kind=a.get("kind", "command"), commands=a.get("commands") or [],
+                files=[files_dir / f"actions_{i}_{j}" / name for name in a.get("files", [])],
+            )
+            for j, a in enumerate(step_data.get("actions", []), start=1)
         ]
         steps.append(StepSpec(
             type=step_type,
@@ -346,6 +396,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             adb_files=adb_files,
             standard_apks=standard_apks,
             standard_apks_optional=standard_apks_optional,
+            apps_connection=step_data.get("apps_connection", "wired"),
             exe_file=exe_file,
             check_var=step_data.get("check_var", ""),
             check_options=step_data.get("check_options", []),
@@ -367,6 +418,29 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         steps=steps,
         status=read_status(model_dir),
     )
+
+
+def _copy_apk(apk: StandardApkSpec, dst: Path, keep_paths: set[Path]) -> None:
+    """Копирует apk.path в dst (как _copy_path для одиночного файла) и, если
+    заданы name/description, пишет рядом сайдкар <файл>.json того же
+    формата, что AdminApi.add_apk пишет для общей библиотеки apk/ (см.
+    app/web/api/admin_api.py) — install_api.py/scanner.py:scan_apk_dir его
+    уже читает как обычный apk/-файл, ничего менять не пришлось. Пустые
+    name/description — сайдкар не пишется вовсе (не засорять модель
+    пустыми файлами; scanner.py:_read_apk_meta и так подставляет имя файла,
+    когда сайдкара нет)."""
+    dst = dst.resolve()
+    if apk.path.resolve() != dst:
+        shutil.copy2(apk.path, dst)
+    keep_paths.add(dst)
+    meta_path = dst.with_suffix(".json")
+    if apk.name or apk.description:
+        meta_path.write_text(
+            json.dumps({"name": apk.name, "description": apk.description}, ensure_ascii=False),
+            encoding="utf-8")
+        keep_paths.add(meta_path)
+    elif meta_path.exists():
+        meta_path.unlink()
 
 
 def _copy_path(src: Path, dst: Path, keep_paths: set[Path]) -> None:
@@ -424,10 +498,7 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                         sub_dir = variant_dir / subdir_name
                         sub_dir.mkdir(parents=True, exist_ok=True)
                         for apk in apks:
-                            dst = (sub_dir / apk.name).resolve()
-                            if apk.resolve() != dst:
-                                shutil.copy2(apk, dst)
-                            keep_paths.add(dst)
+                            _copy_apk(apk, sub_dir / apk.path.name, keep_paths)
             else:
                 for subdir_name, apks in (("required", step.standard_apks),
                                            ("optional", step.standard_apks_optional)):
@@ -436,10 +507,7 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                     sub_dir = pack_dir / subdir_name
                     sub_dir.mkdir(parents=True, exist_ok=True)
                     for apk in apks:
-                        dst = (sub_dir / apk.name).resolve()
-                        if apk.resolve() != dst:
-                            shutil.copy2(apk, dst)
-                        keep_paths.add(dst)
+                        _copy_apk(apk, sub_dir / apk.path.name, keep_paths)
         elif step.type == "usb":
             usb_step_dir = usb_root / f"step_{i}"
             if step.variants:
@@ -464,6 +532,17 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
             adb_step_dir.mkdir(parents=True, exist_ok=True)
             for f in step.adb_files:
                 _copy_path(f, adb_step_dir / f.name, keep_paths)
+        elif step.type == "actions":
+            for j, action in enumerate(step.actions, start=1):
+                if not action.files:
+                    continue
+                # "actions_{i}_{j}" (не "action_") — имя папки уже задано
+                # существующим _render_install_py (files_rel_prefix у
+                # _render_command_body), должно совпадать буквально.
+                action_dir = files_dir / f"actions_{i}_{j}"
+                action_dir.mkdir(parents=True, exist_ok=True)
+                for f in action.files:
+                    _copy_path(f, action_dir / f.name, keep_paths)
         elif step.type == "instruction" and step.instruction_blocks:
             instr_step_dir = files_dir / f"instruction_{i}"
             instr_step_dir.mkdir(parents=True, exist_ok=True)
@@ -522,6 +601,10 @@ def _write_version_file(model_dir: Path, changelog: str, status: str = "ok") -> 
 # ----------------------------------------------------------------------
 # _wizard_spec.json — снимок NewCarSpec для повторного открытия в редакторе
 # ----------------------------------------------------------------------
+def _apk_entry_to_json(apk: StandardApkSpec) -> dict:
+    return {"filename": apk.path.name, "name": apk.name, "description": apk.description}
+
+
 def _render_spec_json(spec: NewCarSpec) -> str:
     data = {
         "wifi": spec.wifi,
@@ -538,8 +621,9 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "commands": step.commands,
                 "adb_install_selected_apks": step.adb_install_selected_apks,
                 "adb_files": [f.name for f in step.adb_files],
-                "standard_apks": [f.name for f in step.standard_apks],
-                "standard_apks_optional": [f.name for f in step.standard_apks_optional],
+                "standard_apks": [_apk_entry_to_json(a) for a in step.standard_apks],
+                "standard_apks_optional": [_apk_entry_to_json(a) for a in step.standard_apks_optional],
+                "apps_connection": step.apps_connection,
                 "exe_file": step.exe_file.name if step.exe_file else None,
                 "check_var": step.check_var,
                 "check_options": step.check_options,
@@ -549,15 +633,16 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "pos_y": step.pos_y,
                 "uart_baudrate": step.uart_baudrate,
                 "actions": [
-                    {"label": a.label, "kind": a.kind, "commands": a.commands}
+                    {"label": a.label, "kind": a.kind, "commands": a.commands,
+                     "files": [f.name for f in a.files]}
                     for a in step.actions
                 ],
                 "variants": [
                     {
                         "name": v.name,
                         "usb_files": [f.name for f in v.usb_files],
-                        "standard_apks": [f.name for f in v.standard_apks],
-                        "standard_apks_optional": [f.name for f in v.standard_apks_optional],
+                        "standard_apks": [_apk_entry_to_json(a) for a in v.standard_apks],
+                        "standard_apks_optional": [_apk_entry_to_json(a) for a in v.standard_apks_optional],
                     }
                     for v in step.variants
                 ],
@@ -927,6 +1012,7 @@ def _render_stages_py(spec: NewCarSpec) -> str:
                 entry.append(f'        "variant_names": {[v.name for v in step.variants]!r},')
             else:
                 entry.append(f'        "standard_dir": {pack_expr},')
+            entry.append(f'        "apps_connection": {step.apps_connection!r},')
         elif step.type == "usb":
             run_expr = f"m.usb_step_{i}"
             entry.append(f'        "run": {run_expr},')

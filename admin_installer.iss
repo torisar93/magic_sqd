@@ -12,7 +12,7 @@
 ; crash.log, cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD Admin"
-#define MyAppVersion "0.4.9-alpha"
+#define MyAppVersion "0.4.11-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd_admin.exe"
 
@@ -45,8 +45,12 @@ Name: "desktopicon"; Description: "Создать значок на рабоче
 ; apk/ и cars/*/files, cars/*/usb_files сюда не идут — та же причина, что и
 ; в installer.iss: content_sync.py докачивает их с сервера сам (и APK,
 ; добавленные через "Добавить APK в общую библиотеку...", создаются прямо в
-; уже установленной программе, а не пакуются заранее).
-Source: "dist\magic_sqd_admin\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
+; уже установленной программе, а не пакуются заранее). cars\_shared\*\* —
+; тоже см. installer.iss: подпапки cars/_shared/ (например freetuga/,
+; сотни МБ) — тяжёлые payload-наборы техника (StepSpec.usb_shared_folder),
+; подтягиваются точечно, а не ставятся заранее; *.py-хелперы ПРЯМО в
+; _shared/ (не в подпапке) под это не попадают и по-прежнему ставятся.
+Source: "dist\magic_sqd_admin\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__pycache__,_shared\*\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; server.json/submit.json — см. installer.iss. admin.json — адрес сервера
 ; для входа через "Выгрузить на сервер..."/"Добавить APK..." (см.
@@ -75,6 +79,9 @@ Type: filesandordirs; Name: "{app}\apk"
 Type: filesandordirs; Name: "{app}\debug_logs"
 ; Резервный Qt-движок отображения — см. installer.iss за полным обоснованием.
 Type: filesandordirs; Name: "{app}\_qt_fallback"
+; Локальный стейджинг заявок клиентов в очереди на модерацию (см.
+; app/pending_submissions.py) — та же причина, что и у _qt_fallback выше.
+Type: filesandordirs; Name: "{app}\_pending"
 Type: files; Name: "{app}\*.log"
 Type: files; Name: "{app}\client_id.txt"
 Type: files; Name: "{app}\seen_versions.json"

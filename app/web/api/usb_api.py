@@ -5,7 +5,6 @@ stage wizard (этап type="usb"). Портировано из app/usb_dialog.p
 app/web/events.py вместо queue.Queue+self.after(100, ...)."""
 from __future__ import annotations
 import threading
-import traceback
 from pathlib import Path
 
 from ..events import event_bridge
@@ -96,7 +95,8 @@ class UsbApi:
             self._finish(False, str(exc))
             return
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
-            self._log(traceback.format_exc())
+            # Traceback больше не льём в видимый лог — см. app/runner.py за
+            # тем же решением и обоснованием.
             self._finish(False, f"Ошибка: {exc}")
             return
         self._finish(True, "Копирование на флешку завершено.")

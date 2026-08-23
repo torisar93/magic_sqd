@@ -1,9 +1,8 @@
 """Запуск одного ADB-этапа stages.py (функция run(ctx)) в фоновом потоке."""
 from __future__ import annotations
 import threading
-import traceback
 
-from .content_sync import ensure_apks_downloaded, sync_model_files
+from .content_sync import ensure_apks_downloaded, sync_model_subfolder
 from .install_context import InstallContext, InstallCancelled
 
 
@@ -14,13 +13,16 @@ class InstallRunner:
         on_finished(success: bool, message: str) вызывается по завершении.
         Оба callback должны сами позаботиться о потокобезопасности (см. gui.py).
         base_dir, если задан, используется, чтобы перед установкой тихо
-        подтянуть files/usb_files модели со своего сервера (см.
-        content_sync.py, server/README.md), а также докачать те из
-        выбранных общих APK (selected_apks), которых ещё нет в apk/
-        локально (см. content_sync.ensure_apks_downloaded — дерево выбора
-        уже показывает их благодаря list_shared_apk_catalog при запуске,
-        но сами файлы качаются только сейчас) — так APK по факту
-        скачиваются "по требованию", в момент нажатия "Установить".
+        подтянуть СВОИ файлы конкретного этапа (own_dirs у start(), см.
+        install_api.py:start_stage — не всю files/+usb_files модели разом,
+        как было раньше: иначе запуск, например, telnet-этапа заодно тянул
+        APK отдельного apps-этапа той же модели, до которого техник ещё не
+        дошёл), а также докачать те из выбранных общих/стандартных APK
+        (selected_apks), которых ещё нет локально (см.
+        content_sync.ensure_apks_downloaded — дерево выбора уже показывает
+        их благодаря манифесту при рендере, но сами файлы качаются только
+        сейчас) — так APK по факту скачиваются "по требованию", в момент
+        нажатия "Установить".
         ask_input_fn(prompt, title) -> str | None, если задан, пробрасывается
         в ctx.ask_input() для install.py/stages.py, которым нужно спросить у
         пользователя что-то во время установки (например, IPv6-адрес). Тоже
@@ -42,17 +44,20 @@ class InstallRunner:
     def cancel(self):
         self._cancel_flag.set()
 
-    def start(self, model, device_serial, selected_apks, run_fn):
+    def start(self, model, device_serial, selected_apks, run_fn, own_dirs=None):
         """Запускает run_fn(ctx) в фоновом потоке — run_fn это функция
         конкретного ADB-этапа из stages.py модели (см. stage_wizard.py,
-        единственный вызывающий)."""
+        единственный вызывающий). own_dirs — локальные папки СВОИХ файлов
+        именно этого этапа (см. install_api.py:_stage_own_dirs), которые
+        нужно докачать перед запуском — пусто, если у этапа нет своих
+        файлов (adb/uart/telnet без вложений, actions)."""
         if self.running:
             raise RuntimeError("Установка уже выполняется.")
 
         self._cancel_flag = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
-            args=(model, device_serial, selected_apks, run_fn),
+            args=(model, device_serial, selected_apks, run_fn, own_dirs or []),
             daemon=True,
         )
         self._thread.start()
@@ -61,11 +66,12 @@ class InstallRunner:
         if self._cancel_flag.is_set():
             raise InstallCancelled("Установка остановлена пользователем.")
 
-    def _run(self, model, device_serial, selected_apks, run_fn):
+    def _run(self, model, device_serial, selected_apks, run_fn, own_dirs):
         try:
             if self.base_dir:
-                sync_model_files(self.base_dir, model, log=self.on_log,
-                                  check_cancelled=self._check_cancelled)
+                for local_dir in own_dirs:
+                    sync_model_subfolder(self.base_dir, local_dir, log=self.on_log,
+                                          check_cancelled=self._check_cancelled)
                 ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apks,
                                         log=self.on_log, check_cancelled=self._check_cancelled)
             ctx = InstallContext(
@@ -83,7 +89,10 @@ class InstallRunner:
             self.on_finished(False, str(exc))
             return
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку скрипта
-            self.on_log(traceback.format_exc())
+            # Полный traceback раньше шёл в видимый лог целиком — техника не
+            # интересует трассировка Python, только понятная причина (см.
+            # on_finished ниже); для отладки traceback всё равно попадает в
+            # debug_logs/ в debug-сборке (см. main_web.py:_enable_debug_log_all).
             self.on_finished(False, f"Ошибка установки: {exc}")
             return
         self.on_finished(True, "Установка завершена успешно.")

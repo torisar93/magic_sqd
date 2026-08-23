@@ -146,7 +146,13 @@ class InstallEngine(
                     var command = cmd.getString("command")
                     if (lastAsk != null) command = command.replace("{ask}", lastAsk)
                     when (val r = AdbSession.shell(command, log)) {
-                        is AdbShellResult.Output -> if (r.text.isNotBlank()) log(r.text.trim())
+                        // Сырой вывод устройства на успешную команду больше не
+                        // льём в лог — на цепочках из десятков shell-команд
+                        // (например выдача разрешений через pm grant/dumpsys)
+                        // это превращало лог в стену технического текста без
+                        // единой понятной строки об итоге (тот же фикс, что и
+                        // в desktop-версии, см. app/adb_utils.py: Adb.run()).
+                        is AdbShellResult.Output -> {}
                         is AdbShellResult.Rejected -> log("Команда отклонена устройством: $command (${r.reason})")
                         is AdbShellResult.Failed -> return StageRunResult.Failed("'$command': ${r.reason}")
                     }

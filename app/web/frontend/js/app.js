@@ -6,6 +6,7 @@ let currentModel = null;
 function log(text) {
   const el = document.getElementById("log-panel");
   const line = document.createElement("div");
+  line.className = `log-line log-line-${window.classifyLogLevel(text)}`;
   line.textContent = text;
   el.appendChild(line);
   el.scrollTop = el.scrollHeight;
@@ -55,53 +56,6 @@ function sendAdbConsoleCommand() {
   const firstWord = command.split(/\s+/, 1)[0].toLowerCase();
   if (ADB_DEVICE_LIST_COMMANDS.has(firstWord)) {
     setTimeout(refreshAdbConsoleDevices, 1500);
-  }
-}
-
-// До подключения устройство ещё НЕ в списке "adb devices" — выбирать пока
-// нечего, поэтому "Подключить Wi-Fi" не привязана к выбору из выпадающего
-// списка выше (в отличие от обычных команд консоли). Сначала пробуем
-// автоопределение IP по шлюзу текущей Wi-Fi-сети (см. get_default_gateway_ip
-// в adb_utils.py) — работает, только если ноутбук подключён к собственной
-// точке доступа магнитолы; если это не сработало (или само подключение по
-// автоопределённому IP не удалось), предлагаем ввести IP вручную —
-// отдельного поля ввода в строке консоли ради этого не держим, оно того не
-// стоит для случая, который нужен нечасто.
-async function connectAdbWifi() {
-  const btn = document.getElementById("adb-console-wifi-connect");
-  // Порт — не всегда 5555 (например Cityray со значком Wi-Fi — 7777), поэтому
-  // берём из поля рядом с кнопкой, а не хардкодим (см. index.html:
-  // #adb-console-wifi-port).
-  const portInput = document.getElementById("adb-console-wifi-port");
-  const port = parseInt(portInput.value, 10) || 5555;
-  btn.disabled = true;
-  try {
-    let result = await window.pywebview.api.install_wifi_connect(port, null);
-    if (!result.ok) {
-      // Автоопределение по шлюзу не сработало — сканируем локальную сеть на
-      // тот же порт (случай, когда магнитола сама подключилась к сети/точке
-      // доступа ноутбука, см. install_api.py:scan_wifi) и предлагаем выбрать
-      // из найденного; пункт "Ввести вручную..." в этом диалоге есть всегда,
-      // даже если скан ничего не нашёл.
-      const candidates = await window.pywebview.api.install_scan_wifi(port);
-      const ip = (await window.selectDialog(
-        candidates.length
-          ? `Не удалось подключиться автоматически. Выберите IP магнитолы (порт ${port}):`
-          : `Не удалось подключиться автоматически и скан сети ничего не нашёл (порт ${port}). Введите IP магнитолы:`,
-        candidates,
-        { title: "Wi-Fi ADB" }
-      ))?.trim();
-      if (!ip) return;
-      result = await window.pywebview.api.install_wifi_connect(port, ip);
-      if (!result.ok) {
-        await window.notice(result.message || result.error || "Не удалось подключиться.",
-          { title: "Wi-Fi ADB", danger: true });
-        return;
-      }
-    }
-    await refreshAdbConsoleDevices();
-  } finally {
-    btn.disabled = false;
   }
 }
 
@@ -167,6 +121,21 @@ window.addEventListener("pywebviewready", async () => {
   window.instructionEditor.init();
   window.graphWizard.init(log);
   window.stageWizard.init(document.getElementById("install-content"), log);
+  window.pendingList.init();
+
+  // Раньше остального старта — в admin-сборке техник не должен увидеть ХОТЬ
+  // ЧТО-ТО из интерфейса (список машин, панель лога и т.п.) без входа,
+  // поэтому гейт стоит ДО sync_startup()/mainPicker.init() ниже, а не после
+  // (см. app/web/api/admin_api.py: try_saved_login/login_only,
+  // dialogs.js: adminLogin.requireLogin — диалог нельзя закрыть без
+  // успешного входа).
+  const info = await window.pywebview.api.app_get_info();
+  if (info.admin_mode) {
+    const saved = await window.pywebview.api.admin_try_saved_login();
+    if (!saved.ok) {
+      await window.adminLoginDialog.requireLogin();
+    }
+  }
 
   // ДО sync_startup() — иначе лог-события, которые синхронизация шлёт по
   // ходу (см. app/content_sync.py: sync_tree/list_files_recursive), летят в
@@ -179,12 +148,12 @@ window.addEventListener("pywebviewready", async () => {
   const syncResult = await window.pywebview.api.sync_startup();
   await window.mainPicker.init(document.getElementById("picker"), { onModelSelected });
 
-  const info = await window.pywebview.api.app_get_info();
   if (info.admin_mode) {
     document.getElementById("admin-login-btn").style.display = "";
     document.getElementById("admin-upload-btn").style.display = "";
     document.getElementById("admin-add-apk-btn").style.display = "";
     document.getElementById("admin-browse-btn").style.display = "";
+    document.getElementById("pending-section").style.display = "";
   }
   // DEBUG-сборка (см. main_web.py:_enable_debug_log_all) — показываем
   // client_id в углу, чтобы можно было сверить с папкой debug_logs/<id>/,
@@ -225,7 +194,6 @@ window.addEventListener("pywebviewready", async () => {
   document.getElementById("adb-console-input").addEventListener("keydown", (event) => {
     if (event.key === "Enter") sendAdbConsoleCommand();
   });
-  document.getElementById("adb-console-wifi-connect").addEventListener("click", () => connectAdbWifi());
   refreshAdbConsoleDevices();
 
   if (syncResult.changes && syncResult.changes.length > 0) {

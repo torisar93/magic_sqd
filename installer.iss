@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.4.9-alpha"
+#define MyAppVersion "0.4.11-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -49,7 +49,18 @@ Name: "desktopicon"; Description: "Создать значок на рабоче
 ; докачивает их с сервера сам — по кнопке "Скачать" и перед установкой
 ; модели соответственно (см. app/content_sync.py). Без этого инсталлятор
 ; весит гигабайты вместо пары десятков мегабайт.
-Source: "dist\magic_sqd\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
+; cars\_shared\*\* — отдельно от files/usb_files: подпапки внутри
+; cars/_shared/ (например freetuga/, 444 МБ) — общие payload-наборы
+; техника произвольного размера и с произвольным именем (см.
+; StepSpec.usb_shared_folder), подтягиваются точечно перед конкретным
+; USB-этапом (см. content_sync.py:sync_shared_folder), а НЕ ставятся
+; заранее — поэтому в инсталлятор не идут, как и apk/files/usb_files выше.
+; Сами *.py-хелперы (load_sibling.py и т.п.) лежат ПРЯМО в _shared/, а не
+; в подпапке, поэтому не попадают под "_shared\*\*" (нужны stages.py
+; каждой модели ВСЕГДА — их, в отличие от подпапок, ставим как обычно).
+; "_shared\*" (один "*") исключил бы и их — проверено отдельно, не ставить
+; обратно без такой же проверки.
+Source: "dist\magic_sqd\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__pycache__,_shared\*\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Адрес своего сервера (cars/apk) и ключ для "Отправить на проверку" —
 ; чтобы конечному пользователю не пришлось создавать эти файлы руками
@@ -91,6 +102,10 @@ Type: filesandordirs; Name: "{app}\debug_logs"
 ; распаковывается уже во время работы программы, не через [Files], та же
 ; причина, что и у cars/apk выше.
 Type: filesandordirs; Name: "{app}\_qt_fallback"
+; Локальный стейджинг заявок клиентов в очереди на модерацию (только
+; admin-сборка, см. app/pending_submissions.py) — та же причина, что и у
+; _qt_fallback выше.
+Type: filesandordirs; Name: "{app}\_pending"
 Type: files; Name: "{app}\*.log"
 Type: files; Name: "{app}\client_id.txt"
 Type: files; Name: "{app}\seen_versions.json"

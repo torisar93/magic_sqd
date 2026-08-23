@@ -25,7 +25,7 @@ from ..events import event_bridge
 from ...admin_client import (AdminClientError, clear_cached_session, delete_cars_path,
                               edit_apk_metadata, get_cached_session, list_cars_path, login,
                               set_cached_session, upload_dir, upload_single_apk)
-from ...admin_config import get_admin_base_url
+from ...admin_config import clear_saved_login, get_admin_base_url, load_saved_login, save_saved_login
 from ...car_generator import INVALID_NAME_CHARS
 from ...content_sync import list_shared_apk_catalog
 
@@ -45,11 +45,16 @@ class AdminApi:
     def get_info(self) -> dict:
         return {"available": self.base_url is not None, "base_url": self.base_url}
 
-    def login_only(self, username: str, password: str) -> dict:
-        """Логин без выгрузки cars/apk — для отдельной кнопки "Войти в
-        админку...", чтобы получить кешированную сессию (см.
-        get_cached_session/_publish_apk_async/_require_session выше) без
-        обязательной полной публикации через "Выгрузить на сервер..."."""
+    def login_only(self, username: str, password: str, remember: bool = False) -> dict:
+        """Логин — используется и опциональной кнопкой "Войти в админку..."
+        (получить кешированную сессию для "Добавить APK.../Файлы на
+        сервере..." без похода в тяжёлую "Выгрузить на сервер..."), и
+        обязательным экраном логина при старте admin-сборки (см. app.js:
+        pywebviewready/dialogs.js:adminLogin.requireLogin). remember — если
+        True, логин/пароль сохраняются локально (см. admin_config.
+        save_saved_login) для автовхода при следующих запусках (см.
+        try_saved_login ниже); явный снятый чекбокс НЕ стирает уже
+        сохранённые данные сам по себе — для этого есть forget_saved_login."""
         if self.base_url is None:
             return {"ok": False, "error": "admin.json не настроен."}
         if not username or not password:
@@ -59,6 +64,31 @@ class AdminApi:
         except AdminClientError as exc:
             return {"ok": False, "error": str(exc)}
         set_cached_session(self.base_url, cookie)
+        if remember:
+            save_saved_login(self.base_dir, username, password)
+        return {"ok": True}
+
+    def try_saved_login(self) -> dict:
+        """Тихая попытка входа сохранёнными логином/паролем (см.
+        admin_config.load_saved_login) — вызывается один раз при старте
+        admin-сборки ДО показа обязательного диалога логина (см. app.js).
+        Неудача (файла нет, пароль сменился на сервере, сеть недоступна) —
+        просто {"ok": False}, без текста ошибки: дальше всё равно покажется
+        обычный диалог логина, объяснять тут нечего."""
+        if self.base_url is None:
+            return {"ok": False}
+        saved = load_saved_login(self.base_dir)
+        if saved is None:
+            return {"ok": False}
+        try:
+            cookie = login(self.base_url, saved["username"], saved["password"])
+        except AdminClientError:
+            return {"ok": False}
+        set_cached_session(self.base_url, cookie)
+        return {"ok": True, "username": saved["username"]}
+
+    def forget_saved_login(self) -> dict:
+        clear_saved_login(self.base_dir)
         return {"ok": True}
 
     def start_upload(self, username: str, password: str) -> dict:

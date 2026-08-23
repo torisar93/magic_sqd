@@ -28,8 +28,11 @@ import java.util.zip.CRC32
  * на практике: CNXN без auth — на ESP32-S3 стенде (fake ADB device),
  * CNXN+AUTH (весь путь TOKEN->SIGNATURE->RSAPUBLICKEY->подтверждение на
  * экране) и полная установка APK — на реальном Android-телефоне по USB.
- * TCP-транспорт пока не проверялся на реальном железе (протокол
- * transport-agnostic, но живая магнитола с Wi-Fi ADB пока не попадалась).
+ * TCP-транспорт (classic AUTH) и STLS/TLS-хендшейк (см. performTlsUpgrade)
+ * проверены Python-прототипом на двух реальных телефонах (Android 11 и 16,
+ * штатная "Беспроводная отладка") — байт-в-байт та же раскладка, что шлёт
+ * этот Kotlin-код. На самой магнитоле (ради которой всё затевалось) пока
+ * не проверялось — недоступна на момент реализации.
  */
 object AdbProtocol {
     const val A_SYNC = 0x434e5953
@@ -39,6 +42,14 @@ object AdbProtocol {
     const val A_CLSE = 0x45534c43
     const val A_WRTE = 0x45545257
     const val A_AUTH = 0x48545541
+    // Ответ на CNXN у устройств, которые требуют "ADB over TLS" (Android 11+
+    // "Беспроводная отладка"). Реализовано в performCnxnHandshake ниже:
+    // переиспользуем ТОТ ЖЕ RSA-ключ, что и для classic AUTH (AdbAuth),
+    // обёрнутый в самоподписанный сертификат (см. AdbTlsAuth) — проверено на
+    // практике, что TLS-ADB доверяет тому же ключу, что уже был одобрен
+    // через classic USB AUTH, без отдельного SPAKE2-сопряжения по коду.
+    const val A_STLS = 0x534c5453
+    const val A_STLS_VERSION = 0x01000000
 
     const val A_VERSION = 0x01000000
 
@@ -101,7 +112,7 @@ class UsbAdbTransport(
  * read() читает ПОЛНОСТЬЮ (loop), т.к. TCP не сохраняет границы записей —
  * один InputStream.read() может вернуть меньше, чем реально уже пришло.
  */
-class TcpAdbTransport(private val socket: Socket) : AdbTransport {
+class TcpAdbTransport(val socket: Socket) : AdbTransport {
     override fun write(bytes: ByteArray, timeoutMs: Int): Boolean {
         return try {
             socket.soTimeout = timeoutMs
@@ -285,7 +296,92 @@ fun performCnxnHandshake(
             String(respPayload, Charsets.US_ASCII).trimEnd(' ', ' ')
         )
         AdbProtocol.A_AUTH -> performAuth(transport, context, respHeader, respPayload, log)
+        AdbProtocol.A_STLS -> performTlsUpgrade(transport, context, log)
         else -> AdbHandshakeResult.Failed("Неожиданная команда в ответе: 0x${respHeader.command.toUInt().toString(16)}")
+    }
+}
+
+/**
+ * STLS-ветка: устройство требует TLS ("Беспроводная отладка", Android 11+).
+ * Шлём встречный STLS, поднимаем TLS 1.3 поверх ТОГО ЖЕ TCP-сокета
+ * (STARTTLS-приём) нашим уже существующим RSA-ключом (AdbAuth/AdbTlsAuth —
+ * тем же, что и для classic AUTH), затем заново шлём CNXN уже внутри
+ * TLS-туннеля и ждём ответа с длинным таймаутом (устройство может ждать,
+ * что этот ключ уже одобрен через предыдущий USB-AUTH — если нет, просто
+ * рвёт соединение, диалога в этом случае не будет, см. AdbTlsAuth).
+ *
+ * ПРОВЕРЕНО Python-прототипом на двух реальных телефонах (Android 11 и 16)
+ * с той же самой раскладкой байт до этого места — не подтверждено ТОЛЬКО
+ * на самой магнитоле (недоступна на момент реализации).
+ */
+private fun performTlsUpgrade(
+    transport: AdbTransport,
+    context: Context,
+    log: (String) -> Unit,
+): AdbHandshakeResult {
+    if (transport !is TcpAdbTransport) {
+        return AdbHandshakeResult.Failed(
+            "Устройство просит TLS-подключение (STLS) не по Wi-Fi — это неожиданно, TLS-ADB " +
+                "поддерживается только для Wi-Fi-подключения."
+        )
+    }
+    if (android.os.Build.VERSION.SDK_INT < 29) {
+        return AdbHandshakeResult.Failed(
+            "Это устройство требует защищённое TLS-подключение (\"Беспроводная отладка\"), " +
+                "которое на этом телефоне (Android ${android.os.Build.VERSION.RELEASE}) не поддерживается — " +
+                "нужен Android 10 (API 29) или новее на телефоне техника."
+        )
+    }
+
+    if (!sendMessage(transport, AdbProtocol.A_STLS, AdbProtocol.A_STLS_VERSION, 0, ByteArray(0))) {
+        return AdbHandshakeResult.Failed("Не удалось отправить встречный STLS")
+    }
+    log("STLS отправлен, поднимаю TLS-соединение...")
+
+    val plainSocket = transport.socket
+    val keyPair = AdbAuth.loadOrCreateKeyPair(context)
+    val certificate = AdbTlsAuth.buildSelfSignedCertificate(keyPair)
+    val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.3")
+    sslContext.init(
+        AdbTlsAuth.buildKeyManagers(keyPair, certificate),
+        arrayOf(AdbTlsAuth.permissiveTrustManager()),
+        null,
+    )
+
+    val sslSocket = try {
+        val host = plainSocket.inetAddress?.hostAddress ?: "localhost"
+        val factory = sslContext.socketFactory
+        (factory.createSocket(plainSocket, host, plainSocket.port, true) as javax.net.ssl.SSLSocket).apply {
+            startHandshake()
+        }
+    } catch (e: Exception) {
+        return AdbHandshakeResult.Failed("TLS-хендшейк не удался: ${e.javaClass.simpleName}: ${e.message}")
+    }
+    log("TLS-хендшейк успешен (${sslSocket.session.cipherSuite}). Шлю CNXN повторно внутри TLS...")
+
+    val tlsTransport = TcpAdbTransport(sslSocket)
+    val banner = "host:: ".toByteArray(Charsets.US_ASCII)
+    if (!sendMessage(tlsTransport, AdbProtocol.A_CNXN, AdbProtocol.A_VERSION, 0x1000, banner)) {
+        return AdbHandshakeResult.Failed("Не удалось отправить CNXN внутри TLS")
+    }
+
+    val (respHeader, respPayload) = try {
+        readMessage(tlsTransport, AUTH_APPROVAL_TIMEOUT_MS)
+    } catch (e: Exception) {
+        return AdbHandshakeResult.Failed(
+            "Не дождались ответа после TLS-подключения (${e.message}) — устройство не узнаёт этот " +
+                "ключ. Подключись по USB к этой машине хотя бы один раз (там ключ будет одобрен через " +
+                "обычный диалог \"Разрешить отладку\"), потом Wi-Fi должен заработать."
+        )
+    }
+    return if (respHeader.command == AdbProtocol.A_CNXN) {
+        AdbHandshakeResult.Connected(String(respPayload, Charsets.US_ASCII).trimEnd(' '))
+    } else {
+        AdbHandshakeResult.Failed(
+            "После TLS-подключения устройство ответило неожиданным сообщением: " +
+                "0x${respHeader.command.toUInt().toString(16)} — ключ, скорее всего, не одобрен " +
+                "(подключись сначала по USB для этой машины)."
+        )
     }
 }
 

@@ -141,6 +141,39 @@ def upload_model(base_url: str, session_cookie: str, cars_dir: Path, model_dir: 
     return _build_and_send(base_url, session_cookie, "cars", build_archive, log, check_cancelled)
 
 
+def upload_model_as(base_url: str, session_cookie: str, cars_dir: Path, model_dir: Path,
+                     brand: str, model: str, modification: str = "",
+                     extra_dirs=(), log=lambda m: None, check_cancelled=lambda: None) -> int:
+    """Как upload_model, но путь публикации (brand/model[/modification])
+    задан явно, а не выводится из расположения model_dir под cars_dir —
+    нужно для публикации заявки клиента (см. app/web/api/submissions_api.py:
+    publish), чья застейдженная копия лежит в base_dir/_pending/<...>/, а не
+    внутри cars_dir (см. app/pending_submissions.py). extra_dirs по-прежнему
+    разрешаются относительно cars_dir — тот же смысл, что и в upload_model
+    (общие cars/_shared/<name>/ публикующего админа)."""
+    dest_root = f"{brand}/{model}/{modification}" if modification else f"{brand}/{model}"
+
+    def build_archive(tmp: Path) -> Path:
+        log(f"Архивирую {dest_root}...")
+        archive_path = tmp / "model.zip"
+        try:
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for file in model_dir.rglob("*"):
+                    if file.is_file():
+                        zf.write(file, f"{dest_root}/{file.relative_to(model_dir)}")
+                for extra_dir in extra_dirs:
+                    if not extra_dir.is_dir():
+                        continue
+                    for file in extra_dir.rglob("*"):
+                        if file.is_file():
+                            zf.write(file, file.relative_to(cars_dir))
+        except OSError as exc:
+            raise AdminClientError(f"Не удалось собрать архив: {exc}") from exc
+        return archive_path
+
+    return _build_and_send(base_url, session_cookie, "cars", build_archive, log, check_cancelled)
+
+
 def _build_and_send(base_url: str, session_cookie: str, target: str, build_archive,
                      log, check_cancelled) -> int:
     """Общая часть upload_dir/upload_model — build_archive(tmp_dir) -> Path
@@ -236,6 +269,83 @@ def delete_cars_path(base_url: str, session_cookie: str, rel_path: str) -> None:
     сервере — единственный способ убрать уже опубликованное: upload_dir/
     upload_model льют только слиянием и никогда сами не удаляют лишнее."""
     _request(base_url, session_cookie, "DELETE", f"/admin/api/cars?path={quote(rel_path)}")
+
+
+# -- очередь заявок клиентов (см. app/web/api/submissions_api.py) -----------
+# Тот же протокол, которым уже пользуется веб-админка (server/admin/
+# index.html) — см. server/backend.py: GET /admin/api/submissions[/peek],
+# GET /admin/download/<имя>, DELETE /admin/api/submissions. Публикация
+# заявки НЕ использует отдельный POST /admin/api/submissions/approve (он
+# распаковывает ИСХОДНЫЙ присланный .zip как есть, без учёта правок,
+# внесённых админом через визуальный редактор) — вместо этого
+# submissions_api.py заливает текущее (возможно, отредактированное)
+# содержимое застейдженной копии через upload_model_as() выше и только
+# затем убирает исходную заявку через delete_submission().
+
+def list_submissions(base_url: str, session_cookie: str) -> list[dict]:
+    """Очередь заявок — то же самое, что видит веб-админка (см.
+    server/backend.py:list_submissions): {name, stamp, label, size, brand,
+    model, modification, client_id}, brand/model — None у очень старых
+    заявок без сайдкар-метаданных."""
+    data = _request(base_url, session_cookie, "GET", "/admin/api/submissions")
+    return data.get("items", [])
+
+
+def peek_submission(base_url: str, session_cookie: str, name: str) -> list[dict]:
+    """Список файлов внутри заявки без скачивания (см. server/backend.py:
+    _handle_submission_peek) — для быстрого превью до полного стейджинга."""
+    data = _request(base_url, session_cookie, "GET",
+                     f"/admin/api/submissions/peek?name={quote(name)}")
+    return data.get("items", [])
+
+
+def delete_submission(base_url: str, session_cookie: str, name: str) -> None:
+    """Отклонить заявку — насовсем удаляет .zip и метаданные на сервере
+    (см. server/backend.py:_handle_delete_submission); сервер не хранит ни
+    причину отклонения, ни архивную копию — это окончательно."""
+    _request(base_url, session_cookie, "DELETE", f"/admin/api/submissions?name={quote(name)}")
+
+
+def download_submission(base_url: str, session_cookie: str, name: str, dest_path: Path,
+                         log=lambda m: None, check_cancelled=lambda: None) -> None:
+    """Скачивает заявку (GET /admin/download/<имя>) в dest_path кусками, для
+    последующей распаковки (см. app/pending_submissions.py:stage) — тот же
+    протокол, что и upload_model/_build_and_send, только в обратную сторону
+    (читаем из сокета в файл, а не наоборот)."""
+    parts = urlsplit(base_url)
+    conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    conn = conn_cls(parts.netloc, timeout=120)
+    try:
+        conn.putrequest("GET", f"/admin/download/{quote(name)}")
+        conn.putheader("Cookie", session_cookie)
+        conn.endheaders()
+        response = conn.getresponse()
+        if response.status == 401:
+            response.read()
+            raise AdminClientError("Сессия входа истекла — войдите заново.")
+        if response.status != 200:
+            raw = response.read()
+            try:
+                error = json.loads(raw).get("error", raw.decode("utf-8", "replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error = raw.decode("utf-8", "replace")
+            raise AdminClientError(f"Сервер отклонил скачивание {name} ({response.status}): {error}")
+        size = int(response.getheader("Content-Length") or 0)
+        log(f"Скачиваю {name} ({size / (1024 * 1024):.1f} МБ)...")
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = dest_path.with_suffix(dest_path.suffix + ".part")
+        with open(tmp_path, "wb") as f:
+            while True:
+                check_cancelled()
+                chunk = response.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                f.write(chunk)
+        tmp_path.replace(dest_path)
+    except (OSError, http.client.HTTPException) as exc:
+        raise AdminClientError(f"Не удалось связаться с сервером: {exc}") from exc
+    finally:
+        conn.close()
 
 
 def upload_single_apk(base_url: str, session_cookie: str, category: str, filename: str,

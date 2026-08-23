@@ -33,8 +33,20 @@
   let vars = {};
   let nextAction = () => advanceAfter(currentIndex);
 
+  // Классификация строки лога по русским ключевым словам — та же логика
+  // (намеренно те же слова), что и в desktop-версии (см. app/web/frontend/
+  // js/log_format.js) — оба приложения пишут лог по-русски в похожем
+  // стиле, красим уже готовую строку, не тащим уровень через AdbSession/
+  // InstallEngine/WebBridge (см. .log-line-* в css/style.css).
+  function classifyLogLevel(text) {
+    if (/ошибк|не удал|отклон|не найден|провал|неизвестн/i.test(text)) return "error";
+    if (/внимани|предупрежд/i.test(text)) return "warn";
+    if (/готово\.?$|успешно|выдан|установлен|опубликован|подключ[её]н|заверш/i.test(text)) return "success";
+    return "info";
+  }
+
   function log(text) {
-    const line = el("div", { text });
+    const line = el("div", { text, class: `log-line log-line-${classifyLogLevel(text)}` });
     logPanelEl.appendChild(line);
     logPanelEl.scrollTop = logPanelEl.scrollHeight;
   }
@@ -266,6 +278,10 @@
     syncStatusEl.appendChild(label);
     syncStatusEl.appendChild(bar);
     syncStatusEl.style.display = "";
+    // Список скрыт на время синхронизации — иначе на пустом при первом
+    // запуске каталоге показывалась карточка "Пусто" прямо под прогресс-
+    // баром, будто марок и правда нет, хотя они просто ещё не скачались.
+    listEl.style.display = "none";
     Bridge.call("start_sync", {});
     pollSyncProgress("cars", label, "Синхронизация каталога с сервером…", bar, fill);
   }
@@ -273,6 +289,7 @@
   function onSyncFinished(event) {
     stopSyncPoll();
     syncStatusEl.style.display = "none";
+    listEl.style.display = "";
     const result = event.result || {};
     if (result.error) {
       console.error("sync_finished с ошибкой:", result.error);

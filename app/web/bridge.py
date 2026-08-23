@@ -13,6 +13,7 @@ from .api.car_editor_api import CarEditorApi
 from .api.install_api import InstallApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
+from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
@@ -45,6 +46,7 @@ class WebApi:
         self._report = ReportApi(base_dir)
         self._admin = AdminApi(base_dir, self.apk_dir)
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner)
+        self._submissions = SubmissionsApi(base_dir, self.cars_dir, self._scanner)
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
         self._update = UpdateApi(base_dir)
 
@@ -131,8 +133,14 @@ class WebApi:
     def admin_get_info(self) -> dict:
         return self._admin.get_info()
 
-    def admin_login(self, username: str, password: str) -> dict:
-        return self._admin.login_only(username, password)
+    def admin_login(self, username: str, password: str, remember: bool = False) -> dict:
+        return self._admin.login_only(username, password, remember)
+
+    def admin_try_saved_login(self) -> dict:
+        return self._admin.try_saved_login()
+
+    def admin_forget_saved_login(self) -> dict:
+        return self._admin.forget_saved_login()
 
     def admin_start_upload(self, username: str, password: str) -> dict:
         return self._admin.start_upload(username, password)
@@ -188,3 +196,19 @@ class WebApi:
 
     def car_cancel_save(self) -> dict:
         return self._car_editor.cancel_save()
+
+    # -- submissions_api ("На модерации", только admin_mode) ----------------
+    def submissions_list(self) -> dict:
+        return self._submissions.list()
+
+    def submissions_peek(self, name: str) -> dict:
+        return self._submissions.peek(name)
+
+    def submissions_stage(self, name: str, brand, model, modification) -> dict:
+        return self._submissions.stage(name, brand, model, modification)
+
+    def submissions_publish(self, model_key: str) -> dict:
+        return self._submissions.publish(model_key)
+
+    def submissions_reject(self, name: str) -> dict:
+        return self._submissions.reject(name)

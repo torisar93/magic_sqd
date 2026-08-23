@@ -147,8 +147,17 @@ class Adb:
         return args
 
     def run(self, *args, check=True, timeout=120):
+        # Раньше здесь безусловно логировалось "$ <команда>" + сырой stdout/
+        # stderr НА КАЖДЫЙ вызов — на цепочках из десятков adb-команд (см.
+        # cars/_shared/adb_permissions.py: grant_all_permissions) это
+        # превращало лог в стену технического текста, за которой не видно
+        # результата (реальная жалоба — выдача разрешений выглядела как
+        # сломанная установка, хотя всё прошло успешно). Человеку интересен
+        # итог, а не сам факт вызова adb — осмысленные фразы ("Выдаю
+        # разрешения...", "Установка APK: ...") уже пишет вызывающий код
+        # через ctx.log(), а ошибка и так долетает до техника через
+        # AdbError/install_finished. Сырой вывод больше никуда не льём.
         cmd = self._base_args() + list(args)
-        self._log("$ " + " ".join(cmd))
         try:
             result = subprocess.run(
                 cmd,
@@ -166,11 +175,6 @@ class Adb:
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise AdbError(f"Команда не ответила за {timeout} сек: {' '.join(cmd)}") from exc
-
-        if result.stdout:
-            self._log(result.stdout.rstrip())
-        if result.stderr:
-            self._log(result.stderr.rstrip())
 
         if check and result.returncode != 0:
             raise AdbError(f"Команда завершилась с ошибкой ({result.returncode}): {' '.join(cmd)}")

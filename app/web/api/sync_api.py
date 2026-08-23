@@ -37,6 +37,15 @@ class SyncApi:
     def _log(message) -> None:
         event_bridge.push({"kind": "log", "text": str(message)})
 
+    @staticmethod
+    def _on_sync_progress(done: int, total: int) -> None:
+        # Тот же формат события, что уже рисует общий #main-progress бар
+        # (см. app/web/api/install_api.py:_on_sync_progress/stage_wizard.js:
+        # updateSyncProgress) — переиспользуем готовый механизм вместо
+        # нового, чтобы скачивание моделей при самом первом запуске
+        # программы не выглядело зависшим (раньше был только построчный лог).
+        event_bridge.push({"kind": "sync_progress", "done": done, "total": total})
+
     def startup_sync(self) -> dict:
         """Вызывается один раз из JS сразу после того, как главное окно
         готово (см. app.js) — до этого момента pywebview.api ещё недоступен.
@@ -62,13 +71,16 @@ class SyncApi:
             manifest = fetch_manifest(base_url)
 
             try:
-                sync_scripts(self.base_dir, self.cars_dir, log=self._log, manifest=manifest)
+                sync_scripts(self.base_dir, self.cars_dir, log=self._log, manifest=manifest,
+                              on_progress=self._on_sync_progress)
             except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
                 self._log(f"Не удалось проверить обновления моделей на сервере: {exc}")
             else:
                 models = flatten_models(scan_cars(self.cars_dir))
                 changes, new_state = update_tracker.compute_changes(self.base_dir, models)
                 update_tracker.save_seen(self.base_dir, new_state)
+            finally:
+                self._on_sync_progress(0, 0)  # скрыть бар, даже если качать было нечего/сбой сети
 
             try:
                 if manifest is not None:

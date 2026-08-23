@@ -12,7 +12,6 @@
 connect_wifi пробует способ 1, и только если он не сработал — способ 2 с
 выбором из найденного (плюс ручной ввод всегда доступен рядом, на случай
 если скан не нашёл нужное устройство)."""
-from __future__ import annotations
 import concurrent.futures
 import ipaddress
 import os
@@ -43,7 +42,6 @@ def get_default_gateway() -> str:
          "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
          "| Select-Object -First 1 -ExpandProperty IPv4DefaultGateway).NextHop"],
         capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
-        stdin=subprocess.DEVNULL,
     )
     ip = (result.stdout or "").strip()
     if not ip:
@@ -66,7 +64,6 @@ def _get_local_ipv4_and_subnet() -> tuple[str, ipaddress.IPv4Network] | None:
          "| Select-Object -First 1; "
          "if ($c) { \"$($c.IPv4Address.IPAddress)/$($c.IPv4Address.PrefixLength)\" }"],
         capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
-        stdin=subprocess.DEVNULL,
     )
     output = (result.stdout or "").strip()
     if not output:

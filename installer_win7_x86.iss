@@ -20,7 +20,7 @@
 ; crash.log, докачанный контент cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.4.9-alpha"
+#define MyAppVersion "0.4.11-alpha"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -56,10 +56,12 @@ Name: "desktopicon"; Description: "Создать значок на рабоче
 
 [Files]
 ; См. installer.iss — та же причина: content_sync.py докачивает apk/
-; и files/usb_files моделей сам, инсталлятор их не бандлит. НЕТ строки
-; про MicrosoftEdgeWebview2Setup.exe — на настоящей Windows 7 он не
-; запустится (см. пояснение в шапке файла), включать незачем.
-Source: "dist_win7\magic_sqd\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__pycache__"; Flags: ignoreversion recursesubdirs createallsubdirs
+; и files/usb_files моделей сам, инсталлятор их не бандлит. cars\_shared\*\*
+; — подпапки cars/_shared/ (тяжёлые payload-наборы техника, например
+; freetuga/) туда же; *.py-хелперы прямо в _shared/ по-прежнему ставятся.
+; НЕТ строки про MicrosoftEdgeWebview2Setup.exe — на настоящей Windows 7 он
+; не запустится (см. пояснение в шапке файла), включать незачем.
+Source: "dist_win7\magic_sqd\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__pycache__,_shared\*\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 Source: "server.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "submit.json"; DestDir: "{app}"; Flags: ignoreversion

@@ -20,8 +20,8 @@ from ..events import event_bridge
 from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cached_session,
                               get_cached_session, login, set_cached_session, upload_model)
 from ...admin_config import get_admin_base_url
-from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec, StepSpec,
-                               StepVariant, create_car, load_car_spec, update_car)
+from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec,
+                               StandardApkSpec, StepSpec, StepVariant, create_car, load_car_spec, update_car)
 from ...instruction_html import default_blocks, render_document
 from ...ping_client import get_or_create_client_id
 from ...submit_client import SubmitCancelled, SubmitError, submit_model
@@ -41,10 +41,25 @@ def _files_to_dicts(paths: list[Path]) -> list[dict]:
     return [_file_dict(p) for p in paths]
 
 
+def _apk_entry_to_dict(apk: StandardApkSpec) -> dict:
+    """Как _file_dict, но плюс display_name/description для "красивого"
+    названия обязательного/необязательного APK (см. StandardApkSpec) —
+    "name" здесь по-прежнему имя файла (как у остальных списков файлов, на
+    случай если что-то в JS полагается на это единообразие), а
+    display_name — то, что реально показывается технику при установке
+    (см. app/car_generator.py: StandardApkSpec, _write_model_files)."""
+    return {"name": apk.path.name, "path": str(apk.path),
+            "display_name": apk.name, "description": apk.description}
+
+
+def _apk_entries_to_dicts(items: list[StandardApkSpec]) -> list[dict]:
+    return [_apk_entry_to_dict(a) for a in items]
+
+
 def _variant_to_dict(v: StepVariant) -> dict:
     return {"name": v.name, "usb_files": _files_to_dicts(v.usb_files),
-            "standard_apks": _files_to_dicts(v.standard_apks),
-            "standard_apks_optional": _files_to_dicts(v.standard_apks_optional)}
+            "standard_apks": _apk_entries_to_dicts(v.standard_apks),
+            "standard_apks_optional": _apk_entries_to_dicts(v.standard_apks_optional)}
 
 
 def _step_to_dict(step: StepSpec) -> dict:
@@ -58,15 +73,19 @@ def _step_to_dict(step: StepSpec) -> dict:
         "commands": step.commands,
         "adb_install_selected_apks": step.adb_install_selected_apks,
         "adb_files": _files_to_dicts(step.adb_files),
-        "standard_apks": _files_to_dicts(step.standard_apks),
-        "standard_apks_optional": _files_to_dicts(step.standard_apks_optional),
+        "standard_apks": _apk_entries_to_dicts(step.standard_apks),
+        "standard_apks_optional": _apk_entries_to_dicts(step.standard_apks_optional),
+        "apps_connection": step.apps_connection,
         "exe_file": _file_dict(step.exe_file) if step.exe_file else None,
         "check_var": step.check_var, "check_options": step.check_options,
         "condition_var": step.condition_var, "condition_values": step.condition_values,
         "variants": [_variant_to_dict(v) for v in step.variants],
         "pos_x": step.pos_x, "pos_y": step.pos_y,
         "uart_baudrate": step.uart_baudrate,
-        "actions": [{"label": a.label, "kind": a.kind, "commands": a.commands} for a in step.actions],
+        "actions": [
+            {"label": a.label, "kind": a.kind, "commands": a.commands, "files": _files_to_dicts(a.files)}
+            for a in step.actions
+        ],
     }
 
 
@@ -74,11 +93,20 @@ def _files_from_dicts(items: list[dict]) -> list[Path]:
     return [Path(item["path"]) for item in (items or [])]
 
 
+def _apk_entry_from_dict(item: dict) -> StandardApkSpec:
+    return StandardApkSpec(path=Path(item["path"]), name=item.get("display_name", ""),
+                            description=item.get("description", ""))
+
+
+def _apk_entries_from_dicts(items: list[dict]) -> list[StandardApkSpec]:
+    return [_apk_entry_from_dict(item) for item in (items or [])]
+
+
 def _variant_from_dict(data: dict) -> StepVariant:
     return StepVariant(name=data.get("name", ""),
                         usb_files=_files_from_dicts(data.get("usb_files")),
-                        standard_apks=_files_from_dicts(data.get("standard_apks")),
-                        standard_apks_optional=_files_from_dicts(data.get("standard_apks_optional")))
+                        standard_apks=_apk_entries_from_dicts(data.get("standard_apks")),
+                        standard_apks_optional=_apk_entries_from_dicts(data.get("standard_apks_optional")))
 
 
 def _step_from_dict(data: dict) -> StepSpec:
@@ -93,8 +121,9 @@ def _step_from_dict(data: dict) -> StepSpec:
         commands=data.get("commands") or [],
         adb_install_selected_apks=data.get("adb_install_selected_apks", False),
         adb_files=_files_from_dicts(data.get("adb_files")),
-        standard_apks=_files_from_dicts(data.get("standard_apks")),
-        standard_apks_optional=_files_from_dicts(data.get("standard_apks_optional")),
+        standard_apks=_apk_entries_from_dicts(data.get("standard_apks")),
+        standard_apks_optional=_apk_entries_from_dicts(data.get("standard_apks_optional")),
+        apps_connection=data.get("apps_connection", "wired"),
         exe_file=Path(exe_file["path"]) if exe_file else None,
         check_var=data.get("check_var", ""), check_options=data.get("check_options") or [],
         condition_var=data.get("condition_var", ""), condition_values=data.get("condition_values") or [],
@@ -102,7 +131,8 @@ def _step_from_dict(data: dict) -> StepSpec:
         pos_x=data.get("pos_x", 0.0), pos_y=data.get("pos_y", 0.0),
         uart_baudrate=data.get("uart_baudrate", 115200),
         actions=[
-            ActionSpec(label=a.get("label", ""), kind=a.get("kind", "command"), commands=a.get("commands") or [])
+            ActionSpec(label=a.get("label", ""), kind=a.get("kind", "command"), commands=a.get("commands") or [],
+                       files=_files_from_dicts(a.get("files")))
             for a in (data.get("actions") or [])
         ],
     )
@@ -245,11 +275,13 @@ class CarEditorApi:
             return {"ok": False, "error": "Сохранение уже выполняется."}
 
         edit_model_dir = None
+        is_pending = False
         if edit_model_key:
             model = self._scanner_api.get_model(edit_model_key)
             if model is None:
                 return {"ok": False, "error": "unknown model key"}
             edit_model_dir = model.dir
+            is_pending = model.is_pending
 
         spec = NewCarSpec(
             brand=spec_data["brand"], model=spec_data["model"],
@@ -261,7 +293,7 @@ class CarEditorApi:
         )
 
         self._cancel_flag = threading.Event()
-        self._thread = threading.Thread(target=self._worker, args=(spec, edit_model_dir), daemon=True)
+        self._thread = threading.Thread(target=self._worker, args=(spec, edit_model_dir, is_pending), daemon=True)
         self._thread.start()
         return {"ok": True}
 
@@ -276,7 +308,7 @@ class CarEditorApi:
     def _log(self, message) -> None:
         event_bridge.push({"kind": "car_save_log", "text": str(message)})
 
-    def _worker(self, spec: NewCarSpec, edit_model_dir) -> None:
+    def _worker(self, spec: NewCarSpec, edit_model_dir, is_pending: bool = False) -> None:
         try:
             if edit_model_dir:
                 update_car(edit_model_dir, spec)
@@ -295,6 +327,15 @@ class CarEditorApi:
             "kind": "car_saved",
             "brand": spec.brand, "model": spec.model, "modification": spec.modification,
         })
+
+        if is_pending:
+            # Правка застейдженной заявки клиента (см. app/web/api/
+            # submissions_api.py) — "Сохранить" здесь означает только
+            # "переписать локальный _pending/<...>/", НЕ публиковать: заявка
+            # ещё не одобрена, публикация — отдельное явное действие
+            # ("Опубликовать" в том же экране, см. submissions_publish).
+            event_bridge.push({"kind": "car_save_finished", "success": True, "message": "Сохранено."})
+            return
 
         admin_base_url = get_admin_base_url(self.base_dir)
         admin_session_cookie = get_cached_session(admin_base_url) if admin_base_url else None

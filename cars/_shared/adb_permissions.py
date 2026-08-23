@@ -165,10 +165,20 @@ def grant_all_permissions(ctx, package: str) -> None:
     if not requested:
         requested = list(_COMMON_DANGEROUS_PERMISSIONS)
 
+    # pm grant молча ничего не делает для разрешения, которое приложение не
+    # запрашивало (обычное дело для запасного списка _COMMON_DANGEROUS_
+    # PERMISSIONS) — код возврата это честно отражает, поэтому здесь (в
+    # отличие от остальных вызовов ниже) стоит посчитать реальный итог, а
+    # не просто отрапортовать "выдано" вслепую.
+    granted = failed = 0
     for perm in requested:
         if perm in _APPOPS:
             continue  # выдаётся ниже через appops, не pm grant
-        ctx.shell(f"pm grant {package} {perm}", check=False)
+        result = ctx.shell(f"pm grant {package} {perm}", check=False)
+        if result.returncode == 0:
+            granted += 1
+        else:
+            failed += 1
 
     for op in _APPOPS.values():
         ctx.shell(f"appops set {package} {op} allow", check=False)
@@ -178,7 +188,16 @@ def grant_all_permissions(ctx, package: str) -> None:
     ctx.shell(f"dumpsys deviceidle whitelist +{package}", check=False)
 
     _enable_accessibility_service(ctx, package, dumpsys_output)
-    ctx.log("Разрешения выданы.")
+    if failed:
+        # "Внимание" в начале — сознательно (см. app/web/frontend/js/
+        # log_format.js: classifyLogLevel), чтобы эта строка красилась как
+        # предупреждение, а не как обычный успех — частичная выдача не
+        # обязательно проблема (запасной список permissions включает и то,
+        # что приложение не запрашивало), но стоит внимания технику.
+        ctx.log(f"Внимание: разрешения выданы частично — {granted} из {granted + failed} "
+                f"(остальные приложению не нужны или недоступны на этой прошивке).")
+    else:
+        ctx.log(f"Все разрешения выданы ({granted}).")
 
 
 def set_mock_location_app(ctx, package: str) -> None:
