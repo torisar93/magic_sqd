@@ -793,7 +793,10 @@
         }
         if (!adbConnected) { log("Сначала подключись к ADB (кнопка вверху)."); return; }
         log(`Выполняю действие: ${action.label}`);
-        Bridge.call("adb_run_stage", { index: stage.index, commands: action.commands || [], filesByName: {} });
+        Bridge.call("adb_run_stage", {
+          index: stage.index, commands: action.commands || [],
+          filesByName: filesByNameFrom(action.files),
+        });
       });
       page.appendChild(btn);
     });

@@ -236,8 +236,15 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
                 "label": a.get("label", ""),
                 "kind": a.get("kind", "command"),
                 "commands": parse_commands(a.get("commands")),
+                # Прикреплённые файлы ОДНОГО действия (см. app/car_generator.py:
+                # ActionSpec.files, "ADB-команды" — бывший отдельный тип "adb"
+                # слит с actions, теперь умеет #push/#install и здесь тоже) —
+                # "actions_{i}_{j}", то же имя папки, что и на desktop
+                # (_write_model_files/_render_command_body), должно совпадать
+                # буквально.
+                "files": [str(files_dir / f"actions_{i}_{j}" / name) for name in a.get("files", [])],
             }
-            for a in step_data.get("actions", [])
+            for j, a in enumerate(step_data.get("actions", []), start=1)
         ]
 
         steps.append({
