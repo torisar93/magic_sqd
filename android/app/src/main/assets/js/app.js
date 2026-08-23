@@ -9,7 +9,7 @@
   const STATUS_TITLES = { green: "Актуально", yellow: "Черновой способ", blue: "Недавно обновлено", red: "Не работает" };
 
   let screenPicker, screenWizard, breadcrumbEl, listEl, syncStatusEl;
-  let wizardContentEl, wizardBackBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl;
+  let wizardContentEl, wizardBackBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl, topHelpBtn;
   let adbStatusEl, adbConnectBtn, usbStatusEl, usbConnectBtn, usbFormatBtn, adbBarEl, usbBarEl;
   let adbModeToggleEl, adbModeWiredBtn, adbModeWifiBtn;
   let logBarEl, logLastLineEl, logExpandBtn, logOverlayEl, logCollapseBtn, logCmdInput, logCmdRunBtn;
@@ -84,6 +84,11 @@
     screenPicker.classList.toggle("active", name === "picker");
     screenWizard.classList.toggle("active", name === "wizard");
     updateTopBack();
+    // Значок "?" — только на списке марок (там же цветные метки статуса,
+    // которые он расшифровывает); на этапах установки прячем — иначе
+    // конфликтовал бы с бегущей строкой длинного названия модели
+    // (обе абсолютно спозиционированы у правого края полосы).
+    topHelpBtn.style.visibility = name === "picker" ? "visible" : "hidden";
     clear(topTitleEl);
     topTitleEl.classList.remove("marquee");
     topTitleEl.style.left = "";
@@ -1186,6 +1191,30 @@
     ]);
   }
 
+  // Значок "?" в шапке (только на списке марок) — версия приложения
+  // (раньше нигде не была видна вовсе, см. WebBridge.kt: app_version читает
+  // versionName из PackageManager) и расшифровка цветных меток статуса у
+  // моделей (те же формулировки, что и в самом списке — STATUS_TITLES).
+  function showAboutModal() {
+    let overlay;
+    let version = "?";
+    try { version = Bridge.call("app_version", {}).version; } catch (e) { /* см. фолбэк выше */ }
+    const legendRow = (color) => el("div", { class: "row", style: "gap: 8px; margin: 6px 0" }, [
+      el("span", { class: `status-dot status-dot-${color}` }),
+      el("span", { class: "stage-text", text: STATUS_TITLES[color] }),
+    ]);
+    overlay = showModal([
+      el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
+      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px", text: `Версия ${version}` }),
+      el("p", { class: "stage-text", style: "color: var(--text-dim); margin-top: 8px", text: "Цветные метки у моделей:" }),
+      legendRow("green"),
+      legendRow("blue"),
+      legendRow("yellow"),
+      legendRow("red"),
+      el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
+    ]);
+  }
+
   function showStatusWarningModal(modelSummary) {
     const isRed = modelSummary.status_color === "red";
     let overlay;
@@ -1232,12 +1261,8 @@
     breadcrumbEl = document.getElementById("picker-breadcrumb");
     syncStatusEl = document.getElementById("picker-sync-status");
     listEl = document.getElementById("picker-list");
-    const appVersionLabelEl = document.getElementById("app-version-label");
-    try {
-      appVersionLabelEl.textContent = `v${Bridge.call("app_version", {}).version}`;
-    } catch (e) {
-      appVersionLabelEl.textContent = "";
-    }
+    topHelpBtn = document.getElementById("top-help");
+    topHelpBtn.addEventListener("click", showAboutModal);
     wizardContentEl = document.getElementById("wizard-content");
     wizardBackBtn = document.getElementById("wizard-back");
     wizardNextBtn = document.getElementById("wizard-next");

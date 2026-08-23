@@ -139,6 +139,31 @@ html, body {
   transform: translateY(-50%) scale(0.96);
 }
 
+/* Значок "?" — версия программы и расшифровка цветных меток статуса
+   (видны только в списке марок, но кнопка постоянно в углу — проще, чем
+   прятать/показывать её вместе с экраном; на этапах мастера всё равно не
+   мешает, там уже есть кнопка "Назад" слева и своя тема сверху). */
+.topbar button.help-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 15px;
+  z-index: 1;
+}
+
+.topbar button.help-btn:active {
+  transform: translateY(-50%) scale(0.92);
+}
+
 .screen {
   flex: 1;
   overflow-y: auto;
@@ -183,14 +208,6 @@ html, body {
    в это время скрыт, см. js/app.js: startSync/onSyncFinished), а не тонкая
    полоска сверху над карточкой "Пусто" — раньше выглядело так, будто
    каталог реально пуст, хотя он просто ещё не скачался. */
-.app-version-label {
-  flex-shrink: 0;
-  padding: 6px 12px 10px;
-  text-align: center;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
 .sync-status {
   flex: 1;
   display: flex;
