@@ -11,6 +11,7 @@
   let screenPicker, screenWizard, breadcrumbEl, listEl, syncStatusEl;
   let wizardContentEl, wizardBackBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl;
   let adbStatusEl, adbConnectBtn, usbStatusEl, usbConnectBtn, usbFormatBtn, adbBarEl, usbBarEl;
+  let adbModeToggleEl, adbModeWiredBtn, adbModeWifiBtn;
   let logBarEl, logLastLineEl, logExpandBtn, logOverlayEl, logCollapseBtn, logCmdInput, logCmdRunBtn;
 
   // Один открытый скан за раз — достаточно, оба места, где он запускается
@@ -333,12 +334,17 @@
   let modelWifiPort = 5555;
   let lastWifiHost = "";
   let installCompletedShown = false;
+  // Выбор техника на apps-этапах с apps_connection == "ask" (провод/Wi-Fi) —
+  // по index этапа, чтобы сохранялся при переходах назад-вперёд в рамках
+  // одного мастера (аналог appsSelection). См. connectionModeFor.
+  let appsConnectionChoice = {};
 
   function openWizard() {
     vars = {};
     currentIndex = 0;
     stages = [];
     appsSelection = {};
+    appsConnectionChoice = {};
     globalSelectedApks = new Set();
     apkLibrary = [];
     installCompletedShown = false;
@@ -415,8 +421,23 @@
     adbConnectBtn.textContent = connected ? "Переподключить" : "Подключить ADB";
   }
 
+  // Способ подключения для ТЕКУЩЕГО этапа: apps-этап сам решает через
+  // apps_connection ("wired"/"wifi"/"ask" — см. car_generator.py на
+  // desktop, теперь и wizard_spec.py здесь), независимо от modelWifi;
+  // adb/actions по-прежнему подчиняются только modelWifi (единой на всю
+  // модель) — тот же контракт, что и в desktop stage_wizard.js:
+  // buildTransportBar. "ask" — то, что техник выбрал на переключателе
+  // (см. appsConnectionChoice/updateTransportBars), по умолчанию "wired".
+  function connectionModeFor(stage) {
+    if (stage && stage.type === "apps") {
+      const mode = stage.apps_connection || "wired";
+      return mode === "ask" ? (appsConnectionChoice[stage.index] || "wired") : mode;
+    }
+    return modelWifi ? "wifi" : "wired";
+  }
+
   function onAdbConnect() {
-    if (modelWifi) {
+    if (connectionModeFor(stages[currentIndex]) === "wifi") {
       promptHostPicker(
         "IP-адрес магнитолы для Wi-Fi ADB:",
         modelWifiPort,
@@ -983,6 +1004,17 @@
   function updateTransportBars(stage) {
     adbBarEl.style.display = ADB_STAGE_TYPES.has(stage.type) ? "flex" : "none";
     usbBarEl.style.display = USB_STAGE_TYPES.has(stage.type) ? "flex" : "none";
+    // Переключатель "Провод/Wi-Fi" — только для apps-этапа с
+    // apps_connection == "ask" (техник сам выбирает на месте, см.
+    // connectionModeFor); для "wired"/"wifi" способ уже задан автором
+    // модели, показывать нечего.
+    const isAsk = stage.type === "apps" && (stage.apps_connection || "wired") === "ask";
+    adbModeToggleEl.style.display = isAsk ? "flex" : "none";
+    if (isAsk) {
+      const current = appsConnectionChoice[stage.index] || "wired";
+      adbModeWiredBtn.className = current === "wired" ? "accent" : "";
+      adbModeWifiBtn.className = current === "wifi" ? "accent" : "";
+    }
   }
 
   function renderStage(stage) {
@@ -1191,6 +1223,9 @@
     usbFormatBtn = document.getElementById("usb-format-btn");
     adbBarEl = document.getElementById("adb-bar");
     usbBarEl = document.getElementById("usb-bar");
+    adbModeToggleEl = document.getElementById("adb-mode-toggle");
+    adbModeWiredBtn = document.getElementById("adb-mode-wired");
+    adbModeWifiBtn = document.getElementById("adb-mode-wifi");
     logBarEl = document.getElementById("log-bar");
     logLastLineEl = document.getElementById("log-last-line");
     logExpandBtn = document.getElementById("log-expand-btn");
@@ -1202,6 +1237,14 @@
     wizardBackBtn.addEventListener("click", () => show(prevVisibleIndex(currentIndex)));
     wizardNextBtn.addEventListener("click", () => nextAction());
     adbConnectBtn.addEventListener("click", onAdbConnect);
+    adbModeWiredBtn.addEventListener("click", () => {
+      appsConnectionChoice[stages[currentIndex].index] = "wired";
+      updateTransportBars(stages[currentIndex]);
+    });
+    adbModeWifiBtn.addEventListener("click", () => {
+      appsConnectionChoice[stages[currentIndex].index] = "wifi";
+      updateTransportBars(stages[currentIndex]);
+    });
     usbConnectBtn.addEventListener("click", onUsbConnect);
     usbFormatBtn.addEventListener("click", onUsbFormat);
     logBarEl.addEventListener("click", () => setLogOpen(true));

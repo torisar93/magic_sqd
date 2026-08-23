@@ -273,6 +273,12 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             "adb_files": adb_files,
             "standard_apks": standard_apks,
             "standard_apks_optional": standard_apks_optional,
+            # "wired"/"wifi"/"ask" — только для type == "apps" (см.
+            # car_generator.py: StepSpec.apps_connection). До этого поля
+            # мобильная версия вообще не знала про него и всегда пыталась
+            # подключиться по проводу, даже если автор явно указал Wi-Fi —
+            # см. app.js: connectionModeFor.
+            "apps_connection": step_data.get("apps_connection", "wired"),
             "exe_file": exe_file,
             "check_var": step_data.get("check_var", ""),
             "check_options": step_data.get("check_options", []),

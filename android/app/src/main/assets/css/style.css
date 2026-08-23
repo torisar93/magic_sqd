@@ -355,12 +355,23 @@ button.danger {
 .adb-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
   flex-shrink: 0;
   font-size: 13px;
+}
+
+.adb-mode-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.adb-mode-toggle button {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .adb-bar #adb-status {
