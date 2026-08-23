@@ -164,8 +164,10 @@ class InstallApi:
             # сохранён до появления этого поля), берём "wifi" для
             # wifi-only моделей вместо слепого "wired" — иначе apps-этап
             # без проводного ADB вообще пытался бы подключиться по USB
-            # (реальный баг: Geely Cityray "со значком Wi-Fi").
-            "apps_connection": stage.get("apps_connection") or ("wifi" if model_wifi else "wired"),
+            # (реальный баг: Geely Cityray "со значком Wi-Fi"). Только для
+            # type == "apps" — поле не имеет смысла для остальных типов.
+            "apps_connection": ((stage.get("apps_connection") or ("wifi" if model_wifi else "wired"))
+                                 if stage["type"] == "apps" else stage.get("apps_connection", "wired")),
             "check_var": stage.get("check_var", ""),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,

@@ -311,18 +311,23 @@
     headerEl.appendChild(grid);
     headerEl.appendChild(brandList);
 
+    // Порт НЕ прячем за чекбоксом (в отличие от прошлой версии) — он нужен
+    // не только когда весь ADB на модели по Wi-Fi (этот чекбокс), но и когда
+    // ТОЛЬКО отдельный apps-этап настроен на apps_connection="wifi"/"ask"
+    // (см. car_step_fields.js: renderAppsFields), а сама модель при этом
+    // спокойно может иметь обычный проводной ADB для остальных этапов —
+    // реальный случай: Geely Atlas New (wifi=false на уровне модели, но
+    // apps-этап — Wi-Fi). Раньше в этом случае поле порта было скрыто и
+    // недоступно для редактирования вовсе.
     const wifiRow = el("div", { class: "row", style: "margin-top: 8px" });
     const wifiCheckbox = el("input", { type: "checkbox" });
     wifiCheckbox.checked = wifi;
-    const wifiPortInput = el("input", { type: "text", style: "width: 70px; display: " + (wifi ? "inline-block" : "none") });
+    const wifiPortInput = el("input", { type: "text", style: "width: 70px" });
     wifiPortInput.value = String(wifiPort);
-    wifiCheckbox.addEventListener("change", () => {
-      wifi = wifiCheckbox.checked;
-      wifiPortInput.style.display = wifi ? "inline-block" : "none";
-    });
+    wifiCheckbox.addEventListener("change", () => { wifi = wifiCheckbox.checked; });
     wifiPortInput.addEventListener("input", () => { wifiPort = wifiPortInput.value; });
-    wifiRow.appendChild(el("label", { class: "row" }, [wifiCheckbox, "ADB-этапы подключаются по Wi-Fi (иначе — по USB/уже подключено)"]));
-    wifiRow.appendChild(el("span", { text: "Порт:" }));
+    wifiRow.appendChild(el("label", { class: "row" }, [wifiCheckbox, "Все ADB-этапы (кроме «Установки приложений» — та настраивается отдельно на самом этапе) подключаются по Wi-Fi, а не по USB"]));
+    wifiRow.appendChild(el("span", { text: "Порт Wi-Fi ADB:" }));
     wifiRow.appendChild(wifiPortInput);
     headerEl.appendChild(wifiRow);
 
@@ -1034,7 +1039,8 @@
       await window.notice("Укажите марку и модель.");
       return;
     }
-    if (wifi && !Number.isFinite(Number(wifiPort))) {
+    const portNeeded = wifi || steps.some((s) => s.type === "apps" && (s.apps_connection === "wifi" || s.apps_connection === "ask"));
+    if (portNeeded && !Number.isFinite(Number(wifiPort))) {
       await window.notice("Порт должен быть числом.");
       return;
     }

@@ -279,8 +279,10 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             # wifi-only моделей (data["wifi"]) вместо слепого "wired",
             # иначе apps-этап без проводного ADB вообще пытался бы
             # подключиться по USB (реальный баг: Geely Cityray "со значком
-            # Wi-Fi" — см. app.js: connectionModeFor).
-            "apps_connection": step_data.get("apps_connection") or ("wifi" if data.get("wifi") else "wired"),
+            # Wi-Fi" — см. app.js: connectionModeFor). Только для
+            # step_type == "apps" — поле не имеет смысла для остальных типов.
+            "apps_connection": ((step_data.get("apps_connection") or ("wifi" if data.get("wifi") else "wired"))
+                                 if step_type == "apps" else step_data.get("apps_connection", "wired")),
             "exe_file": exe_file,
             "check_var": step_data.get("check_var", ""),
             "check_options": step_data.get("check_options", []),

@@ -396,7 +396,18 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             adb_files=adb_files,
             standard_apks=standard_apks,
             standard_apks_optional=standard_apks_optional,
-            apps_connection=step_data.get("apps_connection", "wired"),
+            # Явный apps_connection побеждает; если его нет вовсе (этап
+            # сохранён до появления этого поля — например Geely Cityray) —
+            # берём "wifi" для wifi-only моделей вместо слепого "wired",
+            # иначе редактор показывал бы "Провод", хотя фактически (см.
+            # install_api.py/wizard_spec.py — тот же fallback) этап уже
+            # работает по Wi-Fi. Как только модель пересохранят через
+            # редактор, значение станет явным и этот fallback перестанет
+            # быть нужен именно для неё. Только для type == "apps" — поле
+            # бессмысленно для остальных типов, не нужно писать в них "wifi"
+            # просто потому, что модель в целом wifi-only.
+            apps_connection=(step_data.get("apps_connection") or ("wifi" if data.get("wifi") else "wired"))
+            if step_type == "apps" else step_data.get("apps_connection", "wired"),
             exe_file=exe_file,
             check_var=step_data.get("check_var", ""),
             check_options=step_data.get("check_options", []),
@@ -973,6 +984,16 @@ def _render_stages_py(spec: NewCarSpec) -> str:
         lines.append("from wifi_adb import connect_wifi  # noqa: E402")
     lines += ["", "m = load_install(__file__)", ""]
 
+    # WIFI_PORT нужен не только когда ВЕСЬ ADB модели идёт по Wi-Fi
+    # (spec.wifi) — apps-этап с apps_connection="wifi"/"ask" тоже читает его
+    # (см. install_api.py: load_wifi_port), даже если у модели в остальном
+    # есть обычный проводной ADB (реальный случай: Geely Atlas New,
+    # spec.wifi=False, но один apps-этап — Wi-Fi). Раньше константа не
+    # писалась вовсе в этом случае, и порт нельзя было сохранить/использовать
+    # никаким способом — техник был заперт на дефолтных 5555.
+    needs_wifi_port = spec.wifi or any(
+        s.type == "apps" and s.apps_connection in ("wifi", "ask") for s in spec.steps
+    )
     if spec.wifi:
         lines += [
             "",
@@ -982,10 +1003,9 @@ def _render_stages_py(spec: NewCarSpec) -> str:
             "        fn(ctx)",
             "    return wrapped",
             "",
-            "",
-            f"WIFI_PORT = {spec.wifi_port}",
-            "",
         ]
+    if needs_wifi_port:
+        lines += ["", f"WIFI_PORT = {spec.wifi_port}", ""]
 
     lines.append("STAGES = [")
     apps_index = 0

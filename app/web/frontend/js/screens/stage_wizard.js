@@ -420,19 +420,25 @@
     const wiredRow = el("div", { class: "row" }, [select, refreshBtn]);
 
     const wifiStatus = el("span", { style: "color: var(--text-dim)", text: "Wi-Fi: не подключено" });
+    // Порт из модели — только предзаполненное значение, не жёсткое:
+    // техник может вручную поменять, если конкретная магнитола настроена
+    // иначе (реальный запрос — раньше порт вообще нельзя было
+    // переопределить на ПК, только увидеть в редакторе).
+    const portInput = el("input", { type: "text", value: String(modelWifiPort), style: "width: 60px" });
     const wifiConnectBtn = el("button", { text: "Подключить Wi-Fi" });
     async function doWifiConnect() {
+      const port = Number(portInput.value) || modelWifiPort;
       wifiConnectBtn.disabled = true;
       wifiStatus.textContent = "Wi-Fi: подключаюсь...";
       try {
-        let result = await window.pywebview.api.install_wifi_connect(modelWifiPort, null);
+        let result = await window.pywebview.api.install_wifi_connect(port, null);
         let ip = result.ip;
         if (!result.ok) {
-          const candidates = await window.pywebview.api.install_scan_wifi(modelWifiPort);
+          const candidates = await window.pywebview.api.install_scan_wifi(port);
           ip = (await window.selectDialog(
             candidates.length
-              ? `Не удалось подключиться автоматически. Выберите IP магнитолы (порт ${modelWifiPort}):`
-              : `Не удалось подключиться автоматически и скан сети ничего не нашёл (порт ${modelWifiPort}). Введите IP магнитолы:`,
+              ? `Не удалось подключиться автоматически. Выберите IP магнитолы (порт ${port}):`
+              : `Не удалось подключиться автоматически и скан сети ничего не нашёл (порт ${port}). Введите IP магнитолы:`,
             candidates,
             { title: "Wi-Fi ADB" }
           ))?.trim();
@@ -440,7 +446,7 @@
             wifiStatus.textContent = "Wi-Fi: не подключено";
             return;
           }
-          result = await window.pywebview.api.install_wifi_connect(modelWifiPort, ip);
+          result = await window.pywebview.api.install_wifi_connect(port, ip);
         }
         if (!result.ok) {
           wifiSerial = null;
@@ -449,14 +455,14 @@
             { title: "Wi-Fi ADB", danger: true });
           return;
         }
-        wifiSerial = `${ip}:${modelWifiPort}`;
+        wifiSerial = `${ip}:${port}`;
         wifiStatus.textContent = `Wi-Fi: подключено (${wifiSerial})`;
       } finally {
         wifiConnectBtn.disabled = false;
       }
     }
     wifiConnectBtn.addEventListener("click", doWifiConnect);
-    const wifiRow = el("div", { class: "row" }, [wifiStatus, wifiConnectBtn]);
+    const wifiRow = el("div", { class: "row" }, [wifiStatus, el("span", { text: "Порт:" }), portInput, wifiConnectBtn]);
 
     const connection = stage.type === "apps" ? (stage.apps_connection || "wired") : "wired";
     if (connection === "wired") {
