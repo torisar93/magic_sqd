@@ -342,17 +342,75 @@ def update_car(cars_dir: Path, model_dir: Path, spec: NewCarSpec, *, allow_renam
 
     new_dir = (_resolve_model_dir(cars_dir, spec.brand.strip(), spec.model.strip(), spec.modification.strip())
                if allow_rename else model_dir)
-    if new_dir != model_dir:
-        if new_dir.exists():
-            raise CarGenerationError(f"Такая модель уже существует: {new_dir}")
-        new_dir.parent.mkdir(parents=True, exist_ok=True)
-        old_parent = model_dir.parent
-        shutil.move(str(model_dir), str(new_dir))
-        _prune_empty_parents(old_parent, cars_dir)
-        model_dir = new_dir
+    if new_dir == model_dir:
+        _write_model_files(model_dir, spec)
+        return model_dir
 
-    _write_model_files(model_dir, spec)
-    return model_dir
+    if new_dir.exists():
+        raise CarGenerationError(f"Такая модель уже существует: {new_dir}")
+    new_dir.parent.mkdir(parents=True, exist_ok=True)
+    old_dir = model_dir
+    old_parent = old_dir.parent
+    shutil.move(str(old_dir), str(new_dir))
+    # spec пришёл из load_car_spec(), вызванного ДО переноса — все пути в
+    # нём (apk, usb_files, exe_file, фото инструкции и т.п.) всё ещё
+    # указывают на старое, уже переехавшее место. Без этой перепрошивки
+    # _write_model_files ниже попытался бы копировать "оттуда" (WinError
+    # 3/2 — пути больше не существует) вместо того чтобы увидеть "файл уже
+    # на месте" и пропустить копирование, как при обычном пересохранении
+    # без переименования.
+    _rebase_spec_paths(spec, old_dir, new_dir)
+    try:
+        _write_model_files(new_dir, spec)
+    except Exception:
+        # Не оставляем модель "наполовину переехавшей" — например, если на
+        # этой машине физически нет байтов какого-то приложенного APK
+        # (тонкий клиент, скачавший только метаданные с сервера, см. память
+        # проекта: ленивая докачка files/). Переносим папку обратно и
+        # поднимаем исходную ошибку — вызывающий код (car_editor_api.py)
+        # покажет её технику, а модель останется в прежнем, рабочем виде.
+        shutil.move(str(new_dir), str(old_dir))
+        _prune_empty_parents(new_dir.parent, cars_dir)
+        raise
+    _prune_empty_parents(old_parent, cars_dir)
+    return new_dir
+
+
+def _rebase_path(p: Path, old_dir: Path, new_dir: Path) -> Path:
+    try:
+        rel = p.resolve().relative_to(old_dir.resolve())
+    except ValueError:
+        return p  # путь вне old_dir (например файл, ещё не скопированный в модель) — не трогаем
+    return new_dir / rel
+
+
+def _rebase_spec_paths(spec: NewCarSpec, old_dir: Path, new_dir: Path) -> None:
+    """См. update_car — после физического переноса модели переписывает все
+    пути к файлам, унаследованные из старого model_dir (через load_car_spec,
+    вызванный до переноса), на новое место."""
+    def rb(p: Path) -> Path:
+        return _rebase_path(p, old_dir, new_dir)
+
+    for step in spec.steps:
+        step.usb_files = [rb(p) for p in step.usb_files]
+        step.adb_files = [rb(p) for p in step.adb_files]
+        if step.exe_file:
+            step.exe_file = rb(step.exe_file)
+        for apk in step.standard_apks:
+            apk.path = rb(apk.path)
+        for apk in step.standard_apks_optional:
+            apk.path = rb(apk.path)
+        for action in step.actions:
+            action.files = [rb(p) for p in action.files]
+        for variant in step.variants:
+            variant.usb_files = [rb(p) for p in variant.usb_files]
+            for apk in variant.standard_apks:
+                apk.path = rb(apk.path)
+            for apk in variant.standard_apks_optional:
+                apk.path = rb(apk.path)
+        for block in step.instruction_blocks:
+            if block.get("type") == "photo" and block.get("path"):
+                block["path"] = str(rb(Path(block["path"])))
 
 
 def _parse_apk_entry(item, base_dir: Path) -> StandardApkSpec:
