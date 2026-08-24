@@ -17,7 +17,8 @@ from ..events import event_bridge
 from ... import update_tracker
 from ...content_config import get_base_url
 from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
-                              list_shared_apk_catalog, sync_scripts, sync_shared_apk_metadata)
+                              list_shared_apk_catalog, prune_removed_models, sync_scripts,
+                              sync_shared_apk_metadata)
 from ...ping_client import PingError, get_or_create_client_id, send_ping
 from ...scanner import flatten_models, scan_cars
 from ...submit_config import get_submit_config
@@ -73,6 +74,13 @@ class SyncApi:
             try:
                 sync_scripts(self.base_dir, self.cars_dir, log=self._log, manifest=manifest,
                               on_progress=self._on_sync_progress)
+                # sync_scripts выше только докачивает — сам никогда не
+                # удаляет локальное (см. его докстринг), поэтому переименованные/
+                # убранные на сервере модели отдельно убираем здесь (см.
+                # prune_removed_models — сравнивает со снимком прошлого
+                # манифеста, не трогает то, что технику ещё только предстоит
+                # опубликовать).
+                prune_removed_models(self.base_dir, self.cars_dir, manifest, log=self._log)
             except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
                 self._log(f"Не удалось проверить обновления моделей на сервере: {exc}")
             else:

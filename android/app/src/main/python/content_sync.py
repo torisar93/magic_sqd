@@ -7,6 +7,7 @@ concurrent.futures), поэтому переносится почти без и�
 это отдельные следующие шаги)."""
 import json
 import os
+import shutil
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -176,16 +177,92 @@ def sync_shared_folder(base_url: str, cars_dir: Path, folder_name: str, log=lamb
 
 
 def sync_scripts(base_url: str, cars_dir: Path, log=lambda m: None,
-                  on_progress=lambda done, total: None) -> int:
+                  on_progress=lambda done, total: None, manifest=None) -> int:
     """Автообновление скриптов/инструкций всех моделей (cars/), без
-    files/usb_files (тяжёлые payload'ы, отдельный шаг перед установкой)."""
-    manifest = fetch_manifest(base_url)
+    files/usb_files (тяжёлые payload'ы, отдельный шаг перед установкой).
+    manifest — если вызывающий уже скачал его сам (см. mobile_bridge.py:
+    sync_cars — нужен ещё и для prune_removed_models ниже, незачем качать
+    дважды), передаётся готовым; иначе качаем сами, как раньше."""
+    if manifest is None:
+        manifest = fetch_manifest(base_url)
     if manifest is None:
         log("Не удалось получить manifest.json с сервера — работаем с тем, что уже скачано локально.")
         return 0
     return sync_tree(base_url, "cars", cars_dir, manifest, log=log,
                       skip_dirs=("files", "usb_files"), no_recurse_dirs=("cars/_shared",),
                       on_progress=on_progress)
+
+
+_KNOWN_MODELS_FILENAME = "known_models.json"
+_MODEL_MARKER = "_wizard_spec.json"  # см. desktop app/car_generator.py: SPEC_FILENAME
+
+
+def _model_prefixes_from_manifest(manifest) -> set:
+    suffix = f"/{_MODEL_MARKER}"
+    return {path[:-len(suffix)] for path in manifest
+            if path.startswith("cars/") and path.endswith(suffix)}
+
+
+def _known_models_path(base_dir: Path) -> Path:
+    return base_dir / _KNOWN_MODELS_FILENAME
+
+
+def _load_known_models(base_dir: Path) -> set:
+    try:
+        data = json.loads(_known_models_path(base_dir).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return set(data) if isinstance(data, list) else set()
+
+
+def _save_known_models(base_dir: Path, prefixes) -> None:
+    try:
+        _known_models_path(base_dir).write_text(
+            json.dumps(sorted(prefixes), ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _prune_empty_ancestors(start: Path, stop_at: Path) -> None:
+    stop_at = stop_at.resolve()
+    current = start.resolve()
+    while current != stop_at and stop_at in current.parents:
+        try:
+            if any(current.iterdir()):
+                return
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def prune_removed_models(base_dir: Path, cars_dir: Path, manifest, log=lambda m: None) -> list:
+    """Порт desktop app/content_sync.py:prune_removed_models — sync_scripts
+    выше только докачивает, сам никогда ничего не удаляет, поэтому модель,
+    переименованную/убранную на сервере (см. car_generator.py:update_car),
+    отдельно убираем здесь, иначе она вечно висела бы в списке марок на
+    телефоне техника дублем со старым названием. Сравниваем со СНИМКОМ
+    прошлого манифеста (base_dir/known_models.json), а не с текущим
+    содержимым cars_dir — иначе под удаление попала бы и модель, которую
+    техник только что создал локально и ещё не опубликовал. Первый запуск
+    после обновления приложения (снимка ещё нет) ничего не удаляет, только
+    заводит базовую линию."""
+    if manifest is None:
+        return []
+    current = _model_prefixes_from_manifest(manifest)
+    previous = _load_known_models(base_dir)
+    removed = []
+    if previous:
+        for prefix in sorted(previous - current):
+            model_dir = base_dir / prefix
+            if not (model_dir / _MODEL_MARKER).exists():
+                continue
+            log(f"Модель больше не публикуется на сервере, убираю локальную копию: {prefix}")
+            shutil.rmtree(model_dir, ignore_errors=True)
+            _prune_empty_ancestors(model_dir.parent, cars_dir)
+            removed.append(prefix)
+    _save_known_models(base_dir, current)
+    return removed
 
 
 def sync_model_subfolder(base_url: str, cars_dir: Path, local_dir: Path, log=lambda m: None,

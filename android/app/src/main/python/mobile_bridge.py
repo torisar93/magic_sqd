@@ -6,7 +6,8 @@ import threading
 from pathlib import Path
 from urllib.parse import quote
 
-from content_sync import sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest
+from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
+                           prune_removed_models)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version
 from wizard_spec import load_wizard_spec
 from apk_library import list_apks as _list_apks, ensure_apks_downloaded as _ensure_apks_downloaded
@@ -38,8 +39,16 @@ def get_sync_progress() -> str:
 
 def sync_cars(cars_dir: str, base_url: str) -> str:
     lines = []
-    downloaded = sync_scripts(base_url, Path(cars_dir), log=lambda m: lines.append(m),
-                               on_progress=_progress_cb("cars"))
+    cars_path = Path(cars_dir)
+    manifest = fetch_manifest(base_url)
+    downloaded = sync_scripts(base_url, cars_path, log=lambda m: lines.append(m),
+                               on_progress=_progress_cb("cars"), manifest=manifest)
+    # sync_scripts выше только докачивает — модели, переименованные/убранные
+    # на сервере (см. desktop app/car_generator.py:update_car), сами собой
+    # локально не пропадают, поэтому отдельно подчищаем их здесь (см.
+    # content_sync.prune_removed_models — не трогает то, что техник только
+    # что создал локально и ещё не опубликовал).
+    prune_removed_models(cars_path.parent, cars_path, manifest, log=lambda m: lines.append(m))
     return json.dumps({"downloaded": downloaded, "log": lines})
 
 

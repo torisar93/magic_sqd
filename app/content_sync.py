@@ -22,6 +22,7 @@ sync_shared_apks/ensure_apks_downloaded). Исключение — список 
 from __future__ import annotations
 import json
 import os
+import shutil
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -376,6 +377,97 @@ def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
         return 0
     return sync_tree(url, "cars", cars_dir, log=log, skip_dirs=("files", "usb_files"),
                       no_recurse_dirs=("cars/_shared",), manifest=manifest, on_progress=on_progress)
+
+
+_KNOWN_MODELS_FILENAME = "known_models.json"
+_MODEL_MARKER = "_wizard_spec.json"  # см. car_generator.py: SPEC_FILENAME — не импортируем
+# оттуда напрямую, чтобы content_sync.py оставался лёгким и порт-совместимым
+# с android/app/src/main/python/content_sync.py (та же константа продублирована там).
+
+
+def _model_prefixes_from_manifest(manifest: dict[str, dict]) -> set[str]:
+    """Множество путей вида "cars/<Марка>/<Модель>[/<Модификация>]" — по
+    одному на каждую реальную модель в манифесте. Узнаём модель по наличию
+    _MODEL_MARKER — единственного файла, который пишет ТОЛЬКО этот редактор
+    (car_generator.py:_write_model_files), есть у каждой модели, созданной
+    через него (подтверждено регрессией по всем моделям проекта)."""
+    suffix = f"/{_MODEL_MARKER}"
+    return {path[:-len(suffix)] for path in manifest
+            if path.startswith("cars/") and path.endswith(suffix)}
+
+
+def _known_models_path(base_dir: Path) -> Path:
+    return base_dir / _KNOWN_MODELS_FILENAME
+
+
+def _load_known_models(base_dir: Path) -> set[str]:
+    try:
+        data = json.loads(_known_models_path(base_dir).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return set(data) if isinstance(data, list) else set()
+
+
+def _save_known_models(base_dir: Path, prefixes: set[str]) -> None:
+    try:
+        _known_models_path(base_dir).write_text(
+            json.dumps(sorted(prefixes), ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass  # не смертельно — просто не подчистим один раз, попробуем снова в следующий запуск
+
+
+def _prune_empty_ancestors(start: Path, stop_at: Path) -> None:
+    """Как car_generator.py:_prune_empty_parents (независимая копия — по той
+    же причине, что и _MODEL_MARKER выше: этот модуль не должен зависеть от
+    car_generator.py)."""
+    stop_at = stop_at.resolve()
+    current = start.resolve()
+    while current != stop_at and stop_at in current.parents:
+        try:
+            if any(current.iterdir()):
+                return
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def prune_removed_models(base_dir: Path, cars_dir: Path, manifest: dict[str, dict] | None,
+                          log=lambda m: None) -> list[str]:
+    """После sync_scripts (который только докачивает — см. его докстринг:
+    "тяжёлые payload'ы... НЕ подтягиваются автоматически", то же верно и для
+    удаления — sync_tree в принципе никогда ничего не стирает) убирает
+    локальные папки моделей, пропавших из манифеста сервера с прошлого
+    успешного запуска — например, админ переименовал модель в редакторе
+    (см. car_generator.py:update_car — физически переносит папку и на
+    сервере при публикации), а у уже установленных техников старое название
+    продолжало бы висеть в списке марок вечно, задваивая машину.
+
+    Осторожность: сравниваем не "есть в cars_dir, но нет в манифесте
+    СЕЙЧАС" (тогда под удаление попала бы и модель, которую сам техник
+    только что создал локально через редактор/мастер и ещё не опубликовал —
+    её тоже пока нет в манифесте), а с сохранённым СНИМКОМ прошлого
+    манифеста (base_dir/known_models.json) — удаляем только то, что раньше
+    реально БЫЛО в манифесте и с тех пор из него пропало. Первый запуск
+    после обновления программы (снимка ещё нет) ничего не удаляет — только
+    заводит базовую линию, чтобы само обновление не могло неожиданно снести
+    что-то знакомое технику."""
+    if manifest is None:
+        return []
+    current = _model_prefixes_from_manifest(manifest)
+    previous = _load_known_models(base_dir)
+    removed: list[str] = []
+    if previous:
+        for prefix in sorted(previous - current):
+            model_dir = base_dir / prefix
+            if not (model_dir / _MODEL_MARKER).exists():
+                continue  # уже не похоже на синхронизированную модель — не трогаем
+            log(f"Модель больше не публикуется на сервере, убираю локальную копию: {prefix}")
+            shutil.rmtree(model_dir, ignore_errors=True)
+            _prune_empty_ancestors(model_dir.parent, cars_dir)
+            removed.append(prefix)
+    _save_known_models(base_dir, current)
+    return removed
 
 
 def sync_shared_folder(base_dir: Path, name: str, log=lambda m: None,
