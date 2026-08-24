@@ -289,6 +289,12 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             # заранее не известен, техник вписывает сам (см. app.js:
             # connectionModeFor/onAdbConnect).
             "apps_wifi_port": step_data.get("apps_wifi_port"),
+            # ADB-команды (actions) — тот же смысл, что apps_connection/
+            # apps_wifi_port выше, но для type == "actions" (см.
+            # car_generator.py: StepSpec.actions_connection/actions_wifi_port,
+            # app.js: connectionModeFor/connectionPortFor).
+            "actions_connection": step_data.get("actions_connection", "wired"),
+            "actions_wifi_port": step_data.get("actions_wifi_port"),
             "exe_file": exe_file,
             "check_var": step_data.get("check_var", ""),
             "check_options": step_data.get("check_options", []),

@@ -176,6 +176,23 @@
     }
 
     // -- uart ---------------------------------------------------------------
+    // Справочное поле порта Wi-Fi ADB — для uart/telnet: оба типа этапа
+    // технически подключаются иначе (COM-порт/фиксированный telnet-порт 23)
+    // и нигде это поле не читают, оно просто на память автору модели, если
+    // порт всё же известен (например для другого этапа той же машины).
+    function renderInfoPortRow(step, portKey) {
+      const row = el("div", { class: "row", style: "margin-bottom: 10px" });
+      row.appendChild(el("span", { text: "Порт Wi-Fi ADB (справочно, ни на что не влияет):" }));
+      const input = el("input", { type: "text", style: "width: 90px", placeholder: "неизвестен" });
+      input.value = step[portKey] != null ? String(step[portKey]) : "";
+      input.addEventListener("input", () => {
+        const v = input.value.trim();
+        step[portKey] = v ? (Number(v) || null) : null;
+      });
+      row.appendChild(input);
+      container.appendChild(row);
+    }
+
     function renderUartFields(step) {
       container.appendChild(el("p", {
         class: "app-desc",
@@ -183,6 +200,7 @@
           + "аналог PuTTY. COM-порт выбирается техником на месте во время установки (или "
           + "определяется сам, если он один) — здесь настраивается только скорость порта.",
       }));
+      renderInfoPortRow(step, "uart_wifi_port");
       container.appendChild(el("span", { class: "field-label", text: "Скорость порта (бод)" }));
       const baudInput = el("input", { type: "number", style: "width: 120px; margin-bottom: 10px" });
       baudInput.value = String(step.uart_baudrate);
@@ -216,6 +234,7 @@
           + "скрыт) — адрес находится автоматически (сканирование соседей в сети) или "
           + "предлагается выбрать/ввести на месте во время установки, порт 23.",
       }));
+      renderInfoPortRow(step, "telnet_wifi_port");
       container.appendChild(el("span", {
         class: "field-label",
         text: "Команды (по одной на строку) — каждая отправляется отдельным telnet-подключением",
@@ -251,6 +270,8 @@
       "через {ask}.";
 
     function renderActionsFields(step) {
+      renderConnectionRow(step, "actions_connection", "actions_wifi_port");
+
       container.appendChild(el("p", {
         class: "app-desc",
         text: "Кнопки, которые техник сможет нажимать в любом порядке и по несколько раз на этом "
@@ -426,40 +447,44 @@
       wired: "Провод (USB)", wifi: "Wi-Fi", ask: "Спросить технику на месте",
     };
 
-    function renderAppsFields(step) {
-      container.appendChild(el("span", { class: "field-label", text: "Способ подключения для установки" }));
+    // Общий блок "способ подключения + порт" — используется и "Установкой
+    // приложений" (apps_connection/apps_wifi_port), и "ADB-командами"
+    // (actions_connection/actions_wifi_port): у КАЖДОГО этапа свой
+    // независимый выбор, одна и та же модель может ставить приложения по
+    // Wi-Fi на одном этапе, а выполнять ADB-команды по проводу на другом.
+    // Порт — пусто, если заранее не известен: техник впишет его сам при
+    // подключении на самом этапе установки.
+    function renderConnectionRow(step, connectionKey, portKey) {
+      container.appendChild(el("span", { class: "field-label", text: "Способ подключения" }));
       const connectionSelect = el("select", {}, Object.entries(APPS_CONNECTION_LABELS).map(([value, text]) =>
-        el("option", { value, text, selected: value === (step.apps_connection || "wired") ? "" : null })));
+        el("option", { value, text, selected: value === (step[connectionKey] || "wired") ? "" : null })));
       container.appendChild(connectionSelect);
 
-      // Порт — свой у ЭТОГО этапа, не общий на всю модель: одна и та же
-      // модель может ставить приложения по Wi-Fi на этом этапе, а другой
-      // adb/actions-этап при этом идёт по проводу (см. "Порт Wi-Fi ADB" в
-      // шапке редактора — тот вариант общий на модель, для старых
-      // adb/actions-этапов, здесь — независимо от него). Пусто — порт
-      // заранее не известен, техник впишет его сам при подключении на
-      // самом этапе установки.
       const portRow = el("div", { class: "row", style: "margin-top: 4px" });
       portRow.appendChild(el("span", { text: "Порт Wi-Fi:" }));
       const portInput = el("input", {
         type: "text", style: "width: 90px",
         placeholder: "неизвестен — впишет техник",
       });
-      portInput.value = step.apps_wifi_port != null ? String(step.apps_wifi_port) : "";
+      portInput.value = step[portKey] != null ? String(step[portKey]) : "";
       portInput.addEventListener("input", () => {
         const v = portInput.value.trim();
-        step.apps_wifi_port = v ? (Number(v) || null) : null;
+        step[portKey] = v ? (Number(v) || null) : null;
       });
       portRow.appendChild(portInput);
       function updatePortVisibility() {
         portRow.style.display = connectionSelect.value === "wired" ? "none" : "flex";
       }
       connectionSelect.addEventListener("change", () => {
-        step.apps_connection = connectionSelect.value;
+        step[connectionKey] = connectionSelect.value;
         updatePortVisibility();
       });
       updatePortVisibility();
       container.appendChild(portRow);
+    }
+
+    function renderAppsFields(step) {
+      renderConnectionRow(step, "apps_connection", "apps_wifi_port");
 
       renderVariantToggle(step, "standard_apks", "APK всех вариантов будут потеряны.");
       if (step.variants.length) {

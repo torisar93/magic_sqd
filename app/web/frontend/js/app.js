@@ -66,10 +66,23 @@ function onModelSelected(model) {
   window.stageWizard.open(model);
 }
 
-function onCarCreated(brand, modelName, modification) {
+// editingKey — ключ (== пройденный путь папки, см. scanner_api.py:
+// _model_to_dict) модели, которая была открыта в редакторе НА МОМЕНТ клика
+// "Изменить" (см. edit-car-btn ниже) — null для "Добавить машину"/правки
+// заявки клиента (pending_list.js, там свой onCreated). Если это была та
+// же модель, что сейчас показана в основном окне — перезагружаем её показ
+// вместо того, чтобы оставлять устаревшую инструкцию/этапы висеть до
+// следующего ручного выбора модели в пикере. dir — новый путь модели (см.
+// car_saved-событие, car_editor_api.py:_worker) — это и есть новый key,
+// даже если марку/модель переименовали.
+async function onCarCreated(brand, modelName, modification, dir, editingKey) {
   const label = modification ? `${brand} / ${modelName} — ${modification}` : `${brand} / ${modelName}`;
   log(`Сохранена модель: ${label}`);
-  window.mainPicker.reload();
+  await window.mainPicker.reload();
+  if (editingKey && dir && currentModel && currentModel.key === editingKey) {
+    const full = await window.pywebview.api.scanner_select_model(dir);
+    if (!full.error) onModelSelected(full);
+  }
 }
 
 // Автообновление ПРОГРАММЫ (не путать с showUpdatesNotice ниже — та про
@@ -118,6 +131,7 @@ window.addEventListener("pywebviewready", async () => {
   window.initResizer(document.getElementById("app-shell"), document.getElementById("resizer"));
 
   window.initDialogs();
+  window.boostyDialogs.init();
   window.instructionEditor.init();
   window.graphWizard.init(log);
   window.stageWizard.init(document.getElementById("install-content"), log);
@@ -177,12 +191,20 @@ window.addEventListener("pywebviewready", async () => {
   });
   if (!info.admin_mode && !info.debug_mode) {
     checkForUpdate(); // fire-and-forget, не блокирует остальной старт
+    // Только техническая сборка (не admin/debug) — те же соображения, что
+    // и у автообновления выше: админ и без того поддерживает проект своей
+    // работой, ему не нужен донат-попап.
+    window.boostyDialogs.maybeShowWelcomeDialog();
   }
 
   document.getElementById("add-car-btn").addEventListener("click", () =>
-    window.graphWizard.open(null, window.mainPicker.getBrands(), onCarCreated));
-  document.getElementById("edit-car-btn").addEventListener("click", () =>
-    window.graphWizard.open(currentModel, window.mainPicker.getBrands(), onCarCreated));
+    window.graphWizard.open(null, window.mainPicker.getBrands(),
+      (brand, modelName, modification, dir) => onCarCreated(brand, modelName, modification, dir, null)));
+  document.getElementById("edit-car-btn").addEventListener("click", () => {
+    const editingKey = currentModel ? currentModel.key : null;
+    window.graphWizard.open(currentModel, window.mainPicker.getBrands(),
+      (brand, modelName, modification, dir) => onCarCreated(brand, modelName, modification, dir, editingKey));
+  });
   document.getElementById("report-btn").addEventListener("click", () => window.reportDialog.open(currentModel));
   document.getElementById("admin-login-btn").addEventListener("click", () => window.adminLoginDialog.open());
   document.getElementById("admin-upload-btn").addEventListener("click", () => window.adminDialog.open());

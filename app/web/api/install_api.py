@@ -174,6 +174,16 @@ class InstallApi:
             # load_stages() ниже). None — заранее не известен, техник
             # вписывает сам на этапе (см. stage_wizard.js: buildTransportBar).
             "apps_wifi_port": stage.get("apps_wifi_port"),
+            # ADB-команды (actions) — свой независимый выбор способа
+            # подключения/порта, тот же смысл, что apps_connection/
+            # apps_wifi_port выше (см. car_generator.py: StepSpec.
+            # actions_connection/actions_wifi_port).
+            "actions_connection": stage.get("actions_connection", "wired"),
+            "actions_wifi_port": stage.get("actions_wifi_port"),
+            # uart/telnet — порт Wi-Fi ADB чисто справочно (см. StepSpec.
+            # uart_wifi_port/telnet_wifi_port) — не используется рантаймом.
+            "uart_wifi_port": stage.get("uart_wifi_port"),
+            "telnet_wifi_port": stage.get("telnet_wifi_port"),
             "check_var": stage.get("check_var", ""),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,

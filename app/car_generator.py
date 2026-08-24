@@ -181,6 +181,23 @@ class StepSpec:
     # Wi-Fi на своём порту, пока другой этап модели работает по проводу.
     # None — заранее не известен, техник вписывает его сам на самом этапе.
     apps_wifi_port: int | None = None
+    # "actions" (ADB-команды) — тот же смысл, что и apps_connection/
+    # apps_wifi_port выше, но для этого типа этапа: раньше подключение для
+    # actions управлялось только общим на всю модель чекбоксом "wifi" в
+    # шапке редактора (см. NewCarSpec.wifi ниже), а верхний бар подключения
+    # в мастере техника (stage_wizard.js: buildTransportBar) для actions
+    # всегда показывал только список проводных устройств — Wi-Fi через него
+    # выбрать было нельзя вовсе. Теперь у actions свой независимый выбор
+    # способа, как у apps.
+    actions_connection: str = "wired"
+    actions_wifi_port: int | None = None
+    # "uart"/"telnet" — порт Wi-Fi ADB чисто справочно/про запас: оба типа
+    # технически подключаются иначе (uart — через COM-порт, выбирается
+    # техником на месте; telnet — по IPv6 на фиксированном порту 23) и не
+    # читают это поле нигде в рантайме — просто место, куда автор модели
+    # может записать порт для памяти, если он всё же известен.
+    uart_wifi_port: int | None = None
+    telnet_wifi_port: int | None = None
     # "exe" — готовый установщик, который производитель магнитолы даёт
     # только собранным .exe без исходных скриптов/инструкций; этап просто
     # даёт пользователю его запустить и завершить установку в нём самому
@@ -239,26 +256,23 @@ class CarGenerationError(RuntimeError):
     pass
 
 
-def create_car(cars_dir: Path, spec: NewCarSpec) -> Path:
-    """Создаёт cars/<марка>/<модель>/ (или cars/<марка>/<модель>/
-    <модификация>/, если spec.modification задана) со всеми файлами.
-    Бросает CarGenerationError, если модель уже существует, марка/модель/
-    модификация заданы некорректно, не задано ни одного этапа, или
-    модификация указана для модели, у которой уже есть свои файлы прямо
-    в cars/<марка>/<модель>/ (обычная модель без модификаций — см.
-    app/scanner.py:ModelGroup, там же и обратный случай "leaf побеждает
-    модификации", так что смешивать их в одной папке модели нельзя)."""
-    brand = spec.brand.strip()
-    model = spec.model.strip()
-    modification = spec.modification.strip()
+def _resolve_model_dir(cars_dir: Path, brand: str, model: str, modification: str) -> Path:
+    """Общая часть create_car/update_car: проверяет марку/модель/модификацию
+    и возвращает путь cars/<марка>/<модель>/ (или .../<модификация>/, если
+    modification задана). Бросает CarGenerationError при пустых полях,
+    недопустимых символах, или если модификация указана для модели, у
+    которой уже есть свои файлы прямо в cars/<марка>/<модель>/ (обычная
+    модель без модификаций — см. app/scanner.py:ModelGroup, там же и
+    обратный случай "leaf побеждает модификации", так что смешивать их в
+    одной папке модели нельзя). НЕ проверяет, существует ли уже итоговый
+    путь — это разный смысл для create_car (всегда ошибка) и update_car
+    (ошибка, только если путь реально меняется), решает вызывающий код."""
     if not brand or not model:
         raise CarGenerationError("Не заданы марка и/или модель.")
     if any(c in INVALID_NAME_CHARS for c in brand) or any(c in INVALID_NAME_CHARS for c in model):
         raise CarGenerationError('Марка/модель не должны содержать символы: < > : " / \\ | ? *')
     if modification and any(c in INVALID_NAME_CHARS for c in modification):
         raise CarGenerationError('Модификация не должна содержать символы: < > : " / \\ | ? *')
-    if not spec.steps:
-        raise CarGenerationError("Не задано ни одного этапа установки.")
 
     model_root = cars_dir / brand / model
     if modification:
@@ -266,9 +280,18 @@ def create_car(cars_dir: Path, spec: NewCarSpec) -> Path:
             raise CarGenerationError(
                 f"{model_root} уже существует как обычная модель без модификаций — "
                 "чтобы добавить модификацию, сначала перенесите её файлы в подпапку вручную.")
-        model_dir = model_root / modification
-    else:
-        model_dir = model_root
+        return model_root / modification
+    return model_root
+
+
+def create_car(cars_dir: Path, spec: NewCarSpec) -> Path:
+    """Создаёт cars/<марка>/<модель>/ (или cars/<марка>/<модель>/
+    <модификация>/, если spec.modification задана) со всеми файлами.
+    Бросает CarGenerationError, если модель уже существует или не задано ни
+    одного этапа (остальные проверки — см. _resolve_model_dir)."""
+    model_dir = _resolve_model_dir(cars_dir, spec.brand.strip(), spec.model.strip(), spec.modification.strip())
+    if not spec.steps:
+        raise CarGenerationError("Не задано ни одного этапа установки.")
     if model_dir.exists():
         raise CarGenerationError(f"Такая модель уже существует: {model_dir}")
 
@@ -281,17 +304,55 @@ def _has_own_files(model_root: Path) -> bool:
     return any((model_root / name).exists() for name in ("instruction.html", "stages.py", "install.py"))
 
 
-def update_car(model_dir: Path, spec: NewCarSpec) -> None:
+def _prune_empty_parents(start: Path, cars_dir: Path) -> None:
+    """После переноса модели на новый путь (см. update_car) подчищает
+    опустевшие родительские папки СТАРОГО пути (например старую марку, если
+    это была её единственная модель) — поднимается вверх, пока встречает
+    пустые папки, останавливается на первой непустой или на cars_dir (саму
+    cars_dir не трогает)."""
+    cars_dir = cars_dir.resolve()
+    current = start.resolve()
+    while current != cars_dir and cars_dir in current.parents:
+        if any(current.iterdir()):
+            return
+        current.rmdir()
+        current = current.parent
+
+
+def update_car(cars_dir: Path, model_dir: Path, spec: NewCarSpec, *, allow_rename: bool = True) -> Path:
     """Пересобирает файлы уже существующей модели (созданной этим мастером
-    ранее — см. load_car_spec) заново из текущего spec. Марку/модель
-    (папку) не переименовывает — если они изменились в spec, они просто
-    игнорируются, вызывающий код (add_car_dialog.py) держит поля марки/
-    модели заблокированными в режиме редактирования."""
+    ранее — см. load_car_spec) заново из текущего spec. Если марка/модель/
+    модификация в spec отличаются от текущего расположения model_dir —
+    физически переносит папку на новый путь (shutil.move) и подчищает
+    опустевшие родительские папки старого пути (см. _prune_empty_parents);
+    иначе просто пересобирает файлы на месте. Возвращает актуальный путь
+    модели (совпадает с исходным model_dir, если переименования не было) —
+    вызывающий код должен использовать именно возвращённое значение дальше
+    (публикация на сервер, событие для UI и т.п.), а не исходный model_dir.
+    allow_rename=False — переименование полностью отключено (даже если
+    spec.brand/model/modification отличаются от текущих, они просто
+    игнорируются) — нужно для правки застейджённой заявки клиента
+    (app/web/api/submissions_api.py): её model_dir лежит в base_dir/
+    _pending/<имя заявки>/, а не под cars_dir, так что "новый путь"
+    оказался бы где-то внутри cars_dir — путать эти два дерева нельзя."""
     if not model_dir.exists():
         raise CarGenerationError(f"Модель не найдена: {model_dir}")
     if not spec.steps:
         raise CarGenerationError("Не задано ни одного этапа установки.")
+
+    new_dir = (_resolve_model_dir(cars_dir, spec.brand.strip(), spec.model.strip(), spec.modification.strip())
+               if allow_rename else model_dir)
+    if new_dir != model_dir:
+        if new_dir.exists():
+            raise CarGenerationError(f"Такая модель уже существует: {new_dir}")
+        new_dir.parent.mkdir(parents=True, exist_ok=True)
+        old_parent = model_dir.parent
+        shutil.move(str(model_dir), str(new_dir))
+        _prune_empty_parents(old_parent, cars_dir)
+        model_dir = new_dir
+
     _write_model_files(model_dir, spec)
+    return model_dir
 
 
 def _parse_apk_entry(item, base_dir: Path) -> StandardApkSpec:
@@ -415,6 +476,10 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             apps_connection=(step_data.get("apps_connection") or ("wifi" if data.get("wifi") else "wired"))
             if step_type == "apps" else step_data.get("apps_connection", "wired"),
             apps_wifi_port=step_data.get("apps_wifi_port"),
+            actions_connection=step_data.get("actions_connection", "wired"),
+            actions_wifi_port=step_data.get("actions_wifi_port"),
+            uart_wifi_port=step_data.get("uart_wifi_port"),
+            telnet_wifi_port=step_data.get("telnet_wifi_port"),
             exe_file=exe_file,
             check_var=step_data.get("check_var", ""),
             check_options=step_data.get("check_options", []),
@@ -643,6 +708,10 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "standard_apks_optional": [_apk_entry_to_json(a) for a in step.standard_apks_optional],
                 "apps_connection": step.apps_connection,
                 "apps_wifi_port": step.apps_wifi_port,
+                "actions_connection": step.actions_connection,
+                "actions_wifi_port": step.actions_wifi_port,
+                "uart_wifi_port": step.uart_wifi_port,
+                "telnet_wifi_port": step.telnet_wifi_port,
                 "exe_file": step.exe_file.name if step.exe_file else None,
                 "check_var": step.check_var,
                 "check_options": step.check_options,
@@ -1056,9 +1125,13 @@ def _render_stages_py(spec: NewCarSpec) -> str:
             entry.append(f'        "run": {run_expr},')
         elif step.type == "uart":
             entry.append(f'        "run": m.uart_step_{i},')
+            entry.append(f'        "uart_wifi_port": {step.uart_wifi_port!r},')
         elif step.type == "telnet":
             entry.append(f'        "run": m.telnet_step_{i},')
+            entry.append(f'        "telnet_wifi_port": {step.telnet_wifi_port!r},')
         elif step.type == "actions":
+            entry.append(f'        "actions_connection": {step.actions_connection!r},')
+            entry.append(f'        "actions_wifi_port": {step.actions_wifi_port!r},')
             entry.append('        "actions": [')
             for j, action in enumerate(step.actions, start=1):
                 action_title = action.label or f"Действие {j}"

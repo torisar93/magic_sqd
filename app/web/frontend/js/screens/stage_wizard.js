@@ -40,6 +40,10 @@
   let sharedApksPromise = null;
   let runnerBusy = false;
   let modelWifiPort = 5555;
+  // Показываем "Готово!"+Boosty один раз за сеанс работы с моделью — сброс
+  // при каждом open() (см. android app.js: installCompletedShown, тот же
+  // приём).
+  let installCompletedShown = false;
 
   function log(message) {
     logFn(`[${model.display_label}] ${message}`);
@@ -213,6 +217,7 @@
     loadError = null;
     stages = [];
     modelWifiPort = 5555;
+    installCompletedShown = false;
 
     const result = await window.pywebview.api.install_load_stages(model.key);
     if (result.error) {
@@ -291,7 +296,13 @@
     const nxt = nextVisibleIndex(index);
     if (nxt >= stages.length) {
       renderNav();
-      if (stages.length) log("Все этапы установки выполнены.");
+      if (stages.length) {
+        log("Все этапы установки выполнены.");
+        if (!installCompletedShown) {
+          installCompletedShown = true;
+          window.boostyDialogs.showCompletionDialog();
+        }
+      }
       return;
     }
     show(nxt);
@@ -420,13 +431,13 @@
     const wiredRow = el("div", { class: "row" }, [select, refreshBtn]);
 
     const wifiStatus = el("span", { style: "color: var(--text-dim)", text: "Wi-Fi: не подключено" });
-    // Порт САМОГО ЭТАПА (apps_wifi_port, задаётся в редакторе на самом
-    // apps-этапе — не общий на модель modelWifiPort, тот для adb/actions)
-    // — если известен заранее, предзаполняем; если нет, поле пустое и
-    // техник вписывает порт сам, увидев его на магнитоле. В любом случае
-    // редактируется — не жёсткое значение (раньше порт вообще нельзя было
-    // переопределить на ПК, только увидеть в редакторе).
-    const stagePort = stage.type === "apps" ? stage.apps_wifi_port : null;
+    // Порт САМОГО ЭТАПА (apps_wifi_port/actions_wifi_port, задаётся в
+    // редакторе прямо на этапе — не общий на модель modelWifiPort, тот
+    // остался только для легаси-типа "adb") — если известен заранее,
+    // предзаполняем; если нет, поле пустое и техник вписывает порт сам,
+    // увидев его на магнитоле.
+    const stagePort = stage.type === "apps" ? stage.apps_wifi_port
+      : stage.type === "actions" ? stage.actions_wifi_port : null;
     const portInput = el("input", {
       type: "text", style: "width: 60px",
       placeholder: stagePort == null ? String(modelWifiPort) : undefined,
@@ -471,7 +482,8 @@
     wifiConnectBtn.addEventListener("click", doWifiConnect);
     const wifiRow = el("div", { class: "row" }, [wifiStatus, el("span", { text: "Порт:" }), portInput, wifiConnectBtn]);
 
-    const connection = stage.type === "apps" ? (stage.apps_connection || "wired") : "wired";
+    const connection = stage.type === "apps" ? (stage.apps_connection || "wired")
+      : stage.type === "actions" ? (stage.actions_connection || "wired") : "wired";
     if (connection === "wired") {
       bar.appendChild(wiredRow);
       refreshDevices();
@@ -780,6 +792,9 @@
     panel.appendChild(el("p", {
       text: "COM-порт для UART определяется автоматически (или предлагается выбрать, если их несколько) во время выполнения этого этапа — устройство ADB для него не требуется.",
     }));
+    if (stage.uart_wifi_port != null) {
+      panel.appendChild(el("p", { style: "color: var(--text-dim)", text: `Известный порт Wi-Fi ADB: ${stage.uart_wifi_port} (справочно).` }));
+    }
     const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
     const startBtn = el("button", { class: "accent", text: "Начать этот этап" });
     const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });
@@ -811,6 +826,9 @@
     panel.appendChild(el("p", {
       text: "IPv6-адрес магнитолы определяется автоматически (или предлагается выбрать/ввести) во время выполнения этого этапа — устройство ADB для него не требуется.",
     }));
+    if (stage.telnet_wifi_port != null) {
+      panel.appendChild(el("p", { style: "color: var(--text-dim)", text: `Известный порт Wi-Fi ADB: ${stage.telnet_wifi_port} (справочно).` }));
+    }
     const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
     const startBtn = el("button", { class: "accent", text: "Начать этот этап" });
     const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });

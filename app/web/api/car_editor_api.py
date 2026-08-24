@@ -18,7 +18,7 @@ import webview
 
 from ..events import event_bridge
 from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cached_session,
-                              get_cached_session, login, set_cached_session, upload_model)
+                              delete_cars_path, get_cached_session, login, set_cached_session, upload_model)
 from ...admin_config import get_admin_base_url
 from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec,
                                StandardApkSpec, StepSpec, StepVariant, create_car, load_car_spec, update_car)
@@ -77,6 +77,10 @@ def _step_to_dict(step: StepSpec) -> dict:
         "standard_apks_optional": _apk_entries_to_dicts(step.standard_apks_optional),
         "apps_connection": step.apps_connection,
         "apps_wifi_port": step.apps_wifi_port,
+        "actions_connection": step.actions_connection,
+        "actions_wifi_port": step.actions_wifi_port,
+        "uart_wifi_port": step.uart_wifi_port,
+        "telnet_wifi_port": step.telnet_wifi_port,
         "exe_file": _file_dict(step.exe_file) if step.exe_file else None,
         "check_var": step.check_var, "check_options": step.check_options,
         "condition_var": step.condition_var, "condition_values": step.condition_values,
@@ -126,6 +130,10 @@ def _step_from_dict(data: dict) -> StepSpec:
         standard_apks_optional=_apk_entries_from_dicts(data.get("standard_apks_optional")),
         apps_connection=data.get("apps_connection", "wired"),
         apps_wifi_port=(int(data["apps_wifi_port"]) if data.get("apps_wifi_port") not in (None, "") else None),
+        actions_connection=data.get("actions_connection", "wired"),
+        actions_wifi_port=(int(data["actions_wifi_port"]) if data.get("actions_wifi_port") not in (None, "") else None),
+        uart_wifi_port=(int(data["uart_wifi_port"]) if data.get("uart_wifi_port") not in (None, "") else None),
+        telnet_wifi_port=(int(data["telnet_wifi_port"]) if data.get("telnet_wifi_port") not in (None, "") else None),
         exe_file=Path(exe_file["path"]) if exe_file else None,
         check_var=data.get("check_var", ""), check_options=data.get("check_options") or [],
         condition_var=data.get("condition_var", ""), condition_values=data.get("condition_values") or [],
@@ -311,10 +319,17 @@ class CarEditorApi:
         event_bridge.push({"kind": "car_save_log", "text": str(message)})
 
     def _worker(self, spec: NewCarSpec, edit_model_dir, is_pending: bool = False) -> None:
+        old_rel_path = None  # относительный путь ДО переименования (если оно было) — для удаления на сервере
         try:
             if edit_model_dir:
-                update_car(edit_model_dir, spec)
-                model_dir = edit_model_dir
+                if is_pending:
+                    model_dir = update_car(self.cars_dir, edit_model_dir, spec, allow_rename=False)
+                else:
+                    if edit_model_dir != self.cars_dir and self.cars_dir in edit_model_dir.parents:
+                        old_rel_path = edit_model_dir.relative_to(self.cars_dir)
+                    model_dir = update_car(self.cars_dir, edit_model_dir, spec)
+                    if model_dir == edit_model_dir:
+                        old_rel_path = None  # не переименовали — нечего удалять на сервере
             else:
                 model_dir = create_car(self.cars_dir, spec)
         except CarGenerationError as exc:
@@ -328,6 +343,7 @@ class CarEditorApi:
         event_bridge.push({
             "kind": "car_saved",
             "brand": spec.brand, "model": spec.model, "modification": spec.modification,
+            "dir": str(model_dir),
         })
 
         if is_pending:
@@ -336,6 +352,9 @@ class CarEditorApi:
             # "переписать локальный _pending/<...>/", НЕ публиковать: заявка
             # ещё не одобрена, публикация — отдельное явное действие
             # ("Опубликовать" в том же экране, см. submissions_publish).
+            # allow_rename=False выше — марку/модель/модификацию можно
+            # поменять в самой заявке (уйдёт в спеке), но папку заявки
+            # (base_dir/_pending/<имя>/) это не переносит.
             event_bridge.push({"kind": "car_save_finished", "success": True, "message": "Сохранено."})
             return
 
@@ -351,6 +370,14 @@ class CarEditorApi:
                 upload_model(admin_base_url, admin_session_cookie, self.cars_dir, model_dir,
                              extra_dirs=extra_dirs, log=self._log, check_cancelled=self._check_cancelled)
                 self._log("Опубликовано на сервере.")
+                if old_rel_path is not None:
+                    old_rel = str(old_rel_path).replace("\\", "/")
+                    try:
+                        self._log(f"Удаляю старый путь на сервере: {old_rel}...")
+                        delete_cars_path(admin_base_url, admin_session_cookie, old_rel)
+                        self._log("Старый путь удалён.")
+                    except AdminClientError as exc:
+                        self._log(f"Не удалось удалить старый путь на сервере ({old_rel}): {exc}")
             except AdminUploadCancelled:
                 self._log("Публикация отменена (локально сохранено).")
             except AdminClientError as exc:

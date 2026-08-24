@@ -441,8 +441,8 @@
   // buildTransportBar. "ask" — то, что техник выбрал на переключателе
   // (см. appsConnectionChoice/updateTransportBars), по умолчанию "wired".
   function connectionModeFor(stage) {
-    if (stage && stage.type === "apps") {
-      const mode = stage.apps_connection || "wired";
+    if (stage && (stage.type === "apps" || stage.type === "actions")) {
+      const mode = (stage.type === "apps" ? stage.apps_connection : stage.actions_connection) || "wired";
       return mode === "ask" ? (appsConnectionChoice[stage.index] || "wired") : mode;
     }
     return modelWifi ? "wifi" : "wired";
@@ -454,6 +454,7 @@
   // в promptHostPicker останется пустым, техник впишет сам.
   function connectionPortFor(stage) {
     if (stage && stage.type === "apps") return stage.apps_wifi_port;
+    if (stage && stage.type === "actions") return stage.actions_wifi_port;
     return modelWifiPort;
   }
 
@@ -1037,7 +1038,8 @@
     // apps_connection == "ask" (техник сам выбирает на месте, см.
     // connectionModeFor); для "wired"/"wifi" способ уже задан автором
     // модели, показывать нечего.
-    const isAsk = stage.type === "apps" && (stage.apps_connection || "wired") === "ask";
+    const isAsk = (stage.type === "apps" && (stage.apps_connection || "wired") === "ask")
+      || (stage.type === "actions" && (stage.actions_connection || "wired") === "ask");
     adbModeToggleEl.style.display = isAsk ? "flex" : "none";
     if (isAsk) {
       const current = appsConnectionChoice[stage.index] || "wired";

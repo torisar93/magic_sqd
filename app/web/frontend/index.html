@@ -62,6 +62,25 @@
     </div>
   </div>
 
+  <dialog id="welcome-dialog" class="dialog-info">
+    <img class="modal-logo" src="img/logo-full-dark.svg" alt="Magic SQD" />
+    <h2>Добро пожаловать!</h2>
+    <p>Magic SQD ставит приложения на магнитолы по ADB и через USB-флешку. Если программа экономит тебе время — загляни на Boosty, это реально помогает разработке.</p>
+    <div class="boosty-links" id="welcome-boosty-links"></div>
+    <div class="dialog-actions">
+      <button id="welcome-dialog-close" class="accent">Понятно</button>
+    </div>
+  </dialog>
+
+  <dialog id="completion-dialog" class="dialog-info">
+    <h2>Готово!</h2>
+    <p>Установка завершена. Если Magic SQD экономит тебе время — поддержи проект на Boosty, это реально помогает развитию.</p>
+    <div class="boosty-links" id="completion-boosty-links"></div>
+    <div class="dialog-actions">
+      <button id="completion-dialog-close" class="accent">Понятно</button>
+    </div>
+  </dialog>
+
   <dialog id="usb-dialog">
     <h2 id="usb-dialog-title">USB-флешка</h2>
     <div class="field row">
@@ -314,6 +333,7 @@
   <script src="js/log_format.js"></script>
   <script src="js/graph/svg.js"></script>
   <script src="js/components/modal.js"></script>
+  <script src="js/components/boosty.js"></script>
   <script src="js/components/resizer.js"></script>
   <script src="js/screens/main_picker.js"></script>
   <script src="js/screens/stage_wizard.js"></script>

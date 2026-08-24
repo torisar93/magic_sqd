@@ -104,6 +104,7 @@
       usb_files: [], usb_copy_selected_apks: false, usb_apks_dest: "", usb_shared_folder: "",
       commands: [], adb_install_selected_apks: false, adb_files: [],
       standard_apks: [], standard_apks_optional: [], apps_connection: "wired",
+      actions_connection: "wired",
       exe_file: null, uart_baudrate: 115200, actions: [],
       check_var: type === "check" ? generateCheckVar() : "", check_options: [],
       condition_var: "", condition_values: [],
@@ -154,7 +155,7 @@
 
     window.events.on("car_save_log", (event) => logFn(event.text));
     window.events.on("car_saved", (event) => {
-      if (onCreatedCb) onCreatedCb(event.brand, event.model, event.modification);
+      if (onCreatedCb) onCreatedCb(event.brand, event.model, event.modification, event.dir);
     });
     window.events.on("car_save_finished", (event) => {
       logFn(event.message);
@@ -289,16 +290,24 @@
     clear(headerEl);
     const grid = el("div", { class: "car-header-grid" });
 
-    const brandInput = el("input", { type: "text", list: "graph-existing-brands", disabled: isEditing ? "" : null });
+    // Марка/модель/модификация редактируются и в режиме правки — при
+    // сохранении car_generator.py:update_car физически переносит папку
+    // модели на новый путь (полноценное переименование, см. car_save/
+    // update_car). Заблокированы только для "Заявки клиента"
+    // (isPendingModel) — там переименование пока не переносит физически
+    // застейдженную папку (см. update_car(..., allow_rename=False) в
+    // car_editor_api.py), так что смысла редактировать эти поля нет.
+    const nameLocked = isPendingModel;
+    const brandInput = el("input", { type: "text", list: "graph-existing-brands", disabled: nameLocked ? "" : null });
     brandInput.value = brand;
     brandInput.addEventListener("input", () => { brand = brandInput.value; });
     const brandList = el("datalist", { id: "graph-existing-brands" }, existingBrands.map((b) => el("option", { value: b })));
 
-    const modelInput = el("input", { type: "text", disabled: isEditing ? "" : null });
+    const modelInput = el("input", { type: "text", disabled: nameLocked ? "" : null });
     modelInput.value = model;
     modelInput.addEventListener("input", () => { model = modelInput.value; });
 
-    const modificationInput = el("input", { type: "text", placeholder: "необязательно", disabled: isEditing ? "" : null });
+    const modificationInput = el("input", { type: "text", placeholder: "необязательно", disabled: nameLocked ? "" : null });
     modificationInput.value = modification;
     modificationInput.addEventListener("input", () => { modification = modificationInput.value; });
 
@@ -311,25 +320,16 @@
     headerEl.appendChild(grid);
     headerEl.appendChild(brandList);
 
-    // Порт НЕ прячем за чекбоксом (в отличие от прошлой версии) — он нужен
-    // не только когда весь ADB на модели по Wi-Fi (этот чекбокс), но и когда
-    // ТОЛЬКО отдельный apps-этап настроен на apps_connection="wifi"/"ask"
-    // (см. car_step_fields.js: renderAppsFields), а сама модель при этом
-    // спокойно может иметь обычный проводной ADB для остальных этапов —
-    // реальный случай: Geely Atlas New (wifi=false на уровне модели, но
-    // apps-этап — Wi-Fi). Раньше в этом случае поле порта было скрыто и
-    // недоступно для редактирования вовсе.
-    const wifiRow = el("div", { class: "row", style: "margin-top: 8px" });
-    const wifiCheckbox = el("input", { type: "checkbox" });
-    wifiCheckbox.checked = wifi;
-    const wifiPortInput = el("input", { type: "text", style: "width: 70px" });
-    wifiPortInput.value = String(wifiPort);
-    wifiCheckbox.addEventListener("change", () => { wifi = wifiCheckbox.checked; });
-    wifiPortInput.addEventListener("input", () => { wifiPort = wifiPortInput.value; });
-    wifiRow.appendChild(el("label", { class: "row" }, [wifiCheckbox, "Все ADB-этапы (кроме «Установки приложений» — та настраивается отдельно на самом этапе) подключаются по Wi-Fi, а не по USB"]));
-    wifiRow.appendChild(el("span", { text: "Порт Wi-Fi ADB:" }));
-    wifiRow.appendChild(wifiPortInput);
-    headerEl.appendChild(wifiRow);
+    // Общий чекбокс "весь ADB модели по Wi-Fi" убран из формы (был нужен
+    // только легаси-типу "adb" — см. car_generator.py: _with_connect — и
+    // не давал доступа к Wi-Fi типу "actions" вовсе). Теперь у "Установки
+    // приложений" и "ADB-команд" свой независимый выбор способа/порта прямо
+    // на самом этапе (см. car_step_fields.js: renderAppsFields/
+    // renderActionsFields), а uart/telnet — там же, справочным полем.
+    // Переменные wifi/wifiPort ниже (см. открытие модели выше) по-прежнему
+    // отправляются в spec_data при сохранении без изменений — старые модели
+    // с легаси "adb" не теряют уже сохранённые spec.wifi/wifi_port, их
+    // просто больше нельзя редактировать через эту форму.
 
     const changelogField = el("div", { class: "field", style: "margin-top: 8px" });
     changelogField.appendChild(el("span", {

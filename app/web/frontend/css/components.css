@@ -493,6 +493,69 @@ dialog .field {
   margin-bottom: 10px;
 }
 
+/* ---- welcome-dialog/completion-dialog (js/components/boosty.js) — узкий
+   информационный диалог с логотипом и ссылками на Boosty, портировано с
+   мобильного приложения (android app.js: showModal/boostyLinksRow). ---- */
+dialog.dialog-info {
+  width: min(380px, 90vw);
+  text-align: center;
+}
+
+dialog.dialog-info h2 {
+  text-align: center;
+}
+
+dialog.dialog-info .modal-logo {
+  display: block;
+  height: 34px;
+  width: auto;
+  margin: 0 auto 10px;
+}
+
+dialog.dialog-info p {
+  color: var(--text-dim);
+  margin: 0 0 4px;
+}
+
+.boosty-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+
+.boosty-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: var(--corner-radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+  transition: background 0.1s ease;
+}
+
+.boosty-link:hover, .boosty-link:focus-visible {
+  background: var(--bg-elevated);
+}
+
+.boosty-link .icon {
+  display: flex;
+  flex-shrink: 0;
+}
+
+dialog.dialog-info .dialog-actions {
+  justify-content: center;
+}
+
+dialog.dialog-info .dialog-actions button {
+  flex: 1;
+}
+
 /* Индикатор "идёт фоновая операция" — usb-копирование/admin-выгрузка/
    сохранение машины (см. dialogs.js, graph_wizard.js). Заранее неизвестная
    длительность (архивирование+сеть) — тот же indeterminate CTkProgressBar,
