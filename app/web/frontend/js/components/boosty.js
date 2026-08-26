@@ -30,15 +30,18 @@
     ]);
   }
 
-  let welcomeDialog, welcomeLinksEl, completionDialog, completionLinksEl;
+  let welcomeDialog, welcomeLinksEl, welcomeCloseButton;
+  let completionDialog, completionLinksEl, completionCloseButton;
 
   function init() {
     welcomeDialog = document.getElementById("welcome-dialog");
     welcomeLinksEl = document.getElementById("welcome-boosty-links");
     completionDialog = document.getElementById("completion-dialog");
     completionLinksEl = document.getElementById("completion-boosty-links");
-    document.getElementById("welcome-dialog-close").addEventListener("click", () => welcomeDialog.close());
-    document.getElementById("completion-dialog-close").addEventListener("click", () => completionDialog.close());
+    welcomeCloseButton = document.getElementById("welcome-dialog-close");
+    completionCloseButton = document.getElementById("completion-dialog-close");
+    welcomeCloseButton.addEventListener("click", () => welcomeDialog.close());
+    completionCloseButton.addEventListener("click", () => completionDialog.close());
   }
 
   // Раз в час максимум в рамках ОДНОГО запуска программы — та же логика,
@@ -57,12 +60,16 @@
     welcomeLinksEl.innerHTML = "";
     welcomeLinksEl.appendChild(boostyLinksRow());
     welcomeDialog.showModal();
+    // Иначе Chromium/WebView2 фокусирует первую ссылку в <dialog>. Раньше
+    // она из-за общего :hover/:focus-visible правила сразу выглядела наведённой.
+    welcomeCloseButton.focus();
   }
 
   function showCompletionDialog() {
     completionLinksEl.innerHTML = "";
     completionLinksEl.appendChild(boostyLinksRow());
     completionDialog.showModal();
+    completionCloseButton.focus();
   }
 
   window.boostyDialogs = { init, maybeShowWelcomeDialog, showCompletionDialog };

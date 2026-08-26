@@ -140,8 +140,8 @@ class StepSpec:
     # "telnet" — тоже без мини-DSL: каждая строка — отдельный вызов
     # cars/_shared/telnet_adb.py:enable_adb_via_telnet(ctx, command=строка)
     # (IPv6-адрес находится автоматически или предлагается выбрать/ввести
-    # заново на каждый вызов). Пусто — используется command по умолчанию
-    # этой функции ("setprop persist.service.adb.button.visible ON").
+    # заново на каждый вызов). Пустой список означает, что этап не выполняет
+    # telnet-команд.
     commands: list[str] = field(default_factory=list)
     adb_install_selected_apks: bool = False
     # Файлы, прикреплённые к ADB-этапу — на них ссылаются команды #push/
@@ -191,13 +191,10 @@ class StepSpec:
     # способа, как у apps.
     actions_connection: str = "wired"
     actions_wifi_port: int | None = None
-    # "uart"/"telnet" — порт Wi-Fi ADB чисто справочно/про запас: оба типа
-    # технически подключаются иначе (uart — через COM-порт, выбирается
-    # техником на месте; telnet — по IPv6 на фиксированном порту 23) и не
-    # читают это поле нигде в рантайме — просто место, куда автор модели
-    # может записать порт для памяти, если он всё же известен.
+    # "uart" — порт Wi-Fi ADB чисто справочно/про запас: UART подключается
+    # через COM-порт, выбранный техником на месте, поэтому это поле не
+    # используется рантаймом.
     uart_wifi_port: int | None = None
-    telnet_wifi_port: int | None = None
     # "exe" — готовый установщик, который производитель магнитолы даёт
     # только собранным .exe без исходных скриптов/инструкций; этап просто
     # даёт пользователю его запустить и завершить установку в нём самому
@@ -537,7 +534,6 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             actions_connection=step_data.get("actions_connection", "wired"),
             actions_wifi_port=step_data.get("actions_wifi_port"),
             uart_wifi_port=step_data.get("uart_wifi_port"),
-            telnet_wifi_port=step_data.get("telnet_wifi_port"),
             exe_file=exe_file,
             check_var=step_data.get("check_var", ""),
             check_options=step_data.get("check_options", []),
@@ -769,7 +765,6 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "actions_connection": step.actions_connection,
                 "actions_wifi_port": step.actions_wifi_port,
                 "uart_wifi_port": step.uart_wifi_port,
-                "telnet_wifi_port": step.telnet_wifi_port,
                 "exe_file": step.exe_file.name if step.exe_file else None,
                 "check_var": step.check_var,
                 "check_options": step.check_options,
@@ -1067,11 +1062,11 @@ def _render_install_py(spec: NewCarSpec) -> str:
         elif step.type == "telnet":
             lines += ["", "", f"def telnet_step_{i}(ctx):"]
             lines += [f'    """{step.title or f"Этап {i}"}."""']
-            for raw_line in (step.commands or [None]):
-                if raw_line:
+            if step.commands:
+                for raw_line in step.commands:
                     lines.append(f"    enable_adb_via_telnet(ctx, command={raw_line!r})")
-                else:
-                    lines.append("    enable_adb_via_telnet(ctx)")
+            else:
+                lines.append('    ctx.log("Для Telnet-этапа не задано команд — ничего не выполняю.")')
         elif step.type == "uart":
             lines += ["", "", f"def uart_step_{i}(ctx):"]
             lines += [f'    """{step.title or f"Этап {i}"}."""']
@@ -1186,7 +1181,6 @@ def _render_stages_py(spec: NewCarSpec) -> str:
             entry.append(f'        "uart_wifi_port": {step.uart_wifi_port!r},')
         elif step.type == "telnet":
             entry.append(f'        "run": m.telnet_step_{i},')
-            entry.append(f'        "telnet_wifi_port": {step.telnet_wifi_port!r},')
         elif step.type == "actions":
             entry.append(f'        "actions_connection": {step.actions_connection!r},')
             entry.append(f'        "actions_wifi_port": {step.actions_wifi_port!r},')

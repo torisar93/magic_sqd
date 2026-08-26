@@ -180,10 +180,9 @@ class InstallApi:
             # actions_connection/actions_wifi_port).
             "actions_connection": stage.get("actions_connection", "wired"),
             "actions_wifi_port": stage.get("actions_wifi_port"),
-            # uart/telnet — порт Wi-Fi ADB чисто справочно (см. StepSpec.
-            # uart_wifi_port/telnet_wifi_port) — не используется рантаймом.
+            # UART — порт Wi-Fi ADB чисто справочно (см. StepSpec.
+            # uart_wifi_port) — не используется рантаймом.
             "uart_wifi_port": stage.get("uart_wifi_port"),
-            "telnet_wifi_port": stage.get("telnet_wifi_port"),
             "check_var": stage.get("check_var", ""),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,

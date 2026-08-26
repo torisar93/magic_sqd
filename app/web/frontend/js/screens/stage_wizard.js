@@ -826,9 +826,6 @@
     panel.appendChild(el("p", {
       text: "IPv6-адрес магнитолы определяется автоматически (или предлагается выбрать/ввести) во время выполнения этого этапа — устройство ADB для него не требуется.",
     }));
-    if (stage.telnet_wifi_port != null) {
-      panel.appendChild(el("p", { style: "color: var(--text-dim)", text: `Известный порт Wi-Fi ADB: ${stage.telnet_wifi_port} (справочно).` }));
-    }
     const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
     const startBtn = el("button", { class: "accent", text: "Начать этот этап" });
     const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });
