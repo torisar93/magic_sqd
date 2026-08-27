@@ -11,6 +11,7 @@ MODEL_STATUSES = ("ok", "needs_review", "broken")
 _RECENTLY_UPDATED_HOURS = 24
 NO_INSTRUCTION_MARKER = "no_instruction.txt"
 VERSION_FILENAME = "version.json"
+LOGO_FILENAMES = ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg")
 
 
 @dataclass
@@ -25,6 +26,7 @@ class ModelInfo:
     changelog: str = ""
     status: str = "ok"
     updated_at: str = ""
+    logo_path: Path = None
 
     @property
     def display_label(self) -> str:
@@ -37,6 +39,7 @@ class ModelGroup:
     name: str
     leaf: ModelInfo
     modifications: list
+    logo_path: Path = None
 
 
 _MODEL_PAYLOAD_DIR_NAMES = {"files", "usb_files"}
@@ -58,13 +61,17 @@ def scan_cars(cars_dir: Path):
             sub_dirs = _model_sub_dirs(model_dir)
             if _has_own_model_files(model_dir) or not sub_dirs:
                 leaf = _build_model_info(brand_dir.name, model_dir.name, None, model_dir)
-                groups.append(ModelGroup(name=model_dir.name, leaf=leaf, modifications=[]))
+                groups.append(ModelGroup(
+                    name=model_dir.name, leaf=leaf, modifications=[], logo_path=_find_logo(model_dir),
+                ))
             else:
                 modifications = [
                     _build_model_info(brand_dir.name, model_dir.name, sub.name, sub)
                     for sub in sub_dirs
                 ]
-                groups.append(ModelGroup(name=model_dir.name, leaf=None, modifications=modifications))
+                groups.append(ModelGroup(
+                    name=model_dir.name, leaf=None, modifications=modifications, logo_path=_find_logo(model_dir),
+                ))
         if groups:
             brands[brand_dir.name] = groups
     return brands
@@ -95,7 +102,16 @@ def _build_model_info(brand: str, name: str, modification, leaf_dir: Path) -> Mo
         changelog=changelog,
         status=status,
         updated_at=updated_at,
+        logo_path=_find_logo(leaf_dir),
     )
+
+
+def _find_logo(directory: Path):
+    for filename in LOGO_FILENAMES:
+        path = directory / filename
+        if path.is_file():
+            return path
+    return None
 
 
 def _read_version(model_dir: Path):

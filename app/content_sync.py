@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -227,19 +229,35 @@ def _is_stale(local_path: Path, item: dict) -> bool:
 
 def download_file(base_url: str, remote_path: str, dest: Path,
                    log=lambda m: None, chunk_size: int = CHUNK_SIZE,
-                   check_cancelled=lambda: None, mtime: float | None = None) -> None:
+                   check_cancelled=lambda: None, mtime: float | None = None,
+                   on_progress=lambda done, total, *args: None) -> None:
     """Скачивает один файл в dest (атомарно — через .part)."""
     url = f"{base_url}/{_encode_path(remote_path)}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp_dest = dest.with_name(dest.name + ".part")
     try:
         with urllib.request.urlopen(url, timeout=60) as resp, open(tmp_dest, "wb") as f:
+            try:
+                total_bytes = int(resp.headers.get("Content-Length") or 0)
+            except ValueError:
+                total_bytes = 0
+            received = 0
+            last_report = 0.0
+            if total_bytes:
+                on_progress(0, total_bytes)
             while True:
                 check_cancelled()
                 chunk = resp.read(chunk_size)
                 if not chunk:
                     break
                 f.write(chunk)
+                received += len(chunk)
+                now = time.monotonic()
+                # Не засоряем очередь UI тысячами событий, но обновляем
+                # длинный APK достаточно часто, чтобы процент был живым.
+                if total_bytes and (received >= total_bytes or now - last_report >= 0.12):
+                    on_progress(received, total_bytes)
+                    last_report = now
     except (urllib.error.HTTPError, urllib.error.URLError) as exc:
         tmp_dest.unlink(missing_ok=True)
         raise ContentSyncError(f"Ошибка скачивания {remote_path}: {exc}") from exc
@@ -257,7 +275,8 @@ def download_file(base_url: str, remote_path: str, dest: Path,
 
 
 def _download_one(base_url: str, remote_path: str, local_path: Path,
-                   log, check_cancelled, mtime: float | None = None) -> bool:
+                   log, check_cancelled, mtime: float | None = None,
+                   on_progress=lambda done, total, *args: None) -> bool:
     """Один файл для параллельного скачивания в sync_tree — обёртка над
     download_file с логом и обработкой ошибки конкретно этого файла (не
     должна рушить скачивание остальных, см. вызов через ThreadPoolExecutor
@@ -267,7 +286,8 @@ def _download_one(base_url: str, remote_path: str, local_path: Path,
     (см. on_progress в sync_tree), а не текст построчно."""
     check_cancelled()
     try:
-        download_file(base_url, remote_path, local_path, log=log, check_cancelled=check_cancelled, mtime=mtime)
+        download_file(base_url, remote_path, local_path, log=log, check_cancelled=check_cancelled,
+                      mtime=mtime, on_progress=on_progress)
         return True
     except ContentSyncError as exc:
         log(f"Не удалось скачать {remote_path}: {exc}")
@@ -277,7 +297,7 @@ def _download_one(base_url: str, remote_path: str, local_path: Path,
 def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
               log=lambda m: None, check_cancelled=lambda: None, skip_dirs: tuple = (),
               no_recurse_dirs: tuple = (), manifest: dict[str, dict] | None = None,
-              on_progress=lambda done, total: None) -> int:
+              on_progress=lambda done, total, *args: None) -> int:
     """Скачивает из remote_subpath в local_dir всё, чего там ещё нет (или
     что отличается по размеру). skip_dirs/no_recurse_dirs — см.
     list_files_recursive. Возвращает число скачанных файлов; сетевые ошибки
@@ -314,7 +334,7 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
                 log(f"Не удалось получить список файлов с сервера ({remote_subpath}): {exc}")
             return 0
 
-    to_download: list[tuple[str, Path, float | None]] = []
+    to_download: list[tuple[str, Path, float | None, int]] = []
     for item in items:
         check_cancelled()
         rel = item["path"][len(remote_subpath):].lstrip("/") if remote_subpath else item["path"]
@@ -323,20 +343,42 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
         local_path = local_dir / rel
         if not _is_stale(local_path, item):
             continue
-        to_download.append((item["path"], local_path, item.get("mtime")))
+        to_download.append((item["path"], local_path, item.get("mtime"), item.get("size", 0)))
 
     downloaded = 0
     if to_download:
-        total = len(to_download)
-        on_progress(0, total)
+        total_files = len(to_download)
+        total_bytes = sum(size for _, _, _, size in to_download)
+        byte_progress = total_bytes > 0
+        if byte_progress:
+            # Каждый поток обновляет только свой счётчик; общий процент
+            # складываем под lock, поэтому несколько параллельных APK не
+            # заставляют индикатор прыгать назад.
+            received = [0] * total_files
+            progress_lock = threading.Lock()
+
+            def report(index: int, done: int, _total: int) -> None:
+                with progress_lock:
+                    received[index] = min(done, to_download[index][3])
+                    bytes_done = sum(received)
+                    files_done = sum(
+                        value >= to_download[i][3] for i, value in enumerate(received)
+                    )
+                on_progress(bytes_done, total_bytes, files_done, total_files)
+
+            on_progress(0, total_bytes, 0, total_files)
+        else:
+            on_progress(0, total_files, 0, total_files)
         # Параллельно (см. _DOWNLOAD_WORKERS) — иначе первый запуск на
         # пустом cars/ качает сотни мелких файлов по одному, каждый со
         # своим round-trip до VPS. check_cancelled() внутри _download_one
         # при отмене бросает исключение в future — оно всплывёт наружу из
         # цикла ниже, как и раньше прерывая sync_tree.
         with ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as executor:
-            futures = [executor.submit(_download_one, base_url, path, local_path, log, check_cancelled, mtime)
-                       for path, local_path, mtime in to_download]
+            futures = [executor.submit(
+                _download_one, base_url, path, local_path, log, check_cancelled, mtime,
+                (lambda done, total, index=index: report(index, done, total)) if byte_progress else (lambda *_: None),
+            ) for index, (path, local_path, mtime, _size) in enumerate(to_download)]
             # as_completed, а не порядок отправки — иначе один медленный файл
             # в начале списка держит done на месте, пока десятки уже готовых
             # за ним ждут своей очереди, и бар потом разом доскакивает до
@@ -347,7 +389,8 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
                 done += 1
                 if future.result():
                     downloaded += 1
-                on_progress(done, total)
+                if not byte_progress:
+                    on_progress(done, total_files, done, total_files)
     if downloaded:
         log(f"Скачано файлов ({remote_subpath}): {downloaded}.")
     return downloaded
@@ -355,7 +398,7 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
 
 def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
                   manifest: dict[str, dict] | None = None,
-                  on_progress=lambda done, total: None) -> int:
+                  on_progress=lambda done, total, *args: None) -> int:
     """Автообновление скриптов/инструкций всех моделей (cars/) при
     запуске программы — install.py/stages.py/instruction.html и т.п., но
     БЕЗ содержимого files/ и usb_files/ (там как раз и лежат тяжёлые
@@ -471,7 +514,8 @@ def prune_removed_models(base_dir: Path, cars_dir: Path, manifest: dict[str, dic
 
 
 def sync_shared_folder(base_dir: Path, name: str, log=lambda m: None,
-                        check_cancelled=lambda: None, manifest: dict[str, dict] | None = None) -> int:
+                       check_cancelled=lambda: None, manifest: dict[str, dict] | None = None,
+                       on_progress=lambda done, total, *args: None) -> int:
     """Подтягивает cars/_shared/<name>/ целиком с сервера — точечно, прямо
     перед выполнением USB-этапа, который на неё ссылается (см.
     StepSpec.usb_shared_folder, app/web/api/usb_api.py), а НЕ при каждом
@@ -485,7 +529,8 @@ def sync_shared_folder(base_dir: Path, name: str, log=lambda m: None,
     if manifest is None:
         manifest = fetch_manifest(url)
     return sync_tree(url, f"cars/_shared/{name}", base_dir / "cars" / "_shared" / name,
-                      log=log, check_cancelled=check_cancelled, manifest=manifest)
+                     log=log, check_cancelled=check_cancelled, manifest=manifest,
+                     on_progress=on_progress)
 
 
 def _model_wants_own_files(model_dir: Path) -> tuple[bool, bool]:
@@ -536,7 +581,7 @@ def _model_wants_own_files(model_dir: Path) -> tuple[bool, bool]:
 
 def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=lambda: None,
                       manifest: dict[str, dict] | None = None,
-                      on_progress=lambda done, total: None) -> int:
+                      on_progress=lambda done, total, *args: None) -> int:
     """Подтягивает files/ и usb_files/ конкретной модели с сервера — по
     кнопке "Скачать файлы модели" (gui.py) и на всякий случай ещё раз прямо
     перед установкой этой модели. Молча ничего не делает (возвращает 0),
@@ -574,7 +619,7 @@ def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=
 
 def sync_model_subfolder(base_dir: Path, local_dir: Path, log=lambda m: None,
                           check_cancelled=lambda: None, manifest: dict[str, dict] | None = None,
-                          on_progress=lambda done, total: None) -> int:
+                          on_progress=lambda done, total, *args: None) -> int:
     """Синхронизирует ОДНУ конкретную подпапку модели (например
     files/instruction_2, files/exe_1) — в отличие от sync_model_files (вся
     files/+usb_files модели разом), для случаев, когда заранее известно, что
@@ -590,7 +635,64 @@ def sync_model_subfolder(base_dir: Path, local_dir: Path, log=lambda m: None,
         manifest = fetch_manifest(url)
     remote_subpath = "cars/" + local_dir.relative_to(base_dir / "cars").as_posix()
     return sync_tree(url, remote_subpath, local_dir, log=log, check_cancelled=check_cancelled,
-                      manifest=manifest, on_progress=on_progress)
+                     manifest=manifest, on_progress=on_progress)
+
+
+def sync_model_apk_metadata(base_dir: Path, folders: list[Path], log=lambda m: None,
+                            check_cancelled=lambda: None,
+                            manifest: dict[str, dict] | None = None,
+                            on_progress=lambda done, total: None) -> int:
+    """Подтягивает только JSON-сайдкары APK конкретной модели.
+
+    Сами APK остаются ленивыми: они скачиваются лишь по нажатию «Установить».
+    Но имя и описание нужны уже в списке выбора, поэтому лёгкие ``*.json``
+    рядом с required/optional забираем отдельно. Это аналог
+    :func:`sync_shared_apk_metadata` для пакетов внутри cars/.
+    """
+    url = get_base_url(base_dir)
+    if not url:
+        return 0
+    if manifest is None:
+        manifest = fetch_manifest(url)
+    if manifest is None:
+        return 0
+
+    cars_dir = (base_dir / "cars").resolve()
+    pending: list[tuple[str, Path, dict]] = []
+    for folder in folders:
+        check_cancelled()
+        folder = Path(folder).resolve()
+        try:
+            remote_dir = "cars/" + folder.relative_to(cars_dir).as_posix()
+        except ValueError:
+            continue
+        prefix = remote_dir.rstrip("/") + "/"
+        for item in filter_manifest(manifest, remote_dir):
+            remote_path = item["path"]
+            if not remote_path.lower().endswith(".json"):
+                continue
+            relative_path = remote_path[len(prefix):]
+            local_path = folder / relative_path
+            if not _is_stale(local_path, item):
+                continue
+            pending.append((remote_path, local_path, item))
+
+    if not pending:
+        return 0
+    on_progress(0, len(pending), 0, len(pending))
+    downloaded = 0
+    for done, (remote_path, local_path, item) in enumerate(pending, start=1):
+        check_cancelled()
+        relative_path = local_path.name
+        try:
+            download_file(url, remote_path, local_path, log=log,
+                          check_cancelled=check_cancelled, mtime=item.get("mtime"))
+            downloaded += 1
+        except ContentSyncError as exc:
+            log(f"Не удалось скачать метаданные {relative_path}: {exc}")
+        finally:
+            on_progress(done, len(pending), done, len(pending))
+    return downloaded
 
 
 def sync_shared_apk_metadata(base_dir: Path, apk_dir: Path, log=lambda m: None,
@@ -679,7 +781,8 @@ def list_shared_apk_catalog(base_dir: Path, items: list[dict] | None = None) -> 
 
 
 def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: None,
-                            check_cancelled=lambda: None) -> int:
+                            check_cancelled=lambda: None,
+                            on_progress=lambda done, total, *args: None) -> int:
     """Докачивает из paths (обычно ctx.selected_apks) только те файлы,
     которых ещё нет локально, — по одному, а не всю папку разом (см.
     list_shared_apk_catalog/scanner.scan_apks/scan_apk_dir_with_remote:
@@ -696,7 +799,8 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
         return 0
     apk_dir = apk_dir.resolve()
     cars_dir = (base_dir / "cars").resolve()
-    downloaded = 0
+    manifest = fetch_manifest(url)
+    pending: list[tuple[Path, str, Path, int]] = []
     for raw_path in paths:
         check_cancelled()
         path = Path(raw_path).resolve()
@@ -711,11 +815,38 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
                 remote_path = f"cars/{rel.as_posix()}"
             except ValueError:
                 continue
+        size = (manifest or {}).get(remote_path, {}).get("size", 0)
+        pending.append((path, remote_path, rel, size))
+
+    if not pending:
+        return 0
+    total_files = len(pending)
+    total_bytes = sum(size for _, _, _, size in pending)
+    byte_progress = total_bytes > 0
+    if byte_progress:
+        on_progress(0, total_bytes, 0, total_files)
+    else:
+        on_progress(0, total_files, 0, total_files)
+    downloaded = 0
+    completed_bytes = 0
+    for done, (path, remote_path, rel, size) in enumerate(pending, start=1):
+        check_cancelled()
         try:
-            download_file(url, remote_path, path, log=log, check_cancelled=check_cancelled)
+            def report(file_done: int, _file_total: int, *, base=completed_bytes, file_size=size) -> None:
+                if byte_progress:
+                    on_progress(base + min(file_done, file_size), total_bytes, done - 1, total_files)
+
+            download_file(url, remote_path, path, log=log, check_cancelled=check_cancelled,
+                          on_progress=report)
             downloaded += 1
         except ContentSyncError as exc:
             log(f"Не удалось скачать {rel.as_posix()}: {exc}")
+        finally:
+            if byte_progress:
+                completed_bytes += size
+                on_progress(completed_bytes, total_bytes, done, total_files)
+            else:
+                on_progress(done, total_files, done, total_files)
     return downloaded
 
 

@@ -65,6 +65,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     init {
         if (!Python.isStarted()) Python.start(AndroidPlatform(context))
+        webView.keepScreenOn = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+            .getBoolean("keep_screen_on", true)
     }
 
     private val carsDir get() = java.io.File(context.filesDir, "cars").apply { mkdirs() }.absolutePath
@@ -82,6 +84,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     "version",
                     context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
                 ).toString()
+                "settings_info" -> settingsInfo().toString()
+                "settings_preferences" -> settingsPreferences().toString()
+                "settings_clear_cache" -> clearCache().toString()
+                "settings_set_preferences" -> setSettingsPreferences(args).toString()
+                "settings_sync_now" -> { startSync(); "{}" }
                 "start_sync" -> { startSync(); "{}" }
                 "get_sync_progress" -> pyModule("mobile_bridge").callAttr("get_sync_progress").toString()
                 "scanner_list_cars" -> pyModule("mobile_bridge").callAttr("list_cars", carsDir).toString()
@@ -123,6 +130,60 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     }
 
     private fun pyModule(name: String) = Python.getInstance().getModule(name)
+
+    private fun settingsInfo(): JSONObject {
+        val preferences = settingsPreferences()
+        val cacheBytes = cacheTargets().sumOf(::directorySize) + directorySize(context.cacheDir)
+        val appBytes = File(context.applicationInfo.sourceDir).length() + directorySize(context.filesDir) + directorySize(context.cacheDir)
+        return JSONObject()
+            .put("app_bytes", appBytes)
+            .put("cache_bytes", cacheBytes)
+            .put("server_configured", true)
+            .put("preferences", preferences)
+    }
+
+    private fun settingsPreferences(): JSONObject {
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        return JSONObject()
+            .put("auto_sync", prefs.getBoolean("auto_sync", true))
+            .put("reduced_motion", prefs.getBoolean("reduced_motion", false))
+            .put("compact_log", prefs.getBoolean("compact_log", true))
+            .put("keep_screen_on", prefs.getBoolean("keep_screen_on", true))
+    }
+
+    private fun setSettingsPreferences(args: JSONObject): JSONObject {
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        listOf("auto_sync", "reduced_motion", "compact_log", "keep_screen_on").forEach { key ->
+            if (args.has(key)) editor.putBoolean(key, args.getBoolean(key))
+        }
+        editor.apply()
+        if (args.has("keep_screen_on")) webView.keepScreenOn = args.getBoolean("keep_screen_on")
+        return settingsInfo().getJSONObject("preferences")
+    }
+
+    private fun clearCache(): JSONObject {
+        val before = cacheTargets().sumOf(::directorySize) + directorySize(context.cacheDir)
+        cacheTargets().forEach(::deleteRecursively)
+        context.cacheDir.listFiles()?.forEach(::deleteRecursively)
+        val remaining = cacheTargets().sumOf(::directorySize) + directorySize(context.cacheDir)
+        return JSONObject().put("freed_bytes", before - remaining).put("remaining_bytes", remaining)
+    }
+
+    private fun cacheTargets(): List<File> {
+        val targets = mutableListOf(File(apkDir))
+        val root = File(carsDir)
+        if (root.isDirectory) root.walkTopDown().filter { it.isDirectory && (it.name == "files" || it.name == "usb_files") }.forEach(targets::add)
+        return targets
+    }
+
+    private fun directorySize(file: File): Long = when {
+        file.isFile -> file.length()
+        file.isDirectory -> file.listFiles()?.sumOf(::directorySize) ?: 0L
+        else -> 0L
+    }
+
+    private fun deleteRecursively(file: File) { if (file.exists()) file.deleteRecursively() }
 
     private fun startSync() {
         Thread {

@@ -4,8 +4,9 @@
 
 .app-shell {
   display: grid;
-  grid-template-columns: 320px 4px 1fr;
+  grid-template-columns: 480px 6px minmax(0, 1fr);
   height: 100vh;
+  background: var(--bg);
 }
 
 .app-shell.resizing {
@@ -13,13 +14,161 @@
   user-select: none;
 }
 
+/* Стартовый экран — это именно каталог, без соседней инструкции и лога.
+   Рабочее пространство появляется только после выбора конкретной модели. */
+.app-shell.catalog-home {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell.catalog-home #left-panel {
+  padding: clamp(18px, 2vw, 28px) clamp(22px, 4vw, 54px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.app-shell.catalog-home #left-panel:hover,
+.app-shell.catalog-home #left-panel:focus-within {
+  scrollbar-color: rgba(126, 143, 165, 0.52) transparent;
+}
+
+.app-shell.catalog-home #left-panel::-webkit-scrollbar { width: 10px; }
+.app-shell.catalog-home #left-panel::-webkit-scrollbar-track { background: transparent; }
+.app-shell.catalog-home #left-panel::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 99px;
+  background: transparent;
+  background-clip: padding-box;
+}
+.app-shell.catalog-home #left-panel:hover::-webkit-scrollbar-thumb,
+.app-shell.catalog-home #left-panel:focus-within::-webkit-scrollbar-thumb {
+  background-color: rgba(126, 143, 165, 0.52);
+}
+
+.app-shell.catalog-home #picker {
+  display: block;
+  width: min(1440px, 100%);
+  min-height: 100%;
+  margin: 0 auto;
+  position: relative;
+}
+
+.app-shell.catalog-home .catalog {
+  display: block;
+  min-height: 100%;
+}
+
+.app-shell.catalog-home #resizer,
+.app-shell.catalog-home #right-panel,
+.app-shell.catalog-home .left-actions,
+.app-shell.catalog-home #pending-section {
+  display: none;
+}
+
+.app-shell.catalog-home .catalog-grid {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+  min-height: auto;
+  overflow: visible;
+}
+
+.app-shell.catalog-home .catalog-card {
+  min-height: 196px;
+  padding: 16px;
+}
+
+.app-shell.workspace-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell.workspace-open #left-panel,
+.app-shell.workspace-open #resizer {
+  display: none;
+}
+
+.app-shell.workspace-open #right-panel {
+  padding: 18px clamp(22px, 4vw, 54px) 24px;
+  position: relative;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(14, 143, 109, 0.13), transparent 31%),
+    linear-gradient(145deg, #171c23 0%, #12151a 62%);
+}
+
+.app-shell.workspace-open #right-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.24;
+  background-image: radial-gradient(rgba(233, 236, 241, 0.18) 0.55px, transparent 0.65px);
+  background-size: 7px 7px;
+  mask-image: linear-gradient(to bottom, black, transparent 56%);
+}
+
+.app-shell.workspace-open #right-panel > * {
+  position: relative;
+  width: min(1440px, 100%);
+  margin-left: auto;
+  margin-right: auto;
+}
+
 #resizer {
   cursor: col-resize;
   background: var(--border);
+  transition: background 160ms ease;
 }
 
 #resizer:hover {
   background: var(--accent);
+}
+
+.workspace-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 12px;
+}
+
+.workspace-back {
+  flex: 0 0 auto;
+  min-width: 118px;
+  padding-inline: 10px;
+}
+
+.workspace-model {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workspace-model span {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-model strong {
+  overflow: hidden;
+  font-family: var(--font-heading);
+  font-size: 18px;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.breadcrumb .catalog-back {
+  color: var(--text);
+  font-weight: 600;
+  padding-left: 0;
 }
 
 .panel {
@@ -33,14 +182,18 @@
 }
 
 .card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.012)),
+    var(--glass-surface);
+  border: 1px solid var(--glass-border);
   border-radius: var(--corner-radius-lg);
   padding: var(--card-pad-y) var(--card-pad-x);
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0; /* см. .panel выше — тот же принцип на следующем уровне вложенности */
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.065), 0 12px 28px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(12px) saturate(120%);
 }
 
 .card-header {
@@ -101,6 +254,302 @@
   flex-direction: column;
   flex: 1;
   min-height: 0; /* иначе ul с overflow:auto ниже не сжимается внутри flex-колонки панели */
+}
+
+/* ---- Каталог марок и моделей ----------------------------------------- */
+.catalog { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+.catalog-topbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 42px;
+  margin: 0 0 16px;
+}
+
+.catalog-full-logo {
+  position: absolute;
+  left: 50%;
+  display: block;
+  width: auto;
+  height: 48px;
+  max-width: min(330px, 38vw);
+  transform: translateX(-50%);
+  filter: drop-shadow(0 7px 18px rgba(0, 0, 0, 0.28));
+}
+
+.catalog-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  position: relative;
+  z-index: 1;
+}
+
+.catalog-global-back {
+  position: relative;
+  z-index: 1;
+  min-width: 118px;
+  padding-inline: 10px;
+}
+
+.catalog-topbar .catalog-search {
+  flex: 0 0 190px;
+  min-width: 190px;
+  margin: 0;
+}
+
+.catalog-topbar-link,
+.catalog-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(18, 21, 26, 0.58);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.catalog-topbar-link:hover,
+.catalog-settings:hover {
+  border-color: rgba(98, 153, 136, 0.72);
+  background: rgba(25, 34, 39, 0.92);
+  color: var(--text);
+}
+
+.catalog-topbar-boosty { color: #f6a17a; }
+
+.catalog-settings {
+  width: 34px;
+  padding: 0;
+}
+
+.catalog-settings svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.catalog-topbar-link:focus-visible,
+.catalog-settings:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(14, 143, 109, 0.25);
+}
+
+.catalog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 16px;
+}
+
+.catalog-kicker {
+  margin: 0 0 5px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.catalog-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: clamp(22px, 2vw, 30px);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+.catalog-subtitle { margin: 7px 0 0; color: var(--text-dim); font-size: 13px; line-height: 1.35; }
+
+.catalog-search {
+  display: flex;
+  align-items: center;
+  flex: 0 1 152px;
+  min-width: 126px;
+  height: 36px;
+  margin-top: 2px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(18, 21, 26, 0.72);
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.catalog-search:focus-within { border-color: var(--accent); background: var(--bg); box-shadow: 0 0 0 2px rgba(14, 143, 109, 0.18); }
+.catalog-search-icon { flex: 0 0 15px; width: 15px; height: 15px; margin-right: 8px; border: 2px solid var(--text-dim); border-radius: 50%; opacity: 0.8; position: relative; }
+.catalog-search-icon::after { content: ""; position: absolute; width: 7px; height: 2px; right: -6px; bottom: -3px; border-radius: 1px; background: var(--text-dim); transform: rotate(45deg); }
+.catalog-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
+.catalog-search input::placeholder { color: var(--text-dim); }
+.catalog-breadcrumb { margin: 0 0 12px; }
+
+/* Синхронизация не должна прятать уже построенную шапку. Оверлей находится
+   ниже неё, занимает свободную область и не перехватывает верхние кнопки. */
+.catalog-startup-overlay {
+  position: absolute;
+  z-index: 4;
+  top: 58px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(180deg, rgba(18, 21, 26, 0.12), rgba(18, 21, 26, 0.48));
+}
+
+.catalog-startup-overlay[hidden] { display: none; }
+
+.catalog-startup-progress {
+  display: grid;
+  justify-items: center;
+  width: min(340px, 100%);
+  gap: 10px;
+  padding: 22px 24px;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: rgba(18, 23, 30, 0.72);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.26), inset 0 1px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+}
+
+.catalog-startup-progress strong { font-family: var(--font-heading); font-size: 17px; }
+.catalog-startup-progress span { color: var(--text-dim); font-size: 13px; }
+
+.catalog-startup-spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgba(147, 224, 205, 0.18);
+  border-top-color: var(--accent-2);
+  border-radius: 50%;
+  animation: catalog-spinner 780ms linear infinite;
+}
+
+.catalog-startup-progress-track {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.catalog-startup-progress-track > div {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 180ms ease;
+}
+
+@keyframes catalog-spinner { to { transform: rotate(360deg); } }
+
+.catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  align-content: start;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 2px 3px 14px 1px;
+}
+
+.catalog-card {
+  display: flex;
+  min-width: 0;
+  min-height: 166px;
+  padding: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  overflow: hidden;
+  position: relative;
+  text-align: left;
+  border: 1px solid rgba(67, 76, 91, 0.72);
+  border-radius: 16px;
+  background: rgba(25, 29, 36, 0.92);
+  color: var(--text);
+  box-shadow: 0 10px 24px rgba(5, 8, 12, 0.14), inset 0 1px rgba(255, 255, 255, 0.025);
+  isolation: isolate;
+  animation: catalog-card-enter 220ms both cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation-delay: calc(var(--card-order) * 24ms);
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.catalog-card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 140px;
+  height: 140px;
+  right: -52px;
+  top: -72px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(14, 143, 109, 0.19), transparent 67%);
+  transition: transform 220ms ease;
+}
+
+.catalog-card:hover { transform: translateY(-2px); border-color: rgba(98, 153, 136, 0.72); background: #202630; box-shadow: 0 16px 30px rgba(5, 8, 12, 0.26), inset 0 1px rgba(255, 255, 255, 0.035); }
+.catalog-card:hover::before { transform: scale(1.22); }
+.catalog-card:active, .catalog-card.is-selected { transform: scale(0.985); border-color: var(--accent); }
+.catalog-card:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), 0 14px 26px rgba(5, 8, 12, 0.22); }
+
+.catalog-card-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(154, 162, 176, 0.16);
+  border-radius: 13px;
+  background: rgba(18, 21, 26, 0.72);
+  color: #93d8c7;
+}
+
+.catalog-card-brand .catalog-card-visual { width: 58px; height: 58px; border-radius: 16px; }
+.catalog-brand-logo { width: 42px; height: 42px; object-fit: contain; }
+.catalog-model-logo { width: 36px; height: 36px; object-fit: contain; }
+.catalog-monogram { color: #b8f1df; font-family: var(--font-heading); font-size: 17px; font-weight: 700; letter-spacing: -0.05em; }
+.catalog-vehicle { width: 48px; color: #88cab9; }
+.catalog-vehicle svg { display: block; width: 100%; height: auto; fill: currentColor; }
+.catalog-vehicle-window { fill: rgba(18, 21, 26, 0.94); }
+.catalog-card-content { display: grid; gap: 4px; margin-top: 14px; }
+.catalog-card-title { overflow: hidden; font-family: var(--font-heading); font-size: 15px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.18; text-overflow: ellipsis; }
+.catalog-card-meta { min-height: 17px; color: var(--text-dim); font-size: 12px; line-height: 1.35; }
+.catalog-card-footer { display: flex; align-items: center; justify-content: space-between; min-height: 18px; margin-top: 9px; }
+.catalog-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04); }
+.catalog-card-action { color: #9be2d0; font-size: 11px; font-weight: 600; }
+.catalog-card-action::after { content: "  ›"; color: var(--accent); font-size: 15px; line-height: 0; }
+.catalog-empty { margin: 20px 0; color: var(--text-dim); text-align: center; }
+
+@keyframes catalog-card-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (max-width: 1140px) {
+  #left-panel { padding: 16px; }
+  .catalog-grid { grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); }
+  .catalog-header { gap: 10px; }
+  .catalog-search { flex-basis: 132px; min-width: 112px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalog-card, .catalog-card::before, .catalog-search, #resizer { animation: none; transition-duration: 0.01ms; }
 }
 
 .picker-list {
@@ -209,7 +658,7 @@
 }
 
 #log-panel {
-  height: 140px;
+  height: 54px;
   overflow-y: auto;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -219,7 +668,10 @@
      и раздвигают окно вширь — см. .panel/.card выше за остальной частью
      этого же исправления. */
   overflow-wrap: anywhere;
+  transition: height 180ms ease;
 }
+
+#log-card.is-expanded #log-panel { height: 230px; }
 
 /* Уровни строк лога (см. js/log_format.js: classifyLogLevel) — те же
    токены, что и везде в проекте (.callout.danger, [data-block-type=...]),
@@ -228,6 +680,7 @@
 .log-line-success { color: var(--accent); }
 .log-line-error { color: var(--danger-text); }
 .log-line-warn { color: var(--warn-text); }
+.log-line-progress { color: var(--text-dim); letter-spacing: 0.02em; }
 
 /* Мини-консоль ADB под логом (была в tkinter-версии до перехода на
    pywebview — см. историю app/gui.py) — свободная "adb shell <команда>" на
@@ -260,12 +713,14 @@
   min-width: 0;
   font-family: var(--font-mono);
   font-size: inherit;
-  background: var(--bg);
+  background: var(--glass-field);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   border-radius: var(--corner-radius);
   padding: 6px 8px;
   box-sizing: border-box;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05), inset 0 -8px 20px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(8px);
 }
 
 /* ---- Stage wizard (см. js/screens/stage_wizard.js) ---- */
@@ -375,11 +830,13 @@
 select {
   font-family: inherit;
   font-size: inherit;
-  background: var(--bg-card);
+  background: var(--glass-field);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   border-radius: var(--corner-radius);
   padding: 6px 8px;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05), inset 0 -8px 20px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(8px);
 }
 
 .row {
@@ -394,17 +851,51 @@ select {
   min-height: 120px;
 }
 
+.apps-section {
+  position: relative;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 11px;
+  background: linear-gradient(145deg, rgba(31, 42, 48, 0.46), rgba(14, 18, 24, 0.36));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.045), 0 5px 14px rgba(0, 0, 0, 0.1);
+}
+
+/* Подсказка принадлежит строке внутри секции. Поднимаем и саму секцию,
+   иначе фон следующей секции рисуется поверх текста подсказки. */
+.apps-section:hover,
+.apps-section:focus-within {
+  z-index: 5;
+}
+
+.apps-section-required { border-color: rgba(91, 174, 146, 0.38); }
+.apps-section-optional { border-color: rgba(198, 160, 96, 0.28); }
+
 .apps-section-header {
   display: flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  padding: 4px 0;
+  min-height: 30px;
+  padding: 2px 4px;
+  border-radius: 7px;
   font-weight: 600;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.apps-section-header:hover {
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--accent-2);
 }
 
 .apps-section-body {
-  padding-left: 20px;
+  padding: 8px 2px 2px;
+}
+
+.apps-section-body.apps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(235px, 100%), 1fr));
+  gap: 6px 8px;
 }
 
 .apps-section-body.collapsed {
@@ -412,28 +903,67 @@ select {
 }
 
 .app-row {
+  position: relative;
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 2px 0;
+  min-width: 0;
+  align-items: center;
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid rgba(187, 207, 222, 0.1);
+  border-radius: 8px;
+  background: rgba(12, 17, 23, 0.34);
+  transition: border-color 150ms ease, background 150ms ease;
 }
 
-.app-row .app-desc {
-  color: var(--text-dim);
+.app-row:hover,
+.app-row:focus-within {
+  z-index: 2;
+  border-color: rgba(98, 153, 136, 0.6);
+  background: rgba(25, 34, 39, 0.82);
+}
+
+.app-row > div,
+.app-row label {
+  min-width: 0;
+  width: 100%;
+}
+
+.app-row label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-description-tooltip {
+  position: fixed;
+  z-index: 9999;
+  width: max-content;
+  max-width: min(400px, calc(100vw - 24px));
+  padding: 9px 11px;
+  border: 1px solid var(--glass-border);
+  border-radius: 9px;
+  background: rgba(10, 14, 19, 0.97);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
+  color: var(--text);
   font-size: 12px;
-  padding-left: 22px;
-  margin-top: -2px;
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
 }
 
 /* ---- Диалоги (usb/report/admin-upload/ask-input) — нативный <dialog>,
    см. план миграции: фокус-трэп и оверлей бесплатно, без своего кода. ---- */
 dialog {
-  background: var(--bg-card);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.018)),
+    var(--glass-surface);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   border-radius: var(--corner-radius-lg);
   padding: 16px;
   width: min(560px, 90vw);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08), 0 24px 70px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(18px) saturate(125%);
 }
 
 dialog::backdrop {
@@ -473,15 +1003,17 @@ dialog .dialog-actions.spread {
 
 dialog input[type="text"], dialog input[type="password"], dialog textarea, dialog select {
   width: 100%;
-  background: var(--bg);
+  background: var(--glass-field);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   border-radius: var(--corner-radius);
   padding: 6px 8px;
   font-family: inherit;
   font-size: inherit;
   box-sizing: border-box;
   margin-bottom: 10px;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05), inset 0 -8px 20px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(8px);
 }
 
 dialog textarea {
@@ -541,6 +1073,29 @@ dialog.dialog-info p {
 
 .boosty-link:hover {
   background: var(--bg-elevated);
+}
+
+#left-panel {
+  position: relative;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(14, 143, 109, 0.13), transparent 31%),
+    linear-gradient(145deg, #171c23 0%, #12151a 62%);
+}
+
+#left-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.24;
+  background-image: radial-gradient(rgba(233, 236, 241, 0.18) 0.55px, transparent 0.65px);
+  background-size: 7px 7px;
+  mask-image: linear-gradient(to bottom, black, transparent 56%);
+}
+
+#left-panel > * {
+  position: relative;
 }
 
 .boosty-link:focus-visible {
@@ -621,6 +1176,49 @@ dialog.dialog-large {
    модалка/без backdrop) — снаружи выглядит как "окно не закрылось". */
 dialog.dialog-large[open] {
   display: flex;
+}
+
+/* Редакторы — самостоятельные экраны внутри одного окна приложения, а не
+   отдельные компактные всплывающие формы. Диалоговый API остаётся только
+   для корректной блокировки фоновых действий и уже существующей логики. */
+dialog#graph-wizard-dialog.dialog-large,
+dialog#instruction-editor-dialog.dialog-large {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 18px clamp(22px, 4vw, 54px) 24px;
+  border: 0;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(14, 143, 109, 0.13), transparent 31%),
+    linear-gradient(145deg, #171c23 0%, #12151a 62%);
+}
+
+dialog#graph-wizard-dialog::backdrop,
+dialog#instruction-editor-dialog::backdrop {
+  background: var(--bg);
+}
+
+.editor-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 36px;
+  margin-bottom: 14px;
+}
+
+.editor-nav h2 {
+  margin: 0;
+}
+
+.editor-back {
+  min-width: 118px;
+  padding-inline: 10px;
 }
 
 .car-header-grid {
@@ -790,3 +1388,19 @@ dialog.dialog-large[open] {
   border: none;
   background: var(--bg-card);
 }
+
+.settings-dialog { width: min(480px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 32px)); padding: 0; overflow: auto; border: 1px solid rgba(133, 163, 174, .34); border-radius: 18px; background: #19212a; color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.58); }
+.settings-dialog::backdrop { background: rgba(0,0,0,.58); backdrop-filter: blur(5px); }
+.settings-dialog header { display: flex; align-items: center; gap: 12px; padding: 18px 20px 12px; }
+.settings-dialog h2, .settings-dialog h3 { margin: 0; }
+.settings-dialog h2 { flex: 1; font-size: 20px; }
+.settings-close { width: 36px; height: 36px; padding: 0; border-radius: 10px; font-size: 24px; }
+.settings-section { display: grid; gap: 9px; padding: 15px 20px; border-top: 1px solid rgba(133, 163, 174, .18); }
+.settings-section h3 { font-size: 14px; color: #b9d6d2; }
+.settings-section p, .settings-section small { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.45; }
+.settings-section small { color: #91a3ad; }
+.settings-section a { color: #9be2d0; }
+.settings-section button { justify-self: start; }
+.settings-toggle { display: flex; align-items: center; gap: 10px; min-height: 38px; color: #d9e4e7; font-size: 14px; cursor: pointer; }
+.settings-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

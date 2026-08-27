@@ -4,7 +4,6 @@ Chaquopy, чем сложные dict/dataclass через границу Kotlin<
 import json
 import threading
 from pathlib import Path
-from urllib.parse import quote
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
                            prune_removed_models)
@@ -63,6 +62,7 @@ def _model_to_dict(model) -> dict:
         "has_wizard_spec": (model.dir / "_wizard_spec.json").exists(),
         "status": model.status,
         "status_color": model_status_color(model),
+        "logo": _logo_rel_path(model.logo_path),
     }
 
 
@@ -72,11 +72,25 @@ def _group_to_dict(group) -> dict:
     colors = ([leaf_dict["status_color"]] if leaf_dict else []) + [m["status_color"] for m in mod_dicts]
     return {
         "name": group.name,
+        "logo": _logo_rel_path(group.logo_path),
         "has_modifications": bool(group.modifications),
         "leaf": leaf_dict,
         "modifications": mod_dicts,
         "status_color": rollup_status_color(colors),
     }
+
+
+def _logo_rel_path(path):
+    """Путь к логотипу относительно filesDir для WebViewAssetLoader."""
+    if not path:
+        return None
+    for ancestor in path.parents:
+        if ancestor.name == "cars":
+            try:
+                return path.relative_to(ancestor.parent).as_posix()
+            except ValueError:
+                return None
+    return None
 
 
 def list_cars(cars_dir: str) -> str:
@@ -94,9 +108,16 @@ def list_cars(cars_dir: str) -> str:
             # что фронтенд подставит в WebViewAssetLoader "/data/" handler
             # (см. MainActivity.kt), картинка просто не отрисуется, если
             # ещё не скачалась (img onerror скрывает).
-            "logo": f"cars/{quote(brand)}/logo.png",
+            "logo": _brand_logo_path(Path(cars_dir), brand),
         })
     return json.dumps({"brands": brands})
+
+
+def _brand_logo_path(cars_dir: Path, brand: str):
+    for filename in ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg"):
+        if (cars_dir / brand / filename).is_file():
+            return f"cars/{brand}/{filename}"
+    return None
 
 
 def select_model(key: str, brand: str, name: str, modification: str = None) -> str:

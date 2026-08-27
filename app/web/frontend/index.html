@@ -9,7 +9,7 @@
 </head>
 <body>
   <div id="debug-id-badge" style="display: none"></div>
-  <div class="app-shell" id="app-shell">
+  <div class="app-shell catalog-home" id="app-shell">
     <div class="panel" id="left-panel">
       <div id="picker"></div>
       <div class="left-actions">
@@ -31,6 +31,17 @@
     </div>
     <div id="resizer"></div>
     <div class="panel" id="right-panel">
+      <header class="workspace-nav" id="workspace-nav" hidden>
+        <button id="back-to-catalog" class="workspace-back" type="button">Назад</button>
+        <div class="workspace-model">
+          <span>Выбранный автомобиль</span>
+          <strong id="workspace-model-title"></strong>
+        </div>
+        <div class="workspace-actions">
+          <button id="workspace-add-car" type="button">Добавить машину</button>
+          <button id="workspace-edit-car" type="button" disabled>Редактировать</button>
+        </div>
+      </header>
       <div class="card" style="flex: 1; margin-bottom: 4px">
         <div class="card-header">
           <span class="section-label">Инструкция и установка</span>
@@ -42,8 +53,11 @@
           </p>
         </div>
       </div>
-      <div class="card">
-        <div class="card-header"><span class="section-label">Лог</span></div>
+      <div class="card" id="log-card">
+        <div class="card-header">
+          <span class="section-label">Лог</span>
+          <button id="log-toggle" type="button" aria-expanded="false">Развернуть</button>
+        </div>
         <div class="progress-bar" id="main-progress" style="display: none">
           <div class="progress-bar-fill" id="main-progress-fill"></div>
         </div>
@@ -234,7 +248,10 @@
   </dialog>
 
   <dialog id="graph-wizard-dialog" class="dialog-large">
-    <h2 id="graph-wizard-title">Визуальный редактор</h2>
+    <header class="editor-nav">
+      <button id="graph-wizard-cancel" class="editor-back" type="button">Назад</button>
+      <h2 id="graph-wizard-title">Визуальный редактор</h2>
+    </header>
     <div id="graph-wizard-header"></div>
     <div class="graph-wizard-body">
       <div class="graph-toolbar">
@@ -256,7 +273,6 @@
     <div class="dialog-actions">
       <button id="graph-wizard-reject" class="danger" style="display: none">Отклонить заявку</button>
       <button id="graph-wizard-publish" class="accent" style="display: none">Опубликовать</button>
-      <button id="graph-wizard-cancel">Отмена</button>
       <button id="graph-wizard-save" class="accent">Создать</button>
     </div>
   </dialog>
@@ -305,7 +321,10 @@
 
 
   <dialog id="instruction-editor-dialog" class="dialog-large">
-    <h2>Инструкция</h2>
+    <header class="editor-nav">
+      <button id="instruction-editor-cancel" class="editor-back" type="button">Назад</button>
+      <h2>Инструкция</h2>
+    </header>
     <div class="instruction-toolbar">
       <button data-block-type="h1">+ Заголовок</button>
       <button data-block-type="h2">+ Подзаголовок</button>
@@ -324,7 +343,6 @@
       </div>
     </div>
     <div class="dialog-actions">
-      <button id="instruction-editor-cancel">Отмена</button>
       <button id="instruction-editor-save" class="accent">Сохранить</button>
     </div>
   </dialog>
@@ -335,6 +353,7 @@
   <script src="js/graph/svg.js"></script>
   <script src="js/components/modal.js"></script>
   <script src="js/components/boosty.js"></script>
+  <script src="js/components/settings.js"></script>
   <script src="js/components/resizer.js"></script>
   <script src="js/screens/main_picker.js"></script>
   <script src="js/screens/stage_wizard.js"></script>

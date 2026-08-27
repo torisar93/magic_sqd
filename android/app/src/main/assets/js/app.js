@@ -8,7 +8,7 @@
 
   const STATUS_TITLES = { green: "Актуально", yellow: "Черновой способ", blue: "Недавно обновлено", red: "Не работает" };
 
-  let screenPicker, screenWizard, breadcrumbEl, listEl, syncStatusEl;
+  let screenPicker, screenWizard, breadcrumbEl, listEl, syncStatusEl, pickerSearchEl;
   let wizardContentEl, wizardBackBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl, topHelpBtn;
   let adbStatusEl, adbConnectBtn, usbStatusEl, usbConnectBtn, usbFormatBtn, adbBarEl, usbBarEl;
   let adbModeToggleEl, adbModeWiredBtn, adbModeWifiBtn;
@@ -77,17 +77,14 @@
   // относительно нашей же страницы (та лежит под /assets/), поэтому нужен
   // полный URL, а не относительный путь.
   function dataUrl(path) {
-    return `https://appassets.androidplatform.net/data/${path}`;
+    return `https://appassets.androidplatform.net/data/${String(path).split("/").map(encodeURIComponent).join("/")}`;
   }
 
   function showScreen(name) {
     screenPicker.classList.toggle("active", name === "picker");
     screenWizard.classList.toggle("active", name === "wizard");
     updateTopBack();
-    // Значок "?" — только на списке марок (там же цветные метки статуса,
-    // которые он расшифровывает); на этапах установки прячем — иначе
-    // конфликтовал бы с бегущей строкой длинного названия модели
-    // (обе абсолютно спозиционированы у правого края полосы).
+    // Кнопка настроек показывается только в каталоге, как и на desktop.
     topHelpBtn.style.visibility = name === "picker" ? "visible" : "hidden";
     clear(topTitleEl);
     topTitleEl.classList.remove("marquee");
@@ -139,6 +136,14 @@
     });
   }
 
+  function resetPickerScroll() {
+    // Экран picker остаётся тем же scroll-контейнером между марками. Без
+    // сброса длинный список Geely открывался на старой позиции прокрутки,
+    // из-за чего заголовок марки оказывался под первой карточкой.
+    screenPicker.scrollTop = 0;
+    requestAnimationFrame(() => { screenPicker.scrollTop = 0; });
+  }
+
   // Кнопка "Назад" в шапке (topBackBtn) — единственный способ идти назад и
   // в пикере, и в мастере (та же позиция слева от лого, см. .topbar
   // button.back), цель зависит от того, где мы сейчас: из модификаций — в
@@ -147,7 +152,7 @@
   function updateTopBack() {
     if (screenWizard.classList.contains("active")) {
       topBackBtn.style.visibility = "visible";
-      topBackBtn.textContent = "Марки";
+      topBackBtn.textContent = "Назад";
       topBackBtn.onclick = () => showScreen("picker");
     } else if (selectedGroup) {
       topBackBtn.style.visibility = "visible";
@@ -155,7 +160,7 @@
       topBackBtn.onclick = () => showGroupStep(selectedBrand);
     } else if (selectedBrand) {
       topBackBtn.style.visibility = "visible";
-      topBackBtn.textContent = "Марки";
+      topBackBtn.textContent = "Назад";
       topBackBtn.onclick = () => showBrandStep();
     } else {
       topBackBtn.style.visibility = "hidden";
@@ -163,26 +168,75 @@
     }
   }
 
+  function vehicleIcon() {
+    const icon = el("span", { class: "catalog-vehicle", "aria-hidden": "true" });
+    icon.innerHTML = `<svg viewBox="0 0 120 64" focusable="false"><path d="M20 42h80l-5-16c-1.3-4-5-7-9.2-7H46c-4.4 0-8.4 2.5-10.4 6.4L29 38H20c-4.4 0-8 3.6-8 8v5h8v-9Z"/><path d="M34 27h22v11H29l5-11Zm26 0h24c2.8 0 5.2 1.8 6.1 4.4L92 38H60V27Z" class="catalog-vehicle-window"/><circle cx="33" cy="48" r="8"/><circle cx="87" cy="48" r="8"/></svg>`;
+    return icon;
+  }
+
   function renderList(items) {
     clear(listEl);
     if (!items.length) {
-      listEl.appendChild(el("li", { class: "empty-hint", text: "Пусто" }));
+      listEl.appendChild(el("p", { class: "empty-hint", text: "Ничего не найдено. Попробуйте другой запрос." }));
       return;
     }
-    for (const item of items) {
-      const li = el("li", { onclick: item.onClick });
-      if (item.icon) {
-        const img = el("img", { class: "list-icon", src: dataUrl(item.icon), alt: "" });
-        img.addEventListener("error", () => { img.style.display = "none"; });
-        li.appendChild(img);
-      }
-      li.appendChild(el("span", { class: "label", text: item.label }));
-      if (item.color) {
-        li.appendChild(el("span", { class: `status-dot status-dot-${item.color}`, title: STATUS_TITLES[item.color] || "" }));
-      }
-      li.appendChild(el("span", { class: "chevron", text: "›" }));
-      listEl.appendChild(li);
+    const query = pickerSearchEl.value.trim().toLocaleLowerCase();
+    const visible = query ? items.filter((item) => `${item.label} ${item.meta || ""}`.toLocaleLowerCase().includes(query)) : items;
+    if (!visible.length) {
+      listEl.appendChild(el("p", { class: "empty-hint", text: "Ничего не найдено. Попробуйте другой запрос." }));
+      return;
     }
+    visible.forEach((item, index) => {
+      const card = el("button", {
+        class: `catalog-card catalog-card-${item.kind || "model"}`,
+        type: "button", onclick: item.onClick,
+        "aria-label": `${item.label}. ${item.meta || "Открыть"}`,
+      });
+      card.style.setProperty("--card-order", Math.min(index, 10));
+      const visual = el("span", { class: "catalog-card-visual" });
+      if (item.icon) {
+        const img = el("img", {
+          class: item.kind === "brand" ? "catalog-brand-logo" : "catalog-model-logo",
+          src: dataUrl(item.icon), alt: `Логотип ${item.label}`,
+          loading: "lazy",
+        });
+        img.addEventListener("error", () => { img.remove(); visual.appendChild(item.kind === "brand" ? el("span", { class: "catalog-monogram", text: item.label.slice(0, 2).toLocaleUpperCase() }) : vehicleIcon()); });
+        visual.appendChild(img);
+      } else if (item.kind === "brand") {
+        visual.appendChild(el("span", { class: "catalog-monogram", text: item.label.slice(0, 2).toLocaleUpperCase() }));
+      } else {
+        visual.appendChild(vehicleIcon());
+      }
+      const content = el("span", { class: "catalog-card-content" }, [
+        el("span", { class: "catalog-card-title", text: item.label }),
+        el("span", { class: "catalog-card-meta", text: item.meta || "Открыть инструкцию" }),
+      ]);
+      const footer = el("span", { class: "catalog-card-footer" });
+      if (item.color) footer.appendChild(el("span", { class: `status-dot status-dot-${item.color}`, title: STATUS_TITLES[item.color] || "", "aria-label": STATUS_TITLES[item.color] || "Статус" }));
+      footer.appendChild(el("span", { class: "catalog-card-action", text: item.action || "Открыть" }));
+      card.append(visual, content, footer);
+      listEl.appendChild(card);
+    });
+  }
+
+  function plural(number, one, few, many) {
+    const mod10 = number % 10;
+    const mod100 = number % 100;
+    return mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
+  }
+
+  function searchResults(query) {
+    const results = [];
+    for (const brand of carsData.brands || []) {
+      if (brand.name.toLocaleLowerCase().includes(query)) results.push({ kind: "brand", label: brand.name, meta: `${brand.groups.length} ${plural(brand.groups.length, "модель", "модели", "моделей")}`, color: brand.status_color, icon: brand.logo, action: "Открыть марку", onClick: () => showGroupStep(brand) });
+      for (const group of brand.groups) {
+        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, color: group.status_color, icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", onClick: () => group.has_modifications ? showModificationStep(group) : selectModel(group.leaf) });
+        for (const modification of group.modifications || []) {
+          if ((modification.modification || "").toLocaleLowerCase().includes(query)) results.push({ kind: "variant", label: `${group.name} — ${modification.modification}`, meta: brand.name, color: modification.status_color, icon: modification.logo || group.logo, onClick: () => selectModel(modification) });
+        }
+      }
+    }
+    return results;
   }
 
   function showBrandStep() {
@@ -190,11 +244,14 @@
     selectedGroup = null;
     renderBreadcrumb();
     updateTopBack();
+    resetPickerScroll();
     if (!carsData || !carsData.brands || !carsData.brands.length) {
       renderList([]);
       return;
     }
-    renderList(carsData.brands.map((b) => ({ label: b.name, color: b.status_color, icon: b.logo, onClick: () => showGroupStep(b) })));
+    const query = pickerSearchEl.value.trim().toLocaleLowerCase();
+    if (query) { renderList(searchResults(query)); return; }
+    renderList(carsData.brands.map((b) => ({ kind: "brand", label: b.name, meta: `${b.groups.length} ${plural(b.groups.length, "модель", "модели", "моделей")}`, color: b.status_color, icon: b.logo, onClick: () => showGroupStep(b) })));
   }
 
   function showGroupStep(brand) {
@@ -202,8 +259,11 @@
     selectedGroup = null;
     renderBreadcrumb();
     updateTopBack();
+    resetPickerScroll();
     renderList(brand.groups.map((g) => ({
-      label: g.name,
+      kind: "model", label: g.name, icon: g.logo || (g.leaf && g.leaf.logo),
+      meta: g.has_modifications ? `${g.modifications.length} ${plural(g.modifications.length, "версия", "версии", "версий")}` : g.leaf.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
+      action: g.has_modifications ? "Выбрать версию" : "Открыть",
       color: g.status_color,
       onClick: () => (g.has_modifications ? showModificationStep(g) : selectModel(g.leaf)),
     })));
@@ -213,7 +273,8 @@
     selectedGroup = group;
     renderBreadcrumb();
     updateTopBack();
-    renderList(group.modifications.map((m) => ({ label: m.modification, color: m.status_color, onClick: () => selectModel(m) })));
+    resetPickerScroll();
+    renderList(group.modifications.map((m) => ({ kind: "variant", label: m.modification, meta: m.no_instruction ? "Способ уточняется" : "Открыть инструкцию", icon: m.logo || group.logo, color: m.status_color, onClick: () => selectModel(m) })));
   }
 
   function openModel(modelSummary) {
@@ -893,58 +954,76 @@
       }
       return { required: stage.standard_apks || [], optional: stage.standard_apks_optional || [] };
     }
-    const lists = currentLists();
+    const rawLists = currentLists();
+    // standard_apks/standard_apks_optional теперь {path,name,description}
+    // (см. wizard_spec.py: _apk_entry — раньше "красивое" имя из редактора
+    // терялось и техник видел голое имя файла) — остальной код (установка,
+    // globalSelectedApks) по-прежнему работает с путями строками, поэтому
+    // наружу отдаём только их, а name/description используем тут же для
+    // самого рендера строк ниже.
+    const lists = { required: rawLists.required.map((a) => a.path),
+                     optional: rawLists.optional.map((a) => a.path) };
 
-    if (lists.required.length) {
-      page.appendChild(el("p", { class: "apk-section-title", text: "Обязательные приложения" }));
-      const ul = el("ul", { class: "stage-apps-list" });
-      lists.required.forEach((path) => {
-        ul.appendChild(el("li", {}, [
-          el("input", { type: "checkbox", checked: "checked", disabled: "disabled" }),
-          el("span", { text: basename(path) }),
-        ]));
-      });
-      page.appendChild(ul);
-    }
-
-    if (lists.optional.length) {
-      page.appendChild(el("p", { class: "apk-section-title", text: "Необязательные приложения" }));
-      const ul = el("ul", { class: "stage-apps-list" });
-      lists.optional.forEach((path) => {
-        const checkbox = el("input", { type: "checkbox" });
-        checkbox.checked = sel.optional.has(path);
-        checkbox.addEventListener("change", () => {
-          if (checkbox.checked) { sel.optional.add(path); globalSelectedApks.add(path); }
-          else { sel.optional.delete(path); globalSelectedApks.delete(path); }
+    function buildAppRow(apk, required, checked, onChange) {
+      const row = el("li", { class: "app-choice" });
+      const checkbox = el("input", { type: "checkbox" });
+      checkbox.checked = checked;
+      if (required) checkbox.disabled = true;
+      if (onChange) checkbox.addEventListener("change", () => onChange(checkbox.checked));
+      row.append(checkbox, el("span", { class: "app-choice-name", text: apk.name || basename(apk.path) }));
+      if (apk.remote_only) row.appendChild(el("span", { class: "app-download-mark", text: "Будет скачано" }));
+      if (apk.description) {
+        const description = el("div", { class: "apk-desc", text: apk.description, id: `apk-desc-${Math.random().toString(36).slice(2)}` });
+        const info = el("button", { class: "apk-info-btn", type: "button", text: "i", "aria-label": "Описание приложения", "aria-expanded": "false" });
+        info.addEventListener("click", () => {
+          const open = row.classList.toggle("description-open");
+          info.setAttribute("aria-expanded", String(open));
         });
-        ul.appendChild(el("li", {}, [checkbox, el("span", { text: basename(path) })]));
-      });
-      page.appendChild(ul);
+        row.append(info, description);
+      }
+      return row;
     }
+
+    function appendSection(title, kind, apks, required, selected) {
+      if (!apks.length) return;
+      const section = el("section", { class: `apps-section apps-section-${kind}` });
+      section.appendChild(el("h3", { class: "apps-section-title", text: title }));
+      const list = el("ul", { class: "stage-apps-list stage-apps-grid" });
+      apks.forEach((apk) => {
+        list.appendChild(buildAppRow(
+          apk,
+          required,
+          required || selected.has(apk.path),
+          (checked) => {
+            if (checked) { selected.add(apk.path); globalSelectedApks.add(apk.path); }
+            else { selected.delete(apk.path); globalSelectedApks.delete(apk.path); }
+          },
+        ));
+      });
+      section.appendChild(list);
+      page.appendChild(section);
+    }
+
+    appendSection("Обязательные приложения", "required", rawLists.required, true, new Set());
+    appendSection("Необязательные приложения", "optional", rawLists.optional, false, sel.optional);
 
     const showGeneralLibrary = stage.type === "apps" || (stage.type === "usb" && stage.usb_copy_selected_apks);
     if (showGeneralLibrary) {
-      page.appendChild(el("p", { class: "apk-section-title", text: "Дополнительные приложения" }));
+      page.appendChild(el("h3", { class: "apps-library-title", text: "Дополнительные приложения" }));
       if (!apkLibrary.length) {
         page.appendChild(el("p", { class: "stage-text", style: "color: var(--text-dim)", text: "Загружаю список..." }));
       } else {
         const byCategory = {};
         apkLibrary.forEach((a) => { (byCategory[a.category || ""] = byCategory[a.category || ""] || []).push(a); });
         Object.keys(byCategory).sort((a, b) => a.localeCompare(b)).forEach((cat) => {
-          const details = el("details", { class: "apk-category" });
+          const details = el("details", { class: "apk-category apps-section apps-section-library" });
           details.appendChild(el("summary", { text: cat || "Без категории" }));
-          const ul = el("ul", { class: "stage-apps-list" });
+          const ul = el("ul", { class: "stage-apps-list stage-apps-grid" });
           byCategory[cat].forEach((apk) => {
-            const checkbox = el("input", { type: "checkbox" });
-            checkbox.checked = globalSelectedApks.has(apk.path);
-            checkbox.addEventListener("change", () => {
-              if (checkbox.checked) globalSelectedApks.add(apk.path);
+            ul.appendChild(buildAppRow(apk, false, globalSelectedApks.has(apk.path), (checked) => {
+              if (checked) globalSelectedApks.add(apk.path);
               else globalSelectedApks.delete(apk.path);
-            });
-            const label = apk.remote_only ? `${apk.name} (⬇ будет скачано)` : apk.name;
-            const li = el("li", {}, [checkbox, el("span", { text: label })]);
-            if (apk.description) li.appendChild(el("div", { class: "apk-desc", text: apk.description }));
-            ul.appendChild(li);
+            }));
           });
           details.appendChild(ul);
           page.appendChild(details);
@@ -1226,6 +1305,52 @@
     ]);
   }
 
+  function showSettingsModal() {
+    const formatBytes = (value) => {
+      const units = ["Б", "КБ", "МБ", "ГБ"]; let size = value || 0; let index = 0;
+      while (size >= 1024 && index < units.length - 1) { size /= 1024; index += 1; }
+      return `${size >= 100 || index === 0 ? Math.round(size) : size.toFixed(1)} ${units[index]}`;
+    };
+    const info = Bridge.call("settings_info", {});
+    let overlay;
+    const cacheLabel = el("span", { text: formatBytes(info.cache_bytes) });
+    const makeToggle = (text, key) => {
+      const input = el("input", { type: "checkbox" }); input.checked = !!info.preferences[key];
+      input.addEventListener("change", () => {
+        const preferences = Bridge.call("settings_set_preferences", { [key]: input.checked });
+        document.documentElement.classList.toggle("reduce-motion", preferences.reduced_motion);
+        document.getElementById("app").classList.toggle("compact-log", preferences.compact_log);
+      });
+      return el("label", { class: "settings-toggle" }, [input, el("span", { text })]);
+    };
+    const clear = el("button", { class: "danger", text: "Очистить кэш" });
+    clear.addEventListener("click", () => {
+      // Android WebView не показывает нативный confirm() без отдельного
+      // WebChromeClient; кнопка уже однозначно подписана и очищает только
+      // безопасный перекачиваемый кэш, поэтому дополнительный диалог тут
+      // намеренно не нужен.
+      const result = Bridge.call("settings_clear_cache", {});
+      cacheLabel.textContent = formatBytes(result.remaining_bytes);
+      clear.textContent = `Освобождено: ${formatBytes(result.freed_bytes)}`;
+    });
+    const sync = el("button", { text: "Проверить обновления сейчас" });
+    sync.addEventListener("click", () => { sync.disabled = true; sync.textContent = "Проверяем…"; Bridge.call("settings_sync_now", {}); });
+    const copyLog = el("button", { text: "Скопировать лог" });
+    copyLog.addEventListener("click", async () => { try { await navigator.clipboard.writeText(logPanelEl.innerText); copyLog.textContent = "Лог скопирован"; } catch (_) { log("Не удалось скопировать лог автоматически."); } });
+    const close = el("button", { class: "settings-close-mobile", type: "button", text: "Закрыть" });
+    close.addEventListener("click", () => overlay.remove());
+    overlay = showModal([
+      el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
+      el("div", { class: "settings-modal-header" }, [el("p", { class: "stage-text", style: "font-weight: 650; font-size: 17px", text: "Настройки" }), close]),
+      el("section", { class: "settings-section" }, [el("strong", { text: "Хранилище" }), el("span", { class: "settings-muted", text: `Приложение: ${formatBytes(info.app_bytes)} · кэш: ` }), cacheLabel, clear, el("small", { text: "Сценарии и настройки останутся на месте." })]),
+      el("section", { class: "settings-section" }, [el("strong", { text: "Синхронизация" }), el("span", { class: "settings-muted", text: "Сервер подключён" }), sync, makeToggle("Обновлять каталог при запуске", "auto_sync")]),
+      el("section", { class: "settings-section" }, [el("strong", { text: "Интерфейс" }), makeToggle("Уменьшить анимации", "reduced_motion"), makeToggle("Не выключать экран во время работы", "keep_screen_on"), makeToggle("Компактный лог", "compact_log")]),
+      el("section", { class: "settings-section" }, [el("strong", { text: "Диагностика" }), copyLog, el("a", { href: "https://github.com/torisar93/magic_sqd", target: "_blank", text: "GitHub проекта" })]),
+      el("button", { class: "accent", text: "Готово", onclick: () => overlay.remove() }),
+    ]);
+    document.documentElement.classList.toggle("reduce-motion", info.preferences.reduced_motion);
+  }
+
   function showStatusWarningModal(modelSummary) {
     const isRed = modelSummary.status_color === "red";
     let overlay;
@@ -1272,8 +1397,14 @@
     breadcrumbEl = document.getElementById("picker-breadcrumb");
     syncStatusEl = document.getElementById("picker-sync-status");
     listEl = document.getElementById("picker-list");
+    pickerSearchEl = document.getElementById("picker-search");
+    pickerSearchEl.addEventListener("input", () => {
+      if (selectedGroup) showModificationStep(selectedGroup);
+      else if (selectedBrand) showGroupStep(selectedBrand);
+      else showBrandStep();
+    });
     topHelpBtn = document.getElementById("top-help");
-    topHelpBtn.addEventListener("click", showAboutModal);
+    topHelpBtn.addEventListener("click", showSettingsModal);
     wizardContentEl = document.getElementById("wizard-content");
     wizardBackBtn = document.getElementById("wizard-back");
     wizardNextBtn = document.getElementById("wizard-next");
@@ -1330,8 +1461,12 @@
     window.events.on("apk_library_result", onApkLibraryResult);
 
     showScreen("picker");
+    const preferences = Bridge.call("settings_preferences", {});
+    document.documentElement.classList.toggle("reduce-motion", preferences.reduced_motion);
+    document.getElementById("app").classList.toggle("compact-log", preferences.compact_log);
+    if (!preferences.auto_sync) syncStatusEl.style.display = "none";
     loadCars();
-    startSync();
+    if (preferences.auto_sync) startSync();
     maybeShowWelcomeModal();
   });
 })();

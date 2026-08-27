@@ -2,6 +2,30 @@
 // wizard, мелкие диалоги (usb/report/admin-upload) и мастер "Добавить/
 // Изменить машину" (с редактором инструкции внутри).
 let currentModel = null;
+let stageUiReady = null;
+
+function initializeStageUi() {
+  if (stageUiReady) return stageUiReady;
+  stageUiReady = new Promise((resolve) => {
+    // Каталог должен появиться раньше редакторов. Это заметно на реальных
+    // наборах данных: создание обработчиков большого мастера установки и
+    // редактора графа занимало первый кадр главного экрана, хотя до выбора
+    // модели они пользователю не нужны.
+    setTimeout(() => {
+      window.instructionEditor.init();
+      window.stageWizard.init(document.getElementById("install-content"), log);
+      try {
+        window.graphWizard.init(log);
+      } catch (err) {
+        console.error("Не удалось инициализировать редактор", err);
+        log(`Ошибка инициализации редактора: ${err.message || err}`);
+      }
+      window.pendingList.init();
+      resolve();
+    }, 0);
+  });
+  return stageUiReady;
+}
 
 function log(text) {
   const el = document.getElementById("log-panel");
@@ -61,9 +85,43 @@ function sendAdbConsoleCommand() {
 
 function onModelSelected(model) {
   currentModel = model;
+  const shell = document.getElementById("app-shell");
+  shell.classList.remove("catalog-home");
+  shell.classList.add("workspace-open");
+  shell.style.gridTemplateColumns = "";
+  document.getElementById("workspace-nav").hidden = false;
+  document.getElementById("workspace-model-title").textContent = model.modification
+    ? `${model.brand} ${model.name} — ${model.modification}`
+    : `${model.brand} ${model.name}`;
   document.getElementById("report-btn").disabled = false;
   document.getElementById("edit-car-btn").disabled = !model.has_wizard_spec;
+  document.getElementById("workspace-edit-car").disabled = !model.has_wizard_spec;
   window.stageWizard.open(model);
+}
+
+function returnToCatalog() {
+  const previousModel = currentModel;
+  currentModel = null;
+  const shell = document.getElementById("app-shell");
+  shell.classList.remove("workspace-open");
+  shell.classList.add("catalog-home");
+  shell.style.gridTemplateColumns = "";
+  document.getElementById("workspace-nav").hidden = true;
+  document.getElementById("report-btn").disabled = true;
+  document.getElementById("edit-car-btn").disabled = true;
+  document.getElementById("workspace-edit-car").disabled = true;
+  window.mainPicker.showModelListFor(previousModel);
+}
+
+function openCarEditorForNewModel() {
+  window.graphWizard.open(null, window.mainPicker.getBrands(),
+    (brand, modelName, modification, dir) => onCarCreated(brand, modelName, modification, dir, null));
+}
+
+function openCarEditorForCurrentModel() {
+  const editingKey = currentModel ? currentModel.key : null;
+  window.graphWizard.open(currentModel, window.mainPicker.getBrands(),
+    (brand, modelName, modification, dir) => onCarCreated(brand, modelName, modification, dir, editingKey));
 }
 
 // editingKey — ключ (== пройденный путь папки, см. scanner_api.py:
@@ -132,11 +190,6 @@ window.addEventListener("pywebviewready", async () => {
 
   window.initDialogs();
   window.boostyDialogs.init();
-  window.instructionEditor.init();
-  window.graphWizard.init(log);
-  window.stageWizard.init(document.getElementById("install-content"), log);
-  window.pendingList.init();
-
   // Раньше остального старта — в admin-сборке техник не должен увидеть ХОТЬ
   // ЧТО-ТО из интерфейса (список машин, панель лога и т.п.) без входа,
   // поэтому гейт стоит ДО sync_startup()/mainPicker.init() ниже, а не после
@@ -144,6 +197,8 @@ window.addEventListener("pywebviewready", async () => {
   // dialogs.js: adminLogin.requireLogin — диалог нельзя закрыть без
   // успешного входа).
   const info = await window.pywebview.api.app_get_info();
+  const settingsPreferences = await window.pywebview.api.settings_preferences();
+  document.documentElement.classList.toggle("reduce-motion", settingsPreferences.reduced_motion);
   if (info.admin_mode) {
     const saved = await window.pywebview.api.admin_try_saved_login();
     if (!saved.ok) {
@@ -158,9 +213,37 @@ window.addEventListener("pywebviewready", async () => {
   // опоздавших слушателей. Из-за этого лог при первом запуске выглядел
   // пустым, будто программа зависла, хотя синхронизация шла нормально.
   window.events.on("log", (event) => log(event.text));
+  window.events.on("sync_progress", (event) => window.mainPicker.setStartupProgress(
+    event.done, event.total, event.files_done, event.files_total,
+  ));
 
-  const syncResult = await window.pywebview.api.sync_startup();
-  await window.mainPicker.init(document.getElementById("picker"), { onModelSelected });
+  // Каталог открывается из локального снимка сразу. Центрированный экран
+  // загрузки нужен только при первом запуске, когда показывать ещё нечего:
+  // проверка/синхронизация большого набора файлов не должна закрывать уже
+  // доступное главное окно на десятки секунд.
+  const pickerReady = window.mainPicker.init(document.getElementById("picker"), {
+    onModelSelected: async (model) => {
+      await initializeStageUi();
+      onModelSelected(model);
+    },
+  });
+  await pickerReady;
+  // Отдаём браузеру один кадр с каталогом, после чего тихо подготавливаем
+  // рабочий экран. К моменту первого клика он обычно уже готов; await выше
+  // сохраняет корректность и при очень быстром клике.
+  initializeStageUi();
+  const catalogWasEmpty = window.mainPicker.getBrands().length === 0;
+  if (catalogWasEmpty) window.mainPicker.showStartupLoading();
+  if (settingsPreferences.auto_sync) {
+    window.pywebview.api.sync_startup().then(async (syncResult) => {
+      await window.mainPicker.reload();
+      if (catalogWasEmpty) window.mainPicker.hideStartupLoading();
+      if (syncResult.changes && syncResult.changes.length > 0) showUpdatesNotice(syncResult.changes);
+    }).catch((error) => {
+      console.error("Ошибка фоновой синхронизации:", error);
+      if (catalogWasEmpty) window.mainPicker.hideStartupLoading();
+    });
+  }
 
   if (info.admin_mode) {
     document.getElementById("admin-login-btn").style.display = "";
@@ -197,19 +280,23 @@ window.addEventListener("pywebviewready", async () => {
     window.boostyDialogs.maybeShowWelcomeDialog();
   }
 
-  document.getElementById("add-car-btn").addEventListener("click", () =>
-    window.graphWizard.open(null, window.mainPicker.getBrands(),
-      (brand, modelName, modification, dir) => onCarCreated(brand, modelName, modification, dir, null)));
-  document.getElementById("edit-car-btn").addEventListener("click", () => {
-    const editingKey = currentModel ? currentModel.key : null;
-    window.graphWizard.open(currentModel, window.mainPicker.getBrands(),
-      (brand, modelName, modification, dir) => onCarCreated(brand, modelName, modification, dir, editingKey));
-  });
+  document.getElementById("add-car-btn").addEventListener("click", openCarEditorForNewModel);
+  document.getElementById("edit-car-btn").addEventListener("click", openCarEditorForCurrentModel);
+  document.getElementById("workspace-add-car").addEventListener("click", openCarEditorForNewModel);
+  document.getElementById("workspace-edit-car").addEventListener("click", openCarEditorForCurrentModel);
   document.getElementById("report-btn").addEventListener("click", () => window.reportDialog.open(currentModel));
+  document.getElementById("back-to-catalog").addEventListener("click", returnToCatalog);
   document.getElementById("admin-login-btn").addEventListener("click", () => window.adminLoginDialog.open());
   document.getElementById("admin-upload-btn").addEventListener("click", () => window.adminDialog.open());
   document.getElementById("admin-add-apk-btn").addEventListener("click", () => window.adminApkDialog.open());
   document.getElementById("admin-browse-btn").addEventListener("click", () => window.adminBrowseDialog.open());
+  document.getElementById("log-toggle").addEventListener("click", () => {
+    const card = document.getElementById("log-card");
+    const expanded = card.classList.toggle("is-expanded");
+    const button = document.getElementById("log-toggle");
+    button.textContent = expanded ? "Свернуть" : "Развернуть";
+    button.setAttribute("aria-expanded", String(expanded));
+  });
 
   document.getElementById("adb-console-refresh").addEventListener("click", () => refreshAdbConsoleDevices());
   document.getElementById("adb-console-send").addEventListener("click", () => sendAdbConsoleCommand());
@@ -218,7 +305,4 @@ window.addEventListener("pywebviewready", async () => {
   });
   refreshAdbConsoleDevices();
 
-  if (syncResult.changes && syncResult.changes.length > 0) {
-    showUpdatesNotice(syncResult.changes);
-  }
 });

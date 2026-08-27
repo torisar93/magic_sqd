@@ -39,13 +39,15 @@ class SyncApi:
         event_bridge.push({"kind": "log", "text": str(message)})
 
     @staticmethod
-    def _on_sync_progress(done: int, total: int) -> None:
+    def _on_sync_progress(done: int, total: int, files_done: int | None = None,
+                          files_total: int | None = None) -> None:
         # Тот же формат события, что уже рисует общий #main-progress бар
         # (см. app/web/api/install_api.py:_on_sync_progress/stage_wizard.js:
         # updateSyncProgress) — переиспользуем готовый механизм вместо
         # нового, чтобы скачивание моделей при самом первом запуске
         # программы не выглядело зависшим (раньше был только построчный лог).
-        event_bridge.push({"kind": "sync_progress", "done": done, "total": total})
+        event_bridge.push({"kind": "sync_progress", "done": done, "total": total,
+                           "files_done": files_done, "files_total": files_total})
 
     def startup_sync(self) -> dict:
         """Вызывается один раз из JS сразу после того, как главное окно

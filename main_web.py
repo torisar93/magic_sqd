@@ -7,6 +7,7 @@
 magic_sqd.spec)."""
 from __future__ import annotations
 import ssl
+import os
 import sys
 import time
 from pathlib import Path
@@ -194,6 +195,20 @@ def get_frontend_dir(base_dir: Path) -> Path:
     meipass = getattr(sys, "_MEIPASS", None)
     root = Path(meipass) if meipass else base_dir
     return root / "app" / "web" / "frontend"
+
+
+def get_webview_profile_dir(base_dir: Path) -> Path:
+    """Постоянный, но полностью технический профиль WebView2.
+
+    По умолчанию pywebview открывает WebView2 в private mode и удаляет его
+    профиль после каждого закрытия. Это заставляет Chromium заново создавать
+    служебные базы на следующем запуске. Храним их вне папки программы (она
+    может быть Program Files), а «Очистить кэш» удаляет эту папку целиком.
+    """
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "MagicSQD" / "webview_profile"
+    return base_dir / "webview_profile"
 
 
 def _set_dpi_aware():
@@ -421,7 +436,20 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
 
     _log_step("webview.start()")
     try:
-        webview.start(debug=debug, **({"gui": renderer["gui"]} if renderer["gui"] else {}))
+        profile_dir = get_webview_profile_dir(base_dir)
+        try:
+            profile_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # На очень жёстко ограниченной Windows сохраняем прежний
+            # приватный режим: приложение всё равно откроется, просто без
+            # ускорения повторных запусков.
+            profile_dir = None
+        webview.start(
+            debug=debug,
+            private_mode=profile_dir is None,
+            storage_path=str(profile_dir) if profile_dir else None,
+            **({"gui": renderer["gui"]} if renderer["gui"] else {}),
+        )
     finally:
         _log_step("webview.start() returned (normal close)")
         # adb.exe запускает свой собственный фоновый сервер-процесс при

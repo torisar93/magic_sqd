@@ -11,8 +11,10 @@ import base64
 from ..events import event_bridge
 from ...scanner import scan_cars, scan_apks, model_status_color, rollup_status_color, ModelInfo
 
-BRAND_LOGO_FILENAMES = ("logo.png", "logo.jpg", "logo.jpeg")
-_LOGO_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+BRAND_LOGO_FILENAMES = ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg")
+_LOGO_MIME = {
+    ".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+}
 
 
 def apk_to_dict(apk) -> dict:
@@ -116,6 +118,7 @@ class ScannerApi:
         colors = ([leaf_dict["status_color"]] if leaf_dict else []) + [m["status_color"] for m in mod_dicts]
         return {
             "name": group.name,
+            "logo": self._logo_data_uri(group.logo_path),
             "has_modifications": group.has_modifications,
             "leaf": leaf_dict,
             "modifications": mod_dicts,
@@ -137,16 +140,24 @@ class ScannerApi:
             "status_color": model_status_color(model),
             "is_pending": model.is_pending,
             "submission_name": model.submission_name,
+            "logo": self._logo_data_uri(model.logo_path),
         }
 
     def _brand_logo_data_uri(self, brand: str) -> str | None:
         for filename in BRAND_LOGO_FILENAMES:
             path = self.cars_dir / brand / filename
-            if path.exists():
-                try:
-                    data = path.read_bytes()
-                except OSError:
-                    continue
-                mime = _LOGO_MIME.get(path.suffix.lower(), "image/png")
-                return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+            data_uri = self._logo_data_uri(path)
+            if data_uri:
+                return data_uri
         return None
+
+    @staticmethod
+    def _logo_data_uri(path) -> str | None:
+        if not path or not path.is_file():
+            return None
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return None
+        mime = _LOGO_MIME.get(path.suffix.lower(), "image/png")
+        return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"

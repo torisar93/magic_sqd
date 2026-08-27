@@ -2,22 +2,32 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Magic SQD</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
   <div id="app">
     <div class="topbar">
-      <button class="back" id="top-back" style="visibility: hidden">Марки</button>
+      <button class="back" id="top-back" style="visibility: hidden">Назад</button>
       <span class="title" id="top-title">Magic SQD</span>
-      <button class="help-btn" id="top-help" aria-label="О программе">?</button>
+      <button class="help-btn" id="top-help" aria-label="Настройки приложения" title="Настройки">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9.7 3.7h4.6l.7 2.1c.5.2 1 .5 1.4.8l2.1-.4 2.3 4-1.4 1.6v1.6l1.4 1.6-2.3 4-2.1-.4c-.4.3-.9.6-1.4.8l-.7 2.1H9.7L9 19.4c-.5-.2-1-.5-1.4-.8l-2.1.4-2.3-4 1.4-1.6v-1.6L3.2 10l2.3-4 2.1.4c.4-.3.9-.6 1.4-.8l.7-2.1Z"/><circle cx="12" cy="12" r="3.1"/></svg>
+      </button>
     </div>
 
     <div class="screen active" id="screen-picker">
+      <div class="catalog-actions" aria-label="Поиск и ссылки проекта">
+        <label class="catalog-search" for="picker-search">
+          <span class="catalog-search-icon" aria-hidden="true"></span>
+          <input id="picker-search" type="search" autocomplete="off" placeholder="Поиск" />
+        </label>
+        <a class="catalog-link catalog-boosty" href="https://boosty.to/magic_sqd" target="_blank" rel="noopener">Boosty</a>
+        <a class="catalog-link" href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener">GitHub</a>
+      </div>
       <div class="breadcrumb" id="picker-breadcrumb"></div>
       <div class="sync-status" id="picker-sync-status" style="display: none"></div>
-      <ul class="list" id="picker-list"></ul>
+      <main class="catalog-grid" id="picker-list" aria-live="polite"></main>
     </div>
 
     <div class="screen" id="screen-wizard">

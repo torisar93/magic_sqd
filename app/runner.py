@@ -7,7 +7,8 @@ from .install_context import InstallContext, InstallCancelled
 
 
 class InstallRunner:
-    def __init__(self, adb_path, on_log, on_finished, base_dir=None, ask_input_fn=None):
+    def __init__(self, adb_path, on_log, on_finished, base_dir=None, ask_input_fn=None,
+                 on_sync_progress=None):
         """
         on_log(str) вызывается из фонового потока при каждой строке лога.
         on_finished(success: bool, message: str) вызывается по завершении.
@@ -34,6 +35,7 @@ class InstallRunner:
         self.on_finished = on_finished
         self.base_dir = base_dir
         self.ask_input_fn = ask_input_fn
+        self.on_sync_progress = on_sync_progress or (lambda done, total: None)
         self._thread = None
         self._cancel_flag = threading.Event()
 
@@ -71,9 +73,11 @@ class InstallRunner:
             if self.base_dir:
                 for local_dir in own_dirs:
                     sync_model_subfolder(self.base_dir, local_dir, log=self.on_log,
-                                          check_cancelled=self._check_cancelled)
+                                          check_cancelled=self._check_cancelled,
+                                          on_progress=self.on_sync_progress)
                 ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apks,
-                                        log=self.on_log, check_cancelled=self._check_cancelled)
+                                        log=self.on_log, check_cancelled=self._check_cancelled,
+                                        on_progress=self.on_sync_progress)
             ctx = InstallContext(
                 adb_path=self.adb_path,
                 device_serial=device_serial,
@@ -95,4 +99,8 @@ class InstallRunner:
             # debug_logs/ в debug-сборке (см. main_web.py:_enable_debug_log_all).
             self.on_finished(False, f"Ошибка установки: {exc}")
             return
+        finally:
+            # (0, 0) скрывает прогресс-бар в логе после успеха, ошибки или
+            # остановки — пользователь не остаётся с вечным индикатором.
+            self.on_sync_progress(0, 0)
         self.on_finished(True, "Установка завершена успешно.")

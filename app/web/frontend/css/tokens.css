@@ -7,10 +7,13 @@
   --bg-card: #191d24;
   --text: #e9ecf1;
   --text-dim: #9aa2b0;
-  --accent: #0e8f6d;
-  --accent-hover: #0b7059;
+  --accent: #08745a;
+  --accent-hover: #065d48;
   --accent-2: #d98a3d;
   --border: #2b303a;
+  --glass-border: rgba(187, 207, 222, 0.15);
+  --glass-surface: rgba(22, 28, 36, 0.82);
+  --glass-field: rgba(9, 13, 18, 0.68);
   --danger: #e0605b;
   --danger-hover: #c94842;
   --info: #4d90d1;
@@ -63,18 +66,30 @@ button {
   font-size: inherit;
   cursor: pointer;
   border-radius: var(--corner-radius);
-  border: 1px solid var(--border);
-  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.012)),
+    var(--glass-surface);
   color: var(--text);
   padding: 6px 14px;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.07), 0 5px 14px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(10px) saturate(120%);
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 button:hover {
-  background: var(--bg-elevated);
+  border-color: rgba(166, 221, 207, 0.34);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.025)),
+    rgba(39, 49, 59, 0.82);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.1), 0 9px 19px rgba(0, 0, 0, 0.2);
+  transform: translateY(-1px);
 }
 
+button:active { transform: translateY(0); }
+
 button.accent {
-  background: var(--accent);
+  background: linear-gradient(145deg, #0c8969, var(--accent));
   border-color: var(--accent);
   color: #fff;
 }
@@ -84,7 +99,7 @@ button.accent:hover {
 }
 
 button.danger {
-  background: var(--danger);
+  background: linear-gradient(145deg, #ee746f, var(--danger));
   border-color: var(--danger);
   color: #fff;
 }

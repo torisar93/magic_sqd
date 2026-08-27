@@ -3,12 +3,16 @@
 // колонки хранится в localStorage, чтобы не сбрасываться между запусками.
 (function () {
   const STORAGE_KEY = "magicsqd.leftPanelWidth";
-  const MIN_WIDTH = 240;
+  const MIN_WIDTH = 380;
+  const DEFAULT_WIDTH = 480;
 
   function initResizer(shellEl, handleEl) {
     const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
-    if (!Number.isNaN(saved)) {
-      shellEl.style.gridTemplateColumns = `${saved}px 4px 1fr`;
+    const initialWidth = Number.isNaN(saved) ? DEFAULT_WIDTH : Math.max(MIN_WIDTH, saved);
+    // На стартовом экране каталог намеренно занимает всё окно. Inline-стиль
+    // здесь сильнее CSS-класса и раньше возвращал ему старую узкую колонку.
+    if (!shellEl.classList.contains("catalog-home")) {
+      shellEl.style.gridTemplateColumns = `${initialWidth}px 6px 1fr`;
     }
 
     let dragging = false;
@@ -21,8 +25,8 @@
 
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;
-      const width = Math.max(MIN_WIDTH, e.clientX);
-      shellEl.style.gridTemplateColumns = `${width}px 4px 1fr`;
+      const width = Math.min(Math.max(MIN_WIDTH, e.clientX), window.innerWidth - 420);
+      shellEl.style.gridTemplateColumns = `${width}px 6px 1fr`;
     });
 
     window.addEventListener("mouseup", () => {

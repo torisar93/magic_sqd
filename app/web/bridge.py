@@ -13,6 +13,7 @@ from .api.car_editor_api import CarEditorApi
 from .api.install_api import InstallApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
+from .api.settings_api import SettingsApi
 from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
@@ -48,6 +49,7 @@ class WebApi:
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner)
         self._submissions = SubmissionsApi(base_dir, self.cars_dir, self._scanner)
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
+        self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, admin_mode)
         self._update = UpdateApi(base_dir)
 
     # -- метаданные окна ------------------------------------------------
@@ -57,6 +59,19 @@ class WebApi:
     # -- sync_api -----------------------------------------------------------
     def sync_startup(self) -> dict:
         return self._sync.startup_sync()
+
+    # -- settings_api -------------------------------------------------------
+    def settings_info(self) -> dict:
+        return self._settings.info()
+
+    def settings_preferences(self) -> dict:
+        return self._settings.preferences()
+
+    def settings_clear_cache(self) -> dict:
+        return self._settings.clear_cache()
+
+    def settings_set_preferences(self, preferences: dict) -> dict:
+        return self._settings.set_preferences(preferences)
 
     # -- update_api -----------------------------------------------------------
     def update_check(self) -> dict:

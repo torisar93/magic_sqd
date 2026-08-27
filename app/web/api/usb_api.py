@@ -64,12 +64,16 @@ class UsbApi:
 
     def _worker(self, model, stage, variant, selected_apk_paths, drive_letter, do_format, filesystem):
         try:
-            sync_model_files(self.base_dir, model, log=self._log, check_cancelled=self._check_cancelled)
+            sync_model_files(self.base_dir, model, log=self._log,
+                             check_cancelled=self._check_cancelled,
+                             on_progress=self._progress)
             ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apk_paths,
-                                    log=self._log, check_cancelled=self._check_cancelled)
+                                    log=self._log, check_cancelled=self._check_cancelled,
+                                    on_progress=self._progress)
             if stage.get("usb_shared_folder"):
                 sync_shared_folder(self.base_dir, stage["usb_shared_folder"],
-                                    log=self._log, check_cancelled=self._check_cancelled)
+                                    log=self._log, check_cancelled=self._check_cancelled,
+                                    on_progress=self._progress)
 
             if do_format:
                 try:
@@ -104,5 +108,12 @@ class UsbApi:
     def _log(self, message) -> None:
         event_bridge.push({"kind": "usb_log", "text": str(message)})
 
+    @staticmethod
+    def _progress(done: int, total: int, files_done: int | None = None,
+                  files_total: int | None = None) -> None:
+        event_bridge.push({"kind": "sync_progress", "done": done, "total": total,
+                           "files_done": files_done, "files_total": files_total})
+
     def _finish(self, success: bool, message: str) -> None:
+        self._progress(0, 0)
         event_bridge.push({"kind": "usb_finished", "success": success, "message": message})

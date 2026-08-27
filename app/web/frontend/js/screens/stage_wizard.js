@@ -40,6 +40,7 @@
   let sharedApksPromise = null;
   let runnerBusy = false;
   let modelWifiPort = 5555;
+  let appDescriptionTooltip = null;
   // Показываем "Готово!"+Boosty один раз за сеанс работы с моделью — сброс
   // при каждом open() (см. android app.js: installCompletedShown, тот же
   // приём).
@@ -61,14 +62,16 @@
     window.events.on("install_log", (event) => log(event.text));
     window.events.on("install_finished", onInstallFinished);
     window.events.on("ask_input", (event) => showAskInputDialog(event));
-    window.events.on("sync_progress", (event) => updateSyncProgress(event.done, event.total));
+    window.events.on("sync_progress", (event) => updateSyncProgress(
+      event.done, event.total, event.files_done, event.files_total,
+    ));
   }
 
   // -- прогресс синхронизации файлов модели перед показом инструкции -------
   // (см. app/content_sync.py: sync_tree on_progress) — раньше вместо этого
   // в лог сыпалась строка "Скачиваю <файл>..." на КАЖДЫЙ файл модели (сотни
   // на первой синхронизации), теперь — обычный прогресс-бар с "N из M".
-  function updateSyncProgress(done, total) {
+  function updateSyncProgress(done, total, filesDone, filesTotal) {
     const bar = document.getElementById("main-progress");
     const fill = document.getElementById("main-progress-fill");
     const label = document.getElementById("main-progress-label");
@@ -77,11 +80,30 @@
       label.style.display = "none";
       return;
     }
-    bar.style.display = "";
-    bar.classList.remove("indeterminate");
-    fill.style.width = `${Math.min(100, Math.round((done / total) * 100))}%`;
-    label.style.display = "";
-    label.textContent = `Скачиваю файлы модели (${done} из ${total})...`;
+    const percent = Math.min(100, Math.round((done / total) * 100));
+    // Процент отображается одной строкой ВНУТРИ лога ниже. Старый бар и
+    // подпись над логом больше не используем, чтобы не было двух индикаторов.
+    bar.style.display = "none";
+    label.style.display = "none";
+
+    // Одна живая строка внутри самого лога вместо десятков сообщений о
+    // каждом файле. appendChild переносит её в конец после новых записей,
+    // поэтому актуальный процент всегда остаётся виден.
+    const logPanel = document.getElementById("log-panel");
+    let progressLine = document.getElementById("sync-progress-log-line");
+    if (!progressLine) {
+      progressLine = document.createElement("div");
+      progressLine.id = "sync-progress-log-line";
+      progressLine.className = "log-line log-line-progress";
+    }
+    const width = 16;
+    const filled = Math.round((percent / 100) * width);
+    const suffix = Number.isFinite(filesDone) && Number.isFinite(filesTotal)
+      ? ` · ${filesDone} из ${filesTotal} файлов`
+      : "";
+    progressLine.textContent = `[${"#".repeat(filled)}${".".repeat(width - filled)}] ${percent}% скачано${suffix}`;
+    logPanel.appendChild(progressLine);
+    logPanel.scrollTop = logPanel.scrollHeight;
   }
 
   // -- построение разметки (один раз, лениво — при первом open(), чтобы
@@ -251,7 +273,7 @@
       // список APK на установку (см. selectedApkPaths), не отдельным путём.
       for (const apk of standard.required) appSelection[apk.path] = true;
       for (const apk of standard.optional) {
-        if (!(apk.path in appSelection)) appSelection[apk.path] = true;
+        if (!(apk.path in appSelection)) appSelection[apk.path] = false;
       }
     }
     for (const apk of await sharedApks()) {
@@ -565,7 +587,7 @@
         const standard = await window.pywebview.api.install_standard_apks(model.key, index, select.value);
         for (const apk of standard.required) appSelection[apk.path] = true;
         for (const apk of standard.optional) {
-          if (!(apk.path in appSelection)) appSelection[apk.path] = true;
+          if (!(apk.path in appSelection)) appSelection[apk.path] = false;
         }
       }
       render();
@@ -625,7 +647,7 @@
     const standard = await window.pywebview.api.install_standard_apks(model.key, stage.index, chosenVariants[stage.index]);
     for (const apk of standard.required) appSelection[apk.path] = true;
     for (const apk of standard.optional) {
-      if (!(apk.path in appSelection)) appSelection[apk.path] = true;
+      if (!(apk.path in appSelection)) appSelection[apk.path] = false;
     }
     if (standard.required.length) {
       tree.appendChild(buildCollapsibleSection("standard-required", "Обязательные приложения", standard.required, null, true));
@@ -656,13 +678,16 @@
 
   function buildCollapsibleSection(key, title, apks, presetBody, required) {
     const collapsed = sectionCollapsed[key] || false;
-    const wrap = el("div");
+    const sectionKind = required ? " apps-section-required"
+      : key === "standard-optional" ? " apps-section-optional" : "";
+    const wrap = el("section", { class: `apps-section${sectionKind}` });
     const header = el("div", { class: "apps-section-header" }, [
       el("span", { text: collapsed ? "▸" : "▾" }),
       el("span", { text: title }),
     ]);
     const body = presetBody || el("div");
     body.classList.add("apps-section-body");
+    if (apks) body.classList.add("apps-grid");
     if (collapsed) body.classList.add("collapsed");
     header.addEventListener("click", () => {
       sectionCollapsed[key] = !sectionCollapsed[key];
@@ -684,6 +709,12 @@
   // buildAppsTree/initAppSelectionDefaults, не через этот чекбокс).
   function buildAppRow(apk, required) {
     const row = el("div", { class: "app-row" });
+    if (apk.description) {
+      row.addEventListener("mouseenter", () => showAppDescription(row, apk.description));
+      row.addEventListener("mouseleave", hideAppDescription);
+      row.addEventListener("focusin", () => showAppDescription(row, apk.description));
+      row.addEventListener("focusout", hideAppDescription);
+    }
     const checkbox = el("input", { type: "checkbox" });
     if (required) {
       checkbox.checked = true;
@@ -694,11 +725,42 @@
     }
     const label = apk.name + (apk.remote_only ? "  ⬇ (будет скачан)" : "");
     const wrap = el("div", {}, [
-      el("label", { class: "row" }, [checkbox, el("span", { text: label, style: apk.remote_only ? "color: var(--text-dim)" : "" })]),
-      apk.description ? el("div", { class: "app-desc", text: apk.description }) : null,
+      el("label", { class: "row" }, [
+        checkbox,
+        el("span", { text: label, style: apk.remote_only ? "color: var(--text-dim)" : "" }),
+      ]),
     ]);
     row.appendChild(wrap);
     return row;
+  }
+
+  // Подсказка живёт прямо в document.body, а не внутри прокручиваемого
+  // списка приложений. Поэтому её не обрезают границы карточек/секций.
+  function showAppDescription(row, description) {
+    if (!appDescriptionTooltip) {
+      appDescriptionTooltip = document.createElement("div");
+      appDescriptionTooltip.className = "app-description-tooltip";
+      appDescriptionTooltip.setAttribute("role", "tooltip");
+      document.body.appendChild(appDescriptionTooltip);
+    }
+    appDescriptionTooltip.textContent = description;
+    appDescriptionTooltip.hidden = false;
+    appDescriptionTooltip.style.visibility = "hidden";
+    const rect = row.getBoundingClientRect();
+    const tipRect = appDescriptionTooltip.getBoundingClientRect();
+    const sidePadding = 12;
+    const left = Math.max(sidePadding, Math.min(rect.left, window.innerWidth - tipRect.width - sidePadding));
+    const below = rect.bottom + 8;
+    const top = below + tipRect.height <= window.innerHeight - sidePadding
+      ? below
+      : Math.max(sidePadding, rect.top - tipRect.height - 8);
+    appDescriptionTooltip.style.left = `${Math.round(left)}px`;
+    appDescriptionTooltip.style.top = `${Math.round(top)}px`;
+    appDescriptionTooltip.style.visibility = "visible";
+  }
+
+  function hideAppDescription() {
+    if (appDescriptionTooltip) appDescriptionTooltip.hidden = true;
   }
 
   function selectedApkPaths() {
@@ -768,12 +830,18 @@
       startBtn.disabled = true;
       stopBtn.disabled = false;
       runnerBusy = true;
-      const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selectedApkPaths());
-      if (!result.ok) {
+      try {
+        const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selectedApkPaths());
+        if (result.ok) return;
         runnerBusy = false;
         startBtn.disabled = false;
         stopBtn.disabled = true;
-        log(result.error);
+        log(result.error || "Не удалось запустить этап.");
+      } catch (err) {
+        runnerBusy = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        log(`Не удалось запустить этап: ${err.message || err}`);
       }
     });
     stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
@@ -873,11 +941,16 @@
         if (!device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
         runnerBusy = true;
         setButtonsDisabled(true);
-        const result = await window.pywebview.api.install_run_action(model.key, stage.index, i, device, selectedApkPaths());
-        if (!result.ok) {
+        try {
+          const result = await window.pywebview.api.install_run_action(model.key, stage.index, i, device, selectedApkPaths());
+          if (result.ok) return;
           runnerBusy = false;
           setButtonsDisabled(false);
-          log(result.error);
+          log(result.error || "Не удалось выполнить команду.");
+        } catch (err) {
+          runnerBusy = false;
+          setButtonsDisabled(false);
+          log(`Не удалось выполнить команду: ${err.message || err}`);
         }
       });
       list.appendChild(btn);

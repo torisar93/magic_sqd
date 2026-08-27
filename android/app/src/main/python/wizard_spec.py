@@ -124,6 +124,22 @@ def _apk_filename(item) -> str:
     return item["filename"] if isinstance(item, dict) else item
 
 
+def _apk_entry(item, base_dir: Path) -> dict:
+    """Как _apk_filename, но возвращает {"path","name","description"} целиком
+    — раньше "красивые" имя/описание из редактора здесь просто отбрасывались
+    (оставался голый _apk_filename), и техник на телефоне видел имя файла
+    вместо человеческого названия, хотя на десктопе оно уже показывалось
+    (см. app/web/api/install_api.py: standard_apks). Явно НЕ читаем сайдкар
+    <файл>.json рядом с apk — на телефоне сам APK (и сайдкар) чаще всего ещё
+    не докачан в момент показа списка (ленивая докачка), а имя/описание уже
+    есть прямо в _wizard_spec.json — читать оттуда надёжнее и не требует
+    сети/локального файла."""
+    if isinstance(item, dict):
+        return {"path": str(base_dir / item["filename"]),
+                "name": item.get("name") or "", "description": item.get("description") or ""}
+    return {"path": str(base_dir / item), "name": "", "description": ""}
+
+
 def _variant_dicts(variant_data, base_dir: Path, step_type: str) -> list:
     variants = []
     for v in variant_data or []:
@@ -137,8 +153,8 @@ def _variant_dicts(variant_data, base_dir: Path, step_type: str) -> list:
         elif step_type == "apps":
             variants.append({
                 "name": name,
-                "standard_apks": [str(v_dir / "required" / _apk_filename(n)) for n in v.get("standard_apks", [])],
-                "standard_apks_optional": [str(v_dir / "optional" / _apk_filename(n))
+                "standard_apks": [_apk_entry(n, v_dir / "required") for n in v.get("standard_apks", [])],
+                "standard_apks_optional": [_apk_entry(n, v_dir / "optional")
                                             for n in v.get("standard_apks_optional", [])],
             })
     return variants
@@ -208,10 +224,10 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             if variant_data:
                 variants = _variant_dicts(variant_data, pack_dir, "apps")
             else:
-                standard_apks = [str(pack_dir / "required" / _apk_filename(item))
+                standard_apks = [_apk_entry(item, pack_dir / "required")
                                   for item in step_data.get("standard_apks", [])]
                 standard_apks_optional = [
-                    str(pack_dir / "optional" / _apk_filename(item))
+                    _apk_entry(item, pack_dir / "optional")
                     for item in step_data.get("standard_apks_optional", [])]
         elif step_type == "exe" and step_data.get("exe_file"):
             exe_file = str(files_dir / f"exe_{i}" / step_data["exe_file"])

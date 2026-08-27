@@ -18,7 +18,8 @@ from pathlib import Path
 from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
                            list_devices, scan_for_adb_hosts)
-from ...content_sync import fetch_manifest, filter_manifest, get_base_url, sync_model_subfolder
+from ...content_sync import (fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
+                             sync_model_subfolder)
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir_with_remote
 from ...stage_runner import (StageDefinitionError, load_model_wifi, load_stages, load_wifi_port,
@@ -63,6 +64,7 @@ class InstallApi:
         self._runner = InstallRunner(
             adb_path, self._on_log, self._on_finished,
             base_dir=base_dir, ask_input_fn=input_broker.request,
+            on_sync_progress=self._on_sync_progress,
         )
         self._pending_stage_index: int | None = None
         self._manifest_cache: dict | None = None
@@ -237,6 +239,14 @@ class InstallApi:
             return filter_manifest(manifest, remote_subpath)
 
         required_dir, optional_dir = standard_dir / "required", standard_dir / "optional"
+        # APK у пакетов модели скачиваются лениво — только перед установкой.
+        # Их JSON-сайдкары маленькие, но содержат отображаемое название и
+        # описание, поэтому подтягиваем их уже для списка выбора. Без этого
+        # у свежей установки вместо «Monjaro Panel» показывалось имя файла.
+        sync_model_apk_metadata(self.base_dir, [required_dir, optional_dir],
+                                log=self._on_log, manifest=manifest,
+                                on_progress=self._on_sync_progress)
+        self._on_sync_progress(0, 0)
         return {
             "required": [apk_to_dict(apk) for apk in
                          scan_apk_dir_with_remote(required_dir, remote_items(required_dir))],
@@ -352,13 +362,14 @@ class InstallApi:
         event_bridge.push({"kind": "install_log", "text": f"=== Этап {stage_index + 1}: {stage['title']} ==="})
         try:
             self._runner.start(model, device_serial, selected_apk_paths, run_fn=run_fn,
-                                own_dirs=self._stage_own_dirs(model, stage))
+                                own_dirs=self._stage_own_dirs(model, stage, stage_index=stage_index))
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
 
     @staticmethod
-    def _stage_own_dirs(model, stage: dict) -> list[Path]:
+    def _stage_own_dirs(model, stage: dict, action_index: int | None = None,
+                        stage_index: int | None = None) -> list[Path]:
         """Локальные папки СВОИХ файлов конкретного этапа — синхронизируются
         прямо перед запуском (см. runner.py: InstallRunner._run), вместо
         того чтобы (как раньше) тянуть всю files/+usb_files модели разом при
@@ -367,6 +378,16 @@ class InstallApi:
         выбранные файлы докачивает ensure_apks_downloaded(...) по факту
         отмеченных галочек, точнее, чем вся папка required/optional разом.
         "usb" через этот путь не идёт вовсе (свой вызов в usb_api.py)."""
+        if stage.get("type") == "actions":
+            # Файлы действия (например Gboard) генератор кладёт в
+            # files/actions_<номер этапа>_<номер действия>. Раньше здесь
+            # учитывался только type=adb, поэтому клик запускал команду до
+            # того, как её APK успевал появиться на диске.
+            if action_index is None:
+                return []
+            if stage_index is None:
+                return []
+            return [model.dir / "files" / f"actions_{stage_index + 1}_{action_index + 1}"]
         if stage.get("type") != "adb":
             return []
         # adb_files (StepSpec в car_generator.py) не сохраняется как ключ в
@@ -407,7 +428,7 @@ class InstallApi:
         event_bridge.push({"kind": "install_log", "text": f"--- {action.get('label') or 'Действие'} ---"})
         try:
             self._runner.start(model, device_serial, selected_apk_paths, run_fn=action["run"],
-                                own_dirs=self._stage_own_dirs(model, stage))
+                                own_dirs=self._stage_own_dirs(model, stage, action_index, stage_index))
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
@@ -445,12 +466,14 @@ class InstallApi:
     def _on_log(self, message: str) -> None:
         event_bridge.push({"kind": "install_log", "text": message})
 
-    def _on_sync_progress(self, done: int, total: int) -> None:
+    def _on_sync_progress(self, done: int, total: int, files_done: int | None = None,
+                          files_total: int | None = None) -> None:
         # (0, 0) — сигнал "скрыть бар" (см. load_stages ниже) — sync_tree
         # сам никогда так не вызывает on_progress (при total=0 скачивать
         # нечего, on_progress вообще не вызывается), так что с реальным
         # прогрессом не перепутается.
-        event_bridge.push({"kind": "sync_progress", "done": done, "total": total})
+        event_bridge.push({"kind": "sync_progress", "done": done, "total": total,
+                           "files_done": files_done, "files_total": files_total})
 
     def _on_finished(self, success: bool, message: str) -> None:
         event_bridge.push({
