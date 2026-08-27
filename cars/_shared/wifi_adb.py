@@ -12,6 +12,7 @@
 connect_wifi пробует способ 1, и только если он не сработал — способ 2 с
 выбором из найденного (плюс ручной ввод всегда доступен рядом, на случай
 если скан не нашёл нужное устройство)."""
+from __future__ import annotations
 import concurrent.futures
 import ipaddress
 import os

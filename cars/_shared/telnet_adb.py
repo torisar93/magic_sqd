@@ -12,6 +12,7 @@ IPv6-адрес — link-local (fe80::...), поэтому телефон/ПК �
 имя интерфейса ("wlan0" — андроидное/линуксовое), а его числовой ifIndex,
 поэтому берём ifIndex активного сетевого адаптера (того же, что и для
 Wi-Fi ADB в cars/_shared/wifi_adb.py)."""
+from __future__ import annotations
 import os
 import socket
 import subprocess

@@ -7,6 +7,7 @@
 магнитолы свой и зашивается прямо в install.py конкретной модели, которая
 использует open_uart(). Этот модуль отвечает только за выбор порта и
 открытие соединения."""
+from __future__ import annotations
 import sys
 
 import serial

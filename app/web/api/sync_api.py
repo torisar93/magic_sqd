@@ -9,6 +9,7 @@ _start_heartbeat), которые не пережили переход на pywe
 ModelInfo.revision/changelog, app/car_generator.py: version.json,
 записывается мастером "Добавить/Изменить машину" при каждом сохранении) с
 тем, что техник уже видел (см. app/update_tracker.py)."""
+from __future__ import annotations
 import shutil
 import threading
 import time
