@@ -50,11 +50,24 @@
       await window.mainPicker.reload();
     });
     dialog.querySelector("[data-sync]").addEventListener("click", async (event) => {
-      event.currentTarget.disabled = true;
-      event.currentTarget.textContent = "Проверяем…";
-      await window.pywebview.api.sync_startup();
-      await window.mainPicker.reload();
-      event.currentTarget.textContent = "Обновления проверены";
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = "Проверяем…";
+      let timeout;
+      try {
+        await Promise.race([
+          window.pywebview.api.sync_startup(),
+          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Превышено время ожидания сервера")), 45000); }),
+        ]);
+        await window.mainPicker.reload();
+        button.textContent = "Обновления проверены";
+      } catch (error) {
+        console.error("Не удалось проверить обновления:", error);
+        button.textContent = "Не удалось проверить";
+      } finally {
+        clearTimeout(timeout);
+        button.disabled = false;
+      }
     });
     dialog.querySelector("[data-copy-log]").addEventListener("click", async (event) => {
       const text = Array.from(document.querySelectorAll("#log-panel .log-line")).map((line) => line.textContent).join("\n");

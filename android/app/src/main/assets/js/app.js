@@ -174,6 +174,16 @@
     return icon;
   }
 
+  function defaultModelLogo(label) {
+    const img = el("img", {
+      class: "catalog-model-logo catalog-model-logo-default",
+      src: "img/default-model-logo.png", alt: `Логотип ${label}`,
+      loading: "lazy",
+    });
+    img.addEventListener("error", () => img.replaceWith(vehicleIcon()), { once: true });
+    return img;
+  }
+
   function renderList(items) {
     clear(listEl);
     if (!items.length) {
@@ -200,12 +210,12 @@
           src: dataUrl(item.icon), alt: `Логотип ${item.label}`,
           loading: "lazy",
         });
-        img.addEventListener("error", () => { img.remove(); visual.appendChild(item.kind === "brand" ? el("span", { class: "catalog-monogram", text: item.label.slice(0, 2).toLocaleUpperCase() }) : vehicleIcon()); });
+        img.addEventListener("error", () => { img.replaceWith(item.kind === "brand" ? el("span", { class: "catalog-monogram", text: item.label.slice(0, 2).toLocaleUpperCase() }) : defaultModelLogo(item.label)); }, { once: true });
         visual.appendChild(img);
       } else if (item.kind === "brand") {
         visual.appendChild(el("span", { class: "catalog-monogram", text: item.label.slice(0, 2).toLocaleUpperCase() }));
       } else {
-        visual.appendChild(vehicleIcon());
+        visual.appendChild(defaultModelLogo(item.label));
       }
       const content = el("span", { class: "catalog-card-content" }, [
         el("span", { class: "catalog-card-title", text: item.label }),
@@ -311,6 +321,8 @@
   // on_progress по мере закачки каждого файла). Раньше тут был только
   // статичный текст без вообще какой-либо индикации хода дела.
   let syncPollTimer = null;
+  let settingsSyncButton = null;
+  let settingsSyncTimeout = null;
 
   function makeProgressBar() {
     const fill = el("div", { class: "progress-bar-fill" });
@@ -365,6 +377,15 @@
     syncStatusEl.style.display = "none";
     listEl.style.display = "";
     const result = event.result || {};
+    if (settingsSyncTimeout) {
+      clearTimeout(settingsSyncTimeout);
+      settingsSyncTimeout = null;
+    }
+    if (settingsSyncButton) {
+      settingsSyncButton.disabled = false;
+      settingsSyncButton.textContent = result.error ? "Не удалось проверить" : "Обновления проверены";
+      settingsSyncButton = null;
+    }
     if (result.error) {
       console.error("sync_finished с ошибкой:", result.error);
       return;
@@ -1334,7 +1355,29 @@
       clear.textContent = `Освобождено: ${formatBytes(result.freed_bytes)}`;
     });
     const sync = el("button", { text: "Проверить обновления сейчас" });
-    sync.addEventListener("click", () => { sync.disabled = true; sync.textContent = "Проверяем…"; Bridge.call("settings_sync_now", {}); });
+    sync.addEventListener("click", () => {
+      sync.disabled = true;
+      sync.textContent = "Проверяем…";
+      settingsSyncButton = sync;
+      if (settingsSyncTimeout) clearTimeout(settingsSyncTimeout);
+      settingsSyncTimeout = setTimeout(() => {
+        if (settingsSyncButton !== sync) return;
+        sync.disabled = false;
+        sync.textContent = "Не удалось проверить";
+        settingsSyncButton = null;
+        settingsSyncTimeout = null;
+      }, 45000);
+      try {
+        Bridge.call("settings_sync_now", {});
+      } catch (error) {
+        clearTimeout(settingsSyncTimeout);
+        settingsSyncTimeout = null;
+        settingsSyncButton = null;
+        sync.disabled = false;
+        sync.textContent = "Не удалось проверить";
+        console.error("Не удалось запустить проверку обновлений:", error);
+      }
+    });
     const copyLog = el("button", { text: "Скопировать лог" });
     copyLog.addEventListener("click", async () => { try { await navigator.clipboard.writeText(logPanelEl.innerText); copyLog.textContent = "Лог скопирован"; } catch (_) { log("Не удалось скопировать лог автоматически."); } });
     const close = el("button", { class: "settings-close-mobile", type: "button", text: "Закрыть" });

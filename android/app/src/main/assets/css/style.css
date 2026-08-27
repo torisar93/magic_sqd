@@ -893,7 +893,7 @@ html, body { background: var(--bg); }
   flex-direction: column;
   align-items: stretch;
   min-width: 0;
-  min-height: 172px;
+  min-height: 190px;
   padding: 13px;
   overflow: hidden;
   border-radius: 17px;
@@ -909,18 +909,18 @@ html, body { background: var(--bg); }
 .catalog-card:active { transform: scale(0.975); background: linear-gradient(145deg, rgba(35, 47, 54, 0.98), rgba(22, 30, 35, 0.98)); border-color: rgba(65, 187, 149, 0.7); }
 .catalog-card:focus-visible { outline: 2px solid #45c9a2; outline-offset: 2px; }
 
-.catalog-card-visual { display: flex; align-items: center; justify-content: center; width: 46px; height: 46px; border: 1px solid rgba(154, 176, 187, 0.18); border-radius: 14px; background: rgba(13, 19, 25, 0.64); color: #84cdbb; }
-.catalog-card-brand .catalog-card-visual { width: 55px; height: 55px; border-radius: 16px; }
-.catalog-brand-logo { width: 40px; height: 40px; object-fit: contain; }
-.catalog-model-logo { width: 34px; height: 34px; object-fit: contain; }
+.catalog-card-visual { position: absolute; inset: 0; z-index: 0; display: flex; align-items: center; justify-content: center; width: auto; height: auto; border: 0; border-radius: 0; background: none; color: #84cdbb; opacity: 0.25; pointer-events: none; }
+.catalog-card-brand .catalog-card-visual { width: auto; height: auto; border-radius: 0; }
+.catalog-brand-logo { width: min(68%, 132px); height: min(68%, 132px); object-fit: contain; }
+.catalog-model-logo { width: min(64%, 120px); height: min(64%, 120px); object-fit: contain; }
 .catalog-monogram { color: #b9f2df; font-size: 16px; font-weight: 750; letter-spacing: -0.04em; }
-.catalog-vehicle { width: 47px; color: #89d3c1; }
+.catalog-vehicle { width: min(66%, 124px); color: #89d3c1; }
 .catalog-vehicle svg { display: block; width: 100%; height: auto; fill: currentColor; }
 .catalog-vehicle-window { fill: rgba(13, 19, 25, 0.94); }
-.catalog-card-content { display: grid; gap: 4px; margin-top: 13px; }
+.catalog-card-content { position: relative; z-index: 1; display: grid; gap: 4px; margin-top: 13px; }
 .catalog-card-title { overflow: hidden; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.18; text-overflow: ellipsis; white-space: nowrap; }
 .catalog-card-meta { min-height: 33px; color: #9eabb8; font-size: 12px; line-height: 1.35; }
-.catalog-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; margin-top: auto; }
+.catalog-card-footer { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; margin-top: auto; }
 .catalog-card-action { color: #9ce1ce; font-size: 11px; font-weight: 700; }
 .catalog-card-action::after { content: "  ›"; color: #25a985; font-size: 17px; line-height: 0; }
 

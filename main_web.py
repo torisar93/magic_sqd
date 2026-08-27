@@ -436,18 +436,18 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
 
     _log_step("webview.start()")
     try:
-        profile_dir = get_webview_profile_dir(base_dir)
-        try:
-            profile_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            # На очень жёстко ограниченной Windows сохраняем прежний
-            # приватный режим: приложение всё равно откроется, просто без
-            # ускорения повторных запусков.
-            profile_dir = None
         webview.start(
             debug=debug,
-            private_mode=profile_dir is None,
-            storage_path=str(profile_dir) if profile_dir else None,
+            # Статические файлы фронтенда отдаём через встроенный loopback
+            # HTTP-сервер pywebview, а не прямо из file://. В постоянном
+            # профиле WebView2 file:// мог подхватывать устаревшие CSS/JS
+            # после обновления; отдельный локальный origin корректно
+            # инвалидирует эти ресурсы и не открывает приложение в сеть.
+            http_server=True,
+            # Постоянный профиль не дал выигрыша в скорости, но на практике
+            # залипал на старых локальных CSS/JS между обновлениями. Для
+            # установщика важнее всегда открыть актуальный интерфейс.
+            private_mode=True,
             **({"gui": renderer["gui"]} if renderer["gui"] else {}),
         )
     finally:

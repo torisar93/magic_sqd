@@ -77,6 +77,45 @@
   padding: 16px;
 }
 
+/* Логотип — фон карточки, а не отдельная иконка. Контент остаётся выше
+   него, поэтому текст и действие читаются на любом логотипе. */
+.app-shell.catalog-home .catalog-card-visual {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  opacity: 0.26;
+  pointer-events: none;
+}
+
+.app-shell.catalog-home .catalog-card-brand .catalog-card-visual {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+}
+
+.app-shell.catalog-home .catalog-brand-logo {
+  width: min(68%, 170px);
+  height: min(68%, 170px);
+}
+
+.app-shell.catalog-home .catalog-model-logo {
+  width: min(64%, 154px);
+  height: min(64%, 154px);
+}
+
+.app-shell.catalog-home .catalog-vehicle { width: min(66%, 160px); }
+
+.app-shell.catalog-home .catalog-card-content,
+.app-shell.catalog-home .catalog-card-footer {
+  position: relative;
+  z-index: 1;
+}
+
 .app-shell.workspace-open {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -474,7 +513,7 @@
 .catalog-card {
   display: flex;
   min-width: 0;
-  min-height: 166px;
+  min-height: 244px;
   padding: 12px;
   flex-direction: column;
   align-items: stretch;
@@ -515,22 +554,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 46px;
+  width: 100%;
+  height: 104px;
   border: 1px solid rgba(154, 162, 176, 0.16);
-  border-radius: 13px;
+  border-radius: 18px;
   background: rgba(18, 21, 26, 0.72);
   color: #93d8c7;
 }
 
-.catalog-card-brand .catalog-card-visual { width: 58px; height: 58px; border-radius: 16px; }
-.catalog-brand-logo { width: 42px; height: 42px; object-fit: contain; }
-.catalog-model-logo { width: 36px; height: 36px; object-fit: contain; }
+.catalog-card-brand .catalog-card-visual { width: 100%; height: 126px; border-radius: 20px; }
+.catalog-brand-logo { width: 94px; height: 94px; object-fit: contain; }
+.catalog-model-logo { width: 82px; height: 82px; object-fit: contain; }
 .catalog-monogram { color: #b8f1df; font-family: var(--font-heading); font-size: 17px; font-weight: 700; letter-spacing: -0.05em; }
-.catalog-vehicle { width: 48px; color: #88cab9; }
+.catalog-vehicle { width: 86px; color: #88cab9; }
 .catalog-vehicle svg { display: block; width: 100%; height: auto; fill: currentColor; }
 .catalog-vehicle-window { fill: rgba(18, 21, 26, 0.94); }
-.catalog-card-content { display: grid; gap: 4px; margin-top: 14px; }
+.catalog-card-content { display: grid; gap: 4px; margin-top: 12px; }
 .catalog-card-title { overflow: hidden; font-family: var(--font-heading); font-size: 15px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.18; text-overflow: ellipsis; }
 .catalog-card-meta { min-height: 17px; color: var(--text-dim); font-size: 12px; line-height: 1.35; }
 .catalog-card-footer { display: flex; align-items: center; justify-content: space-between; min-height: 18px; margin-top: 9px; }
@@ -1394,7 +1433,7 @@ dialog#instruction-editor-dialog::backdrop {
 .settings-dialog header { display: flex; align-items: center; gap: 12px; padding: 18px 20px 12px; }
 .settings-dialog h2, .settings-dialog h3 { margin: 0; }
 .settings-dialog h2 { flex: 1; font-size: 20px; }
-.settings-close { width: 36px; height: 36px; padding: 0; border-radius: 10px; font-size: 24px; }
+.settings-close { display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; font-size: 24px; line-height: 1; }
 .settings-section { display: grid; gap: 9px; padding: 15px 20px; border-top: 1px solid rgba(133, 163, 174, .18); }
 .settings-section h3 { font-size: 14px; color: #b9d6d2; }
 .settings-section p, .settings-section small { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.45; }

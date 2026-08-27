@@ -230,6 +230,11 @@
       logo.className = item.kind === "brand" ? "catalog-brand-logo" : "catalog-model-logo";
       logo.src = item.logo;
       logo.alt = `Логотип ${item.title}`;
+      if (item.kind === "model") {
+        logo.addEventListener("error", () => {
+          logo.replaceWith(defaultModelLogo(item.title));
+        }, { once: true });
+      }
       visual.appendChild(logo);
     } else if (item.kind === "brand") {
         const monogram = document.createElement("span");
@@ -237,7 +242,7 @@
         monogram.textContent = item.title.slice(0, 2).toLocaleUpperCase();
         visual.appendChild(monogram);
     } else {
-      visual.appendChild(vehicleIcon(item.hasVariants));
+      visual.appendChild(defaultModelLogo(item.title));
     }
     card.appendChild(visual);
 
@@ -265,6 +270,15 @@
       item.onClick();
     });
     return card;
+  }
+
+  function defaultModelLogo(title) {
+    const logo = document.createElement("img");
+    logo.className = "catalog-model-logo catalog-model-logo-default";
+    logo.src = "img/default-model-logo.png";
+    logo.alt = `Логотип ${title}`;
+    logo.addEventListener("error", () => logo.replaceWith(vehicleIcon()), { once: true });
+    return logo;
   }
 
   function vehicleIcon() {

@@ -236,9 +236,14 @@ window.addEventListener("pywebviewready", async () => {
   if (catalogWasEmpty) window.mainPicker.showStartupLoading();
   if (settingsPreferences.auto_sync) {
     window.pywebview.api.sync_startup().then(async (syncResult) => {
-      await window.mainPicker.reload();
+      // Первый запуск требует построить каталог после скачивания. В остальных
+      // случаях не перерисовываем карточки без причины: раньше это давало
+      // заметное второе «обновление» каталога при каждом запуске, даже когда
+      // сервер ничего не менял.
+      const catalogChanged = Boolean(syncResult.changes && syncResult.changes.length > 0);
+      if (catalogWasEmpty || catalogChanged) await window.mainPicker.reload();
       if (catalogWasEmpty) window.mainPicker.hideStartupLoading();
-      if (syncResult.changes && syncResult.changes.length > 0) showUpdatesNotice(syncResult.changes);
+      if (catalogChanged) showUpdatesNotice(syncResult.changes);
     }).catch((error) => {
       console.error("Ошибка фоновой синхронизации:", error);
       if (catalogWasEmpty) window.mainPicker.hideStartupLoading();
