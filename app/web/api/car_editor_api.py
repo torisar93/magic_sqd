@@ -379,7 +379,8 @@ class CarEditorApi:
             except AdminUploadCancelled:
                 self._log("Публикация отменена (локально сохранено).")
             except AdminClientError as exc:
-                clear_cached_session(admin_base_url)
+                if "истекла" in str(exc):
+                    clear_cached_session(admin_base_url)
                 self._log(f"Не опубликовано на сервере: {exc}")
         elif submit_config:
             try:

@@ -232,7 +232,8 @@ class AdminApi:
             self._apk_log(f"Опубликовано на сервере: {filename}.")
             event_bridge.push({"kind": "apk_upload_finished", "success": True})
         except AdminClientError as exc:
-            clear_cached_session(self.base_url)
+            if "истекла" in str(exc):
+                clear_cached_session(self.base_url)
             self._apk_log(f"Не опубликовано на сервере: {exc}")
             event_bridge.push({"kind": "apk_upload_finished", "success": False})
 

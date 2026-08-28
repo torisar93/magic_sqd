@@ -124,7 +124,8 @@ class SubmissionsApi:
             model_dict = self._scanner_api.register_pending(model_info)
             self._finish("stage", True, "Готово.", extra={"model": model_dict})
         except AdminClientError as exc:
-            clear_cached_session(base_url)
+            if "истекла" in str(exc):
+                clear_cached_session(base_url)
             self._finish("stage", False, str(exc))
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
             self._finish("stage", False, f"Неожиданная ошибка: {exc}")
@@ -157,7 +158,8 @@ class SubmissionsApi:
             self._scanner_api.unregister_pending(key)
             self._finish("publish", True, "Опубликовано.")
         except AdminClientError as exc:
-            clear_cached_session(base_url)
+            if "истекла" in str(exc):
+                clear_cached_session(base_url)
             self._finish("publish", False, str(exc))
         except Exception as exc:  # noqa: BLE001
             self._finish("publish", False, f"Неожиданная ошибка: {exc}")
