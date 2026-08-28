@@ -1265,6 +1265,38 @@
     ]);
   }
 
+  // Автообновление ПРИЛОЖЕНИЯ (не cars/, см. onSyncFinished) — desktop-версия
+  // (app.js) умеет тихо переустановить себя, здесь только ссылка на apk (нет
+  // прав тихо заменить пакет без root, см. WebBridge.kt: startUpdateCheck) —
+  // техник сам скачивает и ставит через системный установщик. Ссылка ведёт
+  // на github.com, поэтому открывается во внешнем браузере (см.
+  // MainActivity.kt: shouldOverrideUrlLoading), а не внутри WebView.
+  function checkForUpdate() {
+    try {
+      Bridge.call("app_update_check", {});
+    } catch (e) { /* сбой проверки не должен мешать обычной работе */ }
+  }
+
+  function onUpdateCheckResult(event) {
+    const update = event.result;
+    if (!update || !update.available) return;
+    let overlay;
+    overlay = showModal([
+      el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
+      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px", text: `Доступна новая версия: ${update.version}` }),
+      el("p", {
+        class: "stage-text", style: "color: var(--text-dim); white-space: pre-wrap",
+        text: `Что нового:\n${update.changelog || "—"}`,
+      }),
+      el("a", {
+        class: "accent", href: update.download_url, target: "_blank",
+        text: "Скачать APK",
+        onclick: () => overlay.remove(),
+      }),
+      el("button", { text: "Позже", onclick: () => overlay.remove() }),
+    ]);
+  }
+
   function showModal(boxChildren) {
     const overlay = el("div", { class: "modal-overlay dismissible" });
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
@@ -1502,6 +1534,7 @@
     window.events.on("usb_connect_result", onUsbConnectResult);
     window.events.on("usb_format_result", onUsbFormatResult);
     window.events.on("apk_library_result", onApkLibraryResult);
+    window.events.on("update_check_result", onUpdateCheckResult);
 
     showScreen("picker");
     const preferences = Bridge.call("settings_preferences", {});
@@ -1511,5 +1544,6 @@
     loadCars();
     if (preferences.auto_sync) startSync();
     maybeShowWelcomeModal();
+    checkForUpdate();
   });
 })();

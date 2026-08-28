@@ -56,12 +56,13 @@
 .app-shell.catalog-home .catalog {
   display: block;
   min-height: 100%;
+  position: relative;
 }
 
 .app-shell.catalog-home #resizer,
 .app-shell.catalog-home #right-panel,
-.app-shell.catalog-home .left-actions,
-.app-shell.catalog-home #pending-section {
+.app-shell.catalog-home #left-panel > .left-actions,
+.app-shell.catalog-home #left-panel > #pending-section {
   display: none;
 }
 
@@ -98,14 +99,29 @@
   border-radius: 0;
 }
 
+/* Раньше width/height задавались как min(X%, Yпикселей) НЕЗАВИСИМО друг от
+   друга — процент ширины считается от ширины карточки, процент высоты от
+   высоты карточки (см. .catalog-card-visual: position:absolute;inset:0,
+   заполняет всю карточку), а карточка не квадратная (заметно шире, чем
+   выше). В итоге получался НЕ квадратный бокс под лого (например 142×124px
+   при карточке 224×196), и из-за object-fit: contain реальный логотип
+   (обычно широкий, «вид сбоку») вписывался в этот перекошенный бокс не по
+   центру карточки, а смещённым — тем сильнее, чем сильнее реальные
+   пропорции карточки отличаются от квадрата (реальный случай — техник
+   прислал скриншот, на модельных карточках сдвиг был особенно заметен).
+   Фиксированный квадратный размер (без независимых % по каждой оси) —
+   единственный надёжный способ гарантировать квадратный бокс вне
+   зависимости от пропорций карточки; оба меньше 168px (минимально
+   доступная ширина при самой узкой колонке сетки — 200px минус
+   padding 16px×2), так что даже на самой узкой карточке не вылезет. */
 .app-shell.catalog-home .catalog-brand-logo {
-  width: min(68%, 170px);
-  height: min(68%, 170px);
+  width: 160px;
+  height: 160px;
 }
 
 .app-shell.catalog-home .catalog-model-logo {
-  width: min(64%, 154px);
-  height: min(64%, 154px);
+  width: 145px;
+  height: 145px;
 }
 
 .app-shell.catalog-home .catalog-vehicle { width: min(66%, 160px); }
@@ -389,6 +405,36 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(14, 143, 109, 0.25);
 }
+
+.catalog-admin-trigger { color: #b9e8db; }
+.catalog-admin-trigger[hidden] { display: none; }
+.catalog.is-admin-mode #catalog-boosty,
+.catalog.is-admin-mode #catalog-github { display: none; }
+.catalog-admin-trigger[aria-expanded="true"] { border-color: var(--accent); background: rgba(18, 91, 75, 0.42); color: #ddfff4; }
+.catalog-admin-popover {
+  position: absolute;
+  z-index: 8;
+  top: 54px;
+  right: 0;
+  width: min(430px, calc(100vw - 44px));
+  padding: 14px;
+  border: 1px solid rgba(108, 194, 170, 0.42);
+  border-radius: 16px;
+  background: rgba(20, 27, 35, 0.94);
+  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.42), inset 0 1px rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px);
+}
+.catalog-admin-popover[hidden] { display: none; }
+.catalog-admin-popover > header { display: grid; gap: 3px; margin: 1px 2px 12px; }
+.catalog-admin-popover > header strong { font-family: var(--font-heading); font-size: 15px; }
+.catalog-admin-popover > header span { color: var(--text-dim); font-size: 12px; }
+.catalog-admin-popover .left-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.catalog-admin-popover .left-actions button { min-height: 42px; height: auto; padding: 8px 10px; font-size: 12px; line-height: 1.2; }
+.catalog-admin-popover .left-actions #edit-car-btn { display: none !important; }
+.catalog-admin-popover #pending-section { display: grid; gap: 8px; margin-top: 12px; padding: 12px; border: 1px solid rgba(117, 142, 165, 0.28); border-radius: 12px; background: rgba(7, 12, 17, 0.26); }
+.catalog-admin-popover #pending-section .card-header { margin: 0; }
+.catalog-admin-popover #pending-section .picker-list { max-height: min(270px, 42vh); overflow: auto; }
+.catalog-admin-popover #pending-refresh-btn { min-height: 30px; padding: 4px 9px; font-size: 12px; }
 
 .catalog-header {
   display: flex;
@@ -1442,4 +1488,9 @@ dialog#instruction-editor-dialog::backdrop {
 .settings-section button { justify-self: start; }
 .settings-toggle { display: flex; align-items: center; gap: 10px; min-height: 38px; color: #d9e4e7; font-size: 14px; cursor: pointer; }
 .settings-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+/* Тап-цель для разблокировки функций администратора (10 тапов, см.
+   settings.js) — user-select: none, чтобы быстрые тапы не выделяли текст. */
+.settings-version { cursor: default; user-select: none; color: #d9e4e7 !important; }
+.settings-admin-status { color: #9be2d0 !important; }
+.settings-admin-status:empty { display: none; }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

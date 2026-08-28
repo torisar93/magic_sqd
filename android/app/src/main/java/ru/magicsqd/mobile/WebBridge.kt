@@ -90,6 +90,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "settings_set_preferences" -> setSettingsPreferences(args).toString()
                 "settings_sync_now" -> { startSync(); "{}" }
                 "start_sync" -> { startSync(); "{}" }
+                "app_update_check" -> { startUpdateCheck(); "{}" }
                 "get_sync_progress" -> pyModule("mobile_bridge").callAttr("get_sync_progress").toString()
                 "scanner_list_cars" -> pyModule("mobile_bridge").callAttr("list_cars", carsDir).toString()
                 "scanner_select_model" -> pyModule("mobile_bridge").callAttr(
@@ -194,6 +195,23 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             }
             val event = JSONObject().put("kind", "sync_finished").put("result", JSONObject(resultJson))
             pushEvent(event)
+        }.start()
+    }
+
+    /** Проверка новой версии приложения на GitHub (см. mobile_bridge.
+     * check_update) — только ссылка на apk, БЕЗ автоустановки: в отличие от
+     * desktop-версии (app/web/api/update_api.py), у обычного приложения нет
+     * прав тихо заменить себя без root. Техник открывает ссылку сам, дальше
+     * системный установщик пакетов. */
+    private fun startUpdateCheck() {
+        val currentVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0"
+        Thread {
+            val resultJson = try {
+                pyModule("mobile_bridge").callAttr("check_update", currentVersion).toString()
+            } catch (e: Exception) {
+                "{\"available\":false}"
+            }
+            pushEvent(JSONObject().put("kind", "update_check_result").put("result", JSONObject(resultJson)))
         }.start()
     }
 

@@ -213,26 +213,27 @@
   })();
 
   // ==================================================================
-  // Войти в админку (только admin_mode, открывается из js/app.js) — либо
+  // Войти в админку (открывается из js/app.js/settings.js) — либо
   // необязательно (кнопка "Войти в админку..." — просто логин без выгрузки
   // cars/apk, см. app/web/api/admin_api.py:login_only, чтобы получить
   // кешированную сессию для "Добавить APK.../Файлы на сервере..." без
-  // похода в тяжёлую "Выгрузить на сервер..."), либо ОБЯЗАТЕЛЬНО при самом
-  // старте admin-сборки — см. requireLogin() ниже, вызывается из app.js
-  // раньше показа остального интерфейса, диалог в этом режиме нельзя
-  // закрыть без успешного входа (кнопка "Закрыть" прячется, Escape
-  // подавлен через событие "cancel" у <dialog>).
+  // похода в тяжёлую "Выгрузить на сервер..."), либо через openUnlock() —
+  // разблокировка функций администратора из "Настроек" (10 тапов по версии
+  // в "О приложении", см. settings.js). Раньше это была отдельная
+  // admin-сборка (admin_main_web.py) с обязательным входом до показа
+  // остального интерфейса — теперь одна программа, отдельного "жёсткого"
+  // режима больше нет.
   // ==================================================================
   const adminLogin = (() => {
-    let dialog, usernameEl, passwordEl, rememberEl, statusEl, startBtn, closeBtn, forgetBtn, titleEl, hintEl;
-    let mandatory = false;
-    let resolveRequire = null;
+    let dialog, usernameEl, passwordEl, rememberEl, rememberRow, statusEl, startBtn, closeBtn, forgetBtn, titleEl, hintEl;
+    let onUnlocked = null;
 
     function init() {
       dialog = document.getElementById("admin-login-dialog");
       usernameEl = document.getElementById("admin-login-username");
       passwordEl = document.getElementById("admin-login-password");
       rememberEl = document.getElementById("admin-login-remember");
+      rememberRow = document.getElementById("admin-login-remember-row");
       statusEl = document.getElementById("admin-login-status");
       startBtn = document.getElementById("admin-login-start");
       closeBtn = document.getElementById("admin-login-close");
@@ -243,20 +244,20 @@
       startBtn.addEventListener("click", onStart);
       closeBtn.addEventListener("click", () => dialog.close());
       forgetBtn.addEventListener("click", onForget);
-      // native <dialog> закрывается по Escape через событие "cancel" — в
-      // обязательном режиме гасим его, чтобы техник не мог обойти вход.
-      dialog.addEventListener("cancel", (e) => { if (mandatory) e.preventDefault(); });
     }
 
     async function open() {
-      mandatory = false;
+      onUnlocked = null;
       const info = await window.pywebview.api.admin_get_info();
       if (!info.available) {
         await window.notice("Не найден admin.json рядом с программой — без него неизвестно, куда входить.");
         return;
       }
       titleEl.textContent = "Войти в админку";
+      hintEl.textContent = "Только вход — ничего не выгружает. Сессия переиспользуется другими кнопками "
+        + '("Добавить APK...", "Файлы на сервере..."), пока открыта программа.';
       hintEl.style.display = "";
+      rememberRow.style.display = "";
       closeBtn.style.display = "";
       forgetBtn.style.display = "";
       document.getElementById("admin-login-server-label").textContent = `Сервер: ${info.base_url}`;
@@ -268,31 +269,36 @@
       dialog.showModal();
     }
 
-    // Обязательный вход при старте admin-сборки (см. app.js) — сначала там
-    // уже сделана тихая попытка admin_try_saved_login(), сюда попадаем,
-    // только если сохранённого входа нет или он не сработал. Возвращает
-    // Promise, который резолвится только по успешному входу — app.js ждёт
-    // его перед тем, как показать остальной интерфейс.
-    function requireLogin() {
-      return new Promise((resolve) => {
-        mandatory = true;
-        resolveRequire = resolve;
-        (async () => {
-          const info = await window.pywebview.api.admin_get_info();
-          titleEl.textContent = "Вход в админку";
-          hintEl.style.display = "none";
-          closeBtn.style.display = "none";
-          forgetBtn.style.display = "none";
-          document.getElementById("admin-login-server-label").textContent =
-            info.available ? `Сервер: ${info.base_url}` : "";
-          usernameEl.value = "";
-          passwordEl.value = "";
-          rememberEl.checked = false;
-          statusEl.textContent = info.available ? "" : "Не найден admin.json рядом с программой.";
-          startBtn.disabled = !info.available;
-          dialog.showModal();
-        })();
-      });
+    // Разблокировка функций администратора (см. settings.js) — успешный
+    // вход сразу включает admin_mode на весь текущий сеанс (см.
+    // app/web/bridge.py: admin_login) И запоминается для следующих запусков
+    // (см. admin_config.save_saved_login, WebApi.__init__: try_saved_login)
+    // — здесь это не опционально, чекбокс "Запомнить меня" скрыт и всегда
+    // считается включённым, иначе разблокировка не переживала бы перезапуск
+    // и теряла бы смысл. onSuccess вызывается сразу после закрытия диалога.
+    function openUnlock(onSuccess) {
+      (async () => {
+        const info = await window.pywebview.api.admin_get_info();
+        if (!info.available) {
+          await window.notice("Не найден admin.json рядом с программой — без него неизвестно, куда входить.");
+          return;
+        }
+        onUnlocked = onSuccess;
+        titleEl.textContent = "Разблокировать функции администратора";
+        hintEl.textContent = "Вход сохранится на этом компьютере — при следующих запусках функции "
+          + "администратора будут видны сразу, без повторного входа.";
+        hintEl.style.display = "";
+        rememberRow.style.display = "none";
+        closeBtn.style.display = "";
+        forgetBtn.style.display = "none";
+        document.getElementById("admin-login-server-label").textContent = `Сервер: ${info.base_url}`;
+        usernameEl.value = "";
+        passwordEl.value = "";
+        rememberEl.checked = true;
+        statusEl.textContent = "";
+        startBtn.disabled = false;
+        dialog.showModal();
+      })();
     }
 
     async function onStart() {
@@ -312,10 +318,10 @@
       }
       statusEl.textContent = "Вход выполнен.";
       dialog.close();
-      if (mandatory && resolveRequire) {
-        const resolve = resolveRequire;
-        resolveRequire = null;
-        resolve();
+      if (onUnlocked) {
+        const callback = onUnlocked;
+        onUnlocked = null;
+        callback();
       }
     }
 
@@ -325,7 +331,7 @@
       statusEl.textContent = "Сохранённый вход забыт.";
     }
 
-    return { init, open, requireLogin };
+    return { init, open, openUnlock };
   })();
 
   // ==================================================================

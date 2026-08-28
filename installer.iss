@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.5.9"
+#define MyAppVersion "0.6.0"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -68,6 +68,15 @@ Source: "dist\magic_sqd\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__p
 ; Не в git — свои для боевого сервера, лежат рядом с installer.iss.
 Source: "server.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "submit.json"; DestDir: "{app}"; Flags: ignoreversion
+; Адрес админ-API (см. app/admin_config.py) — раньше шёл только в отдельной
+; admin-сборке (admin_installer.iss, убрана), теперь один и тот же exe для
+; всех: функции администратора по умолчанию скрыты (см. app/web/bridge.py:
+; WebApi.__init__), включаются либо тихим автовходом сохранёнными логином/
+; паролем, либо явной разблокировкой ("Настройки" → 10 тапов по версии →
+; вход). Без этого файла раздел "О приложении" не найдёт, куда входить.
+; Содержимое не секретное (просто адрес сервера), поэтому в общем
+; установщике безопасно.
+Source: "admin.json"; DestDir: "{app}"; Flags: ignoreversion
 
 ; WebView2 Runtime Bootstrapper (официальный, ~2 МБ, качает подходящую под
 ; архитектуру машины Evergreen-версию рантайма с серверов Microsoft) — без

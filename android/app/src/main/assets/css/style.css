@@ -372,6 +372,27 @@ button.accent {
   font-weight: 600;
 }
 
+/* Ссылка-кнопка (см. app.js: onUpdateCheckResult — ссылка на apk должна
+   выглядеть как обычная accent-кнопка, но остаться <a> с реальным href,
+   чтобы сработал MainActivity.kt: shouldOverrideUrlLoading, как и у ссылок
+   Boosty). button.accent выше не применяется — тот селектор завязан на тег
+   button, не на класс сам по себе. */
+a.accent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 15px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  text-align: center;
+}
+
 button.danger {
   border-color: var(--danger);
   color: var(--danger);

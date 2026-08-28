@@ -12,7 +12,13 @@ server/README.md §9.
 Скачивание — тот же chunked-подход через .part -> replace, что и в
 app/content_sync.py:download_file, но без зависимости от него (тот модуль
 завязан на server.json/content_config.py и свой протокол листинга, тут
-источники — GitHub API и простой version.json)."""
+источники — GitHub API и простой version.json).
+
+Win7-сборка (is_win7=True, см. main_web_win7.py) ищет свой ассет
+(MagicSQD_Setup_Win7.exe) в том же GitHub-релизе и НЕ опрашивает свой
+сервер — тот зеркалирует только обычный x64-инсталлятор (см. UpdateApi.
+__init__). Установка тем же /VERYSILENT-путём — оба инсталлятора собраны
+Inno Setup и одинаково понимают эти флаги."""
 from __future__ import annotations
 import concurrent.futures
 import json
@@ -31,6 +37,7 @@ from ...version import APP_VERSION
 
 GITHUB_API_URL = "https://api.github.com/repos/torisar93/magic_sqd/releases"
 ASSET_NAME = "MagicSQD_Setup.exe"
+ASSET_NAME_WIN7 = "MagicSQD_Setup_Win7.exe"
 REQUEST_TIMEOUT_SECONDS = 8
 DOWNLOAD_TIMEOUT_SECONDS = 60
 
@@ -49,8 +56,16 @@ def _parse_version(tag: str) -> tuple[int, ...]:
 
 
 class UpdateApi:
-    def __init__(self, base_dir: Path):
+    def __init__(self, base_dir: Path, is_win7: bool = False):
         self.base_dir = base_dir
+        self.is_win7 = is_win7
+        # Win7-сборка (см. installer_win7_x86.iss) публикует свой собственный
+        # инсталлятор в том же GitHub-релизе, что и обычная сборка (см.
+        # server/README.md §9 — один тег на цикл, три ассета). Свой сервер
+        # (магазин content_config.get_download_base_url) зеркалирует ТОЛЬКО
+        # MagicSQD_Setup.exe (см. server/backend.py:_handle_exe_upload) — для
+        # Win7 своего зеркала нет, поэтому этот источник ниже пропускается.
+        self.asset_name = ASSET_NAME_WIN7 if is_win7 else ASSET_NAME
         self._installing = False
 
     # -- проверка -----------------------------------------------------------
@@ -69,6 +84,8 @@ class UpdateApi:
         return best
 
     def _check_own_server(self) -> dict | None:
+        if self.is_win7:
+            return None
         url = get_download_base_url(self.base_dir)
         if not url:
             return None
@@ -86,7 +103,7 @@ class UpdateApi:
             "available": True,
             "version": version,
             "changelog": str(data.get("changelog") or "").strip(),
-            "download_url": f"{url}/{ASSET_NAME}",
+            "download_url": f"{url}/{self.asset_name}",
         }
 
     def _check_github(self) -> dict | None:
@@ -107,7 +124,7 @@ class UpdateApi:
         version = str(latest.get("tag_name") or "")
         if not version or _parse_version(version) <= _parse_version(APP_VERSION):
             return None
-        asset = next((a for a in latest.get("assets", []) if a.get("name") == ASSET_NAME), None)
+        asset = next((a for a in latest.get("assets", []) if a.get("name") == self.asset_name), None)
         if not asset:
             return None
         return {
@@ -133,7 +150,7 @@ class UpdateApi:
 
     def _worker(self, download_url: str) -> None:
         try:
-            installer_path = Path(tempfile.gettempdir()) / ASSET_NAME
+            installer_path = Path(tempfile.gettempdir()) / self.asset_name
             self._log("Скачивание обновления...")
             self._download(download_url, installer_path)
             self._log("Обновление скачано. Программа сейчас закроется для установки...")

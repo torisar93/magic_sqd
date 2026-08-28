@@ -47,7 +47,7 @@ def run() -> None:
     from app.web.bridge import WebApi
     from app.web import events
 
-    api = WebApi(base_dir, admin_mode=False)
+    api = WebApi(base_dir, admin_mode=False, is_win7=True)
     debug_upload_once = main_web._enable_debug_log_all(base_dir, api)
     frontend_dir = main_web.get_frontend_dir(base_dir)
 

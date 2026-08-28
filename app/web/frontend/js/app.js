@@ -83,6 +83,23 @@ function sendAdbConsoleCommand() {
   }
 }
 
+// Показывает/прячет admin-only элементы интерфейса — вызывается на старте
+// (см. pywebviewready ниже, с info.admin_mode) и повторно сразу после
+// разблокировки функций администратора из "Настроек" (см. settings.js: 10
+// тапов по версии → вход), без перезапуска программы. window.mainPicker.
+// setAdminMode сама одноразовая (переносит кнопки в попап при первом
+// enabled=true, дальше no-op) — безопасно звать оба раза.
+function applyAdminMode(enabled) {
+  window.mainPicker.setAdminMode(enabled);
+  const display = enabled ? "" : "none";
+  document.getElementById("admin-login-btn").style.display = display;
+  document.getElementById("admin-upload-btn").style.display = display;
+  document.getElementById("admin-add-apk-btn").style.display = display;
+  document.getElementById("admin-browse-btn").style.display = display;
+  document.getElementById("pending-section").style.display = display;
+}
+window.applyAdminMode = applyAdminMode;
+
 function onModelSelected(model) {
   currentModel = model;
   const shell = document.getElementById("app-shell");
@@ -190,21 +207,20 @@ window.addEventListener("pywebviewready", async () => {
 
   window.initDialogs();
   window.boostyDialogs.init();
-  // Раньше остального старта — в admin-сборке техник не должен увидеть ХОТЬ
-  // ЧТО-ТО из интерфейса (список машин, панель лога и т.п.) без входа,
-  // поэтому гейт стоит ДО sync_startup()/mainPicker.init() ниже, а не после
-  // (см. app/web/api/admin_api.py: try_saved_login/login_only,
-  // dialogs.js: adminLogin.requireLogin — диалог нельзя закрыть без
-  // успешного входа).
+  // admin_mode здесь уже полностью решён на стороне Python (тихий автовход
+  // сохранёнными логином/паролем, если функции администратора когда-то
+  // разблокировали на этой машине — см. app/web/bridge.py: WebApi.__init__)
+  // — раньше тут ещё был отдельный обязательный экран входа для отдельной
+  // admin-сборки (admin_main_web.py), сейчас программа одна и его нет.
   const info = await window.pywebview.api.app_get_info();
   const settingsPreferences = await window.pywebview.api.settings_preferences();
   document.documentElement.classList.toggle("reduce-motion", settingsPreferences.reduced_motion);
-  if (info.admin_mode) {
-    const saved = await window.pywebview.api.admin_try_saved_login();
-    if (!saved.ok) {
-      await window.adminLoginDialog.requireLogin();
-    }
-  }
+  // Win7-сборка (QtWebEngine, не WebView2, см. bridge.py: WebApi.is_win7) —
+  // на реальном старом железе backdrop-filter (blur позади каждой кнопки/
+  // диалога) оказался очень тяжёлым без аппаратного ускорения; "low-perf"
+  // отключает его целиком (см. css/tokens.css), это не пользовательская
+  // настройка — от сборки, а не от предпочтения.
+  document.documentElement.classList.toggle("low-perf", info.is_win7);
 
   // ДО sync_startup() — иначе лог-события, которые синхронизация шлёт по
   // ходу (см. app/content_sync.py: sync_tree/list_files_recursive), летят в
@@ -250,16 +266,11 @@ window.addEventListener("pywebviewready", async () => {
     });
   }
 
-  if (info.admin_mode) {
-    document.getElementById("admin-login-btn").style.display = "";
-    document.getElementById("admin-upload-btn").style.display = "";
-    document.getElementById("admin-add-apk-btn").style.display = "";
-    document.getElementById("admin-browse-btn").style.display = "";
-    document.getElementById("pending-section").style.display = "";
-  }
-  // DEBUG-сборка (см. main_web.py:_enable_debug_log_all) — показываем
-  // client_id в углу, чтобы можно было сверить с папкой debug_logs/<id>/,
-  // если дебаг-сборку поставили нескольким людям одновременно.
+  applyAdminMode(info.admin_mode);
+  // Диагностика (см. main_web.py:_enable_debug_log_all, переключается из
+  // "Настроек" — settings.js) — показываем client_id в углу, чтобы можно
+  // было сверить с папкой debug_logs/<id>/, если включена у нескольких
+  // людей одновременно.
   if (info.debug_mode) {
     const badge = document.getElementById("debug-id-badge");
     badge.textContent = `DEBUG · ${info.client_id}`;

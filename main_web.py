@@ -1,7 +1,11 @@
-"""Точка входа технической сборки (pywebview-интерфейс). Тот же app/web/,
-что и admin_main_web.py — разница только в admin_mode=False и именах
-лог-файлов, как раньше у main.py/admin_main.py (см. app/gui.py: admin_mode
-прячет adb-консоль и показывает кнопку "Выгрузить на сервер...").
+"""Единственная точка входа (pywebview-интерфейс) — раньше отдельная
+admin-сборка (admin_main_web.py/admin.spec) собиралась и ставилась отдельно
+от технической; теперь один и тот же exe, admin_mode просто включает
+видимость admin-функций (adb-консоль, "Выгрузить на сервер...", см.
+app/web/bridge.py: WebApi.__init__ — либо тихий автовход сохранёнными
+логином/паролем, либо явная разблокировка через "Настройки" → 10 тапов по
+версии → вход, см. app/web/frontend/js/screens/dialogs.js: adminLogin.
+openUnlock).
 
 Запуск: python main_web.py (собранный вариант — magic_sqd.exe, см.
 magic_sqd.spec)."""
@@ -56,19 +60,18 @@ def _log_step(message: str) -> None:
 
 
 def _enable_debug_log_all(base_dir: Path, api):
-    """DEBUG-СБОРКА (не часть обычного релиза, см. installer_debug.iss):
-    маркер-файл DEBUG_LOG_ALL рядом с exe (см. app/web/bridge.py:
-    WebApi.debug_mode) включает максимально подробное логирование в
-    debug_logs/<client_id>/debug_all.log — каждый вызов моста JS<->Python
-    (аргументы, результат) плюс весь stdout/stderr процесса (перехватывает
-    необработанные исключения в фоновых потоках, которые иначе нигде не
-    видны). client_id — тот же, что видно в углу окна (см. app.js), чтобы
-    можно было сверить, чей это лог, если дебаг-сборку ставят нескольким
-    людям одновременно. Лог САМ уходит на сервер (см. _start_debug_uploader
-    ниже) — клиенту не нужно ничего пересылать руками. Временная мера для
-    диагностики конкретной проблемы (флешка не видна на Windows 11), не для
-    обычных пользователей — объём лога быстро растёт, содержимое может
-    включать пути файлов и т.п.
+    """Маркер-файл DEBUG_LOG_ALL рядом с exe (см. app/web/api/settings_api.py:
+    set_debug_mode — переключается из "Настроек", раньше это была отдельная
+    сборка, installer_debug.iss, убрана) включает максимально подробное
+    логирование в debug_logs/<client_id>/debug_all.log — каждый вызов моста
+    JS<->Python (аргументы, результат) плюс весь stdout/stderr процесса
+    (перехватывает необработанные исключения в фоновых потоках, которые
+    иначе нигде не видны). client_id — тот же, что видно в углу окна (см.
+    app.js), чтобы можно было сверить, чей это лог, если у нескольких людей
+    одновременно включена диагностика. Лог САМ уходит на сервер (см.
+    _start_debug_uploader ниже) — клиенту не нужно ничего пересылать руками.
+    Для диагностики конкретной проблемы, не для постоянного использования —
+    объём лога быстро растёт, содержимое может включать пути файлов и т.п.
 
     Возвращает функцию upload_once() (для финальной отправки при закрытии
     окна, см. run()) или None, если DEBUG_LOG_ALL не включён."""
@@ -185,8 +188,8 @@ def get_base_dir() -> Path:
 
 
 def get_frontend_dir(base_dir: Path) -> Path:
-    """Статические файлы app/web/frontend/ (см. datas= в magic_sqd.spec/
-    admin.spec) — в onedir-сборке PyInstaller 6+ лежат в _internal/ рядом с
+    """Статические файлы app/web/frontend/ (см. datas= в magic_sqd.spec) —
+    в onedir-сборке PyInstaller 6+ лежат в _internal/ рядом с
     exe, НЕ прямо рядом с ним (в отличие от cars/apk/tools/assets — эти
     пользователь трогает руками, поэтому им обязательно быть прямо у exe).
     sys._MEIPASS — официальный способ PyInstaller найти данные бандла
@@ -281,7 +284,7 @@ def _ensure_renderer(base_dir: Path, title: str, force_qt: bool = False) -> dict
     выполняется, и ни startup.log, ни debug-лог это не ловят как ошибку
     (реальный случай на машине техника без WebView2 — см. app/
     webview2_check.py). Инсталлятор уже сам молча ставит рантайм при
-    установке/обновлении (installer.iss/admin_installer.iss) — эта проверка
+    установке/обновлении (installer.iss) — эта проверка
     здесь на случай уже установленных копий без этого шага (старые версии)
     или если у инсталлятора в момент установки не было интернета.
 
@@ -381,9 +384,11 @@ def _ensure_renderer(base_dir: Path, title: str, force_qt: bool = False) -> dict
 
 
 def run(admin_mode: bool, log_prefix: str, title: str) -> None:
-    """Общая точка входа technician/admin сборок — main_web.py и
-    admin_main_web.py вызывают её с разными admin_mode/log_prefix/title,
-    как main.py/admin_main.py делали для tkinter-версии."""
+    """log_prefix/title остались параметрами с прошлых времён отдельной
+    admin-сборки (main.py/admin_main.py у tkinter-версии, потом
+    admin_main_web.py) — сейчас всегда "" и APP_TITLE (единственный
+    оставшийся вызывающий — блок __main__ ниже), но трогать сигнатуру ради
+    этого не стали: работает и так, а параметры дёшевы."""
     global _STARTUP_LOG_PATH
     base_dir = get_base_dir()
     _STARTUP_LOG_PATH = base_dir / f"{log_prefix}startup.log"
@@ -491,8 +496,10 @@ def _run_with_crash_log(admin_mode: bool, log_prefix: str, title: str) -> None:
 
 
 if __name__ == "__main__":
-    # --admin: временный флаг для разработчика, чтобы проверить admin_mode
-    # из исходников без сборки admin_main_web.py отдельным .exe — реальная
-    # админ-сборка всегда идёт через admin_main_web.py/admin.spec.
+    # --admin: только для разработки — сразу включить admin_mode из
+    # исходников, не проходя разблокировку через "Настройки" (10 тапов по
+    # версии → вход, см. app/web/bridge.py: WebApi.__init__). В собранном
+    # виде разблокировка постоянная (тихий автовход сохранёнными логином/
+    # паролем при следующих запусках) — отдельной admin-сборки больше нет.
     admin_mode = "--admin" in sys.argv
     _run_with_crash_log(admin_mode=admin_mode, log_prefix="", title=APP_TITLE)

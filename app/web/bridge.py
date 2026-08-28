@@ -13,7 +13,7 @@ from .api.car_editor_api import CarEditorApi
 from .api.install_api import InstallApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
-from .api.settings_api import SettingsApi
+from .api.settings_api import DEBUG_LOG_ALL_MARKER, SettingsApi
 from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
@@ -21,24 +21,28 @@ from .api.usb_api import UsbApi
 from ..adb_utils import find_adb_path
 from ..ping_client import get_or_create_client_id
 
-# DEBUG-СБОРКА (не часть обычного релиза, см. installer_debug.iss/
-# main_web.py:_enable_debug_log_all) — маркер-файл рядом с exe включает
-# подробное логирование КАЖДОГО вызова моста + весь stdout/stderr в
-# base_dir/debug_logs/<client_id>/debug_all.log. client_id тот же, что и
-# обычный "пульс" (см. ping_client.py) — читается здесь один раз, чтобы
-# main_web.py мог сразу знать папку лога и app.js мог показать его в углу
-# окна (см. app_get_info) для сверки "чей это лог", если дебаг-сборку
-# ставят нескольким людям одновременно.
-DEBUG_LOG_ALL_MARKER = "DEBUG_LOG_ALL"
-
 
 class WebApi:
-    def __init__(self, base_dir: Path, admin_mode: bool = False):
+    def __init__(self, base_dir: Path, admin_mode: bool = False, is_win7: bool = False):
         self.base_dir = base_dir
-        self.admin_mode = admin_mode
+        # Win7-сборка (см. main_web_win7.py) — QtWebEngine на старом железе
+        # реального техника (не в реестре, а на живой машине с "семёркой")
+        # оказался сильно медленнее WebView2: app.js ставит класс "low-perf"
+        # на <html>, отключающий backdrop-filter (см. css/tokens.css —
+        # blur() позади полупрозрачных элементов на КАЖДОЙ кнопке/диалоге,
+        # дорогой per-frame эффект, которого WebView2-сборка не замечает
+        # только благодаря аппаратному ускорению).
+        self.is_win7 = is_win7
         self.cars_dir = base_dir / "cars"
         self.apk_dir = base_dir / "apk"
         self.adb_path = find_adb_path(base_dir)
+        # DEBUG-логирование (см. main_web.py:_enable_debug_log_all) — раньше
+        # отдельный debug-установщик, теперь маркер-файл переключается прямо
+        # из "Настроек" (см. app/web/api/settings_api.py:set_debug_mode) и
+        # только читается здесь при каждом запуске. client_id тот же, что и
+        # обычный "пульс" (см. ping_client.py) — читается один раз, чтобы
+        # main_web.py мог сразу знать папку лога и app.js мог показать его в
+        # углу окна (см. app_get_info) для сверки "чей это лог".
         self.debug_mode = (base_dir / DEBUG_LOG_ALL_MARKER).exists()
         self.client_id = get_or_create_client_id(base_dir) if self.debug_mode else ""
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
@@ -46,15 +50,30 @@ class WebApi:
         self._usb = UsbApi(base_dir, self._scanner)
         self._report = ReportApi(base_dir)
         self._admin = AdminApi(base_dir, self.apk_dir)
+        # Раньше отдельная admin-сборка (admin_main_web.py, убрана) — теперь
+        # одна и та же программа, admin_mode просто определяет видимость
+        # соответствующих кнопок (см. app.js). Помимо явного параметра (dev-
+        # флаг main_web.py --admin) — тихая попытка входа сохранёнными
+        # логином/паролем (см. admin_config.save_saved_login,
+        # AdminApi.try_saved_login): если на этой машине уже разблокировали
+        # функции администратора раньше (см. admin_login ниже — "Настройки"
+        # → 10 тапов по версии → вход, всегда с запоминанием), они снова
+        # включатся сами, без повторного входа. Без admin.json (обычная
+        # свежая установка) try_saved_login тут же возвращает {"ok": False}
+        # без сетевого запроса — старту это ничего не стоит.
+        self.admin_mode = admin_mode or self._admin.try_saved_login().get("ok", False)
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner)
         self._submissions = SubmissionsApi(base_dir, self.cars_dir, self._scanner)
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
-        self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, admin_mode)
-        self._update = UpdateApi(base_dir)
+        self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
+        self._update = UpdateApi(base_dir, is_win7=is_win7)
 
     # -- метаданные окна ------------------------------------------------
     def app_get_info(self) -> dict:
-        return {"admin_mode": self.admin_mode, "debug_mode": self.debug_mode, "client_id": self.client_id}
+        return {
+            "admin_mode": self.admin_mode, "debug_mode": self.debug_mode,
+            "client_id": self.client_id, "is_win7": self.is_win7,
+        }
 
     # -- sync_api -----------------------------------------------------------
     def sync_startup(self) -> dict:
@@ -72,6 +91,9 @@ class WebApi:
 
     def settings_set_preferences(self, preferences: dict) -> dict:
         return self._settings.set_preferences(preferences)
+
+    def settings_set_debug_mode(self, enabled: bool) -> dict:
+        return self._settings.set_debug_mode(enabled)
 
     # -- update_api -----------------------------------------------------------
     def update_check(self) -> dict:
@@ -149,7 +171,15 @@ class WebApi:
         return self._admin.get_info()
 
     def admin_login(self, username: str, password: str, remember: bool = False) -> dict:
-        return self._admin.login_only(username, password, remember)
+        # Единственный вход в админку теперь (см. WebApi.__init__ — отдельной
+        # admin-сборки больше нет) — успешный логин сразу включает admin_mode
+        # для текущего сеанса (см. settings.js: 10 тапов по версии в "О
+        # приложении" → dialogs.js: adminLogin.openUnlock).
+        result = self._admin.login_only(username, password, remember)
+        if result.get("ok"):
+            self.admin_mode = True
+            self._settings.admin_mode = True
+        return result
 
     def admin_try_saved_login(self) -> dict:
         return self._admin.try_saved_login()

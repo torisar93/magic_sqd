@@ -2,7 +2,10 @@
 простые типы (строки), отдаёт JSON-строки (проще и надёжнее гонять через
 Chaquopy, чем сложные dict/dataclass через границу Kotlin<->Python)."""
 import json
+import re
 import threading
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
@@ -34,6 +37,69 @@ def _progress_cb(phase: str):
 def get_sync_progress() -> str:
     with _progress_lock:
         return json.dumps(dict(_progress))
+
+
+# -- проверка обновлений самого приложения (не cars/, см. sync_cars выше) --
+# Desktop-версия (app/web/api/update_api.py) умеет тихо переустановить себя
+# через собственный .exe — на Android так нельзя (нет прав тихо заменить
+# APK без root), поэтому здесь только ссылка на скачивание, установка —
+# руками техника через системный установщик пакетов (см. WebBridge.kt:
+# startUpdateCheck/MainActivity.kt: shouldOverrideUrlLoading открывает её во
+# внешнем браузере). Один и тот же GitHub-релиз несёт оба продукта разом
+# (см. server/README.md §9), поэтому версия сравнивается не с тегом релиза
+# (это версия desktop-сборки), а с версией, зашитой в имя самого apk-ассета.
+# Планируется переход на RuStore для обновлений — тогда этот путь перестанет
+# быть единственным, но прямая ссылка остаётся рабочим запасным вариантом.
+_GITHUB_API_URL = "https://api.github.com/repos/torisar93/magic_sqd/releases"
+_REQUEST_TIMEOUT_SECONDS = 8
+_APK_ASSET_RE = re.compile(r"^MagicSQD_Android_(.+)\.apk$", re.IGNORECASE)
+
+
+def _parse_version(text: str) -> tuple:
+    parts = []
+    for chunk in text.strip().split("."):
+        match = re.match(r"\d+", chunk)
+        parts.append(int(match.group()) if match else 0)
+    return tuple(parts) or (0,)
+
+
+def check_update(current_version: str) -> str:
+    """Молча возвращает {"available": false} при любой сетевой ошибке или
+    если релиз не несёт apk-ассет (например, между релизами перед вливанием
+    Android-сборки) — сбой проверки не должен ничего ломать в интерфейсе."""
+    try:
+        req = urllib.request.Request(
+            _GITHUB_API_URL, headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+            releases = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError,
+            json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return json.dumps({"available": False})
+    if not releases:
+        return json.dumps({"available": False})
+
+    # releases[0] (не /releases/latest) — та же причина, что и у desktop
+    # (см. update_api.py:_check_github) — включает prerelease, проект в альфе.
+    latest = releases[0]
+    apk_asset = None
+    apk_version = None
+    for asset in latest.get("assets", []):
+        match = _APK_ASSET_RE.match(str(asset.get("name") or ""))
+        if match:
+            apk_asset = asset
+            apk_version = match.group(1)
+            break
+    if not apk_asset or not apk_version:
+        return json.dumps({"available": False})
+    if _parse_version(apk_version) <= _parse_version(current_version):
+        return json.dumps({"available": False})
+
+    return json.dumps({
+        "available": True,
+        "version": apk_version,
+        "changelog": str(latest.get("body") or "").strip(),
+        "download_url": apk_asset["browser_download_url"],
+    })
 
 
 def sync_cars(cars_dir: str, base_url: str) -> str:

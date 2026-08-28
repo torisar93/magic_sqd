@@ -50,6 +50,33 @@
   box-sizing: border-box;
 }
 
+/* Win7-сборка (см. app.js: pywebviewready — ставится по bridge.py:
+   WebApi.is_win7, не пользовательская настройка) — QtWebEngine на реальном
+   старом железе техника оказался намного медленнее WebView2. Одного
+   backdrop-filter не хватило (реальный случай — техник проверил на живой
+   машине, тормозит так же), и ни один из --disable-gpu/QT_OPENGL=software/
+   QT_ANGLE_PLATFORM=d3d9/--no-sandbox не изменил картину (см. переписку) —
+   значит дело не в конкретном GPU-пути, а в том, что программный рендер на
+   слабом CPU одинаково дорого стоит на ЛЮБОМ per-frame эффекте. Убираем
+   CSS-анимации/transition (сворачиваем в 1 кадр — раньше вход карточек в
+   каталоге плюс куча hover/scroll-переходов честно пытались отрисовать
+   30-60 промежуточных кадров, что на софтверном рендере и давало те самые
+   "1-2 кадра в секунду") и декоративное радиальное свечение в углу каждой
+   карточки (.catalog-card::before — чисто эффект, ничего не значит
+   функционально). box-shadow НЕ трогаем целиком — часть из них
+   функциональная (например .picker-list li.selected использует inset
+   box-shadow как единственный индикатор выделения, см. components.css —
+   убрать его глобально значило бы сделать невозможным понять, какая
+   модель выбрана). */
+.low-perf, .low-perf *, .low-perf *::before, .low-perf *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation-duration: .01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: .01ms !important;
+}
+.low-perf .catalog-card::before { content: none; }
+
 html, body {
   margin: 0;
   padding: 0;

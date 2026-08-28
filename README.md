@@ -188,9 +188,12 @@ STAGES = [
 
 Интерфейс — pywebview (нативное окно WebView2 на Windows) + локальный
 HTML/CSS/JS во `app/web/frontend/`, Python-бэкенд как раньше в `app/`
-(см. `app/web/bridge.py`). Два build-варианта — техник (`main_web.py`) и
-админ (`admin_main_web.py`, `admin_mode=True` — прячет adb-консоль,
-показывает "Выгрузить на сервер...").
+(см. `app/web/bridge.py`). Один build-вариант (`main_web.py`) на всех:
+функции администратора (adb-консоль, "Выгрузить на сервер...") по
+умолчанию скрыты, включаются через "Настройки" → 10 тапов подряд по
+номеру версии в разделе "О приложении" → вход (см. `app/web/bridge.py:
+WebApi.__init__` — либо тихий автовход сохранёнными логином/паролем при
+следующих запусках, либо явный через `admin_login`).
 
 ```powershell
 python -m venv .venv
@@ -198,23 +201,22 @@ python -m venv .venv
 .\.venv\Scripts\python main_web.py
 ```
 
-`--admin` — временный флаг для проверки admin_mode из исходников без
-сборки `admin_main_web.py` отдельным .exe. `--debug` — открывает DevTools
-(консоль браузера) для отладки фронтенда.
+`--admin` — временный флаг для разработчика, сразу включить admin_mode из
+исходников, не проходя разблокировку через интерфейс. `--debug` —
+открывает DevTools (консоль браузера) для отладки фронтенда.
 
 ## Сборка .exe и инсталлятора
 
 ```powershell
 .\.venv\Scripts\pyinstaller magic_sqd.spec
-.\.venv\Scripts\pyinstaller admin.spec
 ```
 
-Собирает onedir-сборки в `dist\magic_sqd\`/`dist\magic_sqd_admin\`.
-**Важно:** PyInstaller 6+ кладёт datas (в т.ч. `app/web/frontend/`) в
-`_internal\` рядом с exe, а не прямо в корень — `main_web.py` учитывает
-это через `sys._MEIPASS` (см. `get_frontend_dir`), `cars\`/`apk\`/`tools\`/
-`assets\` пользователь по-прежнему кладёт прямо рядом с exe (это НЕ
-затрагивается `_internal`, программа сама пишет/читает их по пути exe).
+Собирает onedir-сборку в `dist\magic_sqd\`. **Важно:** PyInstaller 6+
+кладёт datas (в т.ч. `app/web/frontend/`) в `_internal\` рядом с exe, а не
+прямо в корень — `main_web.py` учитывает это через `sys._MEIPASS` (см.
+`get_frontend_dir`), `cars\`/`apk\`/`tools\`/`assets\` пользователь
+по-прежнему кладёт прямо рядом с exe (это НЕ затрагивается `_internal`,
+программа сама пишет/читает их по пути exe).
 
 **Пересборка стирает `dist\magic_sqd\` целиком** — если там уже лежат
 `cars\`/`apk\`/`tools\`/`assets\` (докачанные или добавленные вручную),
@@ -243,7 +245,7 @@ PySide2/Qt5 вместо WebView2:
 ## Иконка
 
 `assets\icon.ico` — иконка `.exe` (зашивается в файл при сборке через
-`icon=` в `magic_sqd.spec`/`admin.spec`) и иконка окна во время работы
+`icon=` в `magic_sqd.spec`) и иконка окна во время работы
 программы — обычная иконка Win32-окна WebView2, без обходных путей вокруг
 переустановки иконки библиотекой (см. историю миграции: именно это
 регулярно ломалось в customtkinter). Сплеш-скрин (`assets\splash.png` в

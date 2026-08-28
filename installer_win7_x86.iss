@@ -20,7 +20,7 @@
 ; crash.log, докачанный контент cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.5.9"
+#define MyAppVersion "0.6.0"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -65,6 +65,9 @@ Source: "dist_win7\magic_sqd\*"; DestDir: "{app}"; Excludes: "apk,files,usb_file
 
 Source: "server.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "submit.json"; DestDir: "{app}"; Flags: ignoreversion
+; Адрес админ-API (см. installer.iss за полным обоснованием) — для
+; паритета с основной сборкой, разблокировка функций администратора та же.
+Source: "admin.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

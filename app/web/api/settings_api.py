@@ -12,6 +12,16 @@ import shutil
 from pathlib import Path
 
 from ...content_config import get_base_url
+from ...version import APP_VERSION
+
+# Маркер-файл рядом с exe, включающий подробное логирование (см. main_web.py:
+# _enable_debug_log_all, app/web/bridge.py: WebApi.debug_mode) — раньше
+# ставился только отдельным debug-установщиком (installer_debug.iss,
+# убран — эта сборка теперь единственная), включается/выключается прямо из
+# "Настроек" (см. set_debug_mode ниже). Читается заново только при следующем
+# запуске программы, поэтому переключатель в интерфейсе явно предупреждает
+# о перезапуске.
+DEBUG_LOG_ALL_MARKER = "DEBUG_LOG_ALL"
 
 
 class SettingsApi:
@@ -29,7 +39,20 @@ class SettingsApi:
             "cache_bytes": cache_bytes,
             "server_configured": bool(get_base_url(self.base_dir)),
             "preferences": self._preferences(),
+            "app_version": APP_VERSION,
+            "debug_mode": (self.base_dir / DEBUG_LOG_ALL_MARKER).exists(),
         }
+
+    def set_debug_mode(self, enabled: bool) -> dict:
+        marker = self.base_dir / DEBUG_LOG_ALL_MARKER
+        try:
+            if enabled:
+                marker.touch(exist_ok=True)
+            else:
+                marker.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {"debug_mode": marker.exists()}
 
     def preferences(self) -> dict:
         """Лёгкий вызов для старта: не обходит большие папки с данными."""
