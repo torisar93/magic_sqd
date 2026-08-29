@@ -92,10 +92,10 @@ function sendAdbConsoleCommand() {
 function applyAdminMode(enabled) {
   window.mainPicker.setAdminMode(enabled);
   const display = enabled ? "" : "none";
-  document.getElementById("admin-login-btn").style.display = display;
   document.getElementById("admin-upload-btn").style.display = display;
   document.getElementById("admin-add-apk-btn").style.display = display;
   document.getElementById("admin-browse-btn").style.display = display;
+  document.getElementById("admin-logout-btn").style.display = display;
   document.getElementById("pending-section").style.display = display;
 }
 window.applyAdminMode = applyAdminMode;
@@ -309,10 +309,17 @@ window.addEventListener("pywebviewready", async () => {
   document.getElementById("workspace-edit-car").addEventListener("click", openCarEditorForCurrentModel);
   document.getElementById("report-btn").addEventListener("click", () => window.reportDialog.open(currentModel));
   document.getElementById("back-to-catalog").addEventListener("click", returnToCatalog);
-  document.getElementById("admin-login-btn").addEventListener("click", () => window.adminLoginDialog.open());
   document.getElementById("admin-upload-btn").addEventListener("click", () => window.adminDialog.open());
   document.getElementById("admin-add-apk-btn").addEventListener("click", () => window.adminApkDialog.open());
   document.getElementById("admin-browse-btn").addEventListener("click", () => window.adminBrowseDialog.open());
+  document.getElementById("admin-logout-btn").addEventListener("click", async () => {
+    if (!(await window.confirmDialog(
+      "Выключить функции администратора на этой машине? Сохранённый вход будет забыт — "
+      + "чтобы включить снова, потребуется войти заново через 10 тапов по версии в Настройках."))) return;
+    await window.pywebview.api.admin_logout();
+    applyAdminMode(false);
+    window.notice("Функции администратора выключены.");
+  });
   document.getElementById("log-toggle").addEventListener("click", () => {
     const card = document.getElementById("log-card");
     const expanded = card.classList.toggle("is-expanded");
