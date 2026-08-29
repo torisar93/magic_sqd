@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.6.4"
+#define MyAppVersion "0.6.5"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -98,27 +98,16 @@ Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [UninstallDelete]
-; Файлы, которые появляются УЖЕ ПОСЛЕ установки (content_sync.py качает
-; cars/apk с сервера, программа сама пишет логи/состояние рядом с exe) —
-; Inno Setup сам удаляет при uninstall только то, что перечислено в
-; [Files] (то есть исходно установленное), про докачанное и порождённое
-; во время работы ничего не знает. Без этого списка после удаления
-; оставались папки cars/apk (иногда гигабайты) и служебные файлы.
-Type: filesandordirs; Name: "{app}\cars"
-Type: filesandordirs; Name: "{app}\apk"
-Type: filesandordirs; Name: "{app}\debug_logs"
-; Резервный Qt-движок отображения (см. app/qt_fallback.py) — качается и
-; распаковывается уже во время работы программы, не через [Files], та же
-; причина, что и у cars/apk выше.
-Type: filesandordirs; Name: "{app}\_qt_fallback"
-; Локальный стейджинг заявок клиентов в очереди на модерацию (только
-; admin-сборка, см. app/pending_submissions.py) — та же причина, что и у
-; _qt_fallback выше.
-Type: filesandordirs; Name: "{app}\_pending"
-Type: files; Name: "{app}\*.log"
-Type: files; Name: "{app}\client_id.txt"
-Type: files; Name: "{app}\seen_versions.json"
-Type: files; Name: "{app}\DEBUG_LOG_ALL"
+; Удаляем ВСЮ папку {app} целиком, а не только то, что перечислено в
+; [Files] (что Inno Setup убирает сам) — программа сама пишет рядом с exe
+; докачанный контент (cars/apk) и служебные файлы во время работы, среди
+; которых admin_saved_login.json (см. app/admin_config.py) — логин/пароль
+; администратора в открытом виде. Раньше здесь был точечный список файлов/
+; папок для удаления (cars, apk, debug_logs, *.log и т.п.) — он не поспевал
+; за новыми файлами (тот же admin_saved_login.json туда не попал) и оставлял
+; чувствительные данные на диске после удаления программы. Полное удаление
+; папки не зависит от того, что именно программа туда положит в будущем.
+Type: filesandordirs; Name: "{app}"
 
 [Code]
 // См. официальную документацию Microsoft (Detect if a WebView2 Runtime is

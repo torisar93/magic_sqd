@@ -297,9 +297,11 @@ window.addEventListener("pywebviewready", async () => {
   if (!info.debug_mode) {
     checkForUpdate(); // fire-and-forget, не блокирует остальной старт
   }
-  if (!info.admin_mode && !info.debug_mode) {
+  if (!info.admin_mode && !info.debug_mode && !catalogWasEmpty) {
     // Админ и без того поддерживает проект своей работой, ему не нужен
-    // донат-попап.
+    // донат-попап. catalogWasEmpty (см. выше) — признак самого первого
+    // запуска (каталог ещё не синхронизирован ни разу): просить донат
+    // раньше, чем человек хоть раз воспользовался программой, неуместно.
     window.boostyDialogs.maybeShowWelcomeDialog();
   }
 

@@ -270,7 +270,12 @@
       ? view.items.filter((item) => `${item.title} ${item.meta}`.toLocaleLowerCase().includes(query))
       : view.items;
     gridEl.innerHTML = "";
-    emptyEl.hidden = visibleItems.length > 0;
+    // Показываем "Ничего не найдено" только когда пусто именно из-за
+    // введённого поискового запроса — иначе тот же текст ошибочно всплывал
+    // при первом запуске (каталог ещё не синхронизирован, items пуст без
+    // всякого поиска) поверх/рядом с "Обновляем каталог" (см.
+    // catalog-startup-overlay ниже), что выглядело как баг поиска.
+    emptyEl.hidden = visibleItems.length > 0 || !query;
     // DocumentFragment вместо N отдельных appendChild — на слабом
     // одноядерном CPU (реальный случай: техник тестировал на eMachines
     // E510, Celeron 900 2009 года) каждая вставка в живой DOM даёт браузеру

@@ -20,7 +20,7 @@
 ; crash.log, докачанный контент cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.6.4"
+#define MyAppVersion "0.6.5"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -75,16 +75,11 @@ Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [UninstallDelete]
-; См. installer.iss за полным обоснованием каждой строки. Нет
-; {app}\_qt_fallback — в этой сборке Qt вшит прямо в exe, а не скачивается
-; по требованию (см. шапку файла), нечему появляться и нечего удалять.
-Type: filesandordirs; Name: "{app}\cars"
-Type: filesandordirs; Name: "{app}\apk"
-Type: filesandordirs; Name: "{app}\debug_logs"
-Type: files; Name: "{app}\*.log"
-Type: files; Name: "{app}\client_id.txt"
-Type: files; Name: "{app}\seen_versions.json"
-Type: files; Name: "{app}\DEBUG_LOG_ALL"
+; См. installer.iss за полным обоснованием — удаляем всю папку {app}
+; целиком, включая admin_saved_login.json (логин/пароль администратора в
+; открытом виде) и любые другие файлы, которые программа могла написать
+; сама во время работы.
+Type: filesandordirs; Name: "{app}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Запустить {#MyAppName}"; Flags: nowait postinstall
