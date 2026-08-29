@@ -680,16 +680,33 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                 action_dir.mkdir(parents=True, exist_ok=True)
                 for f in action.files:
                     _copy_path(f, action_dir / f.name, keep_paths)
-        elif step.type == "instruction" and step.instruction_blocks:
+        elif step.type == "instruction":
             instr_step_dir = files_dir / f"instruction_{i}"
-            instr_step_dir.mkdir(parents=True, exist_ok=True)
-            instruction_html.save_instruction(instr_step_dir, step.instruction_blocks)
-            keep_paths.add((instr_step_dir / "instruction.html").resolve())
-            images_dir = instr_step_dir / "images"
-            if images_dir.is_dir():
-                for f in images_dir.iterdir():
-                    if f.is_file():
-                        keep_paths.add(f.resolve())
+            existing_html = instr_step_dir / "instruction.html"
+            if step.instruction_blocks:
+                instr_step_dir.mkdir(parents=True, exist_ok=True)
+                instruction_html.save_instruction(instr_step_dir, step.instruction_blocks)
+                keep_paths.add(existing_html.resolve())
+                images_dir = instr_step_dir / "images"
+                if images_dir.is_dir():
+                    for f in images_dir.iterdir():
+                        if f.is_file():
+                            keep_paths.add(f.resolve())
+            elif existing_html.is_file() and existing_html.stat().st_size > 0:
+                # instruction_blocks пуст в памяти — либо шаг реально без
+                # инструкции, либо (см. car_editor_api.py:
+                # _sync_instruction_folders) load_car_spec() прочитал файл
+                # ДО того, как он был докачан с сервера. Раз на диске уже
+                # лежит непустой instruction.html — не удаляем его "на
+                # всякий случай": реальный инцидент (2026-08, 41 модель)
+                # именно так тихо остался без инструкции при массовой
+                # пересборке stages.py на машине с несинканными файлами.
+                keep_paths.add(existing_html.resolve())
+                images_dir = instr_step_dir / "images"
+                if images_dir.is_dir():
+                    for f in images_dir.iterdir():
+                        if f.is_file():
+                            keep_paths.add(f.resolve())
 
     for root in (files_dir, usb_root):
         if not root.exists():
@@ -704,7 +721,7 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                 pass  # не пусто (не относящееся к мастеру) — оставляем как есть
 
     (model_dir / "install.py").write_text(_render_install_py(spec), encoding="utf-8")
-    (model_dir / "stages.py").write_text(_render_stages_py(spec), encoding="utf-8")
+    (model_dir / "stages.py").write_text(_render_stages_py(spec, model_dir), encoding="utf-8")
     (model_dir / SPEC_FILENAME).write_text(_render_spec_json(spec), encoding="utf-8")
     _write_version_file(model_dir, spec.changelog, spec.status)
 
@@ -1092,7 +1109,7 @@ def _render_install_py(spec: NewCarSpec) -> str:
 # ----------------------------------------------------------------------
 # stages.py
 # ----------------------------------------------------------------------
-def _render_stages_py(spec: NewCarSpec) -> str:
+def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
     lines = [
         f'"""{spec.brand} {spec.model} — этапы установки.',
         'Создано мастером "Добавить машину...", можно редактировать вручную."""',
@@ -1198,11 +1215,17 @@ def _render_stages_py(spec: NewCarSpec) -> str:
                 f'        "exe_path": Path(__file__).resolve().parent / "files" / "exe_{i}" '
                 f'/ {step.exe_file.name!r},'
             )
-        elif step.type == "instruction" and step.instruction_blocks:
+        elif step.type == "instruction":
             # "instruction" — относительный путь-строка (см.
             # app/stage_runner.py: stage_instruction_html_path резолвит его
             # как model.dir / rel), а не Path-выражение, как "exe_path" выше.
-            entry.append(f'        "instruction": {f"files/instruction_{i}/instruction.html"!r},')
+            # Пишем ссылку и когда instruction_blocks пуст в памяти, но на
+            # диске уже лежит непустой instruction.html (см. _write_model_files
+            # выше и её докстринг про несинканные файлы) — иначе рендер
+            # молча теряет ссылку на уже существующую инструкцию.
+            instr_html_path = model_dir / "files" / f"instruction_{i}" / "instruction.html"
+            if step.instruction_blocks or (instr_html_path.is_file() and instr_html_path.stat().st_size > 0):
+                entry.append(f'        "instruction": {f"files/instruction_{i}/instruction.html"!r},')
         # "manual" — без "run"
 
         entry.append("    },")

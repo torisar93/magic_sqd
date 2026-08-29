@@ -9,6 +9,7 @@ Path<->str на границе, (2) открывает нативные диал
 сервер в фоновом потоке (см. _CreateCarProgressDialog в старом коде)."""
 from __future__ import annotations
 import base64
+import json
 import mimetypes
 import shutil
 import threading
@@ -22,6 +23,7 @@ from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cache
 from ...admin_config import get_admin_base_url
 from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec,
                                StandardApkSpec, StepSpec, StepVariant, create_car, load_car_spec, update_car)
+from ...content_sync import fetch_manifest, get_base_url, sync_model_subfolder
 from ...instruction_html import default_blocks, render_document
 from ...ping_client import get_or_create_client_id
 from ...submit_client import SubmitCancelled, SubmitError, submit_model
@@ -155,10 +157,49 @@ class CarEditorApi:
         self._cancel_flag = threading.Event()
 
     # -- загрузка существующей модели (режим редактирования) --------------
+    def _sync_instruction_folders(self, model_dir: Path) -> None:
+        """Докачивает files/instruction_N/ для каждого instruction-этапа
+        ПЕРЕД тем, как load_car_spec() прочитает их в редактор — иначе на
+        машине, где эти файлы ещё не синканы (ленивая докачка — см.
+        install_api.py: load_stages, тот же приём), load_car_spec() прочтёт
+        пустой текст и посчитает инструкцию пустой. При следующем
+        сохранении update_car() тогда тихо стирает ссылку "instruction" в
+        stages.py, хотя сам файл цел на сервере — реальный инцидент
+        (2026-08): 41 модель именно так осталась без инструкции после
+        массовой пересборки stages.py на машине с несинканными файлами.
+        Сеть недоступна/сервер не настроен — просто работаем с тем, что уже
+        есть локально, как и раньше (не должно мешать редактированию)."""
+        spec_path = model_dir / "_wizard_spec.json"
+        if not spec_path.exists():
+            return
+        try:
+            raw = json.loads(spec_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        steps = raw.get("steps", [])
+        if not any(s.get("type") == "instruction" for s in steps):
+            return
+        base_url = get_base_url(self.base_dir)
+        if not base_url:
+            return
+        try:
+            manifest = fetch_manifest(base_url)
+        except Exception:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
+            return
+        for i, step_data in enumerate(steps, start=1):
+            if step_data.get("type") != "instruction":
+                continue
+            instr_dir = model_dir / "files" / f"instruction_{i}"
+            try:
+                sync_model_subfolder(self.base_dir, instr_dir, manifest=manifest)
+            except Exception:  # noqa: BLE001 - см. докстринг выше
+                continue
+
     def load_spec(self, model_key: str) -> dict:
         model = self._scanner_api.get_model(model_key)
         if model is None:
             return {"error": "unknown model key"}
+        self._sync_instruction_folders(model.dir)
         spec = load_car_spec(model.dir, model.brand, model.name, model.modification or "")
         if spec is None:
             return {"error": (
