@@ -87,29 +87,41 @@
   }
 
   function setAdminMode(enabled) {
-    if (!enabled || adminModeReady || !adminToggleEl) return;
-    adminModeReady = true;
-    adminToggleEl.hidden = false;
-    adminToggleEl.closest(".catalog").classList.add("is-admin-mode");
-    const actions = document.querySelector("#left-panel > .left-actions");
-    const pending = document.querySelector("#left-panel > #pending-section");
-    if (actions) adminActionsEl.appendChild(actions);
-    if (pending) adminPendingEl.appendChild(pending);
+    if (!adminToggleEl) return;
+    // Разовая настройка (переносит .left-actions/#pending-section внутрь
+    // поповера, вешает обработчики) — только при ПЕРВОМ включении за этот
+    // запуск программы; переносить элементы обратно при выходе из
+    // admin-режима незачем, достаточно спрятать сам переключатель и его
+    // поповер целиком (см. ниже) — см. admin_logout в settings.js, который
+    // теперь может вызвать это и с enabled=false в течение того же сеанса.
+    if (enabled && !adminModeReady) {
+      adminModeReady = true;
+      adminToggleEl.closest(".catalog").classList.add("is-admin-mode");
+      const actions = document.querySelector("#left-panel > .left-actions");
+      const pending = document.querySelector("#left-panel > #pending-section");
+      if (actions) adminActionsEl.appendChild(actions);
+      if (pending) adminPendingEl.appendChild(pending);
 
-    const close = () => {
+      const close = () => {
+        adminPopoverEl.hidden = true;
+        adminToggleEl.setAttribute("aria-expanded", "false");
+      };
+      adminToggleEl.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const willOpen = adminPopoverEl.hidden;
+        adminPopoverEl.hidden = !willOpen;
+        adminToggleEl.setAttribute("aria-expanded", String(willOpen));
+      });
+      document.addEventListener("click", (event) => {
+        if (!adminPopoverEl.hidden && !adminPopoverEl.contains(event.target) && event.target !== adminToggleEl) close();
+      });
+      document.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+    }
+    adminToggleEl.hidden = !enabled;
+    if (!enabled) {
       adminPopoverEl.hidden = true;
       adminToggleEl.setAttribute("aria-expanded", "false");
-    };
-    adminToggleEl.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const willOpen = adminPopoverEl.hidden;
-      adminPopoverEl.hidden = !willOpen;
-      adminToggleEl.setAttribute("aria-expanded", String(willOpen));
-    });
-    document.addEventListener("click", (event) => {
-      if (!adminPopoverEl.hidden && !adminPopoverEl.contains(event.target) && event.target !== adminToggleEl) close();
-    });
-    document.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+    }
   }
 
   async function reload() {

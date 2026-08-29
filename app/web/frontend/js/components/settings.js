@@ -27,7 +27,7 @@
       <section class="settings-section"><h3>Хранилище</h3><p>Приложение: <strong>${formatBytes(info.app_bytes)}</strong> · кэш: <strong data-cache-size>${formatBytes(info.cache_bytes)}</strong></p><button class="danger" type="button" data-clear>Очистить кэш</button><small>Удаляются загруженные APK, файлы моделей и временные логи. Сценарии и настройки останутся на месте.</small></section>
       <section class="settings-section"><h3>Синхронизация</h3><p>${info.server_configured ? "Сервер подключён" : "Сервер не настроен"}</p><button type="button" data-sync>Проверить обновления сейчас</button><div data-toggles></div></section>
       <section class="settings-section"><h3>Диагностика</h3><p>Лог помогает найти проблему с подключением или установкой.</p><button type="button" data-copy-log>Скопировать лог</button><div data-debug-toggle></div></section>
-      <section class="settings-section"><h3>О приложении</h3><p data-version class="settings-version">Magic SQD v${info.app_version}</p><p data-admin-status class="settings-admin-status"></p><a href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener">GitHub проекта</a></section>`;
+      <section class="settings-section"><h3>О приложении</h3><p data-version class="settings-version">Magic SQD v${info.app_version}</p><p data-admin-status class="settings-admin-status"></p><div data-admin-logout-row></div><a href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener">GitHub проекта</a></section>`;
     document.body.appendChild(dialog);
     const close = () => { dialog.close(); dialog.remove(); };
     dialog.querySelector(".settings-close").addEventListener("click", close);
@@ -88,6 +88,23 @@
     // отдельная admin-сборка — теперь одна программа для всех.
     const adminStatusEl = dialog.querySelector("[data-admin-status]");
     adminStatusEl.textContent = info.admin_mode ? "Функции администратора включены." : "";
+    if (info.admin_mode) {
+      const logoutBtn = document.createElement("button");
+      logoutBtn.type = "button";
+      logoutBtn.className = "danger";
+      logoutBtn.textContent = "Выйти из режима администратора";
+      logoutBtn.addEventListener("click", async () => {
+        if (!(await window.confirmDialog(
+          "Выключить функции администратора на этой машине? Сохранённый вход будет забыт — "
+          + "чтобы включить снова, потребуется войти заново через 10 тапов по версии."))) return;
+        logoutBtn.disabled = true;
+        await window.pywebview.api.admin_logout();
+        window.applyAdminMode(false);
+        close();
+        window.notice("Функции администратора выключены.");
+      });
+      dialog.querySelector("[data-admin-logout-row]").append(logoutBtn);
+    }
     let tapCount = 0;
     let tapTimer = null;
     dialog.querySelector("[data-version]").addEventListener("click", () => {

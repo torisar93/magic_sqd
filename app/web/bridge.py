@@ -187,6 +187,17 @@ class WebApi:
     def admin_forget_saved_login(self) -> dict:
         return self._admin.forget_saved_login()
 
+    def admin_logout(self) -> dict:
+        """Выход из режима администратора в текущем сеансе — обратное к
+        admin_login (см. выше): чистит сохранённый логин/пароль и
+        кешированную сессию (см. AdminApi.logout), и сразу выключает
+        admin_mode здесь и в SettingsApi, без перезапуска программы."""
+        result = self._admin.logout()
+        if result.get("ok"):
+            self.admin_mode = False
+            self._settings.admin_mode = False
+        return result
+
     def admin_start_upload(self, username: str, password: str) -> dict:
         return self._admin.start_upload(username, password)
 

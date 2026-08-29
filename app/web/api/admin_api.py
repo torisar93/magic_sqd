@@ -91,6 +91,21 @@ class AdminApi:
         clear_saved_login(self.base_dir)
         return {"ok": True}
 
+    def logout(self) -> dict:
+        """Полный выход из режима администратора — в отличие от
+        forget_saved_login (только чистит сохранённые логин/пароль на
+        диске, не трогая текущую сессию), тут ещё чистится кешированная
+        cookie-сессия (см. get_cached_session/upload_dir и т.п. — без этого
+        уже скрытые кнопки "Выгрузить на сервер"/публикация заявок всё
+        равно продолжили бы работать с той же сессией, если бы админ
+        включил их обратно в этом же запуске программы без повторного
+        входа). admin_mode на самой WebApi сбрасывает вызывающий (см.
+        bridge.py: admin_logout) — отсюда наружу он не виден."""
+        clear_saved_login(self.base_dir)
+        if self.base_url:
+            clear_cached_session(self.base_url)
+        return {"ok": True}
+
     def start_upload(self, username: str, password: str) -> dict:
         if self.base_url is None:
             return {"ok": False, "error": "admin.json не настроен."}

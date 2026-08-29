@@ -277,8 +277,6 @@ window.addEventListener("pywebviewready", async () => {
     badge.style.display = "";
   }
 
-  // Автообновление — только техническая сборка (не admin, не debug, см.
-  // "Область" в плане/checkForUpdate выше).
   window.events.on("update_log", (event) => log(event.text));
   window.events.on("update_finished", (event) => {
     if (!event.success) {
@@ -288,11 +286,20 @@ window.addEventListener("pywebviewready", async () => {
     // при успехе окно скоро закроется само (см. update_api.py:_close_app) —
     // показывать больше нечего
   });
-  if (!info.admin_mode && !info.debug_mode) {
+  // Раньше пропускалось и для admin_mode тоже — имело смысл, пока
+  // admin-сборка была ОТДЕЛЬНОЙ (публиковалась только вручную), но после
+  // объединения сборок (см. app/web/bridge.py: WebApi.is_win7/admin_mode)
+  // admin_mode — это просто переключатель на той же самой установленной
+  // копии, которой реально пользуются как рабочей; она не должна навсегда
+  // переставать проверять обновления после одной разблокировки. debug_mode
+  // всё ещё пропускает — не хотим прерывать диагностику неожиданным
+  // автообновлением посреди сессии.
+  if (!info.debug_mode) {
     checkForUpdate(); // fire-and-forget, не блокирует остальной старт
-    // Только техническая сборка (не admin/debug) — те же соображения, что
-    // и у автообновления выше: админ и без того поддерживает проект своей
-    // работой, ему не нужен донат-попап.
+  }
+  if (!info.admin_mode && !info.debug_mode) {
+    // Админ и без того поддерживает проект своей работой, ему не нужен
+    // донат-попап.
     window.boostyDialogs.maybeShowWelcomeDialog();
   }
 
