@@ -182,6 +182,28 @@
     else showBrandStep();
   }
 
+  // Марки — только синяя метка ("недавно обновлено"), остальные цвета
+  // (зелёный/жёлтый/красный) на этом уровне не показываем: одна марка
+  // объединяет много непохожих друг на друга моделей, и сводный по всем
+  // сразу цвет тут больше путает, чем помогает технику (например одна
+  // сломанная модификация красила бы всю марку красным, хотя остальные
+  // ноль модели у неё рабочие).
+  function brandCardStatus(brand) {
+    return brand.status_color === "blue" ? "blue" : null;
+  }
+
+  // Модель с модификациями — сразу все точки по каждой модификации, а не
+  // один сведённый цвет (см. rollup_status_color в app/scanner.py) — иначе
+  // карточка красилась красным целиком, даже если сломана только ОДНА из
+  // нескольких модификаций, а остальные рабочие. Без модификаций (leaf) —
+  // как раньше, один цвет.
+  function groupCardStatus(group) {
+    if (group.has_modifications) {
+      return { statuses: group.modifications.map((m) => m.status_color) };
+    }
+    return { status: group.status_color };
+  }
+
   function renderCurrentStep() {
     if (step === "brand") {
       const query = searchEl.value.trim().toLocaleLowerCase();
@@ -194,7 +216,7 @@
       }
       renderCatalog({
         items: data.brands.map((brand) => ({
-          kind: "brand", title: brand.name, logo: brand.logo, status: brand.status_color,
+          kind: "brand", title: brand.name, logo: brand.logo, status: brandCardStatus(brand),
           meta: `${brand.groups.length} ${plural(brand.groups.length, "модель", "модели", "моделей")}`,
           onClick: () => showModelStep(brand),
         })),
@@ -205,7 +227,7 @@
     if (step === "model") {
       renderCatalog({
         items: selectedBrand.groups.map((group) => ({
-          kind: "model", title: group.name, logo: group.logo || group.leaf?.logo, status: group.status_color,
+          kind: "model", title: group.name, logo: group.logo || group.leaf?.logo, ...groupCardStatus(group),
           meta: group.has_modifications
             ? `${group.modifications.length} ${plural(group.modifications.length, "версия", "версии", "версий")}`
             : group.leaf.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
@@ -231,7 +253,7 @@
     for (const brand of data.brands) {
       if (brand.name.toLocaleLowerCase().includes(query)) {
         results.push({
-          kind: "brand", title: brand.name, logo: brand.logo, status: brand.status_color,
+          kind: "brand", title: brand.name, logo: brand.logo, status: brandCardStatus(brand),
           meta: `${brand.groups.length} ${plural(brand.groups.length, "модель", "модели", "моделей")}`,
           action: "Открыть марку", onClick: () => showModelStep(brand),
         });
@@ -239,7 +261,7 @@
       for (const group of brand.groups) {
         if (group.name.toLocaleLowerCase().includes(query)) {
           results.push({
-            kind: "model", title: group.name, logo: group.logo || group.leaf?.logo, status: group.status_color,
+            kind: "model", title: group.name, logo: group.logo || group.leaf?.logo, ...groupCardStatus(group),
             meta: brand.name,
             action: group.has_modifications ? "Выбрать версию" : "Открыть",
             hasVariants: group.has_modifications,
@@ -329,7 +351,14 @@
 
     const footer = document.createElement("span");
     footer.className = "catalog-card-footer";
-    if (item.status) footer.appendChild(statusBadge(item.status));
+    if (item.statuses && item.statuses.length) {
+      const group = document.createElement("span");
+      group.className = "catalog-status-group";
+      for (const color of item.statuses) group.appendChild(statusBadge(color));
+      footer.appendChild(group);
+    } else if (item.status) {
+      footer.appendChild(statusBadge(item.status));
+    }
     const action = document.createElement("span");
     action.className = "catalog-card-action";
     action.textContent = item.action || "Открыть";

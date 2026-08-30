@@ -253,7 +253,8 @@ class CarGenerationError(RuntimeError):
     pass
 
 
-def _resolve_model_dir(cars_dir: Path, brand: str, model: str, modification: str) -> Path:
+def _resolve_model_dir(cars_dir: Path, brand: str, model: str, modification: str,
+                        moving_from: Path | None = None) -> Path:
     """Общая часть create_car/update_car: проверяет марку/модель/модификацию
     и возвращает путь cars/<марка>/<модель>/ (или .../<модификация>/, если
     modification задана). Бросает CarGenerationError при пустых полях,
@@ -263,7 +264,15 @@ def _resolve_model_dir(cars_dir: Path, brand: str, model: str, modification: str
     обратный случай "leaf побеждает модификации", так что смешивать их в
     одной папке модели нельзя). НЕ проверяет, существует ли уже итоговый
     путь — это разный смысл для create_car (всегда ошибка) и update_car
-    (ошибка, только если путь реально меняется), решает вызывающий код."""
+    (ошибка, только если путь реально меняется), решает вызывающий код.
+
+    moving_from — исходная папка при update_car (None у create_car): если
+    она совпадает с cars/<марка>/<модель>/, значит превращаем ЭТУ ЖЕ
+    обычную модель в первую модификацию самой себя (техник решил, что
+    нужны варианты — например разные версии головного устройства), а не
+    сталкиваемся с ЧУЖОЙ уже занятой папкой — в этом случае проверку
+    ниже нужно пропустить, иначе update_car падал бы на собственной же
+    исходной папке."""
     if not brand or not model:
         raise CarGenerationError("Не заданы марка и/или модель.")
     if any(c in INVALID_NAME_CHARS for c in brand) or any(c in INVALID_NAME_CHARS for c in model):
@@ -273,7 +282,8 @@ def _resolve_model_dir(cars_dir: Path, brand: str, model: str, modification: str
 
     model_root = cars_dir / brand / model
     if modification:
-        if model_root.exists() and _has_own_files(model_root):
+        is_self_move = moving_from is not None and moving_from.resolve() == model_root.resolve()
+        if model_root.exists() and _has_own_files(model_root) and not is_self_move:
             raise CarGenerationError(
                 f"{model_root} уже существует как обычная модель без модификаций — "
                 "чтобы добавить модификацию, сначала перенесите её файлы в подпапку вручную.")
@@ -337,7 +347,8 @@ def update_car(cars_dir: Path, model_dir: Path, spec: NewCarSpec, *, allow_renam
     if not spec.steps:
         raise CarGenerationError("Не задано ни одного этапа установки.")
 
-    new_dir = (_resolve_model_dir(cars_dir, spec.brand.strip(), spec.model.strip(), spec.modification.strip())
+    new_dir = (_resolve_model_dir(cars_dir, spec.brand.strip(), spec.model.strip(), spec.modification.strip(),
+                                   moving_from=model_dir)
                if allow_rename else model_dir)
     if new_dir == model_dir:
         _write_model_files(model_dir, spec)
@@ -345,10 +356,34 @@ def update_car(cars_dir: Path, model_dir: Path, spec: NewCarSpec, *, allow_renam
 
     if new_dir.exists():
         raise CarGenerationError(f"Такая модель уже существует: {new_dir}")
-    new_dir.parent.mkdir(parents=True, exist_ok=True)
     old_dir = model_dir
     old_parent = old_dir.parent
-    shutil.move(str(old_dir), str(new_dir))
+    # Модель без модификаций превращается в первую модификацию САМОЙ СЕБЯ
+    # (см. _resolve_model_dir: moving_from) — new_dir тогда лежит ВНУТРИ
+    # old_dir (cars/Марка/Модель -> cars/Марка/Модель/Модификация), а
+    # shutil.move() не умеет переносить папку саму в себя ("Cannot move a
+    # directory into itself"). Нужен обходной путь через временную папку
+    # РЯДОМ (не внутри old_dir): сначала увозим всё старое содержимое в
+    # сторону, потом создаём пустую old_dir заново и заносим содержимое
+    # обратно уже по вложенному пути.
+    nested_self_move = old_dir.resolve() in new_dir.resolve().parents
+
+    def _unique_sibling(base: Path) -> Path:
+        candidate = base.parent / f"{base.name}__magicsqd_move_tmp"
+        counter = 1
+        while candidate.exists():
+            candidate = base.parent / f"{base.name}__magicsqd_move_tmp_{counter}"
+            counter += 1
+        return candidate
+
+    if nested_self_move:
+        tmp_dir = _unique_sibling(old_dir)
+        shutil.move(str(old_dir), str(tmp_dir))
+        new_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(tmp_dir), str(new_dir))
+    else:
+        new_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(old_dir), str(new_dir))
     # spec пришёл из load_car_spec(), вызванного ДО переноса — все пути в
     # нём (apk, usb_files, exe_file, фото инструкции и т.п.) всё ещё
     # указывают на старое, уже переехавшее место. Без этой перепрошивки
@@ -366,7 +401,13 @@ def update_car(cars_dir: Path, model_dir: Path, spec: NewCarSpec, *, allow_renam
         # проекта: ленивая докачка files/). Переносим папку обратно и
         # поднимаем исходную ошибку — вызывающий код (car_editor_api.py)
         # покажет её технику, а модель останется в прежнем, рабочем виде.
-        shutil.move(str(new_dir), str(old_dir))
+        if nested_self_move:
+            tmp_dir = _unique_sibling(new_dir)
+            shutil.move(str(new_dir), str(tmp_dir))
+            shutil.rmtree(old_dir, ignore_errors=True)  # пустая — создали её сами выше
+            shutil.move(str(tmp_dir), str(old_dir))
+        else:
+            shutil.move(str(new_dir), str(old_dir))
         _prune_empty_parents(new_dir.parent, cars_dir)
         raise
     _prune_empty_parents(old_parent, cars_dir)
@@ -454,14 +495,29 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         if step_type == "usb":
             usb_step_dir = usb_root / f"step_{i}"
             if variant_data:
+                usb_pack_dir = files_dir / f"usb_pack_{i}"
                 for v in variant_data:
                     v_dir = usb_step_dir / v.get("name", "")
+                    v_pack_dir = usb_pack_dir / v.get("name", "")
                     variants.append(StepVariant(
                         name=v.get("name", ""),
                         usb_files=[v_dir / name for name in v.get("usb_files", [])],
+                        standard_apks=[_parse_apk_entry(item, v_pack_dir / "required")
+                                       for item in v.get("standard_apks", [])],
+                        standard_apks_optional=[_parse_apk_entry(item, v_pack_dir / "optional")
+                                                 for item in v.get("standard_apks_optional", [])],
                     ))
             else:
                 usb_files = [usb_step_dir / name for name in step_data.get("usb_files", [])]
+                # См. _write_model_files/_render_stages_py — "usb"-этап тоже
+                # может предлагать техническую библиотеку своих APK галочками
+                # (необязательные — записать на флешку и поставить самому
+                # через файловый менеджер, без ADB), не только "apps"-этап.
+                usb_pack_dir = files_dir / f"usb_pack_{i}"
+                standard_apks = [_parse_apk_entry(item, usb_pack_dir / "required")
+                                  for item in step_data.get("standard_apks", [])]
+                standard_apks_optional = [_parse_apk_entry(item, usb_pack_dir / "optional")
+                                           for item in step_data.get("standard_apks_optional", [])]
         elif step_type == "apps":
             apps_index += 1
             pack_dir = files_dir / ("pack" if apps_index == 1 else f"pack_{apps_index}")
@@ -653,10 +709,36 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                     variant_dir.mkdir(parents=True, exist_ok=True)
                     for f in variant.usb_files:
                         _copy_path(f, variant_dir / f.name, keep_paths)
-            elif step.usb_files:
-                usb_step_dir.mkdir(parents=True, exist_ok=True)
-                for f in step.usb_files:
-                    _copy_path(f, usb_step_dir / f.name, keep_paths)
+                    if variant.standard_apks or variant.standard_apks_optional:
+                        usb_pack_dir = files_dir / f"usb_pack_{i}" / variant.name
+                        for subdir_name, apks in (("required", variant.standard_apks),
+                                                   ("optional", variant.standard_apks_optional)):
+                            if not apks:
+                                continue
+                            sub_dir = usb_pack_dir / subdir_name
+                            sub_dir.mkdir(parents=True, exist_ok=True)
+                            for apk in apks:
+                                _copy_apk(apk, sub_dir / apk.path.name, keep_paths)
+            else:
+                if step.usb_files:
+                    usb_step_dir.mkdir(parents=True, exist_ok=True)
+                    for f in step.usb_files:
+                        _copy_path(f, usb_step_dir / f.name, keep_paths)
+                # Необязательные APK этого usb-этапа (галочками, как у
+                # "apps", но чтобы записать на флешку и поставить самому
+                # через файловый менеджер, а не через ADB) — см.
+                # install_api.py:standard_apks, читает "standard_dir" из
+                # stages.py независимо от типа этапа.
+                if step.standard_apks or step.standard_apks_optional:
+                    usb_pack_dir = files_dir / f"usb_pack_{i}"
+                    for subdir_name, apks in (("required", step.standard_apks),
+                                               ("optional", step.standard_apks_optional)):
+                        if not apks:
+                            continue
+                        sub_dir = usb_pack_dir / subdir_name
+                        sub_dir.mkdir(parents=True, exist_ok=True)
+                        for apk in apks:
+                            _copy_apk(apk, sub_dir / apk.path.name, keep_paths)
         elif step.type == "exe" and step.exe_file:
             exe_step_dir = files_dir / f"exe_{i}"
             exe_step_dir.mkdir(parents=True, exist_ok=True)
@@ -1190,6 +1272,18 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
                 entry.append(f'        "usb_shared_folder": {step.usb_shared_folder!r},')
             if step.variants:
                 entry.append(f'        "variant_names": {[v.name for v in step.variants]!r},')
+                if any(v.standard_apks or v.standard_apks_optional for v in step.variants):
+                    pack_expr = f'Path(__file__).resolve().parent / "files" / "usb_pack_{i}"'
+                    entry.append(f'        "standard_dir_base": {pack_expr},')
+            elif step.standard_apks or step.standard_apks_optional:
+                # Необязательные APK этого этапа галочками — записать на
+                # флешку и поставить самому через файловый менеджер (не
+                # ADB-установка, см. app/web/frontend/js/screens/
+                # stage_wizard.js: renderUsbStage — показывает тот же
+                # apps-tree, что и у "apps"-этапа, если usb_copy_selected_apks
+                # или свои standard_apks/standard_apks_optional заданы).
+                pack_expr = f'Path(__file__).resolve().parent / "files" / "usb_pack_{i}"'
+                entry.append(f'        "standard_dir": {pack_expr},')
         elif step.type == "adb":
             run_expr = f"_with_connect(m.adb_step_{i})" if spec.wifi else f"m.adb_step_{i}"
             entry.append(f'        "run": {run_expr},')

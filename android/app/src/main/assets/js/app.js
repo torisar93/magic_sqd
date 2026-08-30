@@ -409,11 +409,34 @@
         el("span", { class: "catalog-card-meta", text: item.meta || "Открыть инструкцию" }),
       ]);
       const footer = el("span", { class: "catalog-card-footer" });
-      if (item.color) footer.appendChild(el("span", { class: `status-dot status-dot-${item.color}`, title: STATUS_TITLES[item.color] || "", "aria-label": STATUS_TITLES[item.color] || "Статус" }));
+      if (item.colors && item.colors.length) {
+        const group = el("span", { class: "catalog-status-group" });
+        for (const color of item.colors) {
+          group.appendChild(el("span", { class: `status-dot status-dot-${color}`, title: STATUS_TITLES[color] || "", "aria-label": STATUS_TITLES[color] || "Статус" }));
+        }
+        footer.appendChild(group);
+      } else if (item.color) {
+        footer.appendChild(el("span", { class: `status-dot status-dot-${item.color}`, title: STATUS_TITLES[item.color] || "", "aria-label": STATUS_TITLES[item.color] || "Статус" }));
+      }
       footer.appendChild(el("span", { class: "catalog-card-action", text: item.action || "Открыть" }));
       card.append(visual, content, footer);
       listEl.appendChild(card);
     });
+  }
+
+  // Та же логика, что и в desktop-версии (см. app/web/frontend/js/screens/
+  // main_picker.js: brandCardStatus/groupCardStatus) — на марках только
+  // синяя метка, у модели с модификациями сразу все точки вместо одной
+  // сведённой (иначе одна сломанная модификация красила бы всю карточку).
+  function brandCardColor(brand) {
+    return brand.status_color === "blue" ? "blue" : null;
+  }
+
+  function groupCardColors(group) {
+    if (group.has_modifications) {
+      return { colors: group.modifications.map((m) => m.status_color) };
+    }
+    return { color: group.status_color };
   }
 
   function plural(number, one, few, many) {
@@ -425,9 +448,9 @@
   function searchResults(query) {
     const results = [];
     for (const brand of carsData.brands || []) {
-      if (brand.name.toLocaleLowerCase().includes(query)) results.push({ kind: "brand", label: brand.name, meta: `${brand.groups.length} ${plural(brand.groups.length, "модель", "модели", "моделей")}`, color: brand.status_color, icon: brand.logo, action: "Открыть марку", onClick: () => showGroupStep(brand) });
+      if (brand.name.toLocaleLowerCase().includes(query)) results.push({ kind: "brand", label: brand.name, meta: `${brand.groups.length} ${plural(brand.groups.length, "модель", "модели", "моделей")}`, color: brandCardColor(brand), icon: brand.logo, action: "Открыть марку", onClick: () => showGroupStep(brand) });
       for (const group of brand.groups) {
-        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, color: group.status_color, icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", onClick: () => group.has_modifications ? showModificationStep(group) : selectModel(group.leaf) });
+        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, ...groupCardColors(group), icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", onClick: () => group.has_modifications ? showModificationStep(group) : selectModel(group.leaf) });
         for (const modification of group.modifications || []) {
           if ((modification.modification || "").toLocaleLowerCase().includes(query)) results.push({ kind: "variant", label: `${group.name} — ${modification.modification}`, meta: brand.name, color: modification.status_color, icon: modification.logo || group.logo, onClick: () => selectModel(modification) });
         }
@@ -448,7 +471,7 @@
     }
     const query = pickerSearchEl.value.trim().toLocaleLowerCase();
     if (query) { renderList(searchResults(query)); return; }
-    renderList(carsData.brands.map((b) => ({ kind: "brand", label: b.name, meta: `${b.groups.length} ${plural(b.groups.length, "модель", "модели", "моделей")}`, color: b.status_color, icon: b.logo, onClick: () => showGroupStep(b) })));
+    renderList(carsData.brands.map((b) => ({ kind: "brand", label: b.name, meta: `${b.groups.length} ${plural(b.groups.length, "модель", "модели", "моделей")}`, color: brandCardColor(b), icon: b.logo, onClick: () => showGroupStep(b) })));
   }
 
   function showGroupStep(brand) {
@@ -461,7 +484,7 @@
       kind: "model", label: g.name, icon: g.logo || (g.leaf && g.leaf.logo),
       meta: g.has_modifications ? `${g.modifications.length} ${plural(g.modifications.length, "версия", "версии", "версий")}` : g.leaf.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
       action: g.has_modifications ? "Выбрать версию" : "Открыть",
-      color: g.status_color,
+      ...groupCardColors(g),
       onClick: () => (g.has_modifications ? showModificationStep(g) : selectModel(g.leaf)),
     })));
   }

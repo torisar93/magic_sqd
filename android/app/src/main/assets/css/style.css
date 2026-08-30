@@ -371,6 +371,10 @@ html, body {
 .status-dot-blue { background: var(--info); }
 .status-dot-red { background: var(--danger); }
 
+/* Модель с модификациями — точка на каждую вместо одной сведённой (см.
+   js/app.js: groupCardColors). */
+.catalog-status-group { display: inline-flex; align-items: center; gap: 4px; }
+
 .empty-hint {
   padding: 24px 16px;
   color: var(--text-dim);
