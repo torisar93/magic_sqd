@@ -811,6 +811,18 @@
 .log-line-error { color: var(--danger-text); }
 .log-line-warn { color: var(--warn-text); }
 .log-line-progress { color: var(--text-dim); letter-spacing: 0.02em; }
+/* Отдельные слова внутри строки лога (см. log_format.js: highlightLogKeywords) —
+   в отличие от .log-line-*, красит не всю строку, а конкретное слово, не
+   заглушая остальной (уже переведённый на русский) текст той же строки. */
+.log-keyword { font-weight: 700; }
+.log-keyword-error { color: var(--danger-text); }
+.log-keyword-warn { color: var(--warn-text); }
+.log-keyword-success { color: var(--accent); }
+.log-keyword-info { color: var(--accent-2); }
+/* Эхо введённой в мини-консоли команды (см. app.js: logConsoleCommand) —
+   отдельный вид, чтобы сразу отличать от результата, который идёт следующей
+   строкой. */
+.log-line-command { color: var(--accent-2); font-weight: 600; margin-top: 6px; }
 
 /* Мини-консоль ADB под логом (была в tkinter-версии до перехода на
    pywebview — см. историю app/gui.py) — свободная "adb shell <команда>" на
@@ -1022,6 +1034,22 @@ select {
   padding: 8px 2px 2px;
 }
 
+/* Кнопка "Добавить свой APK..." (см. stage_wizard.js: pickPersonalApks) —
+   вне свёрнутых секций, поэтому обычный класс кнопки, не apps-section-*. */
+.app-personal-apk-add {
+  margin-bottom: 8px;
+}
+
+.app-personal-apk-remove {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 8px;
+}
+
 .apps-section-body.apps-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(235px, 100%), 1fr));
@@ -1062,6 +1090,16 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Без явного размера нативный чекбокс WebView2 рисуется неодинаково от
+   строки к строке (заметно разные квадратики в одной и той же сетке) —
+   тот же приём, что уже применяется в .settings-toggle input ниже. */
+.app-row input[type="checkbox"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
 }
 
 .app-description-tooltip {

@@ -38,17 +38,60 @@
   // (намеренно те же слова), что и в desktop-версии (см. app/web/frontend/
   // js/log_format.js) — оба приложения пишут лог по-русски в похожем
   // стиле, красим уже готовую строку, не тащим уровень через AdbSession/
-  // InstallEngine/WebBridge (см. .log-line-* в css/style.css).
+  // InstallEngine/WebBridge (см. .log-line-* в css/style.css). Английские
+  // "Error"/"Exception" и т.п. — на случай непереведённого сырого вывода
+  // adb/Android (см. WebBridge.kt: AdbConsoleFormat — переводит только
+  // известные частые случаи).
   function classifyLogLevel(text) {
-    if (/ошибк|не удал|отклон|не найден|провал|неизвестн/i.test(text)) return "error";
+    if (/ошибк|не удал|отклон|не найден|провал|неизвестн|\berror\b|\bexception\b|\bfailed\b|\bfailure\b|permission denial/i.test(text)) return "error";
     if (/внимани|предупрежд/i.test(text)) return "warn";
     if (/готово\.?$|успешно|выдан|установлен|опубликован|подключ[её]н|заверш/i.test(text)) return "success";
     return "info";
   }
 
+  function escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Отдельные служебные слова в сыром английском выводе — та же логика, что
+  // и в desktop-версии (см. app/web/frontend/js/log_format.js:
+  // highlightLogKeywords), намеренно тот же список.
+  const KEYWORD_TRANSLATIONS = [
+    { pattern: /\bfatal\b/gi, text: "Критично", cls: "error" },
+    { pattern: /\bexception\b/gi, text: "Исключение", cls: "error" },
+    { pattern: /\berror\b/gi, text: "Ошибка", cls: "error" },
+    { pattern: /\bfailed\b/gi, text: "Не удалось", cls: "error" },
+    { pattern: /\bfailure\b/gi, text: "Сбой", cls: "error" },
+    { pattern: /\bdenied\b/gi, text: "Отказано", cls: "error" },
+    { pattern: /\bwarning\b/gi, text: "Внимание", cls: "warn" },
+    { pattern: /\bdeprecated\b/gi, text: "Устарело", cls: "warn" },
+    { pattern: /\bstarting\b/gi, text: "Запуск", cls: "info" },
+    { pattern: /\bsuccess(?:fully)?\b/gi, text: "Успешно", cls: "success" },
+    { pattern: /\bconnected\b/gi, text: "Подключено", cls: "success" },
+    { pattern: /\bdisconnected\b/gi, text: "Отключено", cls: "warn" },
+    { pattern: /\baborted\b/gi, text: "Прервано", cls: "error" },
+    { pattern: /\btimeout\b/gi, text: "Истекло время ожидания", cls: "error" },
+    { pattern: /\bkilled\b/gi, text: "Остановлено", cls: "warn" },
+    { pattern: /\bunavailable\b/gi, text: "Недоступно", cls: "warn" },
+    { pattern: /\bskipped\b/gi, text: "Пропущено", cls: "warn" },
+    { pattern: /\bunauthorized\b/gi, text: "Не авторизовано", cls: "error" },
+    { pattern: /\boffline\b/gi, text: "Не отвечает", cls: "error" },
+    { pattern: /\bdisabled\b/gi, text: "Отключено", cls: "warn" },
+    { pattern: /\benabled\b/gi, text: "Включено", cls: "success" },
+  ];
+
+  function highlightKeywords(text) {
+    let html = escapeHtml(text);
+    for (const { pattern, text: translated, cls } of KEYWORD_TRANSLATIONS) {
+      html = html.replace(pattern, `<span class="log-keyword log-keyword-${cls}">${translated}</span>`);
+    }
+    return html;
+  }
+
   function log(text) {
     const level = classifyLogLevel(text);
-    const line = el("div", { text, class: `log-line log-line-${level}` });
+    const line = el("div", { class: `log-line log-line-${level}` });
+    line.innerHTML = highlightKeywords(text);
     logPanelEl.appendChild(line);
     logPanelEl.scrollTop = logPanelEl.scrollHeight;
     // Свёрнутая нижняя полоса лога раньше всегда показывала статичное "Лог"
@@ -64,10 +107,154 @@
     if (open) logPanelEl.scrollTop = logPanelEl.scrollHeight;
   }
 
+  // Известные shell-команды консоли (см. WebBridge.kt: adbShellCommand —
+  // здесь ВСЕГДА ровно одна shell-команда на уже подключённом устройстве,
+  // нет отдельных adb-команд верхнего уровня вроде "devices"/"install
+  // <путь-на-компьютере>", в отличие от desktop-версии, поэтому список
+  // короче, чем ADB_CONSOLE_SUGGESTIONS в app/web/frontend/js/app.js) — тот
+  // же приём: value — что реально выполнится, label — красивая подпись и в
+  // подсказке (datalist), и в эхе введённой команды (см. logConsoleCommand).
+  const SHELL_CMD_SUGGESTIONS = [
+    { value: "pm list packages", label: "Список всех установленных пакетов" },
+    { value: "pm list packages -3", label: "Список пользовательских (не системных) приложений" },
+    { value: "pm list packages -s", label: "Список системных приложений" },
+    { value: "pm path ", label: "Путь к APK установленного пакета — pm path <пакет>" },
+    { value: "pm clear ", label: "Очистить данные приложения — pm clear <пакет>" },
+    { value: "pm uninstall ", label: "Удалить пакет через pm — pm uninstall <пакет>" },
+    { value: "pm grant ", label: "Выдать разрешение — pm grant <пакет> <разрешение>" },
+    { value: "pm disable-user ", label: "Отключить приложение — pm disable-user <пакет>" },
+    { value: "pm enable ", label: "Включить приложение — pm enable <пакет>" },
+    { value: "dumpsys battery", label: "Статус батареи" },
+    { value: "dumpsys package ", label: "Подробности о пакете — dumpsys package <пакет>" },
+    { value: "dumpsys meminfo ", label: "Использование памяти приложением — dumpsys meminfo <пакет>" },
+    { value: "dumpsys activity activities", label: "Стек запущенных активностей" },
+    { value: "dumpsys cpuinfo", label: "Загрузка процессора по процессам" },
+    { value: "wm size", label: "Разрешение экрана" },
+    { value: "wm size reset", label: "Сбросить разрешение экрана к заводскому" },
+    { value: "wm density", label: "Плотность экрана (DPI)" },
+    { value: "wm density reset", label: "Сбросить плотность экрана к заводской" },
+    { value: "svc wifi enable", label: "Включить Wi-Fi" },
+    { value: "svc wifi disable", label: "Выключить Wi-Fi" },
+    { value: "getprop", label: "Все системные свойства устройства" },
+    { value: "getprop ro.product.model", label: "Модель устройства" },
+    { value: "getprop ro.build.version.release", label: "Версия Android" },
+    { value: "ps -A", label: "Список запущенных процессов" },
+    { value: "am start -n ", label: "Запустить activity напрямую — am start -n <пакет>/<activity>" },
+    { value: "am start -a android.settings.SETTINGS", label: "Открыть системные настройки Android" },
+    { value: "am start -a android.settings.WIFI_SETTINGS", label: "Открыть настройки Wi-Fi" },
+    { value: "am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:", label: "Открыть настройки конкретного приложения — ...-d package:<пакет>" },
+    { value: "am force-stop ", label: "Принудительно остановить приложение — am force-stop <пакет>" },
+    { value: "input keyevent 3", label: "Кнопка «Домой»" },
+    { value: "input keyevent 4", label: "Кнопка «Назад»" },
+    { value: "input keyevent 26", label: "Кнопка питания (вкл/выкл экран)" },
+    { value: "screencap -p /sdcard/screen.png", label: "Сделать скриншот на устройство" },
+  ];
+
+  let logCmdSuggestionsListEl = null;
+
+  // Свой список подсказок вместо нативного <datalist> — на Android WebView
+  // тот открывается как полноэкранный системный оверлей поверх ВСЕГО,
+  // включая клавиатуру (реальная жалоба техника). Показываем/прячем прямо
+  // внутри уже открытой карточки лога (см. css/style.css:
+  // .log-cmd-suggestions-list — абсолютно позиционирован НАД полем ввода,
+  // ограничен высотой карточки).
+  function initLogCmdSuggestions() {
+    logCmdSuggestionsListEl = document.getElementById("log-cmd-suggestions-list");
+    if (!logCmdSuggestionsListEl) return;
+    logCmdInput.addEventListener("input", updateLogCmdSuggestions);
+    // mousedown, не click — срабатывает РАНЬШЕ, чем поле ввода теряет фокус
+    // (blur), иначе список уже успевал бы спрятаться (см. ниже) раньше,
+    // чем успевал сработать сам выбор подсказки.
+    logCmdSuggestionsListEl.addEventListener("mousedown", (e) => e.preventDefault());
+  }
+
+  function updateLogCmdSuggestions() {
+    if (!logCmdSuggestionsListEl) return;
+    const normalized = stripRedundantPrefix(logCmdInput.value).toLowerCase();
+    const matches = (normalized
+      ? SHELL_CMD_SUGGESTIONS.filter((s) => s.value.toLowerCase().startsWith(normalized))
+      : SHELL_CMD_SUGGESTIONS
+    ).slice(0, 8);
+    renderLogCmdSuggestions(matches);
+  }
+
+  function renderLogCmdSuggestions(matches) {
+    logCmdSuggestionsListEl.innerHTML = "";
+    if (!matches.length) {
+      logCmdSuggestionsListEl.hidden = true;
+      return;
+    }
+    for (const suggestion of matches) {
+      const item = el("li", {}, [
+        el("span", { text: suggestion.label }),
+        el("span", { class: "suggestion-value", text: suggestion.value }),
+      ]);
+      item.addEventListener("click", () => {
+        logCmdInput.value = suggestion.value;
+        hideLogCmdSuggestions();
+        logCmdInput.focus();
+      });
+      logCmdSuggestionsListEl.appendChild(item);
+    }
+    logCmdSuggestionsListEl.hidden = false;
+  }
+
+  function hideLogCmdSuggestions() {
+    if (logCmdSuggestionsListEl) logCmdSuggestionsListEl.hidden = true;
+  }
+
+  // Совпадает с AdbConsoleFormat.stripRedundantPrefix на стороне Kotlin —
+  // свой нормализатор здесь нужен, чтобы найти красивую подпись даже если
+  // человек по привычке дописал "adb"/"shell" в начале.
+  function stripRedundantPrefix(command) {
+    let result = command;
+    const lower = result.toLowerCase();
+    if (lower === "adb") return "";
+    if (lower.startsWith("adb shell ")) result = result.slice("adb shell ".length);
+    else if (lower.startsWith("adb ")) result = result.slice("adb ".length);
+    if (result.toLowerCase().startsWith("shell ")) result = result.slice("shell ".length);
+    return result.trim();
+  }
+
+  function findLogCmdSuggestion(normalized) {
+    const exact = SHELL_CMD_SUGGESTIONS.find((s) => s.value.trim() === normalized);
+    if (exact) return exact;
+    const prefixMatches = SHELL_CMD_SUGGESTIONS.filter(
+      (s) => s.value.length < normalized.length && normalized.startsWith(s.value));
+    if (!prefixMatches.length) return undefined;
+    return prefixMatches.reduce((best, s) => (s.value.length > best.value.length ? s : best));
+  }
+
+  function shortLabel(label) {
+    const dashIndex = label.indexOf(" — ");
+    return dashIndex === -1 ? label : label.slice(0, dashIndex);
+  }
+
+  // Эхо введённой команды — та же логика, что и в desktop-версии (см.
+  // app/web/frontend/js/app.js: logConsoleCommand), до ответа от Kotlin
+  // (который приходит отдельным событием "adb_log" уже из фонового потока,
+  // см. WebBridge.kt: adbShellCommand — сам больше не дублирует эхо).
+  function logConsoleCommand(command) {
+    const normalized = stripRedundantPrefix(command);
+    const match = findLogCmdSuggestion(normalized);
+    let text;
+    if (match) {
+      const extraArg = normalized.slice(match.value.trim().length).trim();
+      text = `❯ ${shortLabel(match.label)}${extraArg ? `: ${extraArg}` : ""}`;
+    } else {
+      text = `❯ ${command}`;
+    }
+    const line = el("div", { class: "log-line log-line-command", text });
+    logPanelEl.appendChild(line);
+    logPanelEl.scrollTop = logPanelEl.scrollHeight;
+  }
+
   function onLogCmdRun() {
     const command = logCmdInput.value.trim();
     if (!command) return;
     logCmdInput.value = "";
+    hideLogCmdSuggestions();
+    logConsoleCommand(command);
     Bridge.call("adb_shell_command", { command });
   }
 
@@ -340,13 +527,52 @@
     }
   }
 
-  function pollSyncProgress(phase, labelEl, labelText, bar, fill) {
+  // Оверлей первого запуска (см. css/style.css: .catalog-startup-overlay) —
+  // портировано из desktop-версии (app/web/frontend/js/screens/main_picker.js:
+  // showStartupLoading/setStartupProgress/hideStartupLoading), показывается
+  // ТОЛЬКО когда каталог ещё пуст (первый запуск программы, ничего ещё не
+  // скачано) — для обычных, не первых синхронизаций остаётся прежний
+  // ненавязчивый текстовый статус наверху (.sync-status, см. startSync ниже).
+  let startupOverlayEl, startupProgressFillEl, startupProgressLabelEl;
+
+  function showStartupOverlay() {
+    if (!startupOverlayEl) return;
+    startupOverlayEl.hidden = false;
+    // На части WebView CSS-анимация спиннера не запускается сама сразу
+    // после снятия [hidden] в том же такте — форсируем reflow между
+    // сбросом и восстановлением animation, это гарантированно перезапускает
+    // анимацию независимо от движка.
+    const spinner = startupOverlayEl.querySelector(".catalog-startup-spinner");
+    if (spinner) {
+      spinner.style.animation = "none";
+      void spinner.offsetWidth;
+      spinner.style.animation = "";
+    }
+    startupProgressFillEl.style.width = "12%";
+    startupProgressLabelEl.textContent = "Подготавливаем список моделей…";
+  }
+
+  function updateStartupOverlay(done, total) {
+    if (!startupOverlayEl || startupOverlayEl.hidden || total <= 0) return;
+    const percent = Math.max(4, Math.min(100, Math.round((done / total) * 100)));
+    startupProgressFillEl.style.width = `${percent}%`;
+    startupProgressLabelEl.textContent = `${percent}% скачано (${done} из ${total})`;
+  }
+
+  function hideStartupOverlay() {
+    if (!startupOverlayEl) return;
+    startupProgressFillEl.style.width = "100%";
+    startupOverlayEl.hidden = true;
+  }
+
+  function pollSyncProgress(phase, labelEl, labelText, bar, fill, alsoOverlay) {
     stopSyncPoll();
     syncPollTimer = setInterval(() => {
       const p = Bridge.call("get_sync_progress", {});
       if (!p || p.phase !== phase) return;
       updateProgressBar(bar, fill, p.done, p.total);
       labelEl.textContent = p.total > 0 ? `${labelText} (${p.done} из ${p.total})` : labelText;
+      if (alsoOverlay) updateStartupOverlay(p.done, p.total);
     }, 300);
   }
 
@@ -357,7 +583,7 @@
     }
   }
 
-  function startSync() {
+  function startSync(isFirstLaunch) {
     clear(syncStatusEl);
     const label = el("span", { text: "Синхронизация каталога с сервером…" });
     const { bar, fill } = makeProgressBar();
@@ -368,14 +594,16 @@
     // запуске каталоге показывалась карточка "Пусто" прямо под прогресс-
     // баром, будто марок и правда нет, хотя они просто ещё не скачались.
     listEl.style.display = "none";
+    if (isFirstLaunch) showStartupOverlay();
     Bridge.call("start_sync", {});
-    pollSyncProgress("cars", label, "Синхронизация каталога с сервером…", bar, fill);
+    pollSyncProgress("cars", label, "Синхронизация каталога с сервером…", bar, fill, isFirstLaunch);
   }
 
   function onSyncFinished(event) {
     stopSyncPoll();
     syncStatusEl.style.display = "none";
     listEl.style.display = "";
+    hideStartupOverlay();
     const result = event.result || {};
     if (settingsSyncTimeout) {
       clearTimeout(settingsSyncTimeout);
@@ -1472,6 +1700,9 @@
     breadcrumbEl = document.getElementById("picker-breadcrumb");
     syncStatusEl = document.getElementById("picker-sync-status");
     listEl = document.getElementById("picker-list");
+    startupOverlayEl = document.getElementById("catalog-startup-overlay");
+    startupProgressFillEl = document.getElementById("catalog-startup-progress-fill");
+    startupProgressLabelEl = document.getElementById("catalog-startup-progress-label");
     pickerSearchEl = document.getElementById("picker-search");
     pickerSearchEl.addEventListener("input", () => {
       if (selectedGroup) showModificationStep(selectedGroup);
@@ -1524,6 +1755,20 @@
     logOverlayEl.addEventListener("click", (e) => { if (e.target === logOverlayEl) setLogOpen(false); });
     logCmdRunBtn.addEventListener("click", onLogCmdRun);
     logCmdInput.addEventListener("keydown", (e) => { if (e.key === "Enter") onLogCmdRun(); });
+    // Фокус в поле ввода команды сам открывает лог, если он ещё свёрнут —
+    // та же идея, что и в desktop-версии (см. app/web/frontend/js/app.js),
+    // но проще: лог здесь и так модальный оверлей с закрытием по клику на
+    // затемнённый фон (см. logOverlayEl выше) — эта же кнопка "закрыть
+    // куда-то мимо" уже работает одинаково независимо от того, открыли лог
+    // вручную или так, отдельного "автозакрытия" не нужно.
+    logCmdInput.addEventListener("focus", () => { setLogOpen(true); updateLogCmdSuggestions(); });
+    logCmdInput.addEventListener("blur", () => {
+      // Небольшая задержка — подстраховка для выбора подсказки тачем/
+      // клавиатурной навигацией без mousedown (см. initLogCmdSuggestions
+      // выше — там основной путь для мыши/тача).
+      setTimeout(hideLogCmdSuggestions, 150);
+    });
+    initLogCmdSuggestions();
     window.events.on("network_scan_result", onNetworkScanResult);
     window.events.on("sync_finished", onSyncFinished);
     window.events.on("model_sync_finished", onModelSyncFinished);
@@ -1542,7 +1787,8 @@
     document.getElementById("app").classList.toggle("compact-log", preferences.compact_log);
     if (!preferences.auto_sync) syncStatusEl.style.display = "none";
     loadCars();
-    if (preferences.auto_sync) startSync();
+    const catalogWasEmpty = !carsData || !carsData.brands || carsData.brands.length === 0;
+    if (preferences.auto_sync) startSync(catalogWasEmpty);
     maybeShowWelcomeModal();
     checkForUpdate();
   });

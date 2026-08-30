@@ -670,6 +670,120 @@
     return { init, open };
   })();
 
+  // ==================================================================
+  // Обновление программы (открывается из js/app.js: checkForUpdate) — один
+  // диалог и на предложение обновиться, и на сам процесс скачивания:
+  // раньше это было textarea-подтверждение (window.confirmDialog) без
+  // всякой обратной связи дальше — после клика "ОК" пользователь не видел
+  // НИЧЕГО (лог шёл в общую панель лога, которую в этот момент никто не
+  // открывал) до внезапного закрытия программы, что выглядело как зависание/
+  // краш. Теперь тот же прогресс-бар с процентом, что и на стартовом экране
+  // каталога (см. main_picker.js: showStartupLoading — тот же CSS-класс
+  // catalog-startup-progress-track), плюс лог здесь же в диалоге.
+  // ==================================================================
+  const update = (() => {
+    let dialog, versionEl, changelogEl, progressTrack, progressFill, progressLabel, logEl, installBtn, laterBtn;
+    let downloadUrl = null;
+    let installing = false;
+
+    function init() {
+      dialog = document.getElementById("update-dialog");
+      versionEl = document.getElementById("update-version-label");
+      changelogEl = document.getElementById("update-changelog");
+      progressTrack = document.getElementById("update-progress-track");
+      progressFill = document.getElementById("update-progress-fill");
+      progressLabel = document.getElementById("update-progress-label");
+      logEl = document.getElementById("update-log");
+      installBtn = document.getElementById("update-install-btn");
+      laterBtn = document.getElementById("update-later-btn");
+
+      installBtn.addEventListener("click", onInstall);
+      laterBtn.addEventListener("click", () => dialog.close());
+      // Пока идёт скачивание, Esc не должен незаметно "закрыть" диалог —
+      // сама программа всё равно скоро закроется сама (см. update_api.py:
+      // _close_app), просто пользователь перестанет видеть, что происходит.
+      dialog.addEventListener("cancel", (event) => { if (installing) event.preventDefault(); });
+
+      window.events.on("update_log", (event) => log(event.text));
+      window.events.on("update_progress", (event) => setProgress(event.done, event.total));
+      window.events.on("update_finished", onFinished);
+    }
+
+    function log(text) {
+      const line = document.createElement("div");
+      line.className = `log-line log-line-${window.classifyLogLevel(text)}`;
+      line.textContent = text;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function formatMb(bytes) {
+      return (bytes / 1024 / 1024).toFixed(1);
+    }
+
+    function setProgress(done, total) {
+      if (total > 0) {
+        const percent = Math.min(100, Math.round((done / total) * 100));
+        progressFill.style.width = `${percent}%`;
+        progressLabel.textContent = `${percent}% · ${formatMb(done)} из ${formatMb(total)} МБ`;
+      } else {
+        // Content-Length не пришёл (см. update_api.py:_download) — бар
+        // остаётся пустым, но подпись всё равно показывает, что процесс
+        // не завис, а реально качает.
+        progressLabel.textContent = `${formatMb(done)} МБ скачано...`;
+      }
+    }
+
+    function open(info) {
+      installing = false;
+      downloadUrl = info.download_url;
+      versionEl.textContent = `Версия ${info.version}`;
+      changelogEl.textContent = info.changelog || "—";
+      progressTrack.style.display = "none";
+      progressFill.style.width = "0";
+      progressLabel.style.display = "none";
+      logEl.style.display = "none";
+      logEl.innerHTML = "";
+      installBtn.disabled = false;
+      installBtn.textContent = "Установить";
+      installBtn.style.display = "";
+      laterBtn.style.display = "";
+      dialog.showModal();
+    }
+
+    async function onInstall() {
+      installing = true;
+      installBtn.disabled = true;
+      installBtn.textContent = "Устанавливаю...";
+      laterBtn.style.display = "none";
+      progressTrack.style.display = "";
+      progressLabel.style.display = "";
+      logEl.style.display = "";
+      const result = await window.pywebview.api.update_install(downloadUrl);
+      if (!result.ok) {
+        installing = false;
+        installBtn.disabled = false;
+        installBtn.textContent = "Установить";
+        laterBtn.style.display = "";
+        log(result.error || "Не удалось начать обновление.");
+      }
+    }
+
+    function onFinished(event) {
+      if (!event.success) {
+        installing = false;
+        installBtn.disabled = false;
+        installBtn.textContent = "Установить";
+        laterBtn.style.display = "";
+        log(event.message || "Не удалось установить обновление.");
+      }
+      // При успехе окно программы скоро само закроется (см. update_api.py:
+      // _close_app) — показывать тут больше нечего.
+    }
+
+    return { init, open };
+  })();
+
   function initDialogs() {
     usb.init();
     report.init();
@@ -677,6 +791,7 @@
     admin.init();
     adminApk.init();
     adminBrowse.init();
+    update.init();
   }
 
   window.usbDialog = usb;
@@ -685,5 +800,6 @@
   window.adminDialog = admin;
   window.adminApkDialog = adminApk;
   window.adminBrowseDialog = adminBrowse;
+  window.updateDialog = update;
   window.initDialogs = initDialogs;
 })();

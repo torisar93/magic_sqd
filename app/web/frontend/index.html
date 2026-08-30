@@ -69,9 +69,9 @@
           <select id="adb-console-device"></select>
           <button id="adb-console-refresh" title="Обновить список устройств">⟳</button>
           <span class="adb-console-label">adb</span>
-          <input type="text" id="adb-console-input"
-                 placeholder="команда... (shell по умолчанию, connect/pair/tcpip — как есть)"
-                 title="Обычный текст выполняется как «adb shell <команда>» на выбранном устройстве. connect/disconnect/pair/tcpip/devices/reboot/root/push/pull/install/uninstall и т.п. — как сама команда adb, без обёртки в shell (например: connect 192.168.1.1:5555)." />
+          <input type="text" id="adb-console-input" placeholder="Введите команду"
+                 list="adb-console-suggestions" autocomplete="off" />
+          <datalist id="adb-console-suggestions"></datalist>
           <button id="adb-console-send">Отправить</button>
         </div>
       </div>
@@ -194,6 +194,21 @@
     <div class="dialog-actions spread">
       <button id="admin-start" class="accent">Войти и загрузить</button>
       <button id="admin-close">Закрыть</button>
+    </div>
+  </dialog>
+
+  <dialog id="update-dialog">
+    <h2>Доступно обновление Magic SQD</h2>
+    <p id="update-version-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></p>
+    <p id="update-changelog" style="white-space: pre-wrap"></p>
+    <div class="catalog-startup-progress-track" id="update-progress-track" style="display: none">
+      <div id="update-progress-fill"></div>
+    </div>
+    <p id="update-progress-label" style="display: none; color: var(--text-dim); font-size: 12px"></p>
+    <div class="dialog-log" id="update-log" style="display: none"></div>
+    <div class="dialog-actions spread">
+      <button id="update-install-btn" class="accent">Установить</button>
+      <button id="update-later-btn">Позже</button>
     </div>
   </dialog>
 

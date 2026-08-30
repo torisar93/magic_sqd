@@ -28,6 +28,14 @@
       <div class="breadcrumb" id="picker-breadcrumb"></div>
       <div class="sync-status" id="picker-sync-status" style="display: none"></div>
       <main class="catalog-grid" id="picker-list" aria-live="polite"></main>
+      <div class="catalog-startup-overlay" id="catalog-startup-overlay" hidden>
+        <div class="catalog-startup-progress">
+          <div class="catalog-startup-spinner"></div>
+          <strong>Обновляем каталог</strong>
+          <span id="catalog-startup-progress-label">Подготавливаем список моделей…</span>
+          <div class="catalog-startup-progress-track"><div id="catalog-startup-progress-fill"></div></div>
+        </div>
+      </div>
     </div>
 
     <div class="screen" id="screen-wizard">
@@ -57,7 +65,10 @@
           </div>
           <div class="log-panel" id="log-panel"></div>
           <div class="log-cmd-row">
-            <input type="text" id="log-cmd-input" placeholder="shell-команда вручную (adb)" />
+            <div class="log-cmd-input-wrap">
+              <input type="text" id="log-cmd-input" placeholder="Введите команду" autocomplete="off" />
+              <ul id="log-cmd-suggestions-list" class="log-cmd-suggestions-list" hidden></ul>
+            </div>
             <button id="log-cmd-run" class="accent">▶</button>
           </div>
         </div>

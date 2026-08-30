@@ -23,7 +23,7 @@
     const info = await window.pywebview.api.settings_info();
     const dialog = document.createElement("dialog");
     dialog.className = "settings-dialog";
-    dialog.innerHTML = `<header><button class="settings-close" type="button" aria-label="Закрыть">×</button><h2>Настройки</h2></header>
+    dialog.innerHTML = `<header><button class="settings-close" type="button" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2>Настройки</h2></header>
       <section class="settings-section"><h3>Хранилище</h3><p>Приложение: <strong>${formatBytes(info.app_bytes)}</strong> · кэш: <strong data-cache-size>${formatBytes(info.cache_bytes)}</strong></p><button class="danger" type="button" data-clear>Очистить кэш</button><small>Удаляются загруженные APK, файлы моделей и временные логи. Сценарии и настройки останутся на месте.</small></section>
       <section class="settings-section"><h3>Синхронизация</h3><p>${info.server_configured ? "Сервер подключён" : "Сервер не настроен"}</p><button type="button" data-sync>Проверить обновления сейчас</button><div data-toggles></div></section>
       <section class="settings-section"><h3>Диагностика</h3><p>Лог помогает найти проблему с подключением или установкой.</p><button type="button" data-copy-log>Скопировать лог</button><div data-debug-toggle></div></section>

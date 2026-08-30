@@ -266,6 +266,20 @@ class InstallApi:
         command = command.strip()
         if not command:
             return {"ok": False}
+        # Перед вводом уже стоит статичная подпись "adb" (см. index.html:
+        # adb-console-label) — сама команда вводится БЕЗ этого слова
+        # ("install foo.apk", "devices", "shell pm list packages"). По
+        # привычке к настоящему терминалу его всё равно иногда дописывают
+        # ("adb install foo.apk") — раньше это ломало разбор: первым словом
+        # оказывалось "adb", в TOP_LEVEL_COMMANDS такого нет, и всё
+        # уходило в шелл устройства как есть (устройство такой команды не
+        # знает). Срезаем один лишний "adb" в начале, если он есть.
+        if command.lower() == "adb":
+            command = ""
+        elif command[:4].lower() == "adb ":
+            command = command[4:].lstrip()
+        if not command:
+            return {"ok": False}
         threading.Thread(target=self._console_worker, args=(device, command), daemon=True).start()
         return {"ok": True}
 
@@ -283,12 +297,323 @@ class InstallApi:
                 # при "connect" оно ещё и не может быть известно заранее.
                 target = None if first_word in SERVER_LEVEL_COMMANDS else device
                 adb = Adb(self.adb_path, target, log=self._console_log)
-                adb.run(*command.split(), check=False)
+                result = adb.run(*command.split(), check=False)
             else:
                 adb = Adb(self.adb_path, device, log=self._console_log)
-                adb.shell(command, check=False)
+                result = adb.shell(command, check=False)
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
             self._console_log(f"Ошибка: {exc}")
+            return
+        # Adb.run/shell больше не логируют вывод сами (см. комментарий в
+        # adb_utils.py:run — раньше это спамило лог на каждый вызов внутри
+        # автоматических скриптов вроде grant_all_permissions). Но для этой
+        # свободной консоли, где человек сам печатает команду и ждёт ответ,
+        # результат обязательно нужен — иначе успешный вызов выглядит так,
+        # будто вообще ничего не произошло.
+        self._log_console_result(command, result)
+
+    def _log_console_result(self, command: str, result) -> None:
+        output = (result.stdout or "").strip()
+        error = (result.stderr or "").strip()
+        # "am start" и некоторые другие shell-команды на многих версиях
+        # Android возвращают returncode=0 ДАЖЕ ПРИ ОШИБКЕ (реальный случай:
+        # "Error type 3 / Error: Activity class {...} does not exist." —
+        # returncode всё равно 0) — код возврата тут ненадёжен, поэтому
+        # известные фразы ошибок ищем прямо в тексте, а не только через него.
+        translated = self._translate_console_error(f"{output}\n{error}")
+        if translated:
+            self._console_log(translated)
+            if output:
+                self._console_log(output)
+            if error:
+                self._console_log(error)
+            return
+        pretty = self._format_console_output(command, output) if result.returncode == 0 and output else None
+        if pretty is not None:
+            self._console_log(pretty)
+        elif output:
+            self._console_log(output)
+        if error:
+            self._console_log(error)
+        if not output and not error:
+            self._console_log("(готово)" if result.returncode == 0 else f"(код возврата: {result.returncode})")
+
+    # Самые частые ошибки adb/Android, с которыми реально сталкиваются
+    # техники — сырой "Error type 3"/"INSTALL_FAILED_..." ничего не говорит
+    # человеку, не знакомому с внутренностями Android, и на практике это
+    # приводило к тому, что люди просто продолжали вводить команды наугад,
+    # не понимая, что вообще пошло не так. Не претендует на перевод ЛЮБОЙ
+    # возможной ошибки — только тех, что встречаются постоянно; для
+    # остального выводится исходный текст (см. вызывающий код) — уже хотя бы
+    # покрашен как ошибка (см. log_format.js: classifyLogLevel, ищет "error"/
+    # "exception" и т.п. и по-английски тоже).
+    _CONSOLE_ERROR_TRANSLATIONS = [
+        ("does not exist", "Ошибка: указанный компонент (activity/сервис) не найден — проверьте, что "
+                            "приложение установлено, и что имя пакета и класса набраны верно (регистр букв важен)."),
+        ("permission denial", "Ошибка: отказано в доступе — не хватает разрешения на это действие."),
+        ("unknown package", "Ошибка: указанный пакет не найден — проверьте имя точно "
+                             '(посмотреть можно через "shell pm list packages").'),
+        ("install_failed_already_exists", "Ошибка: пакет с таким именем уже установлен — используйте "
+                                           '"install -r", чтобы переустановить поверх.'),
+        ("install_failed_duplicate_package", "Ошибка: пакет с таким именем уже установлен — используйте "
+                                              '"install -r", чтобы переустановить поверх.'),
+        ("install_failed_insufficient_storage", "Ошибка: на устройстве не хватает места для установки."),
+        ("install_failed_version_downgrade", "Ошибка: нельзя установить более старую версию поверх уже установленной."),
+        ("install_failed_update_incompatible", "Ошибка: установленная версия несовместима с этим APK (другая "
+                                                "подпись) — сначала удалите текущее приложение (uninstall)."),
+        ("install_failed_invalid_apk", "Ошибка: файл повреждён или не является корректным APK."),
+        ("install_parse_failed_not_apk", "Ошибка: выбранный файл не является APK."),
+        ("install_parse_failed_no_certificates", "Ошибка: APK не подписан — установка невозможна."),
+        ("install_parse_failed_inconsistent_certificates", "Ошибка: приложение подписано другим ключом, чем уже "
+                                                             "установленная версия — сначала удалите текущую (uninstall)."),
+        ("install_failed_no_matching_abis", "Ошибка: это приложение не поддерживает архитектуру процессора этого устройства."),
+        ("install_failed_older_sdk", "Ошибка: это приложение требует более новую версию Android, чем стоит на устройстве."),
+        ("install_failed_missing_shared_library", "Ошибка: приложению не хватает системной библиотеки, которой нет на этом устройстве."),
+        ("install_failed_test_only", "Ошибка: этот APK помечен как тестовый (test-only) — установите с флагом "
+                                      '"install -t", если это ожидаемо.'),
+        ("no devices/emulators found", "Ошибка: нет подключённых устройств — проверьте кабель или Wi-Fi ADB-подключение."),
+        ("device offline", "Ошибка: устройство не отвечает (offline) — переподключите провод или Wi-Fi ADB заново."),
+        ("device unauthorized", "Ошибка: устройство не авторизовано — примите запрос отладки по USB на экране устройства."),
+        ("more than one device", "Ошибка: подключено несколько устройств — выберите конкретное в списке слева от поля ввода."),
+        ("device not found", "Ошибка: указанное устройство не найдено — оно могло отключиться."),
+        ("no such file or directory", "Ошибка: файл или папка не найдены по указанному пути."),
+        ("failed to stat", "Ошибка: указанный путь к файлу не найден."),
+        ("protocol fault", "Ошибка: сбой связи с устройством — попробуйте переподключить его."),
+        ("not running as root", "Ошибка: нет root-доступа на этом устройстве — выполните сначала команду \"root\"."),
+        ("remount failed", "Ошибка: не удалось перемонтировать /system на запись — на этом устройстве обычно "
+                            "нужен root (сначала выполните \"root\")."),
+        ("adb server is out of date", "Ошибка: adb-сервер устарел — выполните \"kill-server\", затем повторите команду."),
+        ("cannot connect to daemon", "Ошибка: не удаётся подключиться к adb-серверу — выполните \"start-server\"."),
+    ]
+
+    # "Failure [ПРИЧИНА]" — общий формат ответа многих pm-команд (uninstall/
+    # disable-user и т.п.) при отказе; сама ПРИЧИНА — отдельный код, часть из
+    # них переведена здесь, остальные хотя бы показываются в понятной рамке
+    # вместо голого "Failure [...]".
+    _PM_FAILURE_REASONS = {
+        "delete_failed_internal_error": "внутренняя ошибка системы",
+        "delete_failed_device_policy_manager": "запрещено политикой устройства (MDM/корпоративное управление)",
+        "delete_failed_user_restricted": "запрещено ограничениями текущего пользователя",
+        "delete_failed_owner_blocked": "заблокировано владельцем устройства",
+        "delete_failed_abort": "операция прервана системой",
+    }
+
+    @classmethod
+    def _translate_console_error(cls, text: str) -> str | None:
+        lowered = text.lower()
+        for needle, translation in cls._CONSOLE_ERROR_TRANSLATIONS:
+            if needle in lowered:
+                return translation
+        match = re.search(r"failure\s*\[([\w_]+)]", text, re.IGNORECASE)
+        if match:
+            code = match.group(1).lower()
+            reason = cls._PM_FAILURE_REASONS.get(code, f"код {match.group(1)}")
+            return f"Ошибка: команда отклонена системой ({reason})."
+        return None
+
+    @staticmethod
+    def _effective_shell_command(command: str) -> str | None:
+        """Реальная команда, которая выполнится ВНУТРИ шелла устройства —
+        либо явно после "shell " (см. TOP_LEVEL_COMMANDS в adb_utils.py — сама
+        "shell" тоже там, отдельно от произвольного текста после неё), либо
+        весь ввод целиком, если это не команда самого adb (ветка по
+        умолчанию в _console_worker — implicit "adb shell <ввод>"). Для
+        настоящих adb-команд верхнего уровня (devices/install/push и т.п.,
+        не "shell") возвращает None — там красиво форматировать нечего в
+        этом смысле, у них своё форматирование ниже (см. _format_console_output)."""
+        words = command.split()
+        if not words:
+            return None
+        first = words[0].lower()
+        if first == "shell":
+            return " ".join(words[1:])
+        if first in TOP_LEVEL_COMMANDS:
+            return None
+        return command
+
+    @staticmethod
+    def _format_console_output(command: str, output: str) -> str | None:
+        """Красивое форматирование под самые частые команды диагностики
+        головного устройства — сырой протокольный вывод adb (табуляции,
+        "package:" в начале каждой строки и т.п.) читать неудобно. Команда,
+        для которой формата ещё нет, возвращает None — тогда используется
+        вывод как есть (см. вызывающий код)."""
+        # "Success" (реже "true") — общий ответ УСПЕХА у многих pm-команд
+        # (install/uninstall/pm clear/pm grant/pm revoke/pm enable/
+        # pm disable-user и т.д.) — не привязан к конкретной команде, поэтому
+        # проверяется универсально, до разбора того, что это была за команда.
+        stripped_lower = output.strip().lower()
+        if stripped_lower == "success":
+            return "Выполнено успешно."
+
+        words = command.split()
+        first = words[0].lower() if words else ""
+        if first == "devices":
+            return InstallApi._format_devices(output)
+        if first == "push":
+            return InstallApi._format_push_pull(output, "Скопировано на устройство")
+        if first == "pull":
+            return InstallApi._format_push_pull(output, "Скопировано с устройства")
+
+        shell_command = InstallApi._effective_shell_command(command)
+        if shell_command is not None:
+            shell_words = shell_command.split()
+            if shell_words[:2] == ["pm", "list"] and shell_words[2:3] == ["packages"]:
+                return InstallApi._format_packages(output)
+            if shell_words[:2] == ["am", "start"]:
+                return InstallApi._format_am_start(output)
+            if shell_words[:2] == ["pm", "path"]:
+                return InstallApi._format_pm_path(output)
+            if shell_words[:2] == ["dumpsys", "battery"]:
+                return InstallApi._format_dumpsys_battery(output)
+            if shell_words[:2] == ["wm", "size"]:
+                return InstallApi._format_wm_size(output)
+            if shell_words[:2] == ["wm", "density"]:
+                return InstallApi._format_wm_density(output)
+        return None
+
+    @staticmethod
+    def _format_push_pull(output: str, verb: str) -> str | None:
+        # "1 file pushed, 0 skipped. 12.3 MB/s (1048576 bytes in 0.081s)"
+        match = re.search(
+            r"(\d+)\s+files?\s+\w+,\s*(\d+)\s+skipped\.\s*([\d.]+\s*\S+/s)\s*\((\d+)\s*bytes\s*in\s*([\d.]+)s\)",
+            output, re.IGNORECASE)
+        if not match:
+            return None
+        count, skipped, speed, byte_count, seconds = match.groups()
+        size = InstallApi._human_size(int(byte_count))
+        parts = [f"{verb}: {count} файл(ов), {size} за {seconds} сек ({speed})"]
+        if int(skipped):
+            parts.append(f"пропущено: {skipped}")
+        return ", ".join(parts) + "."
+
+    @staticmethod
+    def _human_size(byte_count: int) -> str:
+        size = float(byte_count)
+        for unit in ("Б", "КБ", "МБ", "ГБ"):
+            if size < 1024 or unit == "ГБ":
+                return f"{size:.1f} {unit}" if unit != "Б" else f"{int(size)} {unit}"
+            size /= 1024
+        return f"{byte_count} Б"
+
+    @staticmethod
+    def _format_pm_path(output: str) -> str | None:
+        line = output.strip().splitlines()[0] if output.strip() else ""
+        if not line.startswith("package:"):
+            return None
+        return f"Путь к APK: {line[len('package:'):]}"
+
+    _BATTERY_STATUS = {"1": "неизвестно", "2": "заряжается", "3": "разряжается", "4": "не заряжается", "5": "заряжена полностью"}
+    _BATTERY_HEALTH = {
+        "1": "неизвестно", "2": "в порядке", "3": "перегрев", "4": "неисправна",
+        "5": "перенапряжение", "6": "сбой", "7": "переохлаждение",
+    }
+
+    @staticmethod
+    def _format_dumpsys_battery(output: str) -> str | None:
+        fields = dict(re.findall(r"^\s*([\w ]+?):\s*(\S+)\s*$", output, re.MULTILINE))
+        if "level" not in fields:
+            return None
+        level = fields.get("level", "?")
+        status = InstallApi._BATTERY_STATUS.get(fields.get("status", ""), fields.get("status", "?"))
+        health = InstallApi._BATTERY_HEALTH.get(fields.get("health", ""), fields.get("health", "?"))
+        parts = [f"Заряд: {level}%", f"статус: {status}", f"состояние: {health}"]
+        if "temperature" in fields:
+            try:
+                parts.append(f"температура: {int(fields['temperature']) / 10:.1f}°C")
+            except ValueError:
+                pass
+        if "voltage" in fields:
+            parts.append(f"напряжение: {fields['voltage']} мВ")
+        return " · ".join(parts)
+
+    @staticmethod
+    def _format_wm_size(output: str) -> str | None:
+        physical = re.search(r"physical size:\s*(\S+)", output, re.IGNORECASE)
+        override = re.search(r"override size:\s*(\S+)", output, re.IGNORECASE)
+        if not physical and not override:
+            return None
+        parts = []
+        if physical:
+            parts.append(f"физическое разрешение: {physical.group(1)}")
+        if override:
+            parts.append(f"установленное разрешение: {override.group(1)}")
+        text = " · ".join(parts) + "."
+        return text[:1].upper() + text[1:]
+
+    @staticmethod
+    def _format_wm_density(output: str) -> str | None:
+        physical = re.search(r"physical density:\s*(\S+)", output, re.IGNORECASE)
+        override = re.search(r"override density:\s*(\S+)", output, re.IGNORECASE)
+        if not physical and not override:
+            return None
+        parts = []
+        if physical:
+            parts.append(f"физическая плотность: {physical.group(1)} DPI")
+        if override:
+            parts.append(f"установленная плотность: {override.group(1)} DPI")
+        text = " · ".join(parts) + "."
+        return text[:1].upper() + text[1:]
+
+    @staticmethod
+    def _format_am_start(output: str) -> str | None:
+        # "am start" при успехе печатает "Starting: Intent { act=... }" или
+        # "{ cmp=пакет/activity }" — сама по себе фраза ни о чём не говорит
+        # человеку, не знакомому с внутренностями Android (см. также
+        # _translate_console_error — сюда попадают только успешные случаи,
+        # ошибки "does not exist"/"Permission Denial" перехватываются раньше).
+        if not output.lower().startswith("starting: intent"):
+            return None
+        match = re.search(r"(?:act|cmp)=(\S+)", output)
+        return f"Запущено: {match.group(1)}" if match else "Запущено."
+
+    @staticmethod
+    def _format_devices(output: str) -> str:
+        # "adb devices" (с -l или без) — первая строка всегда служебная
+        # ("List of devices attached"), дальше "<серийник>\t<состояние>...".
+        lines = [ln for ln in output.splitlines() if ln.strip() and "list of devices" not in ln.lower()]
+        if not lines:
+            return "Подключённых устройств не найдено."
+        state_labels = {
+            "device": "подключено",
+            "offline": "не отвечает (offline)",
+            "unauthorized": "не авторизовано — примите запрос на экране устройства",
+            "no permissions": "нет доступа (permissions) — переустановите драйвер/проверьте udev-правила",
+        }
+        rows = []
+        for line in lines:
+            parts = line.split(maxsplit=1)
+            serial = parts[0]
+            rest = parts[1] if len(parts) > 1 else ""
+            state_word = rest.split(maxsplit=1)[0] if rest else "unknown"
+            label = f"{serial} — {state_labels.get(state_word, state_word)}"
+            # "devices -l" добавляет после состояния "product:... model:...
+            # device:... transport_id:..." — раньше эта часть просто
+            # отбрасывалась (нужна была только сама по себе state_word).
+            model_match = re.search(r"model:(\S+)", rest)
+            if model_match:
+                label += f" ({model_match.group(1).replace('_', ' ')})"
+            rows.append(f"  • {label}")
+        return f"Устройств подключено: {len(rows)}\n" + "\n".join(rows)
+
+    @staticmethod
+    def _format_packages(output: str) -> str:
+        # "pm list packages" (в т.ч. с -3/-s/-f и фильтром по имени) —
+        # каждая строка "package:<имя>", или "package:<путь к apk>=<имя>"
+        # с флагом -f.
+        names = []
+        for line in output.splitlines():
+            line = line.strip()
+            if not line.startswith("package:"):
+                continue
+            value = line[len("package:"):]
+            if "=" in value:
+                value = value.rsplit("=", 1)[1]
+            names.append(value)
+        if not names:
+            return "Пакеты не найдены."
+        names.sort()
+        return f"Установлено пакетов: {len(names)}\n" + "\n".join(f"  • {name}" for name in names)
 
     # -- кнопка «Подключить Wi-Fi» под логом главного окна — то же самое, что
     # печатать "connect <ip>:<port>" в консоли выше, но без необходимости

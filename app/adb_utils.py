@@ -126,6 +126,13 @@ TOP_LEVEL_COMMANDS = {
     "remount", "reboot", "wait-for-device", "kill-server", "start-server",
     "devices", "get-state", "get-serialno", "push", "pull", "install",
     "uninstall", "logcat", "forward", "reverse", "sideload",
+    # "shell" — тоже сама команда adb, не шелл-команда устройства: раньше
+    # явный ввод "shell <команда>" в мини-консоли не попадал в этот набор
+    # (первое слово — "shell", его тут не было) и уходил в ветку по
+    # умолчанию, которая САМА уже оборачивает ввод в "adb shell ..." — в
+    # итоге получалось "adb shell 'shell <команда>'" (шелл внутри шелла,
+    # устройство не знает такой команды).
+    "shell",
 }
 # Из них команды уровня adb-сервера (не конкретного устройства) — "-s
 # <serial>" им не нужен, а для connect/pair устройство ещё и не может быть

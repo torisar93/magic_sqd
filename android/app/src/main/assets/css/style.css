@@ -27,6 +27,10 @@
      неотличима от "актуально"; desktop под это же держит отдельный
      --info (#4d90d1), заводим его и тут. */
   --info: #4d90d1;
+  /* Второй цвет градиента прогресс-бара оверлея первого запуска (см.
+     .catalog-startup-progress-track ниже) — тот же оттенок, что и
+     --accent-2 на desktop (app/web/frontend/css/tokens.css). */
+  --accent-2: #d98a3d;
 }
 
 * { box-sizing: border-box; }
@@ -170,6 +174,67 @@ html, body {
   display: none;
   flex-direction: column;
 }
+
+#screen-picker { position: relative; }
+
+/* Оверлей первого запуска (каталог ещё пуст, пока не скачался хотя бы раз)
+   — портировано из desktop-версии (см. app/web/frontend/css/components.css:
+   .catalog-startup-overlay) взамен голого текстового статуса, который тут
+   был раньше (.sync-status — и остался, используется для обычных, не
+   первых синхронизаций, см. js/app.js: startSync). */
+.catalog-startup-overlay {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(180deg, rgba(17, 21, 26, 0.2), rgba(17, 21, 26, 0.55));
+}
+
+.catalog-startup-overlay[hidden] { display: none; }
+
+.catalog-startup-progress {
+  display: grid;
+  justify-items: center;
+  width: min(320px, 100%);
+  gap: 10px;
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.32);
+}
+
+.catalog-startup-progress strong { font-size: 16px; }
+.catalog-startup-progress span { color: var(--text-dim); font-size: 13px; text-align: center; }
+
+.catalog-startup-spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgba(16, 164, 126, 0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: catalog-spinner 780ms linear infinite;
+}
+
+.catalog-startup-progress-track {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.catalog-startup-progress-track > div {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 180ms ease;
+}
+
+@keyframes catalog-spinner { to { transform: rotate(360deg); } }
 
 .screen.active { display: flex; animation: fadeIn 0.22s ease; }
 
@@ -440,6 +505,19 @@ button.danger {
   align-items: center;
   gap: 8px;
   padding: 6px 0;
+  /* nowrap — иначе длинное имя приложения "переносит" бейдж "Будет
+     скачано"/кнопку описания на новую строку целиком (это же li), вместо
+     того чтобы обрезаться многоточием (.app-choice-name уже рассчитан на
+     это: min-width:0 + text-overflow:ellipsis) — из-за этого карточки в
+     одной сетке получались разной высоты (реальный случай — см. скриншот
+     списка Яндекс-приложений). wrap нужен только когда открыто описание
+     (см. .app-choice.description-open ниже — .apk-desc сам переносится на
+     отдельную строку через flex-basis:100%, для этого трюка обязателен
+     именно wrap). */
+  flex-wrap: nowrap;
+}
+
+.app-choice.description-open {
   flex-wrap: wrap;
 }
 
@@ -699,14 +777,32 @@ button.danger {
 .log-line-success { color: var(--ok); }
 .log-line-error { color: var(--danger); }
 .log-line-warn { color: var(--warn); }
+/* Эхо введённой в мини-консоли команды (см. js/app.js: logConsoleCommand) —
+   отдельный вид, чтобы сразу отличать от результата следующей строкой. */
+.log-line-command { color: var(--info); font-weight: 700; margin-top: 6px; }
+
+/* Отдельные слова внутри строки лога (см. js/app.js: highlightKeywords) —
+   красит не всю строку, а конкретное слово, та же логика, что и в
+   desktop-версии (app/web/frontend/css/components.css). */
+.log-keyword { font-weight: 700; }
+.log-keyword-error { color: var(--danger); }
+.log-keyword-warn { color: var(--warn); }
+.log-keyword-success { color: var(--ok); }
+.log-keyword-info { color: var(--info); }
 
 .log-cmd-row {
   display: flex;
   gap: 6px;
 }
 
-.log-cmd-row input[type="text"] {
+.log-cmd-input-wrap {
+  position: relative;
   flex: 1;
+  min-width: 0;
+}
+
+.log-cmd-input-wrap input[type="text"] {
+  width: 100%;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -718,6 +814,49 @@ button.danger {
 
 .log-cmd-row button {
   padding: 8px 14px;
+}
+
+/* Свой список подсказок вместо нативного <datalist> — на Android WebView
+   он открывается как полноэкранный системный оверлей поверх ВСЕГО экрана,
+   включая клавиатуру (реальная жалоба). Абсолютно позиционирован НАД полем
+   ввода внутри уже открытой карточки лога (см. .log-card: max-height 70vh),
+   поэтому не может перекрыть ни клавиатуру, ни весь экран. */
+.log-cmd-suggestions-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  max-height: 40vh;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 5;
+}
+
+.log-cmd-suggestions-list[hidden] { display: none; }
+
+.log-cmd-suggestions-list li {
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.log-cmd-suggestions-list li:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.log-cmd-suggestions-list .suggestion-value {
+  display: block;
+  margin-top: 1px;
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .host-port-row {

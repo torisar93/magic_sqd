@@ -145,6 +145,9 @@ class UpdateApi:
     def _log(self, message) -> None:
         event_bridge.push({"kind": "update_log", "text": str(message)})
 
+    def _progress(self, done: int, total: int) -> None:
+        event_bridge.push({"kind": "update_progress", "done": done, "total": total})
+
     def _finished(self, success: bool, message: str = "") -> None:
         event_bridge.push({"kind": "update_finished", "success": success, "message": message})
 
@@ -152,7 +155,7 @@ class UpdateApi:
         try:
             installer_path = Path(tempfile.gettempdir()) / self.asset_name
             self._log("Скачивание обновления...")
-            self._download(download_url, installer_path)
+            self._download(download_url, installer_path, on_progress=self._progress)
             self._log("Обновление скачано. Программа сейчас закроется для установки...")
             self._spawn_installer(installer_path)
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
@@ -164,16 +167,26 @@ class UpdateApi:
         self._close_app()
 
     @staticmethod
-    def _download(url: str, dest: Path) -> None:
+    def _download(url: str, dest: Path, on_progress=None) -> None:
         tmp = dest.with_name(dest.name + ".part")
         try:
             with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as resp, \
                     open(tmp, "wb") as f:
+                # Content-Length почти всегда есть и у GitHub Releases, и у
+                # своего сервера (см. server/backend.py — статическая раздача
+                # файлов) — но не гарантирован нигде, поэтому total может
+                # остаться 0 (см. UpdateDialog.setProgress на стороне JS —
+                # там это отдельно обрабатывается, а не считается ошибкой).
+                total = int(resp.headers.get("Content-Length") or 0)
+                downloaded = 0
                 while True:
                     chunk = resp.read(1024 * 1024)
                     if not chunk:
                         break
                     f.write(chunk)
+                    downloaded += len(chunk)
+                    if on_progress:
+                        on_progress(downloaded, total)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise

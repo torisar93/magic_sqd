@@ -7,6 +7,7 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.magicsqd.mobile.usb.AdbConsoleFormat
 import ru.magicsqd.mobile.usb.AdbHandshakeResult
 import ru.magicsqd.mobile.usb.AdbSession
 import ru.magicsqd.mobile.usb.AdbShellResult
@@ -344,18 +345,28 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * техника при диагностике на месте. Требует уже установленного
      * ADB-соединения (USB или Wi-Fi — без разницы, AdbSession сам решает). */
     private fun adbShellCommand(command: String) {
-        val trimmed = command.trim()
+        // Эхо введённой команды теперь красиво показывает сама JS-сторона
+        // ДО вызова этого моста (см. app.js: onLogCmdRun/logConsoleCommand,
+        // тот же приём, что и в desktop-версии) — раньше здесь же дублировался
+        // сырой "$ команда", это привело бы к двойному эху.
+        val trimmed = AdbConsoleFormat.stripRedundantPrefix(command)
         if (trimmed.isEmpty()) return
         runExclusive(::onBusy) {
             if (!AdbSession.isConnected) {
                 pushAdbLog("ADB не подключён — команда не выполнена: $trimmed")
                 return@runExclusive
             }
-            pushAdbLog("\$ $trimmed")
             when (val r = AdbSession.shell(trimmed, ::pushAdbLog)) {
-                is AdbShellResult.Output -> if (r.text.isNotBlank()) pushAdbLog(r.text.trim())
-                is AdbShellResult.Rejected -> pushAdbLog("Команда отклонена устройством: ${r.reason}")
-                is AdbShellResult.Failed -> pushAdbLog("Ошибка: ${r.reason}")
+                is AdbShellResult.Output -> if (r.text.isNotBlank()) {
+                    val text = r.text.trim()
+                    pushAdbLog(AdbConsoleFormat.translateError(text)
+                        ?: AdbConsoleFormat.formatOutput(trimmed, text)
+                        ?: text)
+                }
+                is AdbShellResult.Rejected -> pushAdbLog(
+                    AdbConsoleFormat.translateError(r.reason) ?: "Команда отклонена устройством: ${r.reason}")
+                is AdbShellResult.Failed -> pushAdbLog(
+                    AdbConsoleFormat.translateError(r.reason) ?: "Ошибка: ${r.reason}")
             }
         }
     }

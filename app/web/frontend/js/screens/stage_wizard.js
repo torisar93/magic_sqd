@@ -36,6 +36,12 @@
   let chosenVariants = {};
   let appSelection = {};
   const sectionCollapsed = {};
+  // Свои APK, добавленные пользователем прямо на этапе (см. buildAppsTree/
+  // pickPersonalApks ниже) — произвольные файлы с диска, а не из apk/, живут
+  // только в памяти этого сеанса работы с моделью (не сохраняются, не
+  // публикуются никуда) — appSelection всё равно собирает финальный список
+  // на установку по пути файла, откуда бы он ни был (см. selectedApkPaths).
+  let personalApks = [];
   let nextAction = () => advanceAfter(currentIndex);
   let sharedApksPromise = null;
   let runnerBusy = false;
@@ -235,6 +241,7 @@
     vars = {};
     chosenVariants = {};
     appSelection = {};
+    personalApks = [];
     hasIntro = model.no_instruction;
     loadError = null;
     stages = [];
@@ -638,6 +645,22 @@
   async function buildAppsTree(stage) {
     const tree = el("div", { class: "apps-tree" });
 
+    // Свои APK — пользователь сам выбирает файл(ы) с компьютера, минуя
+    // общую библиотеку apk/ (та наполняется только администратором, см.
+    // admin_apk_dialog.js). Кнопка всегда видна сверху, вне свёрнутых
+    // секций — иначе тонула бы среди остальных разделов.
+    tree.appendChild(el("button", {
+      class: "app-personal-apk-add",
+      type: "button",
+      text: "Добавить свой APK...",
+      onclick: () => pickPersonalApks(),
+    }));
+    if (personalApks.length) {
+      const body = el("div", { class: "apps-grid" });
+      for (const apk of personalApks) body.appendChild(buildPersonalAppRow(apk));
+      tree.appendChild(buildCollapsibleSection("personal", "Свои APK", null, body));
+    }
+
     // Сверху вниз: обязательные (всегда ставятся, без чекбокса) →
     // необязательные этой машины (чекбоксом, техник решает сам) →
     // дополнительные из общей библиотеки apk/ (см. buildAppRow/
@@ -677,7 +700,13 @@
   }
 
   function buildCollapsibleSection(key, title, apks, presetBody, required) {
-    const collapsed = sectionCollapsed[key] || false;
+    // По умолчанию свёрнуто (не встречалось в sectionCollapsed ещё) — раньше
+    // все разделы открывались сразу, и на моделях с большим списком
+    // приложений (см. "Яндекс" на скриншоте пользователя) этап превращался
+    // в длинную простыню чекбоксов ещё до того, как техник вообще решил,
+    // какой раздел ему нужен. Ручной выбор пользователя (клик по заголовку)
+    // по-прежнему запоминается в sectionCollapsed на время работы с моделью.
+    const collapsed = key in sectionCollapsed ? sectionCollapsed[key] : true;
     const sectionKind = required ? " apps-section-required"
       : key === "standard-optional" ? " apps-section-optional" : "";
     const wrap = el("section", { class: `apps-section${sectionKind}` });
@@ -729,6 +758,45 @@
         checkbox,
         el("span", { text: label, style: apk.remote_only ? "color: var(--text-dim)" : "" }),
       ]),
+    ]);
+    row.appendChild(wrap);
+    return row;
+  }
+
+  async function pickPersonalApks() {
+    const picked = await window.pywebview.api.car_pick_files("apk", true);
+    if (!picked.length) return;
+    for (const file of picked) {
+      if (!personalApks.some((apk) => apk.path === file.path)) {
+        personalApks.push({ path: file.path, name: file.name });
+      }
+      appSelection[file.path] = true;
+    }
+    render();
+  }
+
+  // Свой APK — тот же чекбокс-ряд, что и обычный buildAppRow, плюс кнопка
+  // "убрать" (не из чего снимать галочку — файл либо в списке на установку,
+  // либо его вообще не должно быть видно, раз это случайный локальный выбор,
+  // а не запись из управляемой библиотеки apk/).
+  function buildPersonalAppRow(apk) {
+    const row = el("div", { class: "app-row" });
+    const checkbox = el("input", { type: "checkbox" });
+    checkbox.checked = !!appSelection[apk.path];
+    checkbox.addEventListener("change", () => { appSelection[apk.path] = checkbox.checked; });
+    const removeBtn = el("button", {
+      type: "button", class: "app-personal-apk-remove",
+      html: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+      "aria-label": `Убрать ${apk.name}`,
+      onclick: () => {
+        personalApks = personalApks.filter((a) => a.path !== apk.path);
+        delete appSelection[apk.path];
+        render();
+      },
+    });
+    const wrap = el("div", { class: "row", style: "justify-content: space-between; align-items: center" }, [
+      el("label", { class: "row" }, [checkbox, el("span", { text: apk.name })]),
+      removeBtn,
     ]);
     row.appendChild(wrap);
     return row;
