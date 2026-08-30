@@ -128,15 +128,15 @@ class InstallEngine(
                 }
 
                 // install_stream (desktop: cat file | pm install -S <size>) — обходной
-                // путь для adbd, где обычный `adb install` не работает. У нас всегда
-                // один и тот же classic sync-путь (installApkOverAdb), так что оба
-                // намеренно ведут себя одинаково — отдельной "потоковой" реализации нет.
+                // путь для adbd, где обычный `adb install` не работает (см.
+                // AdbInstall.kt:installApkStreamOverAdb).
                 "install", "install_stream" -> {
                     val name = cmd.getString("file")
                     val localPath = filesByName[name]
                         ?: return StageRunResult.Failed("Файл не найден для установки: $name")
                     val bytes = File(localPath).readBytes()
-                    when (val r = AdbSession.installApk(bytes, log)) {
+                    val install = if (cmd.getString("kind") == "install_stream") AdbSession::installApkPmStream else AdbSession::installApk
+                    when (val r = install(bytes, log)) {
                         is AdbInstallResult.Failed -> return StageRunResult.Failed(r.reason)
                         is AdbInstallResult.Success -> log("Установлено: $name")
                     }
@@ -179,15 +179,78 @@ class InstallEngine(
         return StageRunResult.Success
     }
 
-    /** Устанавливает список APK (по абсолютным локальным путям) по очереди. */
-    fun installApks(apkPaths: List<String>): StageRunResult {
+    // Те же ключи, что INSTALL_METHOD_KEYS в app/install_context.py (desktop)
+    // и car_generator.py:StepSpec.apps_install_method — "adb_install" не
+    // входит в список ниже: на Android нет отдельного "целиком через adb
+    // install" протокола, единственный "классический" путь (push + pm
+    // install -r) и есть INSTALL_METHODS[0], тот же, что уже был здесь
+    // раньше по умолчанию — так что desktop-спека с "adb_install" просто
+    // попадает в default-порядок, что и так правильно.
+    private val INSTALL_METHODS: List<Pair<String, (ByteArray, (String) -> Unit) -> AdbInstallResult>> = listOf(
+        "pm_install" to AdbSession::installApk,
+        "pm_install_stream" to AdbSession::installApkPmStream,
+        "localinstall" to { bytes, methodLog ->
+            val helper = File(context.filesDir, "cars/_shared/chery_localinstall.apk")
+            if (!helper.exists()) {
+                AdbInstallResult.Failed("chery_localinstall.apk не найден в cars/_shared (ещё не синхронизирован?)")
+            } else {
+                AdbSession.installApkLocalinstall(bytes, helper.readBytes(), methodLog)
+            }
+        },
+    )
+
+    /** Устанавливает список APK (по абсолютным локальным путям) по очереди,
+     * автоматически подбирая рабочий способ — как desktop (см.
+     * app/install_context.py:install_apk_auto), но своим набором методов
+     * (см. INSTALL_METHODS выше). preferredMethod — подсказка "начни
+     * перебор с этого способа" (car_generator.py:StepSpec.apps_install_method,
+     * см. wizard_spec.py), не жёсткая привязка — если он не сработает,
+     * пробуются остальные по обычному порядку. Способ, сработавший на
+     * первом APK, запоминается на весь остаток списка — не имеет смысла
+     * заново перебирать на каждом следующем файле. */
+    fun installApks(apkPaths: List<String>, preferredMethod: String = ""): StageRunResult {
+        var confirmedMethod: Int? = null
+        val order = INSTALL_METHODS.indices.let { indices ->
+            val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
+            if (preferredIndex >= 0) listOf(preferredIndex) + indices.filter { it != preferredIndex } else indices.toList()
+        }
+
         for (path in apkPaths) {
             val file = File(path)
             if (!file.exists()) return StageRunResult.Failed("Файл не скачан: $path")
             log("Устанавливаю ${file.name}...")
-            when (val r = AdbSession.installApk(file.readBytes(), log)) {
-                is AdbInstallResult.Failed -> return StageRunResult.Failed("${file.name}: ${r.reason}")
-                is AdbInstallResult.Success -> log("Установлено: ${file.name}")
+            val bytes = file.readBytes()
+
+            if (confirmedMethod != null) {
+                val (_, install) = INSTALL_METHODS[confirmedMethod]
+                when (val r = install(bytes, log)) {
+                    is AdbInstallResult.Failed -> return StageRunResult.Failed("${file.name}: ${r.reason}")
+                    is AdbInstallResult.Success -> log("Установлено: ${file.name}")
+                }
+                continue
+            }
+
+            val errors = mutableListOf<String>()
+            var installed = false
+            for (methodIndex in order) {
+                val (label, install) = INSTALL_METHODS[methodIndex]
+                when (val r = install(bytes, log)) {
+                    is AdbInstallResult.Failed -> errors.add("$label: ${r.reason}")
+                    is AdbInstallResult.Success -> {
+                        confirmedMethod = methodIndex
+                        if (methodIndex != 0) {
+                            log("Сработал способ установки APK: $label — дальше буду использовать его же для остальных приложений.")
+                        }
+                        log("Установлено: ${file.name}")
+                        installed = true
+                    }
+                }
+                if (installed) break
+            }
+            if (!installed) {
+                return StageRunResult.Failed(
+                    "Не удалось установить ${file.name} ни одним из способов:\n" + errors.joinToString("\n")
+                )
             }
         }
         return StageRunResult.Success

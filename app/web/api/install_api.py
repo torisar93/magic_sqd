@@ -687,7 +687,8 @@ class InstallApi:
         event_bridge.push({"kind": "install_log", "text": f"=== Этап {stage_index + 1}: {stage['title']} ==="})
         try:
             self._runner.start(model, device_serial, selected_apk_paths, run_fn=run_fn,
-                                own_dirs=self._stage_own_dirs(model, stage, stage_index=stage_index))
+                                own_dirs=self._stage_own_dirs(model, stage, stage_index=stage_index),
+                                preferred_install_method=stage.get("apps_install_method", ""))
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}

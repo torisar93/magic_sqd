@@ -103,7 +103,7 @@
       type, title: "", description: "", instruction_blocks: [],
       usb_files: [], usb_copy_selected_apks: false, usb_apks_dest: "", usb_shared_folder: "",
       commands: [], adb_install_selected_apks: false, adb_files: [],
-      standard_apks: [], standard_apks_optional: [], apps_connection: "wired",
+      standard_apks: [], standard_apks_optional: [], apps_connection: "wired", apps_install_method: "",
       actions_connection: "wired",
       exe_file: null, uart_baudrate: 115200, actions: [],
       check_var: type === "check" ? generateCheckVar() : "", check_options: [],

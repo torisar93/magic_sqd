@@ -1,5 +1,6 @@
 """Объект ctx, передаваемый в install.py каждой модели."""
 from __future__ import annotations
+import sys
 import time
 from pathlib import Path
 
@@ -11,7 +12,29 @@ class InstallCancelled(RuntimeError):
 
 
 # Подписи для лога/сообщения об ошибке — по индексу в install_apk_auto ниже.
-_INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm install -S (поток)")
+_INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm install -S (поток)",
+                          "app_process + localinstall.apk (Chery DesaySV)")
+# Те же 4 способа, но короткими устойчивыми ключами — хранятся в
+# StepSpec.apps_install_method/_wizard_spec.json/stages.py (см.
+# car_generator.py) как явная подсказка "начни перебор с этого способа",
+# когда автор модели уже знает, какой из них рабочий на этой магнитоле
+# (не жёсткая привязка — если он всё-таки не сработает, install_apk_auto
+# просто пойдёт дальше по остальным способам в обычном порядке).
+INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "localinstall")
+
+# Платформа Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
+# блокирует обычный "pm install" на уровне прошивки; единственный найденный
+# рабочий способ — маленький helper APK, который запускается через
+# app_process от имени shell и ставит целевой APK через Android API
+# PackageInstaller.Session, тот же приём, что и в открытом проекте
+# https://github.com/EvilBorsch/chery-adb-app-install (см. instuction.md в
+# репозитории за разбором механизма). Как ПОСЛЕДНИЙ из способов
+# install_apk_auto — на других платформах команда app_process просто не
+# найдёт нужный класс и упадёт с ошибкой, не будет попыток install_selected_apks
+# останавливаться на этом способе или что-то ломать.
+_LOCALINSTALL_HELPER_NAME = "chery_localinstall.apk"
+_LOCALINSTALL_REMOTE_APK = "/data/local/tmp/desaysv-install-target.apk"
+_LOCALINSTALL_REMOTE_HELPER = "/data/local/tmp/desaysv-localinstall.apk"
 
 
 def _check_pm_install_result(result) -> None:
@@ -28,7 +51,8 @@ def _check_pm_install_result(result) -> None:
 
 class InstallContext:
     def __init__(self, adb_path, device_serial, model_dir: Path, selected_apks,
-                 log_fn, cancel_flag, ask_input_fn=None, shared_dir: Path | None = None):
+                 log_fn, cancel_flag, ask_input_fn=None, shared_dir: Path | None = None,
+                 preferred_install_method: str = ""):
         self.model_dir = Path(model_dir)
         self.files_dir = self.model_dir / "files"
         # cars/_shared/ — общие для МНОГИХ моделей файлы (не только Python-
@@ -51,6 +75,14 @@ class InstallContext:
         # запуска install.py (один InstallContext на запуск, см. runner.py),
         # чтобы не перебирать все три способа заново на каждом следующем APK.
         self._install_method: int | None = None
+        # Подсказка "начни перебор с этого способа" (см. StepSpec.
+        # apps_install_method в car_generator.py) — только меняет ПОРЯДОК
+        # попыток в install_apk_auto, не пропускает остальные способы, если
+        # автор модели ошибся. "" или незнакомый ключ — обычный порядок.
+        self._preferred_method: int | None = (
+            INSTALL_METHOD_KEYS.index(preferred_install_method)
+            if preferred_install_method in INSTALL_METHOD_KEYS else None
+        )
 
     # --- служебное -------------------------------------------------
     def log(self, message):
@@ -145,7 +177,10 @@ class InstallContext:
             self._install_with_method(self._install_method, path, extra_args)
             return
         errors = []
-        for method in range(len(_INSTALL_METHOD_LABELS)):
+        order = range(len(_INSTALL_METHOD_LABELS))
+        if self._preferred_method is not None:
+            order = [self._preferred_method, *(m for m in order if m != self._preferred_method)]
+        for method in order:
             try:
                 self._install_with_method(method, path, extra_args)
             except AdbError as exc:
@@ -158,7 +193,7 @@ class InstallContext:
             return
         raise InstallCancelled(
             f"Не удалось установить {Path(path).name} ни одним из способов "
-            "(adb install / pm install / pm install -S):\n" + "\n".join(errors)
+            "(adb install / pm install / pm install -S / localinstall.apk):\n" + "\n".join(errors)
         )
 
     def _install_with_method(self, method: int, path, extra_args) -> None:
@@ -166,8 +201,10 @@ class InstallContext:
             self.install_apk(path, extra_args=extra_args)
         elif method == 1:
             self.install_apk_pm(path, extra_args=extra_args)
-        else:
+        elif method == 2:
             self.install_apk_stream(path, extra_args=extra_args)
+        else:
+            self.install_apk_localinstall(path)
 
     def install_apk_pm(self, path, remote_dir="/sdcard/Download", extra_args=None):
         """Установка через adb push + "pm install" по пути на устройстве
@@ -203,6 +240,68 @@ class InstallContext:
         extra = (" " + " ".join(extra_args)) if extra_args else ""
         result = self.shell(f"cat {remote_path} | pm install -S {size}{extra}", check=False)
         _check_pm_install_result(result)
+
+    def _installed_packages(self) -> set[str]:
+        result = self.shell("pm list packages", check=False)
+        return {
+            line.strip()[len("package:"):].strip()
+            for line in (result.stdout or "").splitlines()
+            if line.strip().startswith("package:")
+        }
+
+    def install_apk_localinstall(self, path) -> None:
+        """Установка через helper cars/_shared/chery_localinstall.apk —
+        см. _LOCALINSTALL_HELPER_NAME выше и install_apk_auto за тем, когда
+        этот способ пробуется. APK заранее не подписан известным именем
+        пакета (aapt в проекте не используется), поэтому имя пакета для
+        последующей выдачи разрешений определяется сравнением списка
+        установленных пакетов до/после — тот же запасной способ, что
+        предлагает и сам instuction.md проекта-источника."""
+        self.check_cancelled()
+        if not self.shared_dir:
+            raise AdbError("cars/_shared недоступна — localinstall.apk не найден")
+        helper = self.shared_dir / _LOCALINSTALL_HELPER_NAME
+        if not helper.is_file():
+            raise AdbError(f"{_LOCALINSTALL_HELPER_NAME} не найден в cars/_shared")
+        path = Path(path)
+        self.log(f"Установка APK (app_process + localinstall, Chery DesaySV): {path.name}")
+        before = self._installed_packages()
+        self.push(path, _LOCALINSTALL_REMOTE_APK)
+        self.shell(f"chmod 644 {_LOCALINSTALL_REMOTE_APK}", check=False)
+        self.push(helper, _LOCALINSTALL_REMOTE_HELPER)
+        self.shell(f"chmod 644 {_LOCALINSTALL_REMOTE_HELPER}", check=False)
+        result = self.shell(
+            f"CLASSPATH={_LOCALINSTALL_REMOTE_HELPER} app_process /system/bin LocalInstall {_LOCALINSTALL_REMOTE_APK}",
+            check=False)
+        self.sleep(2)
+        after = self._installed_packages()
+        self.shell(f"rm -f {_LOCALINSTALL_REMOTE_APK} {_LOCALINSTALL_REMOTE_HELPER}", check=False)
+
+        new_packages = after - before
+        if len(new_packages) != 1:
+            text = ((result.stdout or "") + (result.stderr or "")).strip()
+            raise AdbError(text or "localinstall не подтвердил успех (пакет не появился в списке)")
+        package = next(iter(new_packages))
+        self._grant_all_permissions_if_available(package)
+        self.shell(f"am force-stop {package}", check=False)
+        self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1", check=False)
+
+    def _grant_all_permissions_if_available(self, package: str) -> None:
+        """cars/_shared/adb_permissions.py уже умеет выдавать все нужные
+        разрешения/appops по имени пакета (используется "actions"-этапами
+        моделей) — переиспользуем её и здесь вместо дублирования той же
+        логики в app/, раз cars/_shared гарантированно синхронизирована на
+        клиент (см. content_sync.py:sync_scripts)."""
+        if not self.shared_dir:
+            return
+        shared_str = str(self.shared_dir)
+        if shared_str not in sys.path:
+            sys.path.insert(0, shared_str)
+        try:
+            from adb_permissions import grant_all_permissions
+        except ImportError:
+            return
+        grant_all_permissions(self, package)
 
     def uninstall(self, package, check=False):
         return self._adb.uninstall(package, check=check)

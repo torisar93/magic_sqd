@@ -478,8 +478,39 @@
       container.appendChild(portRow);
     }
 
+    // Ключи те же, что INSTALL_METHOD_KEYS в app/install_context.py — если
+    // список способов там изменится, поправить и здесь.
+    const APPS_INSTALL_METHOD_LABELS = {
+      "": "Автоматически (перебор по порядку)",
+      adb_install: "adb install",
+      pm_install: "adb push + pm install",
+      pm_install_stream: "adb push + pm install -S (поток)",
+      localinstall: "app_process + localinstall.apk (Chery DesaySV)",
+    };
+
+    // Подсказка "начни перебор способов установки APK с этого" — не
+    // отменяет перебор остальных, только меняет порядок (см. car_generator.py:
+    // StepSpec.apps_install_method/install_context.py: install_apk_auto) —
+    // полезно, когда автор модели уже знает рабочий способ на конкретной
+    // платформе (например Chery/Jaecoo/Exeed/Tenet на DesaySV — там всегда
+    // срабатывает "localinstall") и не хочет, чтобы техник каждый раз ждал,
+    // пока программа перепробует предыдущие способы впустую.
+    function renderInstallMethodRow(step) {
+      container.appendChild(el("span", { class: "field-label", text: "Способ установки APK" }));
+      const select = el("select", {}, Object.entries(APPS_INSTALL_METHOD_LABELS).map(([value, text]) =>
+        el("option", { value, text, selected: value === (step.apps_install_method || "") ? "" : null })));
+      select.addEventListener("change", () => { step.apps_install_method = select.value; });
+      container.appendChild(select);
+      container.appendChild(el("p", {
+        style: "font-size: 12px; color: var(--text-dim); margin: 4px 0 0;",
+        text: "Если заранее известно, какой способ работает на этой магнитоле — программа попробует его первым; "
+          + "остальные всё равно пробуются по порядку следом, если он не сработает.",
+      }));
+    }
+
     function renderAppsFields(step) {
       renderConnectionRow(step, "apps_connection", "apps_wifi_port");
+      renderInstallMethodRow(step);
 
       renderVariantToggle(step, "standard_apks", "APK всех вариантов будут потеряны.");
       if (step.variants.length) {

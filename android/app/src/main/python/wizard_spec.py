@@ -299,6 +299,12 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             # step_type == "apps" — поле не имеет смысла для остальных типов.
             "apps_connection": ((step_data.get("apps_connection") or ("wifi" if data.get("wifi") else "wired"))
                                  if step_type == "apps" else step_data.get("apps_connection", "wired")),
+            # Подсказка "начни перебор способов установки APK с этого" (см.
+            # car_generator.py: StepSpec.apps_install_method) — какой из
+            # способов пробовать первым в InstallEngine.installApks (Kotlin),
+            # если он заранее известен для этой магнитолы. "" — обычный
+            # порядок. Пусто у остальных типов этапов, как и apps_connection.
+            "apps_install_method": step_data.get("apps_install_method", "") if step_type == "apps" else "",
             # Свой порт ИМЕННО этого apps-этапа (см. car_generator.py:
             # StepSpec.apps_wifi_port) — независим от общего wifi_port
             # модели (data["wifi_port"], для adb/actions-этапов). None —

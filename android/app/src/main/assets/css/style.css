@@ -374,6 +374,12 @@ html, body {
 /* Модель с модификациями — точка на каждую вместо одной сведённой (см.
    js/app.js: groupCardColors). */
 .catalog-status-group { display: inline-flex; align-items: center; gap: 4px; }
+/* margin-right: auto только в подвале карточки — раздвигает точку(и) и
+   "Открыть" по краям без space-between (см. .catalog-card-footer выше).
+   Не на самом .status-dot/.catalog-status-group — та же разметка ещё
+   используется в списке-легенде статусов, где такой отступ не нужен. */
+.catalog-card-footer .status-dot,
+.catalog-card-footer .catalog-status-group { margin-right: auto; }
 
 .empty-hint {
   padding: 24px 16px;
@@ -1099,7 +1105,12 @@ html, body { background: var(--bg); }
 .catalog-card-content { position: relative; z-index: 1; display: grid; gap: 4px; margin-top: 13px; }
 .catalog-card-title { overflow: hidden; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.18; text-overflow: ellipsis; white-space: nowrap; }
 .catalog-card-meta { min-height: 33px; color: #9eabb8; font-size: 12px; line-height: 1.35; }
-.catalog-card-footer { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; margin-top: auto; }
+/* flex-end, не space-between — с одним-единственным ребёнком (кнопка
+   "Открыть", когда точки статуса нет вовсе — см. js/app.js:
+   brandCardColor) space-between кладёт его в НАЧАЛО ряда, а не в конец.
+   margin-right: auto на самой точке/группе точек ниже раздвигает их по
+   краям, когда точка есть. */
+.catalog-card-footer { position: relative; z-index: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 18px; margin-top: auto; }
 .catalog-card-action { color: #9ce1ce; font-size: 11px; font-weight: 700; }
 .catalog-card-action::after { content: "  ›"; color: #25a985; font-size: 17px; line-height: 0; }
 

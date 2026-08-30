@@ -1318,7 +1318,7 @@
       if (!apkPaths.length) { log("Не выбрано ни одного приложения."); return; }
       btn.disabled = true;
       btn.textContent = "Устанавливаю...";
-      Bridge.call("adb_install_apks", { index: stage.index, apkPaths });
+      Bridge.call("adb_install_apks", { index: stage.index, apkPaths, appsInstallMethod: stage.apps_install_method || "" });
     });
     page.appendChild(btn);
   }

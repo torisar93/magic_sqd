@@ -663,12 +663,18 @@
 .catalog-card-content { display: grid; gap: 4px; margin-top: 12px; }
 .catalog-card-title { overflow: hidden; font-family: var(--font-heading); font-size: 15px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.18; text-overflow: ellipsis; }
 .catalog-card-meta { min-height: 17px; color: var(--text-dim); font-size: 12px; line-height: 1.35; }
-.catalog-card-footer { display: flex; align-items: center; justify-content: space-between; min-height: 18px; margin-top: 9px; }
-.catalog-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04); }
+/* flex-end, не space-between — с одним-единственным ребёнком (кнопка
+   "Открыть", когда точки статуса нет вовсе — см. main_picker.js:
+   brandCardStatus) space-between кладёт его в НАЧАЛО ряда, а не в конец
+   (реальный баг: "Открыть" уезжала влево). margin-right: auto на самой
+   точке/группе точек ниже — вот что на самом деле раздвигает их по краям,
+   когда точка есть. */
+.catalog-card-footer { display: flex; align-items: center; justify-content: flex-end; min-height: 18px; margin-top: 9px; }
+.catalog-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04); margin-right: auto; }
 
 /* Модель с модификациями — точка на каждую, а не одна сведённая (см.
    main_picker.js: groupCardStatus) — просто ряд точек рядом. */
-.catalog-status-group { display: inline-flex; align-items: center; gap: 4px; }
+.catalog-status-group { display: inline-flex; align-items: center; gap: 4px; margin-right: auto; }
 .catalog-card-action { color: #9be2d0; font-size: 11px; font-weight: 600; }
 .catalog-card-action::after { content: "  ›"; color: var(--accent); font-size: 15px; line-height: 0; }
 .catalog-empty { margin: 20px 0; color: var(--text-dim); text-align: center; }

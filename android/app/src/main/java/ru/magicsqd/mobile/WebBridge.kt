@@ -481,13 +481,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val stageIndex = args.optInt("index", -1)
         val pathsArr = args.getJSONArray("apkPaths")
         val paths = (0 until pathsArr.length()).map { pathsArr.getString(it) }
+        val preferredMethod = args.optString("appsInstallMethod", "")
         runExclusive(::onBusy) {
             val result = try {
                 if (!AdbSession.isConnected) {
                     StageRunResult.Failed("ADB не подключён — сначала подключись к устройству")
                 } else {
                     ensureApksDownloaded(paths) // общая библиотека — байты качаются только на этом шаге
-                    installEngine().installApks(paths)
+                    installEngine().installApks(paths, preferredMethod)
                 }
             } catch (e: Exception) {
                 StageRunResult.Failed((e.message ?: "неизвестная ошибка"))

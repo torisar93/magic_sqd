@@ -160,3 +160,119 @@ fun installApkOverAdb(
         AdbInstallResult.Failed("pm install не вернул Success: ${pmOutput.trim()}")
     }
 }
+
+/**
+ * Тот же push, что и installApkOverAdb, но установка через
+ * "cat <файл> | pm install -S <размер>" вместо обычного "pm install -r
+ * <файл>" — на части adbd/pm обычный путь не срабатывает, а потоковый
+ * работает (порт desktop app/install_context.py: install_apk_stream).
+ */
+fun installApkStreamOverAdb(
+    transport: AdbTransport,
+    apkBytes: ByteArray,
+    remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
+    log: (String) -> Unit,
+): AdbInstallResult {
+    when (val pushResult = syncPushBytes(transport, apkBytes, remotePath, log)) {
+        is AdbPushResult.Failed -> return AdbInstallResult.Failed(pushResult.reason)
+        AdbPushResult.Success -> {}
+    }
+    log("Файл записан на устройство. Запускаю pm install -S ${apkBytes.size} (поток) ...")
+
+    val installResult = runAdbShellCommand(
+        transport, "cat $remotePath | pm install -S ${apkBytes.size}", log, timeoutMs = 120000
+    )
+    val pmOutput = when (installResult) {
+        is AdbShellResult.Output -> installResult.text
+        is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install -S отклонён: ${installResult.reason}")
+        is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install -S ошибка: ${installResult.reason}")
+    }
+
+    runAdbShellCommand(transport, "rm -f $remotePath", log)
+
+    return if (pmOutput.contains("Success", ignoreCase = true)) {
+        AdbInstallResult.Success(pmOutput.trim())
+    } else {
+        AdbInstallResult.Failed("pm install -S не вернул Success: ${pmOutput.trim()}")
+    }
+}
+
+private fun installedPackages(transport: AdbTransport, log: (String) -> Unit): Set<String> {
+    val output = when (val r = runAdbShellCommand(transport, "pm list packages", log)) {
+        is AdbShellResult.Output -> r.text
+        else -> ""
+    }
+    return output.lineSequence()
+        .map { it.trim() }
+        .filter { it.startsWith("package:") }
+        .map { it.removePrefix("package:").trim() }
+        .toSet()
+}
+
+/**
+ * Установка через helper-APK cars/_shared/chery_localinstall.apk — на
+ * платформе Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
+ * прошивка блокирует обычный "pm install", единственный рабочий способ —
+ * запустить helper через app_process от имени shell: он ставит целевой
+ * APK через Android API PackageInstaller.Session (см.
+ * https://github.com/EvilBorsch/chery-adb-app-install/blob/main/instuction.md,
+ * а также desktop-порт: app/install_context.py:install_apk_localinstall).
+ * helperBytes — содержимое cars/_shared/chery_localinstall.apk, уже
+ * скачанного обычной синхронизацией (см. InstallEngine.kt).
+ *
+ * APK заранее не подписан известным именем пакета, поэтому оно
+ * определяется сравнением списка установленных пакетов до/после — тот же
+ * запасной способ, что и на desktop.
+ */
+fun installApkViaLocalinstall(
+    transport: AdbTransport,
+    apkBytes: ByteArray,
+    helperBytes: ByteArray,
+    log: (String) -> Unit,
+): AdbInstallResult {
+    val remoteApk = "/data/local/tmp/desaysv-install-target.apk"
+    val remoteHelper = "/data/local/tmp/desaysv-localinstall.apk"
+
+    val before = installedPackages(transport, log)
+
+    when (val r = syncPushBytes(transport, apkBytes, remoteApk, log)) {
+        is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
+        AdbPushResult.Success -> {}
+    }
+    runAdbShellCommand(transport, "chmod 644 $remoteApk", log)
+    when (val r = syncPushBytes(transport, helperBytes, remoteHelper, log)) {
+        is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
+        AdbPushResult.Success -> {}
+    }
+    runAdbShellCommand(transport, "chmod 644 $remoteHelper", log)
+
+    log("Устанавливаю через localinstall.apk (app_process, Chery DesaySV)...")
+    val installResult = runAdbShellCommand(
+        transport,
+        "CLASSPATH=$remoteHelper app_process /system/bin LocalInstall $remoteApk",
+        log,
+        timeoutMs = 120000,
+    )
+    Thread.sleep(2000) // helper коммитит сессию установки асинхронно — даём системе время дописать пакет
+
+    val after = installedPackages(transport, log)
+    runAdbShellCommand(transport, "rm -f $remoteApk $remoteHelper", log)
+
+    val newPackages = after - before
+    if (newPackages.size != 1) {
+        val text = when (installResult) {
+            is AdbShellResult.Output -> installResult.text
+            is AdbShellResult.Rejected -> installResult.reason
+            is AdbShellResult.Failed -> installResult.reason
+        }
+        val candidates = if (newPackages.isEmpty()) "нет" else newPackages.joinToString(", ")
+        return AdbInstallResult.Failed(
+            "localinstall не подтвердил успех (новых пакетов: $candidates): ${text.trim()}"
+        )
+    }
+    val pkg = newPackages.first()
+    AdbPermissions.grantAllPermissions(pkg, log)
+    runAdbShellCommand(transport, "am force-stop $pkg", log)
+    runAdbShellCommand(transport, "monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)
+    return AdbInstallResult.Success("localinstall: $pkg")
+}

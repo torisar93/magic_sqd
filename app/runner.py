@@ -46,20 +46,24 @@ class InstallRunner:
     def cancel(self):
         self._cancel_flag.set()
 
-    def start(self, model, device_serial, selected_apks, run_fn, own_dirs=None):
+    def start(self, model, device_serial, selected_apks, run_fn, own_dirs=None,
+              preferred_install_method: str = ""):
         """Запускает run_fn(ctx) в фоновом потоке — run_fn это функция
         конкретного ADB-этапа из stages.py модели (см. stage_wizard.py,
         единственный вызывающий). own_dirs — локальные папки СВОИХ файлов
         именно этого этапа (см. install_api.py:_stage_own_dirs), которые
         нужно докачать перед запуском — пусто, если у этапа нет своих
-        файлов (adb/uart/telnet без вложений, actions)."""
+        файлов (adb/uart/telnet без вложений, actions). preferred_install_method
+        — см. install_api.py:start_stage/StepSpec.apps_install_method в
+        car_generator.py (только для "apps"-этапов без своего run — пусто у
+        всех остальных)."""
         if self.running:
             raise RuntimeError("Установка уже выполняется.")
 
         self._cancel_flag = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
-            args=(model, device_serial, selected_apks, run_fn, own_dirs or []),
+            args=(model, device_serial, selected_apks, run_fn, own_dirs or [], preferred_install_method),
             daemon=True,
         )
         self._thread.start()
@@ -68,7 +72,7 @@ class InstallRunner:
         if self._cancel_flag.is_set():
             raise InstallCancelled("Установка остановлена пользователем.")
 
-    def _run(self, model, device_serial, selected_apks, run_fn, own_dirs):
+    def _run(self, model, device_serial, selected_apks, run_fn, own_dirs, preferred_install_method=""):
         try:
             if self.base_dir:
                 for local_dir in own_dirs:
@@ -87,6 +91,7 @@ class InstallRunner:
                 cancel_flag=self._cancel_flag,
                 ask_input_fn=self.ask_input_fn,
                 shared_dir=(self.base_dir / "cars" / "_shared") if self.base_dir else None,
+                preferred_install_method=preferred_install_method,
             )
             run_fn(ctx)
         except InstallCancelled as exc:

@@ -175,6 +175,18 @@ class StepSpec:
     # доступного проводного ADB — обычно там же и spec.wifi=True); "ask" —
     # технику предлагается выбрать способ на месте.
     apps_connection: str = "wired"
+    # "apps" — если автор модели заранее знает, какой из способов установки
+    # APK (см. app/install_context.py: _INSTALL_METHOD_LABELS/install_apk_auto)
+    # реально работает на этой магнитоле — можно указать его здесь, чтобы
+    # install_apk_auto пробовал именно его ПЕРВЫМ, а не перебирал все
+    # предыдущие впустую на каждой установке (например Chery/Jaecoo/Exeed/
+    # Tenet на платформе DesaySV — там всегда срабатывает только последний,
+    # "localinstall"). Остальные способы всё равно пробуются по порядку
+    # следом, если указанный не сработал, — это подсказка для скорости, а
+    # не жёсткая привязка, на случай если автор ошибся. "" (по умолчанию) —
+    # обычный порядок с самого начала. Значения — см. _APPS_INSTALL_METHOD_KEYS
+    # ниже (та же строка хранится в _wizard_spec.json/stages.py).
+    apps_install_method: str = ""
     # Порт Wi-Fi ADB именно ДЛЯ ЭТОГО apps-этапа (apps_connection
     # "wifi"/"ask") — независим от spec.wifi_port ниже (тот общий на всю
     # модель, для adb/actions-этапов): один apps-этап может ставить по
@@ -586,6 +598,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             # просто потому, что модель в целом wifi-only.
             apps_connection=(step_data.get("apps_connection") or ("wifi" if data.get("wifi") else "wired"))
             if step_type == "apps" else step_data.get("apps_connection", "wired"),
+            apps_install_method=step_data.get("apps_install_method", ""),
             apps_wifi_port=step_data.get("apps_wifi_port"),
             actions_connection=step_data.get("actions_connection", "wired"),
             actions_wifi_port=step_data.get("actions_wifi_port"),
@@ -860,6 +873,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "standard_apks": [_apk_entry_to_json(a) for a in step.standard_apks],
                 "standard_apks_optional": [_apk_entry_to_json(a) for a in step.standard_apks_optional],
                 "apps_connection": step.apps_connection,
+                "apps_install_method": step.apps_install_method,
                 "apps_wifi_port": step.apps_wifi_port,
                 "actions_connection": step.actions_connection,
                 "actions_wifi_port": step.actions_wifi_port,
@@ -1262,6 +1276,8 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
             else:
                 entry.append(f'        "standard_dir": {pack_expr},')
             entry.append(f'        "apps_connection": {step.apps_connection!r},')
+            if step.apps_install_method:
+                entry.append(f'        "apps_install_method": {step.apps_install_method!r},')
             entry.append(f'        "apps_wifi_port": {step.apps_wifi_port!r},')
         elif step.type == "usb":
             run_expr = f"m.usb_step_{i}"
