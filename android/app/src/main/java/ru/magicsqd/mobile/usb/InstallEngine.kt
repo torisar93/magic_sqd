@@ -208,18 +208,30 @@ class InstallEngine(
      * пробуются остальные по обычному порядку. Способ, сработавший на
      * первом APK, запоминается на весь остаток списка — не имеет смысла
      * заново перебирать на каждом следующем файле. */
-    fun installApks(apkPaths: List<String>, preferredMethod: String = ""): StageRunResult {
+    fun installApks(apkPaths: List<String>, preferredMethod: String = "", modelDir: File? = null): StageRunResult {
         var confirmedMethod: Int? = null
         val order = INSTALL_METHODS.indices.let { indices ->
             val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
             if (preferredIndex >= 0) listOf(preferredIndex) + indices.filter { it != preferredIndex } else indices.toList()
         }
+        val certDir = modelDir?.let { resignCertDirForModel(it) }
 
         for (path in apkPaths) {
             val file = File(path)
             if (!file.exists()) return StageRunResult.Failed("Файл не скачан: $path")
             log("Устанавливаю ${file.name}...")
-            val bytes = file.readBytes()
+            var signedFile = file
+            if (certDir != null) {
+                log("Переподписываю ${file.name} сертификатом магнитолы (обязательно для этой модели)...")
+                signedFile = File(file.parentFile, "${file.nameWithoutExtension}_resigned.apk")
+                try {
+                    resignApkFile(file, certDir, signedFile)
+                } catch (e: Exception) {
+                    return StageRunResult.Failed("Не удалось переподписать ${file.name}: ${e.message}")
+                }
+                log("Подписано: ${file.name}")
+            }
+            val bytes = signedFile.readBytes()
 
             if (confirmedMethod != null) {
                 val (_, install) = INSTALL_METHODS[confirmedMethod]

@@ -23,8 +23,8 @@ android {
         applicationId = "ru.magicsqd.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.2.8"
+        versionCode = 23
+        versionName = "0.2.9"
 
         ndk {
             // arm64-v8a/armeabi-v7a — реальные телефоны; x86_64 — эмулятор для UI-отладки
@@ -95,4 +95,13 @@ dependencies {
     // userspace SCSI-over-bulk-transfer поверх UsbManager. Последний релиз 0.10.0
     // (2023), но библиотека зрелая и это единственный практичный путь без root.
     implementation("me.jahnen.libaums:core:0.10.0")
+
+    // Официальная библиотека Google для подписи APK (v1+v2+v3 — тот же код,
+    // что и в apksigner/Android Studio) — нужна для переподписи APK своим
+    // сертификатом на некоторых платформах (Changan WutongOS проверяет
+    // serial number сертификата, см. app/apk_signer.py на desktop и
+    // AdbInstall.kt:resignApk). Чистая Java-библиотека без Android-специфики
+    // — работает прямо в ART, отдельная JVM/JRE не нужна (в отличие от
+    // desktop, где для этого вшит минимальный JRE — см. tools/jre_minimal/).
+    implementation("com.android.tools.build:apksig:8.7.3")
 }

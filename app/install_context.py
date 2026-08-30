@@ -173,6 +173,7 @@ class InstallContext:
         плохой знак сразу для всего оставшегося списка, продолжать нет
         смысла."""
         self.check_cancelled()
+        path = self._maybe_resign(path)
         if self._install_method is not None:
             self._install_with_method(self._install_method, path, extra_args)
             return
@@ -195,6 +196,31 @@ class InstallContext:
             f"Не удалось установить {Path(path).name} ни одним из способов "
             "(adb install / pm install / pm install -S / localinstall.apk):\n" + "\n".join(errors)
         )
+
+    def _maybe_resign(self, path) -> Path:
+        """Если у модели есть files/resign_cert/{private.pk8,certificate.crt}
+        (см. app/apk_signer.py) — переподписывает APK этим сертификатом
+        ПЕРЕД любым способом установки. Нужно для платформ вроде Changan
+        WutongOS, где ГУ проверяет serial number сертификата APK и
+        отказывается ставить обычный "adb install"/"pm install" без
+        совпадения (см. research/Changan/notes.md). Молча возвращает путь
+        без изменений, если сертификата для этой модели нет — большинство
+        моделей его не имеют."""
+        from .apk_signer import ApkSignError, resign_apk, resign_cert_dir_for_model
+
+        path = Path(path)
+        cert_dir = resign_cert_dir_for_model(self.model_dir)
+        if cert_dir is None or self.shared_dir is None:
+            return path
+        base_dir = self.shared_dir.parent.parent
+        out_path = path.with_name(f"{path.stem}_resigned{path.suffix}")
+        self.log(f"Переподписываю {path.name} сертификатом магнитолы (обязательно для этой модели)...")
+        try:
+            resign_apk(base_dir, path, cert_dir, out_path)
+        except ApkSignError as exc:
+            raise AdbError(str(exc))
+        self.log(f"Подписано: {path.name}")
+        return out_path
 
     def _install_with_method(self, method: int, path, extra_args) -> None:
         if method == 0:

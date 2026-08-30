@@ -11,6 +11,11 @@ dist/
 tools/*.exe
 tools/*.dll
 
+# минимальный JRE + apksigner.jar для переподписи APK (app/apk_signer.py) —
+# собираются/копируются отдельно, см. tools/README.txt
+tools/jre_minimal/
+tools/apksigner.jar
+
 # отдельная копия platform-tools под Windows 7-сборку (старее, см. tools_win7/README.txt)
 tools_win7/*.exe
 tools_win7/*.dll
