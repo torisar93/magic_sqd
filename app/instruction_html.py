@@ -143,22 +143,21 @@ INSTRUCTION_CSS = f"""
   .caption {{ color: {theme.TEXT_DIM}; font-size: 12px; margin-top: -4px; text-align: center; }}
   /* Раньше просто <img style="max-width:100%"> — фото разных размеров и
      пропорций (скриншот телефона рядом со скриншотом магнитолы) смотрелись
-     вразнобой. Общая рамка (граница/подложка/скругление) даёт единый вид,
-     но БЕЗ фиксированной высоты — фиксированная высота + object-fit:contain
-     оставляла по бокам узкие полосы подложки на фото с пропорцией, не
-     совпадающей с рамкой (особенно заметно на узком экране телефона, см.
-     фидбэк — "тонкие рамки слева и справа, выглядит некрасиво"); при auto-
-     высоте фото занимает всю ширину рамки без полей, своей естественной
-     пропорцией. Клик — на весь экран, см. LIGHTBOX_SCRIPT ниже. */
+     вразнобой; пробовали единить их рамкой (border+padding+подложка), но
+     ЛЮБАЯ рамка — это видимая кайма другого цвета по краям фото независимо
+     от пропорций (см. фидбэк — "тонкие рамки слева и справа, выглядит
+     некрасиво", не ушло даже после фикса высоты/object-fit). Теперь без
+     рамки вовсе — только скругление уголков самого фото и лёгкая тень,
+     фото занимает всю ширину колонки естественной пропорцией, без каймы.
+     Клик — на весь экран, см. LIGHTBOX_SCRIPT ниже. */
   img.screenshot {{
     display: block; box-sizing: border-box; width: 100%; max-width: 460px;
-    height: auto; margin: 14px auto;
-    background: {theme.BG_ELEVATED}; border: 1px solid {theme.BORDER}; border-radius: 8px;
-    padding: 6px; cursor: zoom-in;
-    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+    height: auto; margin: 14px auto; border-radius: 8px; cursor: zoom-in;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+    transition: transform .15s ease, box-shadow .15s ease;
   }}
   img.screenshot:hover {{
-    border-color: {theme.ACCENT_2}; transform: translateY(-1px);
+    transform: translateY(-1px);
     box-shadow: 0 6px 16px rgba(0, 0, 0, .35);
   }}
   {_LIGHTBOX_CSS}
