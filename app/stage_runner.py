@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction", "uart", "telnet", "actions")
+STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction", "uart", "telnet", "actions", "qr_adb")
 
 
 class StageDefinitionError(RuntimeError):
