@@ -189,6 +189,7 @@ class InstallEngine(
     private val INSTALL_METHODS: List<Pair<String, (ByteArray, (String) -> Unit) -> AdbInstallResult>> = listOf(
         "pm_install" to AdbSession::installApk,
         "pm_install_stream" to AdbSession::installApkPmStream,
+        "pm_install_spoofed" to AdbSession::installApkSpoofed,
         "localinstall" to { bytes, methodLog ->
             val helper = File(context.filesDir, "cars/_shared/chery_localinstall.apk")
             if (!helper.exists()) {

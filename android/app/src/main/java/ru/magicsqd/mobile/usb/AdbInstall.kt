@@ -162,6 +162,58 @@ fun installApkOverAdb(
 }
 
 /**
+ * Тот же push, что и installApkOverAdb, но `pm install -i
+ * com.android.packageinstaller -t -g -r <path>` — подмена "личности"
+ * установщика под системный Package Installer, портировано 1:1 из
+ * собственного deploy-скрипта MonGuard для платформы Geely OneOS/NewEra
+ * (desktop-версия: app/install_context.py: install_apk_pm_spoofed). Часть
+ * сборок на этой платформе иначе не ставит APK тихо через голый adb —
+ * либо блокирует, либо всплывает системный диалог подтверждения на самой
+ * магнитоле. Если флаг -i отклонён (Unknown option/INVALID_INSTALLER —
+ * старые сборки pm его не знают), откатывается на обычный
+ * "pm install -t -g -r" без подмены.
+ */
+fun installApkSpoofedOverAdb(
+    transport: AdbTransport,
+    apkBytes: ByteArray,
+    remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
+    log: (String) -> Unit,
+): AdbInstallResult {
+    when (val pushResult = syncPushBytes(transport, apkBytes, remotePath, log)) {
+        is AdbPushResult.Failed -> return AdbInstallResult.Failed(pushResult.reason)
+        AdbPushResult.Success -> {}
+    }
+    log("Файл записан на устройство. Запускаю pm install -i (подмена установщика) $remotePath ...")
+
+    var installResult = runAdbShellCommand(
+        transport, "pm install -i com.android.packageinstaller -t -g -r $remotePath", log, timeoutMs = 120000
+    )
+    var pmOutput = when (installResult) {
+        is AdbShellResult.Output -> installResult.text
+        is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install отклонён: ${installResult.reason}")
+        is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install ошибка: ${installResult.reason}")
+    }
+    val lower = pmOutput.lowercase()
+    if ("unknown option" in lower || "invalid_installer" in lower || "invalid installer" in lower) {
+        log("Флаг -i отклонён этой прошивкой — пробую pm install без подмены установщика")
+        installResult = runAdbShellCommand(transport, "pm install -t -g -r $remotePath", log, timeoutMs = 120000)
+        pmOutput = when (installResult) {
+            is AdbShellResult.Output -> installResult.text
+            is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install отклонён: ${installResult.reason}")
+            is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install ошибка: ${installResult.reason}")
+        }
+    }
+
+    runAdbShellCommand(transport, "rm -f $remotePath", log) // best effort, на результат не влияет
+
+    return if (pmOutput.contains("Success", ignoreCase = true)) {
+        AdbInstallResult.Success(pmOutput.trim())
+    } else {
+        AdbInstallResult.Failed("pm install не вернул Success: ${pmOutput.trim()}")
+    }
+}
+
+/**
  * Тот же push, что и installApkOverAdb, но установка через
  * "cat <файл> | pm install -S <размер>" вместо обычного "pm install -r
  * <файл>" — на части adbd/pm обычный путь не срабатывает, а потоковый

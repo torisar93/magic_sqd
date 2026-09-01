@@ -486,6 +486,7 @@
       pm_install: "adb push + pm install",
       pm_install_stream: "adb push + pm install -S (поток)",
       localinstall: "app_process + localinstall.apk (Chery DesaySV)",
+      pm_install_spoofed: "adb push + pm install -i (подмена установщика, Geely OneOS/NewEra)",
     };
 
     // Подсказка "начни перебор способов установки APK с этого" — не

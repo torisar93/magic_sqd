@@ -162,6 +162,9 @@ object AdbSession {
     fun installApkPmStream(bytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
         installApkStreamOverAdb(requireTransport(), bytes, log = log)
 
+    fun installApkSpoofed(bytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
+        installApkSpoofedOverAdb(requireTransport(), bytes, log = log)
+
     fun installApkLocalinstall(bytes: ByteArray, helperBytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
         installApkViaLocalinstall(requireTransport(), bytes, helperBytes, log = log)
 

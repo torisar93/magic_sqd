@@ -13,14 +13,15 @@ class InstallCancelled(RuntimeError):
 
 # Подписи для лога/сообщения об ошибке — по индексу в install_apk_auto ниже.
 _INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm install -S (поток)",
-                          "app_process + localinstall.apk (Chery DesaySV)")
-# Те же 4 способа, но короткими устойчивыми ключами — хранятся в
+                          "app_process + localinstall.apk (Chery DesaySV)",
+                          "adb push + pm install -i (подмена установщика, Geely OneOS/NewEra)")
+# Те же 5 способов, но короткими устойчивыми ключами — хранятся в
 # StepSpec.apps_install_method/_wizard_spec.json/stages.py (см.
 # car_generator.py) как явная подсказка "начни перебор с этого способа",
 # когда автор модели уже знает, какой из них рабочий на этой магнитоле
 # (не жёсткая привязка — если он всё-таки не сработает, install_apk_auto
 # просто пойдёт дальше по остальным способам в обычном порядке).
-INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "localinstall")
+INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "localinstall", "pm_install_spoofed")
 
 # Платформа Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
 # блокирует обычный "pm install" на уровне прошивки; единственный найденный
@@ -229,6 +230,8 @@ class InstallContext:
             self.install_apk_pm(path, extra_args=extra_args)
         elif method == 2:
             self.install_apk_stream(path, extra_args=extra_args)
+        elif method == 4:
+            self.install_apk_pm_spoofed(path, extra_args=extra_args)
         else:
             self.install_apk_localinstall(path)
 
@@ -265,6 +268,33 @@ class InstallContext:
         size = path.stat().st_size
         extra = (" " + " ".join(extra_args)) if extra_args else ""
         result = self.shell(f"cat {remote_path} | pm install -S {size}{extra}", check=False)
+        _check_pm_install_result(result)
+
+    def install_apk_pm_spoofed(self, path, remote_dir="/data/local/tmp", extra_args=None):
+        """adb push + "pm install -i com.android.packageinstaller -t -g -r"
+        — подмена "личности" установщика под системный Package Installer,
+        портировано 1:1 из собственного deploy-скрипта MonGuard для платформы
+        Geely OneOS/NewEra (install_newera.py: install_apk_via_shell) —
+        некоторые сборки на этой платформе иначе не дают тихо поставить APK
+        через голый adb (либо блокируют, либо всплывает системный диалог
+        подтверждения, требующий тапа по экрану самой магнитолы). -t — тестовые
+        пакеты, -g — сразу выдать все runtime-разрешения из манифеста
+        (аналог pm install --grant), -r — переустановка поверх существующей
+        версии. Если флаг -i отклонён (Unknown option/INVALID_INSTALLER —
+        старые сборки pm его не знают), автоматически откатывается на
+        обычный "pm install -t -g -r" без подмены — тот же приём, что и в
+        оригинале."""
+        self.check_cancelled()
+        path = Path(path)
+        remote_path = f"{remote_dir.rstrip('/')}/{path.name}"
+        self.log(f"Установка APK (adb push + pm install -i, Geely OneOS/NewEra): {path.name}")
+        self.push(path, remote_path)
+        extra = (" " + " ".join(extra_args)) if extra_args else ""
+        result = self.shell(f"pm install -i com.android.packageinstaller -t -g -r {remote_path}{extra}", check=False)
+        text = ((result.stdout or "") + (result.stderr or "")).strip().lower()
+        if "unknown option" in text or "invalid_installer" in text or "invalid installer" in text:
+            self.log("Флаг -i отклонён этой прошивкой — пробую pm install без подмены установщика")
+            result = self.shell(f"pm install -t -g -r {remote_path}{extra}", check=False)
         _check_pm_install_result(result)
 
     def _installed_packages(self) -> set[str]:
