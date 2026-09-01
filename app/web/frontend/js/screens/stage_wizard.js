@@ -870,13 +870,17 @@
   async function renderQrAdbStage(panel) {
     const driveSelect = el("select", { style: "flex: 1" });
     const showAllCheckbox = el("input", { type: "checkbox" });
+
+    const writeBtn = el("button", { class: "accent", text: "1. Записать файл-триггер на флешку" });
+    const writeStatusEl = el("p", { style: "color: var(--text-dim); font-size: 12px" });
+
+    const getBtn = el("button", { class: "accent", text: "4. Получить пароль" });
     const resultBox = el("div", { class: "field", style: "display: none" });
     const codeEl = el("div", { class: "qr-adb-code" });
     const metaEl = el("p", { style: "color: var(--text-dim); font-size: 12px" });
     const copyBtn = el("button", { text: "Скопировать" });
     resultBox.append(codeEl, el("div", { class: "dialog-actions" }, [copyBtn]), metaEl);
     const errorEl = el("div", { class: "callout danger", style: "display: none" });
-    const getBtn = el("button", { class: "accent", text: "Получить пароль" });
 
     let drives = [];
     async function refreshDrives() {
@@ -887,8 +891,32 @@
       }
     }
 
+    function currentDrive() {
+      return drives.find((d) => d.letter === driveSelect.value);
+    }
+
+    writeBtn.addEventListener("click", async () => {
+      const drive = currentDrive();
+      if (!drive) { await window.notice("Выберите флешку из списка."); return; }
+      writeBtn.disabled = true;
+      writeStatusEl.textContent = "";
+      writeStatusEl.className = "";
+      try {
+        const result = await window.pywebview.api.qr_adb_write_flag(drive.letter);
+        if (result.ok) {
+          writeStatusEl.textContent = "Готово — теперь вставьте эту флешку в магнитолу (шаг 2).";
+          writeStatusEl.className = "log-line-success";
+        } else {
+          writeStatusEl.textContent = result.error;
+          writeStatusEl.className = "log-line-error";
+        }
+      } finally {
+        writeBtn.disabled = false;
+      }
+    });
+
     getBtn.addEventListener("click", async () => {
-      const drive = drives.find((d) => d.letter === driveSelect.value);
+      const drive = currentDrive();
       if (!drive) { await window.notice("Выберите флешку из списка."); return; }
       getBtn.disabled = true;
       getBtn.textContent = "Ищу...";
@@ -906,7 +934,7 @@
         }
       } finally {
         getBtn.disabled = false;
-        getBtn.textContent = "Получить пароль";
+        getBtn.textContent = "4. Получить пароль";
       }
     });
     copyBtn.addEventListener("click", async () => {
@@ -920,9 +948,12 @@
     });
     showAllCheckbox.addEventListener("change", refreshDrives);
 
-    panel.appendChild(el("p", {
-      text: "Вставьте флешку (ту же, что была в магнитоле) в этот компьютер и выберите её ниже.",
-    }));
+    panel.appendChild(el("ol", {}, [
+      el("li", { text: "Вставьте флешку в этот компьютер, выберите её ниже и запишите на неё файл-триггер." }),
+      el("li", { text: "Вставьте эту же флешку в магнитолу, зайдите в инженерное меню, откройте пункт «ADB» и оставайтесь на экране с QR-кодом." }),
+      el("li", { text: "Дождитесь на экране магнитолы надписи «QNX OK», затем извлеките флешку." }),
+      el("li", { text: "Вставьте флешку обратно в этот компьютер и нажмите «Получить пароль» ниже." }),
+    ]));
     panel.appendChild(el("div", { class: "field row" }, [
       driveSelect,
       el("button", { text: "Обновить", onclick: refreshDrives }),
@@ -930,9 +961,12 @@
     panel.appendChild(el("label", { class: "row" }, [
       showAllCheckbox, document.createTextNode(" Показать все диски (если нужной флешки нет в списке)"),
     ]));
+    panel.appendChild(writeBtn);
+    panel.appendChild(writeStatusEl);
+    panel.appendChild(el("hr"));
+    panel.appendChild(getBtn);
     panel.appendChild(resultBox);
     panel.appendChild(errorEl);
-    panel.appendChild(getBtn);
     refreshDrives();
   }
 

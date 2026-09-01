@@ -49,7 +49,7 @@ class WebApi:
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
         self._usb = UsbApi(base_dir, self._scanner)
-        self._qr_adb = QrAdbApi()
+        self._qr_adb = QrAdbApi(self.cars_dir)
         self._report = ReportApi(base_dir)
         self._admin = AdminApi(base_dir, self.apk_dir)
         # Раньше отдельная admin-сборка (admin_main_web.py, убрана) — теперь
@@ -164,6 +164,9 @@ class WebApi:
 
     # -- qr_adb_api -----------------------------------------------------
     # Список дисков — тот же usb_list_drives выше, отдельного не заводим.
+    def qr_adb_write_flag(self, drive_letter: str) -> dict:
+        return self._qr_adb.write_flag(drive_letter)
+
     def qr_adb_get_password(self, drive_letter: str) -> dict:
         return self._qr_adb.get_password(drive_letter)
 
