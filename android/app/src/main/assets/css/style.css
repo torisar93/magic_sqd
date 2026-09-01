@@ -415,6 +415,52 @@ html, body {
   line-height: 1.5;
 }
 
+.qr-adb-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.qr-adb-step-num {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.qr-adb-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.qr-adb-step-body > .stage-text:first-child {
+  margin-top: 0;
+}
+
+.qr-adb-code {
+  font-family: monospace;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-align: center;
+  padding: 14px;
+  margin: 8px 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--accent-2);
+  user-select: all;
+}
+
 .stage-instruction-frame {
   /* Растягиваем на всю ширину экрана, отменяя боковой padding .stage-page
      (14px, см. переопределение ниже по файлу) отрицательным margin —

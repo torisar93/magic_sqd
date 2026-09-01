@@ -17,6 +17,8 @@ import ru.magicsqd.mobile.usb.MdnsResolve
 import ru.magicsqd.mobile.usb.NetworkScan
 import ru.magicsqd.mobile.usb.StageRunResult
 import ru.magicsqd.mobile.usb.UsbFlashSession
+import ru.magicsqd.mobile.usb.readQrAdbBugreportZip
+import ru.magicsqd.mobile.usb.writeQrAdbFlag
 import ru.magicsqd.mobile.usb.writeUsbStage
 import java.io.File
 
@@ -124,6 +126,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "usb_disconnect" -> { UsbFlashSession.disconnect(); "{}" }
                 "usb_format" -> { usbFormat(args); "{}" }
                 "usb_run_stage" -> { usbRunStage(args); "{}" }
+                "qr_adb_write_flag" -> { qrAdbWriteFlag(); "{}" }
+                "qr_adb_get_password" -> { qrAdbGetPassword(); "{}" }
                 else -> JSONObject().put("error", "Неизвестный метод: $method").toString()
             }
         } catch (e: Exception) {
@@ -563,6 +567,58 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             }
             pushStageResult(stageIndex, result)
         }
+    }
+
+    /** Портовая версия "Пароль ADB по QR-коду" (desktop: app/qr_adb_password.py,
+     * app/web/api/qr_adb_api.py) — та же флешка/сессия, что и у "usb"-этапа
+     * (см. USB_STAGE_TYPES в app.js — qr_adb добавлен туда же, чтобы техник
+     * подключал флешку тем же самым баром сверху). Шаг 1 процедуры: */
+    private fun qrAdbWriteFlag() = runExclusive(::onBusy) {
+        val event = try {
+            if (!UsbFlashSession.isMounted) {
+                JSONObject().put("ok", false).put("error", "Флешка не подключена — сначала подключите её сверху.")
+            } else {
+                val flagFile = File(carsDir, "_shared/svlog.flag")
+                if (!flagFile.exists()) {
+                    JSONObject().put("ok", false).put(
+                        "error", "svlog.flag не найден — обновите каталог (Настройки → Проверить обновления) и попробуйте снова."
+                    )
+                } else {
+                    writeQrAdbFlag(UsbFlashSession.requireFs(), flagFile, ::pushAdbLog).fold(
+                        onSuccess = { JSONObject().put("ok", true) },
+                        onFailure = { e -> JSONObject().put("ok", false).put("error", e.message) },
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
+        }
+        pushEvent(JSONObject().put("kind", "qr_adb_write_result").put("result", event))
+    }
+
+    /** Шаг 4 процедуры: та же флешка (уже вставленная обратно после «QNX
+     * OK» на магнитоле) читается напрямую через libaums (см.
+     * readQrAdbBugreportZip), сам расчёт кода — в Python (см.
+     * android/.../python/qr_adb_password.py — порт desktop-алгоритма). */
+    private fun qrAdbGetPassword() = runExclusive(::onBusy) {
+        val event = try {
+            if (!UsbFlashSession.isMounted) {
+                JSONObject().put("ok", false).put("error", "Флешка не подключена — сначала подключите её сверху.")
+            } else {
+                readQrAdbBugreportZip(UsbFlashSession.requireFs()).fold(
+                    onSuccess = { bytes ->
+                        val zipB64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        val resultJson = pyModule("qr_adb_password")
+                            .callAttr("get_password_from_zip_b64", zipB64).toString()
+                        JSONObject(resultJson)
+                    },
+                    onFailure = { e -> JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")) },
+                )
+            }
+        } catch (e: Exception) {
+            JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
+        }
+        pushEvent(JSONObject().put("kind", "qr_adb_password_result").put("result", event))
     }
 
     private fun pushStageResult(stageIndex: Int, result: StageRunResult) {

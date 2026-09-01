@@ -23,7 +23,7 @@ SPEC_FILENAME = "_wizard_spec.json"
 # uart не поддержан сознательно — нужен физический доступ к serial-порту
 # через USB-to-serial адаптер (usb-serial-for-android или аналог), отдельная
 # от ADB-транспорта область USB Host API, не сделано.
-EXECUTABLE_STAGE_TYPES = ("adb", "apps", "manual", "check", "instruction", "actions", "usb", "telnet")
+EXECUTABLE_STAGE_TYPES = ("adb", "apps", "manual", "check", "instruction", "actions", "usb", "telnet", "qr_adb")
 
 _ADB_SLEEP_RE = re.compile(r"^#sleep\s+([\d.]+)\s*$", re.IGNORECASE)
 _ADB_REBOOT_RE = re.compile(r"^#reboot\s*$", re.IGNORECASE)

@@ -22,7 +22,7 @@
   // показываются только для них, а не постоянно на весь мастер (иначе на
   // instruction/check/manual этапах висят лишние кнопки безо всякого толку).
   const ADB_STAGE_TYPES = new Set(["adb", "apps", "actions"]);
-  const USB_STAGE_TYPES = new Set(["usb"]);
+  const USB_STAGE_TYPES = new Set(["usb", "qr_adb"]);
 
   let carsData = null;
   let selectedBrand = null;
@@ -658,6 +658,13 @@
   // Модели без _wizard_spec.json (написанные вручную) показывают заглушку.
   let adbConnected = false;
   let usbConnected = false;
+  // Состояние этапа "qr_adb" (см. renderQrAdbStage/onQrAdbWriteResult/
+  // onQrAdbPasswordResult) — храним отдельно от stage, а не мутируем уже
+  // отрисованный DOM из обработчика события: та же схема, что и у
+  // остального мастера (см. onAdbStageResult — просто render() заново),
+  // только тут ещё и сам код нужно показать техника ПОСЛЕ переотрисовки.
+  let qrAdbWriteStatus = null;
+  let qrAdbResult = null;
   let appsSelection = {}; // stage.index -> {variant, optionalChecked: Set<path>}
   // Список необязательных APK, отмеченных техником на ЛЮБОМ "apps"-этапе —
   // общий на всю установку (аналог desktop ctx.selected_apks), т.к.
@@ -693,6 +700,8 @@
     globalSelectedApks = new Set();
     apkLibrary = [];
     installCompletedShown = false;
+    qrAdbWriteStatus = null;
+    qrAdbResult = null;
     modelWifi = false;
     modelWifiPort = 5555;
     // Новая модель — потенциально другая физическая магнитола/флешка,
@@ -1391,6 +1400,80 @@
     page.appendChild(btn);
   }
 
+  // Порт desktop-версии (app/web/frontend/js/screens/stage_wizard.js:
+  // renderQrAdbStage) — та же флешка/сессия, что и у "usb"-этапа (см.
+  // USB_STAGE_TYPES выше), поэтому свой транспортный бар не нужен, техник
+  // подключает её тем же баром сверху. Каждый шаг процедуры — своя
+  // карточка (номер + текст + действие сразу под ним, если есть) — тот же
+  // приём, что и на desktop, чтобы взгляд не метался между описанием и
+  // кнопкой в разных концах экрана.
+  function qrAdbStepCard(number, text, extraNodes) {
+    const body = el("div", { class: "qr-adb-step-body" }, [el("p", { class: "stage-text", text })]);
+    for (const node of extraNodes || []) body.appendChild(node);
+    return el("div", { class: "qr-adb-step" }, [
+      el("div", { class: "qr-adb-step-num", text: String(number) }),
+      body,
+    ]);
+  }
+
+  function renderQrAdbStage(page) {
+    const writeBtn = el("button", { class: "accent", text: "Записать файл-триггер на флешку" });
+    writeBtn.addEventListener("click", () => {
+      if (!usbConnected) { log("Сначала подключи флешку (кнопка вверху)."); return; }
+      writeBtn.disabled = true;
+      writeBtn.textContent = "Записываю...";
+      Bridge.call("qr_adb_write_flag", {});
+    });
+    const writeStatusNodes = [];
+    if (qrAdbWriteStatus) {
+      writeStatusNodes.push(el("p", {
+        class: "stage-text",
+        style: qrAdbWriteStatus.ok ? "color: var(--accent)" : "color: var(--danger)",
+        text: qrAdbWriteStatus.ok
+          ? "Готово — теперь вставьте эту флешку в магнитолу (шаг 2)."
+          : (qrAdbWriteStatus.error || "Не удалось записать файл."),
+      }));
+    }
+
+    const getBtn = el("button", { class: "accent", text: "Получить пароль" });
+    getBtn.addEventListener("click", () => {
+      if (!usbConnected) { log("Сначала подключи флешку (кнопка вверху)."); return; }
+      getBtn.disabled = true;
+      getBtn.textContent = "Ищу...";
+      Bridge.call("qr_adb_get_password", {});
+    });
+    const resultNodes = [getBtn];
+    if (qrAdbResult) {
+      if (qrAdbResult.ok) {
+        resultNodes.push(el("div", { class: "qr-adb-code", text: qrAdbResult.code }));
+        resultNodes.push(el("p", { class: "stage-text", style: "color: var(--text-dim); font-size: 12px", text: `SN: ${qrAdbResult.sn || "?"}` }));
+      } else {
+        resultNodes.push(el("p", { class: "stage-text", style: "color: var(--danger)", text: qrAdbResult.error || "Не удалось получить пароль." }));
+      }
+    }
+
+    page.appendChild(qrAdbStepCard(1,
+      "Убедитесь, что флешка подключена (бар вверху), и запишите на неё файл-триггер.",
+      [writeBtn, ...writeStatusNodes]));
+    page.appendChild(qrAdbStepCard(2,
+      "Вставьте эту же флешку в магнитолу, зайдите в инженерное меню, откройте пункт «ADB» и оставайтесь на экране с QR-кодом."));
+    page.appendChild(qrAdbStepCard(3,
+      "Дождитесь на экране магнитолы надписи «QNX OK», затем извлеките флешку."));
+    page.appendChild(qrAdbStepCard(4,
+      "Вставьте флешку обратно в этот телефон (переподключите её баром вверху) и нажмите «Получить пароль».",
+      resultNodes));
+  }
+
+  function onQrAdbWriteResult(event) {
+    qrAdbWriteStatus = event.result || { ok: false, error: "неизвестная ошибка" };
+    if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render();
+  }
+
+  function onQrAdbPasswordResult(event) {
+    qrAdbResult = event.result || { ok: false, error: "неизвестная ошибка" };
+    if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render();
+  }
+
   // "telnet"-этап: включает ADB-отладку на магнитоле удалённо (см.
   // TelnetAdb.kt, порт cars/_shared/telnet_adb.py) — своё, отдельное от
   // AdbSession TCP-соединение на каждую команду, поэтому не завязан на
@@ -1507,6 +1590,8 @@
       renderActionsStage(page, stage);
     } else if (stage.type === "usb") {
       renderUsbStage(page, stage);
+    } else if (stage.type === "qr_adb") {
+      renderQrAdbStage(page);
     } else if (stage.type === "telnet") {
       renderTelnetStage(page, stage);
     } else if (!stage.supported) {
@@ -1832,6 +1917,8 @@
     window.events.on("adb_stage_result", onAdbStageResult);
     window.events.on("usb_connect_result", onUsbConnectResult);
     window.events.on("usb_format_result", onUsbFormatResult);
+    window.events.on("qr_adb_write_result", onQrAdbWriteResult);
+    window.events.on("qr_adb_password_result", onQrAdbPasswordResult);
     window.events.on("apk_library_result", onApkLibraryResult);
     window.events.on("update_check_result", onUpdateCheckResult);
 
