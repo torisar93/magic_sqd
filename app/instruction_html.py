@@ -85,11 +85,13 @@ _LIGHTBOX_CSS = f"""
     position: fixed; inset: 0; background: rgba(8, 9, 12, .88);
     display: flex; align-items: center; justify-content: center; padding: 28px;
     opacity: 0; pointer-events: none; transition: opacity .18s ease; z-index: 1000;
+    touch-action: none;
   }}
   #magicsqd-lightbox.is-open {{ opacity: 1; pointer-events: auto; }}
   #magicsqd-lightbox img {{
     max-width: 100%; max-height: 100%; border-radius: 8px; cursor: zoom-out;
     box-shadow: 0 12px 40px rgba(0, 0, 0, .55); will-change: transform;
+    touch-action: none; user-select: none; -webkit-user-drag: none;
   }}
 """
 
@@ -141,13 +143,16 @@ INSTRUCTION_CSS = f"""
   .caption {{ color: {theme.TEXT_DIM}; font-size: 12px; margin-top: -4px; text-align: center; }}
   /* Раньше просто <img style="max-width:100%"> — фото разных размеров и
      пропорций (скриншот телефона рядом со скриншотом магнитолы) смотрелись
-     вразнобой. Теперь единая "рамка" фиксированной высоты: object-fit:
-     contain вписывает фото целиком (без обрезки) на общий цвет-подложку,
-     а не растягивает/обрезает под чужую пропорцию. Клик — на весь экран,
-     см. LIGHTBOX_SCRIPT ниже. */
+     вразнобой. Общая рамка (граница/подложка/скругление) даёт единый вид,
+     но БЕЗ фиксированной высоты — фиксированная высота + object-fit:contain
+     оставляла по бокам узкие полосы подложки на фото с пропорцией, не
+     совпадающей с рамкой (особенно заметно на узком экране телефона, см.
+     фидбэк — "тонкие рамки слева и справа, выглядит некрасиво"); при auto-
+     высоте фото занимает всю ширину рамки без полей, своей естественной
+     пропорцией. Клик — на весь экран, см. LIGHTBOX_SCRIPT ниже. */
   img.screenshot {{
     display: block; box-sizing: border-box; width: 100%; max-width: 460px;
-    height: 260px; object-fit: contain; margin: 14px auto;
+    height: auto; margin: 14px auto;
     background: {theme.BG_ELEVATED}; border: 1px solid {theme.BORDER}; border-radius: 8px;
     padding: 6px; cursor: zoom-in;
     transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
@@ -257,11 +262,65 @@ LIGHTBOX_SCRIPT = f"""
 
   var currentTrigger = null;
 
+  // Зум/пан жестами после открытия — щипок двумя пальцами, перетаскивание
+  // одним пальцем, когда уже приближено, двойное касание сбрасывает/
+  // приближает (тот же жест, что в галереях телефона). MAX_ZOOM подобран
+  // так, чтобы читать мелкий текст на скриншоте инженерного меню, но не
+  // размывать фото в кашу.
+  var MAX_ZOOM = 4;
+  var zoomScale = 1, panX = 0, panY = 0;
+  var pinchStartDist = 0, pinchStartScale = 1;
+  var panStartX = 0, panStartY = 0, panStartPanX = 0, panStartPanY = 0;
+  var lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+  var gestureMoved = false;
+
+  function clampPan(scale, x, y) {{
+    var imgRect = img.getBoundingClientRect();
+    // getBoundingClientRect уже включает текущий transform — считаем от
+    // "естественного" размера (без масштаба), чтобы не накапливать ошибку.
+    var natW = imgRect.width / zoomScale, natH = imgRect.height / zoomScale;
+    var overflowX = Math.max(0, (natW * scale - natW) / 2);
+    var overflowY = Math.max(0, (natH * scale - natH) / 2);
+    return {{
+      x: Math.max(-overflowX, Math.min(overflowX, x)),
+      y: Math.max(-overflowY, Math.min(overflowY, y)),
+    }};
+  }}
+
+  function setTransform(animate) {{
+    img.style.transition = animate
+      ? "transform .18s cubic-bezier(.2,.8,.2,1)"
+      : "none";
+    img.style.transform = "translate(" + panX + "px," + panY + "px) scale(" + zoomScale + ")";
+  }}
+
+  function resetZoom(animate) {{
+    zoomScale = 1; panX = 0; panY = 0;
+    setTransform(animate);
+  }}
+
+  function toggleZoom(clientX, clientY) {{
+    if (zoomScale > 1.01) {{
+      resetZoom(true);
+      return;
+    }}
+    var imgRect = img.getBoundingClientRect();
+    // Приближаем к точке двойного касания, а не к центру — иначе после
+    // зума палец оказывается совсем не там, где рассматривали фото.
+    var offX = (imgRect.left + imgRect.width / 2 - clientX);
+    var offY = (imgRect.top + imgRect.height / 2 - clientY);
+    zoomScale = 2.4;
+    var clamped = clampPan(zoomScale, offX * (zoomScale - 1) / 1, offY * (zoomScale - 1) / 1);
+    panX = clamped.x; panY = clamped.y;
+    setTransform(true);
+  }}
+
   function open(trigger) {{
     currentTrigger = trigger;
     var rect = screenRect(trigger);
     img.src = trigger.src;
     img.alt = trigger.alt || "";
+    resetZoom(false);
     overlay.classList.add("is-open");
     if (reduceMotion) return;
     var run = function () {{
@@ -295,10 +354,97 @@ LIGHTBOX_SCRIPT = f"""
     }}
     setTimeout(function () {{
       img.src = ""; img.style.transition = ""; img.style.transform = ""; img.style.opacity = "";
+      zoomScale = 1; panX = 0; panY = 0;
     }}, transform ? 160 : 0);
   }}
 
-  overlay.addEventListener("click", close);
+  function touchDist(t0, t1) {{
+    var dx = t0.clientX - t1.clientX, dy = t0.clientY - t1.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }}
+
+  overlay.addEventListener("touchstart", function (e) {{
+    if (e.touches.length === 2) {{
+      pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+      pinchStartScale = zoomScale;
+      gestureMoved = true;
+    }} else if (e.touches.length === 1) {{
+      panStartX = e.touches[0].clientX; panStartY = e.touches[0].clientY;
+      panStartPanX = panX; panStartPanY = panY;
+      gestureMoved = false;
+    }}
+  }}, {{ passive: true }});
+
+  overlay.addEventListener("touchmove", function (e) {{
+    if (e.touches.length === 2 && pinchStartDist > 0) {{
+      e.preventDefault();
+      var dist = touchDist(e.touches[0], e.touches[1]);
+      zoomScale = Math.max(1, Math.min(MAX_ZOOM, pinchStartScale * (dist / pinchStartDist)));
+      var clamped = clampPan(zoomScale, panX, panY);
+      panX = clamped.x; panY = clamped.y;
+      setTransform(false);
+    }} else if (e.touches.length === 1 && zoomScale > 1.01) {{
+      e.preventDefault();
+      var dx = e.touches[0].clientX - panStartX, dy = e.touches[0].clientY - panStartY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) gestureMoved = true;
+      var clamped2 = clampPan(zoomScale, panStartPanX + dx, panStartPanY + dy);
+      panX = clamped2.x; panY = clamped2.y;
+      setTransform(false);
+    }}
+  }}, {{ passive: false }});
+
+  overlay.addEventListener("touchend", function (e) {{
+    if (e.touches.length > 0) return;
+    // Подавляем синтетический click после тапа — закрытие/зум по тапу
+    // обрабатываем целиком сами ниже (иначе на телефоне click от ПЕРВОГО
+    // тапа двойного тапа закрыл бы лайтбокс раньше, чем долетит второй).
+    e.preventDefault();
+    pinchStartDist = 0;
+    if (gestureMoved) return;
+    var t = e.changedTouches[0];
+    var now = Date.now();
+    if (now - lastTapTime < 300 && Math.abs(t.clientX - lastTapX) < 30 && Math.abs(t.clientY - lastTapY) < 30) {{
+      // Двойной тап — приблизить/сбросить.
+      lastTapTime = 0;
+      toggleZoom(t.clientX, t.clientY);
+      return;
+    }}
+    lastTapTime = now; lastTapX = t.clientX; lastTapY = t.clientY;
+    var tapTime = now;
+    setTimeout(function () {{
+      // Второй тап за это время не пришёл (иначе lastTapTime уже был бы
+      // сброшен в 0 выше) — это одиночный тап, закрываем, только если
+      // фото не приближено.
+      if (lastTapTime === tapTime && zoomScale <= 1.01) close();
+    }}, 300);
+  }}, {{ passive: false }});
+
+  overlay.addEventListener("wheel", function (e) {{
+    e.preventDefault();
+    var delta = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    var newScale = Math.max(1, Math.min(MAX_ZOOM, zoomScale * delta));
+    if (newScale === zoomScale) return;
+    zoomScale = newScale;
+    var clamped = clampPan(zoomScale, panX, panY);
+    panX = clamped.x; panY = clamped.y;
+    setTransform(false);
+  }}, {{ passive: false }});
+
+  // Мышь: обычный клик закрывает лайтбокс, двойной — приближает/сбрасывает
+  // (та же логика, что для тача выше — двойной клик рождает ДВА click перед
+  // dblclick, поэтому закрытие по первому клику откладываем на время,
+  // достаточное отличить его от начала двойного, и отменяем, если dblclick
+  // всё же случился).
+  var mouseClickTimer = null;
+  overlay.addEventListener("click", function () {{
+    if (zoomScale > 1.01) return;
+    clearTimeout(mouseClickTimer);
+    mouseClickTimer = setTimeout(close, 220);
+  }});
+  overlay.addEventListener("dblclick", function (e) {{
+    clearTimeout(mouseClickTimer);
+    toggleZoom(e.clientX, e.clientY);
+  }});
   hostDoc.addEventListener("keydown", function (e) {{ if (e.key === "Escape") close(); }});
   document.addEventListener("click", function (e) {{
     var target = e.target;
