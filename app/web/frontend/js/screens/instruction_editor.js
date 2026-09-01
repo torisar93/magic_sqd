@@ -8,7 +8,8 @@
 
   const BLOCK_TYPE_LABELS = {
     h1: "Заголовок", h2: "Подзаголовок", p: "Текст", steps: "Шаги",
-    warn: "Важно", danger: "Осторожно", photo: "Фото", html: "HTML-код",
+    warn: "Важно", danger: "Осторожно", photo: "Фото",
+    qr_adb: "QR-код ADB (флешка)", html: "HTML-код",
   };
 
   let dialog, listEl, previewFrame;
@@ -106,6 +107,15 @@
       textarea.value = block.text || "";
       textarea.addEventListener("input", () => { block.text = textarea.value; });
       row.appendChild(textarea);
+    } else if (block.type === "qr_adb") {
+      // Фиксированный текст (см. app/instruction_html.py:_render_block) —
+      // одна и та же процедура одинакова для всех моделей на этой платформе
+      // (svlog.flag на флешку → инженерное меню/ADB/QR → QNX OK → пароль),
+      // поэтому редактировать тут нечего, в отличие от остальных блоков.
+      row.appendChild(el("div", {
+        class: "app-desc",
+        text: "Стандартный текст процедуры (флешка + svlog.flag → QR-код → QNX OK → пароль ADB), не редактируется.",
+      }));
     } else if (block.type === "photo") {
       const photoRow = el("div", { class: "row" });
       const nameLabel = el("span", {
