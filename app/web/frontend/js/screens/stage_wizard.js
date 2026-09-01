@@ -867,14 +867,27 @@
   // отдельный тип этапа, а не ADB-команда (см. app/qr_adb_password.py за
   // самим расчётом). Инлайново на странице этапа, а не отдельным диалогом —
   // это полноценный этап мастера, а не второстепенное действие.
+  // Каждый шаг — своя карточка (номер + текст + при необходимости
+  // действие СРАЗУ под своим текстом), а не общий список шагов сверху и
+  // все кнопки отдельно внизу — раньше взгляд метался вверх-вниз-вверх-вниз
+  // между описанием и соответствующей ему кнопкой (см. фидбэк техника).
+  function qrAdbStepCard(number, text, extra) {
+    const body = el("div", { class: "qr-adb-step-body" }, [el("p", { text })]);
+    if (extra) for (const node of [].concat(extra)) body.appendChild(node);
+    return el("div", { class: "qr-adb-step" }, [
+      el("div", { class: "qr-adb-step-num", text: String(number) }),
+      body,
+    ]);
+  }
+
   async function renderQrAdbStage(panel) {
     const driveSelect = el("select", { style: "flex: 1" });
     const showAllCheckbox = el("input", { type: "checkbox" });
 
-    const writeBtn = el("button", { class: "accent", text: "1. Записать файл-триггер на флешку" });
+    const writeBtn = el("button", { class: "accent", text: "Записать файл-триггер на флешку" });
     const writeStatusEl = el("p", { style: "color: var(--text-dim); font-size: 12px" });
 
-    const getBtn = el("button", { class: "accent", text: "4. Получить пароль" });
+    const getBtn = el("button", { class: "accent", text: "Получить пароль" });
     const resultBox = el("div", { class: "field", style: "display: none" });
     const codeEl = el("div", { class: "qr-adb-code" });
     const metaEl = el("p", { style: "color: var(--text-dim); font-size: 12px" });
@@ -916,6 +929,11 @@
     });
 
     getBtn.addEventListener("click", async () => {
+      // Обновляем список — после того как флешку вынули и вставили обратно
+      // (шаг 2-4), старый список из шага 1 мог устареть.
+      const previousLetter = driveSelect.value;
+      await refreshDrives();
+      if (drives.some((d) => d.letter === previousLetter)) driveSelect.value = previousLetter;
       const drive = currentDrive();
       if (!drive) { await window.notice("Выберите флешку из списка."); return; }
       getBtn.disabled = true;
@@ -934,7 +952,7 @@
         }
       } finally {
         getBtn.disabled = false;
-        getBtn.textContent = "4. Получить пароль";
+        getBtn.textContent = "Получить пароль";
       }
     });
     copyBtn.addEventListener("click", async () => {
@@ -948,25 +966,23 @@
     });
     showAllCheckbox.addEventListener("change", refreshDrives);
 
-    panel.appendChild(el("ol", {}, [
-      el("li", { text: "Вставьте флешку в этот компьютер, выберите её ниже и запишите на неё файл-триггер." }),
-      el("li", { text: "Вставьте эту же флешку в магнитолу, зайдите в инженерное меню, откройте пункт «ADB» и оставайтесь на экране с QR-кодом." }),
-      el("li", { text: "Дождитесь на экране магнитолы надписи «QNX OK», затем извлеките флешку." }),
-      el("li", { text: "Вставьте флешку обратно в этот компьютер и нажмите «Получить пароль» ниже." }),
-    ]));
-    panel.appendChild(el("div", { class: "field row" }, [
-      driveSelect,
-      el("button", { text: "Обновить", onclick: refreshDrives }),
-    ]));
-    panel.appendChild(el("label", { class: "row" }, [
-      showAllCheckbox, document.createTextNode(" Показать все диски (если нужной флешки нет в списке)"),
-    ]));
-    panel.appendChild(writeBtn);
-    panel.appendChild(writeStatusEl);
-    panel.appendChild(el("hr"));
-    panel.appendChild(getBtn);
-    panel.appendChild(resultBox);
-    panel.appendChild(errorEl);
+    panel.appendChild(qrAdbStepCard(1,
+      "Вставьте флешку в этот компьютер, выберите её ниже и запишите на неё файл-триггер.",
+      [
+        el("div", { class: "field row" }, [driveSelect, el("button", { text: "Обновить", onclick: refreshDrives })]),
+        el("label", { class: "row" }, [
+          showAllCheckbox, document.createTextNode(" Показать все диски (если нужной флешки нет в списке)"),
+        ]),
+        writeBtn,
+        writeStatusEl,
+      ]));
+    panel.appendChild(qrAdbStepCard(2,
+      "Вставьте эту же флешку в магнитолу, зайдите в инженерное меню, откройте пункт «ADB» и оставайтесь на экране с QR-кодом."));
+    panel.appendChild(qrAdbStepCard(3,
+      "Дождитесь на экране магнитолы надписи «QNX OK», затем извлеките флешку."));
+    panel.appendChild(qrAdbStepCard(4,
+      "Вставьте флешку обратно в этот компьютер (в тот же разъём — список дисков не обновится сам) и нажмите «Получить пароль».",
+      [getBtn, resultBox, errorEl]));
     refreshDrives();
   }
 

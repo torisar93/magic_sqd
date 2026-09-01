@@ -1154,6 +1154,37 @@ dialog h2 {
   font-size: 16px;
 }
 
+.qr-adb-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.qr-adb-step-num {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-2);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.qr-adb-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.qr-adb-step-body > p:first-child {
+  margin-top: 0;
+}
+
 .qr-adb-code {
   font-family: var(--font-mono);
   font-size: 28px;
