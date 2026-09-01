@@ -97,7 +97,7 @@ _LIGHTBOX_CSS = f"""
 
 INSTRUCTION_CSS = f"""
   body {{
-    font-family: "Segoe UI", Arial, sans-serif; margin: 20px 16px; max-width: 760px;
+    font-family: "Segoe UI", Arial, sans-serif; margin: 20px 22px; max-width: 760px;
     margin-inline: auto; background: {theme.BG_CARD}; color: {theme.TEXT}; font-size: 15.5px;
   }}
   h1 {{

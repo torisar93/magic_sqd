@@ -703,6 +703,7 @@
     Bridge.call("adb_disconnect", {});
     Bridge.call("usb_disconnect", {});
     showScreen("wizard");
+    closePhotoLightbox();
     clear(wizardContentEl);
     // Пока реальные этапы ещё не загрузились — скрываем панели ADB/флешки,
     // иначе на долю секунды видно их состояние от ПРЕДЫДУЩЕЙ модели (или
@@ -1041,6 +1042,7 @@
   // мастеру или пикеру; и только если деться больше некуда — реально выйти
   // из приложения (Kotlin делает это по возврату "exit").
   window.__handleBackPress = function () {
+    if (closePhotoLightbox()) return "handled";
     if (closeDismissibleModal()) return "handled";
     if (logOverlayEl.classList.contains("open")) { setLogOpen(false); return "handled"; }
     if (screenWizard.classList.contains("active")) {
@@ -1106,7 +1108,33 @@
     render();
   }
 
+  // Лайтбокс фото инструкции (см. app/instruction_html.py: LIGHTBOX_SCRIPT)
+  // на Android живёт не внутри iframe этапа, а прямо в этом, верхнем
+  // документе (см. комментарий про topWin/window.frameElement там же) —
+  // потому что у iframe с инструкцией нет своего скролла, и position:fixed
+  // внутри него не считает настоящий видимый экран. Обратная сторона: если
+  // iframe, который его открыл, потом уничтожается (замена содержимого
+  // мастера — см. render() ниже, или системный "назад", см.
+  // __handleBackPress) БЕЗ явного закрытия лайтбокса самим тапом/эскейпом —
+  // его открывшие обработчики (click/keydown), навешанные ИЗ ТОГО iframe,
+  // умирают вместе с его JS-контекстом, и оверлей остаётся видимым, но
+  // навсегда не реагирующим ни на что — ровно баг "открыл фото, нажал
+  // системное назад, закрыть больше никак". Закрываем его отсюда напрямую
+  // (этот код всегда живёт в самом верхнем документе, его контекст не
+  // умирает вместе с iframe этапа) при каждой смене содержимого мастера и
+  // как первый пункт обработки "назад" — раньше самого лайтбокса тут ничего
+  // не знало вообще.
+  function closePhotoLightbox() {
+    const overlay = document.getElementById("magicsqd-lightbox");
+    if (!overlay || !overlay.classList.contains("is-open")) return false;
+    overlay.classList.remove("is-open");
+    const img = overlay.querySelector("img");
+    if (img) { img.removeAttribute("src"); img.style.transform = ""; img.style.opacity = ""; }
+    return true;
+  }
+
   function render() {
+    closePhotoLightbox();
     clear(wizardContentEl);
     if (!stages.length) {
       wizardContentEl.appendChild(el("p", { class: "stage-text", text: "Для этой модели нет заданных этапов установки." }));
