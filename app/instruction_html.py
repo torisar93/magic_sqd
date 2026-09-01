@@ -96,9 +96,18 @@ _LIGHTBOX_CSS = f"""
 """
 
 INSTRUCTION_CSS = f"""
+  /* padding (не margin) для бокового отступа текста — margin-inline: auto
+     ниже нужен ТОЛЬКО чтобы центрировать блок на широком (десктопном)
+     экране, когда max-width реально ограничивает ширину; на узком
+     телефонном экране, где центрировать нечего (containing block уже уже
+     760px), margin-left/right при auto-раскладке блока резолвятся в 0 —
+     он с самого начала СХЛОПЫВАЛ отступ на телефоне, который тут пытались
+     задать через margin (тот же margin: 20px 22px), а не только на этом
+     широком max-width. padding это не затрагивает никогда. */
   body {{
-    font-family: "Segoe UI", Arial, sans-serif; margin: 20px 22px; max-width: 760px;
-    margin-inline: auto; background: {theme.BG_CARD}; color: {theme.TEXT}; font-size: 15.5px;
+    font-family: "Segoe UI", Arial, sans-serif; box-sizing: border-box;
+    padding: 20px 22px; max-width: 760px; margin: 0 auto;
+    background: {theme.BG_CARD}; color: {theme.TEXT}; font-size: 15.5px;
   }}
   h1 {{
     font-size: 21px; font-weight: 700; letter-spacing: -.2px; color: {theme.TEXT};
