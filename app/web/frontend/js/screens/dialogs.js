@@ -147,6 +147,98 @@
   })();
 
   // ==================================================================
+  // Пароль ADB по QR-коду (открывается из components/settings.js) — см.
+  // app/qr_adb_password.py за самим алгоритмом. Список дисков — та же
+  // usb_list_drives, что и у usb-диалога выше, отдельной ручки для этого
+  // не заводили.
+  // ==================================================================
+  const qrAdb = (() => {
+    let dialog, driveSelect, showAllCheckbox, resultBox, codeEl, metaEl, errorEl, getBtn, closeBtn, copyBtn;
+    let drives = [];
+
+    function init() {
+      dialog = document.getElementById("qr-adb-dialog");
+      driveSelect = document.getElementById("qr-adb-drive");
+      showAllCheckbox = document.getElementById("qr-adb-show-all");
+      resultBox = document.getElementById("qr-adb-result-box");
+      codeEl = document.getElementById("qr-adb-code");
+      metaEl = document.getElementById("qr-adb-meta");
+      errorEl = document.getElementById("qr-adb-error");
+      getBtn = document.getElementById("qr-adb-get");
+      closeBtn = document.getElementById("qr-adb-close");
+      copyBtn = document.getElementById("qr-adb-copy");
+
+      document.getElementById("qr-adb-refresh").addEventListener("click", refreshDrives);
+      showAllCheckbox.addEventListener("change", refreshDrives);
+      getBtn.addEventListener("click", onGet);
+      copyBtn.addEventListener("click", onCopy);
+      closeBtn.addEventListener("click", () => dialog.close());
+    }
+
+    async function refreshDrives() {
+      drives = await window.pywebview.api.usb_list_drives(showAllCheckbox.checked);
+      clear(driveSelect);
+      for (const d of drives) {
+        const option = document.createElement("option");
+        option.value = d.letter;
+        option.textContent = d.display;
+        driveSelect.appendChild(option);
+      }
+    }
+
+    function showResult(result) {
+      errorEl.style.display = "none";
+      resultBox.style.display = "";
+      codeEl.textContent = result.code;
+      metaEl.textContent = `SN: ${result.sn} · ${result.logs_folder}/${result.zip_name}`;
+    }
+
+    function showError(message) {
+      resultBox.style.display = "none";
+      errorEl.style.display = "";
+      errorEl.textContent = message;
+    }
+
+    async function onGet() {
+      const drive = drives.find((d) => d.letter === driveSelect.value);
+      if (!drive) {
+        await window.notice("Выберите флешку из списка.");
+        return;
+      }
+      getBtn.disabled = true;
+      getBtn.textContent = "Ищу...";
+      try {
+        const result = await window.pywebview.api.qr_adb_get_password(drive.letter);
+        if (result.ok) showResult(result);
+        else showError(result.error);
+      } finally {
+        getBtn.disabled = false;
+        getBtn.textContent = "Получить пароль";
+      }
+    }
+
+    async function onCopy() {
+      try {
+        await navigator.clipboard.writeText(codeEl.textContent);
+        copyBtn.textContent = "Скопировано";
+        setTimeout(() => { copyBtn.textContent = "Скопировать"; }, 1500);
+      } catch (_) {
+        window.notice(codeEl.textContent, { title: "Код" });
+      }
+    }
+
+    function open() {
+      resultBox.style.display = "none";
+      errorEl.style.display = "none";
+      showAllCheckbox.checked = false;
+      refreshDrives();
+      dialog.showModal();
+    }
+
+    return { init, open };
+  })();
+
+  // ==================================================================
   // Сообщить о проблеме (открывается из js/app.js по кнопке report-btn)
   // ==================================================================
   const report = (() => {
@@ -786,6 +878,7 @@
 
   function initDialogs() {
     usb.init();
+    qrAdb.init();
     report.init();
     adminLogin.init();
     admin.init();
@@ -795,6 +888,7 @@
   }
 
   window.usbDialog = usb;
+  window.qrAdbDialog = qrAdb;
   window.reportDialog = report;
   window.adminLoginDialog = adminLogin;
   window.adminDialog = admin;

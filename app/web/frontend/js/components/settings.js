@@ -27,6 +27,7 @@
       <section class="settings-section"><h3>Хранилище</h3><p>Приложение: <strong>${formatBytes(info.app_bytes)}</strong> · кэш: <strong data-cache-size>${formatBytes(info.cache_bytes)}</strong></p><button class="danger" type="button" data-clear>Очистить кэш</button><small>Удаляются загруженные APK, файлы моделей и временные логи. Сценарии и настройки останутся на месте.</small></section>
       <section class="settings-section"><h3>Синхронизация</h3><p>${info.server_configured ? "Сервер подключён" : "Сервер не настроен"}</p><button type="button" data-sync>Проверить обновления сейчас</button><div data-toggles></div></section>
       <section class="settings-section"><h3>Диагностика</h3><p>Лог помогает найти проблему с подключением или установкой.</p><button type="button" data-copy-log>Скопировать лог</button><div data-debug-toggle></div></section>
+      <section class="settings-section"><h3>Пароль ADB по QR-коду</h3><p>Для моделей без Wi-Fi (Cityray, Atlas/Preface без значка Wi-Fi и т.п.) — вычислить пароль по флешке с логами магнитолы.</p><button type="button" data-qr-adb>Открыть...</button></section>
       <section class="settings-section"><h3>О приложении</h3><p data-version class="settings-version">Magic SQD v${info.app_version}</p><p data-admin-status class="settings-admin-status"></p><a href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener">GitHub проекта</a></section>`;
     document.body.appendChild(dialog);
     const close = () => { dialog.close(); dialog.remove(); };
@@ -41,6 +42,10 @@
       const preferences = await window.pywebview.api.settings_set_preferences({ [key]: value });
       document.documentElement.classList.toggle("reduce-motion", preferences.reduced_motion);
     }
+    dialog.querySelector("[data-qr-adb]").addEventListener("click", () => {
+      close();
+      window.qrAdbDialog.open();
+    });
     dialog.querySelector("[data-clear]").addEventListener("click", async (event) => {
       if (!(await window.confirmDialog("Очистить скачанные файлы и кэш? Их можно будет скачать снова."))) return;
       event.currentTarget.disabled = true;

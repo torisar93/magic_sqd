@@ -130,6 +130,35 @@
     </div>
   </dialog>
 
+  <dialog id="qr-adb-dialog">
+    <h2>Пароль ADB по QR-коду</h2>
+    <p style="color: var(--text-dim); font-size: 12px">
+      Для моделей без значка Wi-Fi: после того как на магнитоле появилась
+      надпись «QNX OK» (флешка с svlog.flag → инженерное меню → ADB → экран
+      с QR-кодом), выньте флешку, вставьте её сюда, в этот компьютер, и
+      выберите её из списка.
+    </p>
+    <div class="field row">
+      <select id="qr-adb-drive" style="flex: 1"></select>
+      <button id="qr-adb-refresh">Обновить</button>
+    </div>
+    <div class="field">
+      <label class="row"><input type="checkbox" id="qr-adb-show-all" /> Показать все диски (если нужной флешки нет в списке)</label>
+    </div>
+    <div class="field" id="qr-adb-result-box" style="display: none">
+      <div class="qr-adb-code" id="qr-adb-code"></div>
+      <div class="dialog-actions">
+        <button id="qr-adb-copy">Скопировать</button>
+      </div>
+      <p id="qr-adb-meta" style="color: var(--text-dim); font-size: 12px"></p>
+    </div>
+    <div class="callout danger" id="qr-adb-error" style="display: none"></div>
+    <div class="dialog-actions spread">
+      <button id="qr-adb-get" class="accent">Получить пароль</button>
+      <button id="qr-adb-close">Закрыть</button>
+    </div>
+  </dialog>
+
   <dialog id="report-dialog">
     <h2 id="report-dialog-title">Сообщить о проблеме</h2>
     <div class="field">

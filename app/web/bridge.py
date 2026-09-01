@@ -11,6 +11,7 @@ from pathlib import Path
 from .api.admin_api import AdminApi
 from .api.car_editor_api import CarEditorApi
 from .api.install_api import InstallApi
+from .api.qr_adb_api import QrAdbApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
 from .api.settings_api import DEBUG_LOG_ALL_MARKER, SettingsApi, is_under_program_files
@@ -48,6 +49,7 @@ class WebApi:
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
         self._usb = UsbApi(base_dir, self._scanner)
+        self._qr_adb = QrAdbApi()
         self._report = ReportApi(base_dir)
         self._admin = AdminApi(base_dir, self.apk_dir)
         # Раньше отдельная admin-сборка (admin_main_web.py, убрана) — теперь
@@ -159,6 +161,11 @@ class WebApi:
 
     def usb_cancel(self) -> dict:
         return self._usb.cancel()
+
+    # -- qr_adb_api -----------------------------------------------------
+    # Список дисков — тот же usb_list_drives выше, отдельного не заводим.
+    def qr_adb_get_password(self, drive_letter: str) -> dict:
+        return self._qr_adb.get_password(drive_letter)
 
     # -- report_api ------------------------------------------------------
     def report_get_info(self) -> dict:
