@@ -20,7 +20,7 @@
 ; crash.log, докачанный контент cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.7.0"
+#define MyAppVersion "0.7.1"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
