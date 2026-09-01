@@ -29,6 +29,7 @@
   let model = null;
   let stages = [];
   let loadError = null;
+  let loadErrorNeedsUpdate = false;
   let hasIntro = false;
   let currentIndex = 0;
   const done = new Set();
@@ -244,6 +245,7 @@
     personalApks = [];
     hasIntro = model.no_instruction;
     loadError = null;
+    loadErrorNeedsUpdate = false;
     stages = [];
     modelWifiPort = 5555;
     installCompletedShown = false;
@@ -251,6 +253,7 @@
     const result = await window.pywebview.api.install_load_stages(model.key);
     if (result.error) {
       loadError = result.error;
+      loadErrorNeedsUpdate = Boolean(result.needs_update);
     } else {
       stages = result.stages;
       modelWifiPort = result.wifi_port || 5555;
@@ -348,6 +351,23 @@
     clear(contentEl);
     if (loadError) {
       contentEl.appendChild(el("div", { class: "callout danger", text: loadError }));
+      if (loadErrorNeedsUpdate) {
+        contentEl.appendChild(el("button", {
+          class: "accent",
+          text: "Проверить обновления",
+          onclick: async (event) => {
+            event.currentTarget.disabled = true;
+            const found = await checkForUpdate();
+            if (!found) {
+              await window.notice(
+                "У вас уже установлена последняя доступная версия — подходящий "
+                  + "релиз для этой модели ещё не вышел. Попробуйте позже.",
+              );
+            }
+            event.currentTarget.disabled = false;
+          },
+        }));
+      }
       renderNav();
       return;
     }

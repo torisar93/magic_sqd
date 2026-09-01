@@ -10,6 +10,21 @@ class StageDefinitionError(RuntimeError):
     pass
 
 
+class UnknownStageTypeError(StageDefinitionError):
+    """type этапа не входит в STAGE_TYPES этой версии программы. Единственный
+    способ, которым такое значение вообще может попасть в сохранённый
+    stages.py — новый тип этапа, добавленный в более позднюю версию
+    редактора (см. app/web/frontend/js/screens/graph_wizard.js:
+    STEP_TYPE_LABELS) и уже сохранённый кем-то в модель на сервере: сама
+    модель корректна, просто ЭТА копия программы её ещё не умеет — не
+    поломанный stages.py и не ошибка автора модели. Ловится отдельно от
+    остальных StageDefinitionError в install_api.py, чтобы показать техника
+    понятную причину ("нужно обновить программу"), а не техническую
+    формулировку — см. историю: реальный инцидент 2026-09-01, когда именно
+    так выглядела уже сломанная для всех модель Geely Preface с ещё не
+    выпущенным типом этапа "qr_adb"."""
+
+
 def load_stages(model) -> list[dict]:
     """Загружает stages.py модели и возвращает провалидированный список этапов."""
     module = _load_module(model.stages_script)
@@ -23,8 +38,9 @@ def load_stages(model) -> list[dict]:
     for i, stage in enumerate(stages, start=1):
         stage_type = stage.get("type")
         if stage_type not in STAGE_TYPES:
-            raise StageDefinitionError(
-                f"Этап {i}: неизвестный type={stage_type!r}, ожидается один из {STAGE_TYPES}"
+            raise UnknownStageTypeError(
+                f"Этап {i}: неизвестный type={stage_type!r} — эта модель использует более новую "
+                "версию программы, ещё не поддерживаемую этой копией"
             )
         if not stage.get("title"):
             raise StageDefinitionError(f"Этап {i}: не задан title")

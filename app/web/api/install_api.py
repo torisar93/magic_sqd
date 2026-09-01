@@ -22,8 +22,8 @@ from ...content_sync import (fetch_manifest, filter_manifest, get_base_url, sync
                              sync_model_subfolder)
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir_with_remote
-from ...stage_runner import (StageDefinitionError, load_model_wifi, load_stages, load_wifi_port,
-                              stage_instruction_html_path)
+from ...stage_runner import (StageDefinitionError, UnknownStageTypeError, load_model_wifi, load_stages,
+                              load_wifi_port, stage_instruction_html_path)
 from .scanner_api import apk_to_dict
 
 _MANIFEST_CACHE_TTL_SECONDS = 60
@@ -96,6 +96,17 @@ class InstallApi:
             return {"stages": []}
         try:
             stages = load_stages(model)
+        except UnknownStageTypeError:
+            # Отдельно от StageDefinitionError ниже — это не поломанная
+            # модель, а модель для более новой версии программы (см.
+            # UnknownStageTypeError.__doc__). needs_update — фронтенд
+            # показывает по нему отдельный callout с кнопкой "Проверить
+            # обновления" вместо технического текста ошибки.
+            return {
+                "error": "Эта модель использует более новую версию программы, чем установлена у вас. "
+                         "Обновите программу, чтобы установка стала доступна.",
+                "needs_update": True,
+            }
         except StageDefinitionError as exc:
             return {"error": f"Ошибка в stages.py: {exc}"}
         except Exception as exc:  # noqa: BLE001 - показать пользователю любую ошибку загрузки скрипта
