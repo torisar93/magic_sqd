@@ -79,7 +79,26 @@
     // здесь применяется со следующего запуска, не сразу.
     const debugCheckbox = checkbox("Подробное логирование (для диагностики, со следующего запуска)",
       "debug_mode", info.debug_mode, async (_key, value) => {
-        await window.pywebview.api.settings_set_debug_mode(value);
+        const result = await window.pywebview.api.settings_set_debug_mode(value);
+        if (result.write_failed) {
+          debugCheckbox.querySelector("input").checked = false;
+          const permissionHint = info.under_program_files
+            ? "\n\nПохоже, программа установлена в Program Files, куда Windows "
+              + "не даёт писать без прав администратора. Решения:\n"
+              + "1) Запустить magic_sqd.exe один раз через правый клик → "
+              + "\"Запуск от имени администратора\";\n"
+              + "2) Или переустановить программу в папку, куда у вас есть "
+              + "доступ без прав администратора — например, в AppData (при "
+              + "установке выберите \"Установить только для меня\" вместо "
+              + "пути по умолчанию)."
+            : " Попробуйте запустить программу от имени администратора или "
+              + "переустановить её в папку, куда у вас есть доступ на запись.";
+          window.notice(
+            "Не удалось сохранить настройку: нет прав на запись в папку программы."
+              + permissionHint,
+            { title: "Не удалось включить логирование" },
+          );
+        }
       });
     dialog.querySelector("[data-debug-toggle]").append(debugCheckbox);
 

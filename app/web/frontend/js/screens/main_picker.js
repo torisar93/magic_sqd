@@ -81,7 +81,7 @@
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(renderCurrentStep, 150);
     });
-    backEl.addEventListener("click", showBrandStep);
+    backEl.addEventListener("click", goBackOneStep);
     settingsEl.addEventListener("click", () => window.settingsDialog.open());
     await reload();
   }
@@ -174,6 +174,11 @@
     selectedGroup = group;
     searchEl.value = "";
     renderCurrentStep();
+  }
+
+  function goBackOneStep() {
+    if (step === "modification") showModelStep(selectedBrand);
+    else showBrandStep();
   }
 
   function showModelListFor(model) {

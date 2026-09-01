@@ -13,7 +13,7 @@ from .api.car_editor_api import CarEditorApi
 from .api.install_api import InstallApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
-from .api.settings_api import DEBUG_LOG_ALL_MARKER, SettingsApi
+from .api.settings_api import DEBUG_LOG_ALL_MARKER, SettingsApi, is_under_program_files
 from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
@@ -73,6 +73,7 @@ class WebApi:
         return {
             "admin_mode": self.admin_mode, "debug_mode": self.debug_mode,
             "client_id": self.client_id, "is_win7": self.is_win7,
+            "under_program_files": is_under_program_files(self.base_dir),
         }
 
     # -- sync_api -----------------------------------------------------------

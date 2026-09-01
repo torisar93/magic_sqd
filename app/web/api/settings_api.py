@@ -24,6 +24,31 @@ from ...version import APP_VERSION
 DEBUG_LOG_ALL_MARKER = "DEBUG_LOG_ALL"
 
 
+def is_under_program_files(base_dir: Path) -> bool:
+    """True, если папка программы лежит в Program Files (обычной или x86) —
+    самая частая причина отказов записи (см. set_debug_mode/sync_api): по
+    умолчанию installer.iss ставит именно туда ({autopf}), а обычный
+    пользователь без прав администратора имеет туда только чтение. Нужно
+    отдельным флагом (а не просто "запись не удалась"), чтобы подсказать
+    ИМЕННО два рабочих варианта — "от администратора" или "переустановить в
+    AppData" — а не общее "нет прав", которое пользователь не знает, как
+    исправить."""
+    candidates = [os.environ.get(name) for name in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")]
+    try:
+        resolved = base_dir.resolve()
+    except OSError:
+        resolved = base_dir
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            resolved.relative_to(Path(candidate).resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 class SettingsApi:
     def __init__(self, base_dir: Path, cars_dir: Path, apk_dir: Path, admin_mode: bool = False):
         self.base_dir = base_dir
@@ -41,18 +66,26 @@ class SettingsApi:
             "preferences": self._preferences(),
             "app_version": APP_VERSION,
             "debug_mode": (self.base_dir / DEBUG_LOG_ALL_MARKER).exists(),
+            "under_program_files": is_under_program_files(self.base_dir),
         }
 
     def set_debug_mode(self, enabled: bool) -> dict:
         marker = self.base_dir / DEBUG_LOG_ALL_MARKER
+        write_failed = False
         try:
             if enabled:
                 marker.touch(exist_ok=True)
             else:
                 marker.unlink(missing_ok=True)
         except OSError:
-            pass
-        return {"debug_mode": marker.exists()}
+            # Обычно нет прав записи в папку программы (Program Files без
+            # админ-прав) — раньше это молча проглатывалось, и переключатель
+            # в интерфейсе выглядел включённым до следующего перезапуска,
+            # когда маркер (которого на самом деле никогда не было на диске)
+            # снова читался как отсутствующий. Сообщаем об этом явно (см.
+            # settings.js), чтобы не выглядело как "настройка не держится".
+            write_failed = enabled and not marker.exists()
+        return {"debug_mode": marker.exists(), "write_failed": write_failed}
 
     def preferences(self) -> dict:
         """Лёгкий вызов для старта: не обходит большие папки с данными."""
