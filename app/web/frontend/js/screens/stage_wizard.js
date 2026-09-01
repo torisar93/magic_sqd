@@ -11,7 +11,7 @@
     usb: "USB-флешка", adb: "ADB", manual: "Вручную на магнитоле",
     apps: "Установка приложений", exe: "Готовый установщик (.exe)",
     check: "Проверка/выбор", instruction: "Инструкция", uart: "UART", telnet: "Telnet",
-    actions: "ADB-команды",
+    actions: "ADB-команды", qr_adb: "Пароль ADB по QR-коду",
   };
 
   // Каким типам этапов реально нужен ADB — верхний бар подключения (см.
@@ -419,7 +419,7 @@
     const builders = {
       check: renderCheckStage, apps: renderAppsStage, manual: renderManualStage,
       usb: renderUsbStage, exe: renderExeStage, adb: renderAdbStage, uart: renderUartStage,
-      telnet: renderTelnetStage, actions: renderActionsStage,
+      telnet: renderTelnetStage, actions: renderActionsStage, qr_adb: renderQrAdbStage,
     };
     (builders[stage.type] || (() => {}))(panel, stage, getDevice);
     contentEl.appendChild(panel);
@@ -855,6 +855,85 @@
         },
       }),
     }));
+  }
+
+  // -- qr_adb ---------------------------------------------------------------
+  // Для моделей платформы Geely без Wi-Fi (Cityray, Atlas/Preface без
+  // значка Wi-Fi): техник уже прошёл процедуру на самой магнитоле (флешка
+  // с svlog.flag → инженерное меню → ADB → «QNX OK», см. блок инструкции
+  // "QR-код ADB (флешка)" в app/instruction_html.py) и вставил флешку
+  // обратно в этот компьютер — здесь она читается напрямую (не через ADB,
+  // магнитола на этом этапе даже не обязана быть подключена), поэтому это
+  // отдельный тип этапа, а не ADB-команда (см. app/qr_adb_password.py за
+  // самим расчётом). Инлайново на странице этапа, а не отдельным диалогом —
+  // это полноценный этап мастера, а не второстепенное действие.
+  async function renderQrAdbStage(panel) {
+    const driveSelect = el("select", { style: "flex: 1" });
+    const showAllCheckbox = el("input", { type: "checkbox" });
+    const resultBox = el("div", { class: "field", style: "display: none" });
+    const codeEl = el("div", { class: "qr-adb-code" });
+    const metaEl = el("p", { style: "color: var(--text-dim); font-size: 12px" });
+    const copyBtn = el("button", { text: "Скопировать" });
+    resultBox.append(codeEl, el("div", { class: "dialog-actions" }, [copyBtn]), metaEl);
+    const errorEl = el("div", { class: "callout danger", style: "display: none" });
+    const getBtn = el("button", { class: "accent", text: "Получить пароль" });
+
+    let drives = [];
+    async function refreshDrives() {
+      drives = await window.pywebview.api.usb_list_drives(showAllCheckbox.checked);
+      clear(driveSelect);
+      for (const d of drives) {
+        driveSelect.appendChild(el("option", { value: d.letter, text: d.display }));
+      }
+    }
+
+    getBtn.addEventListener("click", async () => {
+      const drive = drives.find((d) => d.letter === driveSelect.value);
+      if (!drive) { await window.notice("Выберите флешку из списка."); return; }
+      getBtn.disabled = true;
+      getBtn.textContent = "Ищу...";
+      try {
+        const result = await window.pywebview.api.qr_adb_get_password(drive.letter);
+        if (result.ok) {
+          errorEl.style.display = "none";
+          resultBox.style.display = "";
+          codeEl.textContent = result.code;
+          metaEl.textContent = `SN: ${result.sn} · ${result.logs_folder}/${result.zip_name}`;
+        } else {
+          resultBox.style.display = "none";
+          errorEl.style.display = "";
+          errorEl.textContent = result.error;
+        }
+      } finally {
+        getBtn.disabled = false;
+        getBtn.textContent = "Получить пароль";
+      }
+    });
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(codeEl.textContent);
+        copyBtn.textContent = "Скопировано";
+        setTimeout(() => { copyBtn.textContent = "Скопировать"; }, 1500);
+      } catch (_) {
+        window.notice(codeEl.textContent, { title: "Код" });
+      }
+    });
+    showAllCheckbox.addEventListener("change", refreshDrives);
+
+    panel.appendChild(el("p", {
+      text: "Вставьте флешку (ту же, что была в магнитоле) в этот компьютер и выберите её ниже.",
+    }));
+    panel.appendChild(el("div", { class: "field row" }, [
+      driveSelect,
+      el("button", { text: "Обновить", onclick: refreshDrives }),
+    ]));
+    panel.appendChild(el("label", { class: "row" }, [
+      showAllCheckbox, document.createTextNode(" Показать все диски (если нужной флешки нет в списке)"),
+    ]));
+    panel.appendChild(resultBox);
+    panel.appendChild(errorEl);
+    panel.appendChild(getBtn);
+    refreshDrives();
   }
 
   // -- exe --------------------------------------------------------------

@@ -99,7 +99,7 @@ class ActionSpec:
 
 @dataclass
 class StepSpec:
-    type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check" | "instruction" | "uart" | "telnet" | "actions"
+    type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check" | "instruction" | "uart" | "telnet" | "actions" | "qr_adb"
     title: str = ""
     description: str = ""
     # "instruction" — часть общей инструкции (заголовки/шаги/плашки/фото),
