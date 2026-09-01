@@ -168,6 +168,9 @@ object AdbSession {
     fun installApkLocalinstall(bytes: ByteArray, helperBytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
         installApkViaLocalinstall(requireTransport(), bytes, helperBytes, log = log)
 
+    fun installApkDexShell(bytes: ByteArray, apkName: String, helperBytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
+        installApkViaDexShell(requireTransport(), bytes, apkName, helperBytes, log = log)
+
     private fun requireTransport(): AdbTransport =
         transport ?: error("ADB не подключён — сначала нужно установить соединение с устройством")
 

@@ -328,3 +328,75 @@ fun installApkViaLocalinstall(
     runAdbShellCommand(transport, "monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)
     return AdbInstallResult.Success("localinstall: $pkg")
 }
+
+/**
+ * Тот же приём (app_process + helper через PackageInstaller.Session), что и
+ * installApkViaLocalinstall выше, но для платформы Geely OneOS (Atlas/
+ * CityRay/Preface) — helper взят буквально из стороннего бесплатного
+ * установщика (пользователь подтвердил, что использовать его можно), не
+ * переписан с нуля: захвачен и разобран через devtools/fake_adb_device.py
+ * (перехвачена точная команда запуска на трёх разных моделях — один и тот
+ * же .dex, один и тот же набор флагов), десктоп-версия: app/
+ * install_context.py: install_apk_dex_shell. helperBytes — содержимое
+ * cars/_shared/dex_shell_helper.dex. ENTRY_CLASS ниже — это РЕАЛЬНОЕ имя
+ * входной точки, скомпилированное внутри самого .dex (как есть, не наше) —
+ * без него app_process не найдёт нужный класс. --flags 0x116 — это ровно
+ * INSTALL_REPLACE_EXISTING(0x2) | INSTALL_ALLOW_TEST(0x4) |
+ * INSTALL_INTERNAL(0x10) | INSTALL_GRANT_RUNTIME_PERMISSIONS(0x100), как и
+ * в оригинале.
+ */
+private const val DEX_SHELL_ENTRY_CLASS = "MonjiShellInstaller"
+
+fun installApkViaDexShell(
+    transport: AdbTransport,
+    apkBytes: ByteArray,
+    apkName: String,
+    helperBytes: ByteArray,
+    log: (String) -> Unit,
+): AdbInstallResult {
+    val remoteApk = "/data/local/tmp/$apkName"
+    val remoteHelper = "/data/local/tmp/dex_shell_helper.dex"
+
+    val before = installedPackages(transport, log)
+
+    when (val r = syncPushBytes(transport, apkBytes, remoteApk, log)) {
+        is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
+        AdbPushResult.Success -> {}
+    }
+    runAdbShellCommand(transport, "chmod 644 $remoteApk", log)
+    when (val r = syncPushBytes(transport, helperBytes, remoteHelper, log)) {
+        is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
+        AdbPushResult.Success -> {}
+    }
+    runAdbShellCommand(transport, "chmod 644 $remoteHelper", log)
+
+    log("Устанавливаю через dex-хелпер (app_process, Geely OneOS)...")
+    val installResult = runAdbShellCommand(
+        transport,
+        "CLASSPATH=$remoteHelper app_process /data/local/tmp $DEX_SHELL_ENTRY_CLASS $remoteApk --flags 0x116",
+        log,
+        timeoutMs = 120000,
+    )
+    Thread.sleep(2000) // helper коммитит сессию установки асинхронно — даём системе время дописать пакет
+
+    val after = installedPackages(transport, log)
+    runAdbShellCommand(transport, "rm -f $remoteApk $remoteHelper", log)
+
+    val newPackages = after - before
+    if (newPackages.size != 1) {
+        val text = when (installResult) {
+            is AdbShellResult.Output -> installResult.text
+            is AdbShellResult.Rejected -> installResult.reason
+            is AdbShellResult.Failed -> installResult.reason
+        }
+        val candidates = if (newPackages.isEmpty()) "нет" else newPackages.joinToString(", ")
+        return AdbInstallResult.Failed(
+            "dex-хелпер не подтвердил успех (новых пакетов: $candidates): ${text.trim()}"
+        )
+    }
+    val pkg = newPackages.first()
+    AdbPermissions.grantAllPermissions(pkg, log)
+    runAdbShellCommand(transport, "am force-stop $pkg", log)
+    runAdbShellCommand(transport, "monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)
+    return AdbInstallResult.Success("dex_shell_install: $pkg")
+}

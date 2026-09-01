@@ -14,14 +14,16 @@ class InstallCancelled(RuntimeError):
 # Подписи для лога/сообщения об ошибке — по индексу в install_apk_auto ниже.
 _INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm install -S (поток)",
                           "app_process + localinstall.apk (Chery DesaySV)",
-                          "adb push + pm install -i (подмена установщика, Geely OneOS/NewEra)")
-# Те же 5 способов, но короткими устойчивыми ключами — хранятся в
+                          "adb push + pm install -i (подмена установщика, Geely OneOS/NewEra)",
+                          "app_process + dex-хелпер (PackageInstaller.Session, Geely OneOS)")
+# Те же 6 способов, но короткими устойчивыми ключами — хранятся в
 # StepSpec.apps_install_method/_wizard_spec.json/stages.py (см.
 # car_generator.py) как явная подсказка "начни перебор с этого способа",
 # когда автор модели уже знает, какой из них рабочий на этой магнитоле
 # (не жёсткая привязка — если он всё-таки не сработает, install_apk_auto
 # просто пойдёт дальше по остальным способам в обычном порядке).
-INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "localinstall", "pm_install_spoofed")
+INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "localinstall", "pm_install_spoofed",
+                        "dex_shell_install")
 
 # Платформа Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
 # блокирует обычный "pm install" на уровне прошивки; единственный найденный
@@ -36,6 +38,25 @@ INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "locali
 _LOCALINSTALL_HELPER_NAME = "chery_localinstall.apk"
 _LOCALINSTALL_REMOTE_APK = "/data/local/tmp/desaysv-install-target.apk"
 _LOCALINSTALL_REMOTE_HELPER = "/data/local/tmp/desaysv-localinstall.apk"
+
+# Тот же приём (app_process + helper через PackageInstaller.Session), что и
+# localinstall выше, но для платформы Geely OneOS (Atlas/CityRay/Preface) —
+# helper взят БУКВАЛЬНО из стороннего бесплатного установщика (пользователь
+# подтвердил, что использовать его можно), не переписан с нуля: захвачен и
+# разобран через devtools/fake_adb_device.py (перехвачена точная команда
+# запуска на трёх разных моделях — один и тот же .dex, один и тот же набор
+# флагов, см. cars/_shared/dex_shell_helper.dex). Класс "MonjiShellInstaller"
+# ниже — это РЕАЛЬНОЕ имя входной точки, скомпилированное внутри самого
+# .dex (как есть, не наше), а не название, которое мы выбираем сами — без
+# него app_process не найдёт нужный класс. --flags 0x116 — это ровно
+# INSTALL_REPLACE_EXISTING(0x2) | INSTALL_ALLOW_TEST(0x4) |
+# INSTALL_INTERNAL(0x10) | INSTALL_GRANT_RUNTIME_PERMISSIONS(0x100), как и
+# в оригинале, а не подобрано на глаз. В отличие от localinstall (Chery),
+# помещаем оба файла НЕ по фиксированному общему пути, а рядом с самим APK.
+_DEX_SHELL_HELPER_NAME = "dex_shell_helper.dex"
+_DEX_SHELL_REMOTE_HELPER = "/data/local/tmp/dex_shell_helper.dex"
+_DEX_SHELL_ENTRY_CLASS = "MonjiShellInstaller"  # см. пояснение выше — имя из самого .dex
+_DEX_SHELL_INSTALL_FLAGS = 0x116
 
 
 def _check_pm_install_result(result) -> None:
@@ -232,6 +253,8 @@ class InstallContext:
             self.install_apk_stream(path, extra_args=extra_args)
         elif method == 4:
             self.install_apk_pm_spoofed(path, extra_args=extra_args)
+        elif method == 5:
+            self.install_apk_dex_shell(path)
         else:
             self.install_apk_localinstall(path)
 
@@ -337,6 +360,45 @@ class InstallContext:
         if len(new_packages) != 1:
             text = ((result.stdout or "") + (result.stderr or "")).strip()
             raise AdbError(text or "localinstall не подтвердил успех (пакет не появился в списке)")
+        package = next(iter(new_packages))
+        self._grant_all_permissions_if_available(package)
+        self.shell(f"am force-stop {package}", check=False)
+        self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1", check=False)
+
+    def install_apk_dex_shell(self, path) -> None:
+        """Установка через helper cars/_shared/dex_shell_helper.dex — см.
+        _DEX_SHELL_HELPER_NAME выше за обоснованием и происхождением файла.
+        Ровно та же логика проверки успеха, что и install_apk_localinstall
+        (сравнение списка пакетов до/после) — с тем же обоснованием: разбор
+        самого .dex (см. историю в devtools/fake_adb_device.py) не дал
+        понятного маркера "Success" в stdout, надёжнее не привязываться к
+        точному формату его вывода."""
+        self.check_cancelled()
+        if not self.shared_dir:
+            raise AdbError("cars/_shared недоступна — dex_shell_helper.dex не найден")
+        helper = self.shared_dir / _DEX_SHELL_HELPER_NAME
+        if not helper.is_file():
+            raise AdbError(f"{_DEX_SHELL_HELPER_NAME} не найден в cars/_shared")
+        path = Path(path)
+        remote_apk = f"/data/local/tmp/{path.name}"
+        self.log(f"Установка APK (app_process + dex-хелпер, Geely OneOS): {path.name}")
+        before = self._installed_packages()
+        self.push(path, remote_apk)
+        self.shell(f"chmod 644 {remote_apk}", check=False)
+        self.push(helper, _DEX_SHELL_REMOTE_HELPER)
+        self.shell(f"chmod 644 {_DEX_SHELL_REMOTE_HELPER}", check=False)
+        result = self.shell(
+            f"CLASSPATH={_DEX_SHELL_REMOTE_HELPER} app_process /data/local/tmp {_DEX_SHELL_ENTRY_CLASS} "
+            f"{remote_apk} --flags {hex(_DEX_SHELL_INSTALL_FLAGS)}",
+            check=False)
+        self.sleep(2)
+        after = self._installed_packages()
+        self.shell(f"rm -f {remote_apk} {_DEX_SHELL_REMOTE_HELPER}", check=False)
+
+        new_packages = after - before
+        if len(new_packages) != 1:
+            text = ((result.stdout or "") + (result.stderr or "")).strip()
+            raise AdbError(text or "dex-хелпер не подтвердил успех (пакет не появился в списке)")
         package = next(iter(new_packages))
         self._grant_all_permissions_if_available(package)
         self.shell(f"am force-stop {package}", check=False)

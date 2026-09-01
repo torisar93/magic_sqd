@@ -186,6 +186,14 @@ class InstallEngine(
     // install -r) и есть INSTALL_METHODS[0], тот же, что уже был здесь
     // раньше по умолчанию — так что desktop-спека с "adb_install" просто
     // попадает в default-порядок, что и так правильно.
+    // Установленный перед КАЖДЫМ install(bytes, log) в installApks() ниже —
+    // единственный способ дать методу dex_shell_install (см. ниже) имя
+    // устанавливаемого APK: сигнатура методов в списке фиксирована
+    // (bytes, log) -> результат ещё с pm_install/localinstall, менять её
+    // ради одного нового способа не стали — closure просто читает текущее
+    // значение поля на момент вызова.
+    private var currentApkName: String = "install.apk"
+
     private val INSTALL_METHODS: List<Pair<String, (ByteArray, (String) -> Unit) -> AdbInstallResult>> = listOf(
         "pm_install" to AdbSession::installApk,
         "pm_install_stream" to AdbSession::installApkPmStream,
@@ -196,6 +204,14 @@ class InstallEngine(
                 AdbInstallResult.Failed("chery_localinstall.apk не найден в cars/_shared (ещё не синхронизирован?)")
             } else {
                 AdbSession.installApkLocalinstall(bytes, helper.readBytes(), methodLog)
+            }
+        },
+        "dex_shell_install" to { bytes, methodLog ->
+            val helper = File(context.filesDir, "cars/_shared/dex_shell_helper.dex")
+            if (!helper.exists()) {
+                AdbInstallResult.Failed("dex_shell_helper.dex не найден в cars/_shared (ещё не синхронизирован?)")
+            } else {
+                AdbSession.installApkDexShell(bytes, currentApkName, helper.readBytes(), methodLog)
             }
         },
     )
@@ -233,6 +249,7 @@ class InstallEngine(
                 log("Подписано: ${file.name}")
             }
             val bytes = signedFile.readBytes()
+            currentApkName = file.name
 
             if (confirmedMethod != null) {
                 val (_, install) = INSTALL_METHODS[confirmedMethod]
