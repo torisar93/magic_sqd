@@ -2,6 +2,7 @@
 "USB-флешка", см. stage_wizard.py/usb_dialog.py)."""
 from __future__ import annotations
 import shutil
+import zipfile
 from pathlib import Path
 
 from .install_context import InstallCancelled
@@ -71,6 +72,24 @@ class UsbContext:
     def copy_selected_apks(self, dest_relative_dir=""):
         for apk in self.selected_apks:
             self.copy_file(apk, str(Path(dest_relative_dir) / apk.name))
+
+    def extract_zip(self, zip_path, dest_relative_dir=""):
+        """Распаковывает .zip-архив в корень флешки (или подпапку) — часть
+        пакетов обновления (например Geely Coolray "Community Full") ждут
+        именно распакованное содержимое в корне FAT32-флешки, а не сам
+        .zip-файл (в отличие от файлов прошивки того же Coolray, которые
+        нужно класть В КОРЕНЬ КАК ЕСТЬ, без распаковки — см. copy_file для
+        этого случая)."""
+        self.check_cancelled()
+        zip_path = Path(zip_path)
+        dest_root = self.drive_root / dest_relative_dir
+        dest_root.mkdir(parents=True, exist_ok=True)
+        self.log(f"Распаковываю: {zip_path.name} -> /{dest_relative_dir}")
+        with zipfile.ZipFile(zip_path) as zf:
+            for member in zf.infolist():
+                self.check_cancelled()
+                zf.extract(member, dest_root)
+        self.log(f"Распаковано: {zip_path.name}")
 
     def write_text(self, dest_relative_path, content, encoding="utf-8"):
         self.check_cancelled()

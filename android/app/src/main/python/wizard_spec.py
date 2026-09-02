@@ -318,10 +318,15 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             "actions_connection": step_data.get("actions_connection", "wired"),
             "actions_wifi_port": step_data.get("actions_wifi_port"),
             "exe_file": exe_file,
-            "check_var": step_data.get("check_var", ""),
             "check_options": step_data.get("check_options", []),
-            "condition_var": step_data.get("condition_var", ""),
-            "condition_values": step_data.get("condition_values", []),
+            # Граф исполнения (см. app/car_generator.py: StepSpec.next/
+            # next_options — то же самое, что и на desktop, тот же формат
+            # _wizard_spec.json). id по умолчанию — позиция в списке, как и
+            # index выше, для моделей, ещё не пересохранённых после
+            # перехода на граф.
+            "id": step_data.get("id", i - 1),
+            "next": step_data.get("next"),
+            "next_options": step_data.get("next_options"),
             "variants": variants,
             "uart_baudrate": step_data.get("uart_baudrate", 115200),
             "actions": actions,

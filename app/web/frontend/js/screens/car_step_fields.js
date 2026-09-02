@@ -29,17 +29,12 @@
     "adb push <файл> <путь>, adb install <apk>, cat файл | pm install -S размер, TIMEOUT /T N.";
 
   // container — куда добавлять поля (вызывающий сам чистит его перед
-  // вызовом renderTypeFields/renderConditionFields); getSteps() — актуальный
-  // массив steps редактируемой машины (нужен renderConditionFields, чтобы
-  // найти check-этап по имени переменной); getBrandModel() -> {brand, model}
-  // (для шаблона инструкции по умолчанию); rerender() — полная перерисовка
-  // панели текущего этапа (после изменений, которые требуют перестроить
-  // форму, например переключение вариантов). options.hideCheckVarField —
-  // редактор-граф выражает condition_var проводами, а не текстовым полем:
-  // имя переменной генерируется автоматически (см. graph_wizard.js:
-  // generateCheckVar) и никогда не показывается пользователю.
-  function createStepFieldsController(container, getSteps, getBrandModel, rerender, options = {}) {
-    const { hideCheckVarField = false } = options;
+  // вызовом renderTypeFields); getSteps() — актуальный массив steps
+  // редактируемой машины; getBrandModel() -> {brand, model} (для шаблона
+  // инструкции по умолчанию); rerender() — полная перерисовка панели
+  // текущего этапа (после изменений, которые требуют перестроить форму,
+  // например переключение вариантов).
+  function createStepFieldsController(container, getSteps, getBrandModel, rerender) {
     let editingVariantIndex = 0;
 
     function buildSpoiler(title, bodyText) {
@@ -647,15 +642,8 @@
     function renderCheckFields(step) {
       container.appendChild(el("p", {
         class: "app-desc",
-        text: "Техник сам сверяется с магнитолой (версия аппаратного обеспечения, прошивки и т.п.) и выбирает подходящий вариант из списка ниже во время установки — опишите, как её проверить, в поле «Описание» выше.",
+        text: "Техник сам сверяется с магнитолой (версия аппаратного обеспечения, прошивки и т.п.) и выбирает подходящий вариант из списка ниже во время установки — опишите, как её проверить, в поле «Описание» выше. Куда ведёт каждый вариант — стрелками на холсте (у узла «Проверка/выбор» отдельный выход справа на каждый вариант).",
       }));
-      if (!hideCheckVarField) {
-        container.appendChild(el("span", { class: "field-label", text: "Имя переменной (короткое, латиницей, например hw_version)" }));
-        const varInput = el("input", { type: "text", style: "margin-bottom: 10px" });
-        varInput.value = step.check_var;
-        varInput.addEventListener("input", () => { step.check_var = varInput.value.trim(); });
-        container.appendChild(varInput);
-      }
 
       container.appendChild(el("span", { class: "field-label", text: "Варианты выбора" }));
       const optionsWrap = el("div");
@@ -677,6 +665,10 @@
           return;
         }
         step.check_options.push(value);
+        // next_options — строго параллельный check_options массив (индекс в
+        // индекс, см. car_generator.py: StepSpec.next_options) — новый
+        // вариант без своей стрелки пока никуда не ведёт (null).
+        step.next_options.push(null);
         newOptionInput.value = "";
         rerender();
       };
@@ -697,7 +689,11 @@
           el("span", { text: option }),
           el("button", {
             class: "danger icon-btn", text: "✕",
-            onclick: () => { step.check_options.splice(i, 1); rerender(); },
+            onclick: () => {
+              step.check_options.splice(i, 1);
+              step.next_options.splice(i, 1);
+              rerender();
+            },
           }),
         ]));
       });
@@ -730,59 +726,11 @@
       }));
     }
 
-    // -- условная видимость (для любого типа этапа) ------------------------
-    function availableCheckVars(excludeStep) {
-      const names = [];
-      for (const step of getSteps()) {
-        if (step === excludeStep) continue;
-        if (step.type === "check" && step.check_var && !names.includes(step.check_var)) names.push(step.check_var);
-      }
-      return names;
-    }
-
-    function renderConditionFields(step) {
-      const ALWAYS = "(всегда)";
-      container.appendChild(el("span", { class: "field-label", text: "Показывать этап только если (необязательно)", style: "margin-top: 12px" }));
-      const values = [ALWAYS, ...availableCheckVars(step)];
-      const current = step.condition_var || ALWAYS;
-      if (!values.includes(current)) values.push(current);
-      const select = el("select", { style: "margin-bottom: 4px" }, values.map((v) => el("option", { value: v, text: v, selected: v === current ? "" : null })));
-      const valuesWrap = el("div");
-
-      select.addEventListener("change", () => {
-        step.condition_var = select.value === ALWAYS ? "" : select.value;
-        step.condition_values = [];
-        rerender();
-      });
-      container.appendChild(select);
-      container.appendChild(el("span", { class: "field-label", text: "Значения, при которых этап нужен" }));
-      container.appendChild(valuesWrap);
-      renderConditionValues(step, valuesWrap);
-    }
-
-    function renderConditionValues(step, valuesContainer) {
-      clear(valuesContainer);
-      if (!step.condition_var) {
-        valuesContainer.appendChild(el("p", { class: "app-desc", text: "Выберите переменную выше" }));
-        return;
-      }
-      const owner = getSteps().find((s) => s.type === "check" && s.check_var === step.condition_var);
-      const options = owner ? owner.check_options : [];
-      if (!options.length) {
-        valuesContainer.appendChild(el("p", { class: "app-desc", text: "У этого этапа-переменной пока нет вариантов выбора." }));
-        return;
-      }
-      for (const option of options) {
-        const checkbox = el("input", { type: "checkbox" });
-        checkbox.checked = step.condition_values.includes(option);
-        checkbox.addEventListener("change", () => {
-          if (checkbox.checked) step.condition_values.push(option);
-          else step.condition_values = step.condition_values.filter((v) => v !== option);
-          rerender();
-        });
-        valuesContainer.appendChild(el("label", { class: "row" }, [checkbox, option]));
-      }
-    }
+    // Видимость этапов ("куда дальше") теперь только графом — стрелками на
+    // холсте (см. graph_wizard.js: renderWires/connectFlow/connectOption),
+    // никакого текстового виджета для этого больше нет (раньше был
+    // renderConditionFields, но createStepFieldsController используется
+    // только графом, где он сознательно не подключался).
 
     const typeBuilders = {
       adb: renderAdbFields, usb: renderUsbFields, apps: renderAppsFields,
@@ -810,7 +758,7 @@
       editingVariantIndex = 0;
     }
 
-    return { renderTypeFields, renderConditionFields, resetVariantIndex };
+    return { renderTypeFields, resetVariantIndex };
   }
 
   window.carStepFields = { createStepFieldsController };

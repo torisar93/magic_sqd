@@ -8,37 +8,29 @@
 //
 // Холст с pan/zoom, узлы как перетаскиваемые карточки, панель свойств
 // справа, авто-раскладка для моделей без сохранённых координат, Save/Cancel.
-// Провод порядка выполнения — от псевдо-узла "Начало" к первому шагу, затем
-// от каждого шага к следующему, СТРОГО по порядку массива steps (нет
-// отдельного состояния — провода каждый раз рисуются заново из текущего
-// порядка). Перетаскивание провода от нижнего сокета узла (или "Начала") на
-// верхний сокет другого узла переставляет этот узел в массиве steps сразу
-// после узла-источника.
-// Узлы "Проверка/выбор" получают отдельный выход-сокет на
-// каждый check_option; у любого узла есть вход "условие" (слева). "Имя
-// переменной" (check_var) — рудимент текстового мастера, тут не
-// показывается, генерируется автоматически (см. generateCheckVar) — условие
-// выражается исключительно проводом (можно сбросить и на верхний "поток"
-// сокет цели, и на левый "условие" — оба работают одинаково).
 //
-// Позиция узла в последовательности (steps) и условие видимости — разные
-// вещи, но связаны так: провод условия ПЕРЕСТАВЛЯЕТ узел сразу после узла
-// проверки, ТОЛЬКО если узел ещё "не привязан" (_detached — только что
-// создан, см. addNode, ни разу ещё не подключён НИКАКИМ проводом). Это
-// покрывает частый случай "N вариантов ведут в один и тот же следующий
-// этап": первый же провод условия и ставит новый узел на место, и задаёт
-// первое условие; второй и третий провод от других вариантов на ТОТ ЖЕ
-// узел (target уже не _detached) только добавляют значения в
-// condition_values, положение больше не трогая — поэтому узел слияния,
-// который уже стоит на своём месте (в том числе поставленный туда обычным
-// потоковым проводом отдельно), от повторных условий не дёргается — см.
-// connectConditionWire/applyCondition. Обычный провод потока (зелёный,
-// снизу узла/из "Начала" — см. connectFlow) всегда просто переставляет,
-// независимо от _detached — это единственный способ подвинуть уже
-// размещённый узел. Провода кликабельны для разрыва связи (см. detachFlow/
-// removeCondition/clearCondition), у сокетов входа — то же самое хватанием
-// напрямую; во время перетаскивания подходящие сокеты-цели увеличиваются
-// (см. highlightDropTargets) — маленькую точку иначе легко промахнуть.
+// Граф исполнения — полностью явный, никакого "порядка по списку +
+// отдельные условия" (см. историю: раньше был именно так, путало —
+// одновременно два разных вида проводов, узел мог "зависеть от условия
+// где-то в другом месте списка", а последовательное продолжение после
+// обычного шага не показывалось вовсе, если у цели уже было условие).
+// Теперь у КАЖДОГО узла, кроме "Проверка/выбор", РОВНО один вход (слева,
+// на него может прийти сколько угодно проводов от разных источников — это
+// нормально, значит несколько разных путей ведут к одному и тому же этапу)
+// и РОВНО один выход (справа) — во что он превращается, храним прямо в
+// самом узле (StepSpec.next — id следующего этапа или null, конец
+// установки). "Проверка/выбор" — тот же один вход слева, но отдельный
+// выход справа НА КАЖДЫЙ вариант (StepSpec.next_options, тот же индекс,
+// что и check_options). Порядок элементов в массиве steps ни на что не
+// влияет, КРОМЕ steps[0] — это всегда точка входа (провод от псевдо-узла
+// "Начало"); перетащить провод "Начала" на другой узел — сделать ЕГО
+// точкой входа (переставляет его на позицию 0, больше ничего не меняя).
+// Обычное перетаскивание провода между двумя узлами НИКОГДА не переставляет
+// их в массиве — просто записывает id цели в .next/.next_options[i]
+// источника. Провода кликабельны для разрыва связи, у входного сокета —
+// то же самое хватанием напрямую (убирает ВСЕ провода, ведущие в этот
+// узел, откуда бы они ни шли); во время перетаскивания подходящие
+// сокеты-цели увеличиваются (см. highlightDropTargets).
 (function () {
   const { el, clear } = window.dom;
   const { svgEl } = window.svgDom;
@@ -62,7 +54,9 @@
 
   const MIN_ZOOM = 0.4;
   const MAX_ZOOM = 2;
-  const LAYOUT_STEP_Y = 160;
+  // Слева направо, а не сверху вниз — коннекторы теперь только слева/
+  // справа узла (см. renderCanvas), и сам холст шире, чем выше.
+  const LAYOUT_STEP_X = 260;
   const LAYOUT_START = 40;
 
   let dialog, headerEl, viewportEl, worldEl, propsEl, addTypeSelect;
@@ -89,14 +83,19 @@
   let wireDragState = null;
   let startNodeEl = null;
   let wiresEl = null;
-  const START_POS = { x: 40, y: -80 };
+  // Слева от первого узла (тот стоит на LAYOUT_START по x), а не сверху —
+  // см. LAYOUT_STEP_X.
+  const START_POS = { x: -120, y: 40 };
 
-  // "Имя переменной" — рудимент текстового мастера, тут не показывается
-  // (см. car_step_fields.js: hideCheckVarField) — condition_var/check_var
-  // связаны исключительно проводами, поэтому генерируется автоматически и
-  // никогда не редактируется руками.
-  function generateCheckVar() {
-    return "check_" + Math.random().toString(36).slice(2, 8);
+  // Следующий свободный id для нового узла — максимальный уже занятый + 1
+  // (пересчитывается из текущего steps каждый раз, отдельного счётчика не
+  // держим — не нужно синхронизировать с undo/отменой и т.п.).
+  function nextFreeId() {
+    return 1 + steps.reduce((max, s) => Math.max(max, s.id ?? -1), -1);
+  }
+
+  function indexById(id) {
+    return steps.findIndex((s) => s.id === id);
   }
 
   function newStep(type) {
@@ -107,8 +106,8 @@
       standard_apks: [], standard_apks_optional: [], apps_connection: "wired", apps_install_method: "",
       actions_connection: "wired",
       exe_file: null, uart_baudrate: 115200, actions: [],
-      check_var: type === "check" ? generateCheckVar() : "", check_options: [],
-      condition_var: "", condition_values: [],
+      check_options: [],
+      id: null, next: null, next_options: [],
       variants: [],
       pos_x: 0, pos_y: 0,
     };
@@ -131,8 +130,7 @@
     // renderCanvas), а условная видимость другого узла — провод (см.
     // renderWires), и оба меняются из панели свойств, а не только с холста.
     stepFieldsController = window.carStepFields.createStepFieldsController(
-      propsEl, () => steps, () => ({ brand, model }), () => { renderCanvas(); renderProperties(); },
-      { hideCheckVarField: true });
+      propsEl, () => steps, () => ({ brand, model }), () => { renderCanvas(); renderProperties(); });
 
     clear(addTypeSelect);
     for (const [type, label] of Object.entries(STEP_TYPE_LABELS)) {
@@ -240,12 +238,16 @@
     }
     changelog = "";
     autoLayout();
-    // Модели, созданные/правленные классическим мастером (или графом до
-    // этого фикса), могут иметь check-этап без check_var (поле там
-    // необязательное) — без него нечего вешать на выходы вариантов на
-    // холсте, поэтому подставляем автоматически, тихо.
+    // id уже гарантированно проставлен car_generator.py:load_car_spec (даже
+    // для моделей, сохранённых до перехода на граф — там id считается по
+    // позиции в списке). Тут только подгоняем длину next_options под
+    // check_options — на случай, если варианты добавляли/убирали в
+    // старом текстовом формате, где next_options не было вовсе.
     steps.forEach((step) => {
-      if (step.type === "check" && !step.check_var) step.check_var = generateCheckVar();
+      if (step.type !== "check") return;
+      if (!Array.isArray(step.next_options)) step.next_options = [];
+      while (step.next_options.length < step.check_options.length) step.next_options.push(null);
+      step.next_options.length = step.check_options.length;
     });
 
     document.getElementById("graph-wizard-title").textContent = isPendingModel
@@ -276,8 +278,8 @@
   function autoLayout() {
     steps.forEach((step, i) => {
       if (!step.pos_x && !step.pos_y) {
-        step.pos_x = LAYOUT_START;
-        step.pos_y = LAYOUT_START + i * LAYOUT_STEP_Y;
+        step.pos_x = LAYOUT_START + i * LAYOUT_STEP_X;
+        step.pos_y = LAYOUT_START;
       }
     });
   }
@@ -425,7 +427,7 @@
     Array.from(worldEl.querySelectorAll(".graph-node, .graph-start-node")).forEach((n) => n.remove());
 
     const startOut = el("div", { class: "graph-socket graph-socket-out" });
-    startOut.addEventListener("mousedown", (e) => startWireDrag(e, -1, "flow"));
+    startOut.addEventListener("mousedown", (e) => startWireDrag(e, -1));
     startNodeEl = el("div", {
       class: "graph-start-node",
       style: `left: ${START_POS.x}px; top: ${START_POS.y}px`,
@@ -437,38 +439,33 @@
       const typeLabelEl = el("div", { class: "graph-node-type-label", text: LEGACY_STEP_TYPE_LABELS[step.type] || step.type });
       const header = el("div", { class: "graph-node-header" }, [titleEl, typeLabelEl]);
       const body = el("div", { class: "graph-node-body", text: step.description || "" });
+      // Один вход слева — сюда может прийти сколько угодно проводов от
+      // разных узлов (несколько разных путей ведут к одному и тому же
+      // этапу — это нормально). Хватание сокета напрямую убирает ВСЕ
+      // входящие провода разом (см. clearIncoming) — более "нащупываемый"
+      // способ разорвать связь, раз тонкую линию кликнуть трудно.
       const inSocket = el("div", { class: "graph-socket graph-socket-in" });
-      const outSocket = el("div", { class: "graph-socket graph-socket-out" });
-      // Вход "условие" — есть у ЛЮБОГО узла (не только у "check"), см.
-      // condition_var/condition_values — этап любого типа может быть скрыт
-      // условно за ответом какого-то более раннего "Проверка/выбор".
-      const conditionInSocket = el("div", { class: "graph-socket graph-socket-condition-in" });
-      outSocket.addEventListener("mousedown", (e) => startWireDrag(e, i, "flow"));
-      // Схватить сам вход (а не только кликнуть по проводу) — тоже
-      // отвязывает текущую связь; второй, более "нащупываемый" способ
-      // разорвать провод, раз тонкую линию кликнуть трудно.
-      inSocket.addEventListener("mousedown", (e) => { e.stopPropagation(); detachFlow(i); });
-      conditionInSocket.addEventListener("mousedown", (e) => {
-        e.stopPropagation();
-        if (step.condition_var) clearCondition(i);
-      });
+      inSocket.addEventListener("mousedown", (e) => { e.stopPropagation(); clearIncoming(step.id); });
 
-      const children = [inSocket, conditionInSocket, header, body];
+      const children = [inSocket, header, body];
 
-      // Выход по одному на каждый вариант выбора — только у "Проверка/
-      // выбор". Перетаскивание от такого выхода на вход "условие" другого
-      // узла — см. connectConditionWire.
-      if (step.type === "check" && step.check_options.length) {
+      if (step.type === "check") {
+        // "Проверка/выбор" — один выход НА КАЖДЫЙ вариант (справа), вместо
+        // общего выхода узла.
         const outputsWrap = el("div", { class: "graph-node-check-outputs" });
         step.check_options.forEach((option, optIndex) => {
-          const dot = el("div", { class: "graph-socket-condition-out" });
-          dot.addEventListener("mousedown", (e) => startWireDrag(e, i, "condition", optIndex));
+          const dot = el("div", { class: "graph-socket-check-out" });
+          dot.addEventListener("mousedown", (e) => startWireDrag(e, i, optIndex));
           outputsWrap.appendChild(el("div", { class: "graph-check-option-row" }, [el("span", { text: option }), dot]));
         });
         children.push(outputsWrap);
+      } else {
+        // Любой другой тип — ровно один выход справа.
+        const outSocket = el("div", { class: "graph-socket graph-socket-out" });
+        outSocket.addEventListener("mousedown", (e) => startWireDrag(e, i));
+        children.push(outSocket);
       }
 
-      children.push(outSocket);
       const node = el("div", {
         class: `graph-node graph-node-type-${step.type}` + (i === selectedIndex ? " selected" : ""),
         style: `left: ${step.pos_x}px; top: ${step.pos_y}px`,
@@ -484,16 +481,15 @@
   function socketPos(index, role) {
     if (index === -1) {
       const w = startNodeEl.offsetWidth, h = startNodeEl.offsetHeight;
-      return { x: START_POS.x + w / 2, y: START_POS.y + h };
+      return { x: START_POS.x + w, y: START_POS.y + h / 2 };
     }
     const nodes = worldEl.querySelectorAll(".graph-node");
     const node = nodes[index];
     const step = steps[index];
     if (!node || !step) return null;
     const w = node.offsetWidth, h = node.offsetHeight;
-    if (role === "in") return { x: step.pos_x + w / 2, y: step.pos_y };
-    if (role === "out") return { x: step.pos_x + w / 2, y: step.pos_y + h };
-    if (role === "condition-in") return { x: step.pos_x, y: step.pos_y + h / 2 };
+    if (role === "in") return { x: step.pos_x, y: step.pos_y + h / 2 };
+    if (role === "out") return { x: step.pos_x + w, y: step.pos_y + h / 2 };
     return null;
   }
 
@@ -505,7 +501,7 @@
     const node = nodes[index];
     const step = steps[index];
     if (!node || !step) return null;
-    const dots = node.querySelectorAll(".graph-socket-condition-out");
+    const dots = node.querySelectorAll(".graph-socket-check-out");
     const dot = dots[optionIndex];
     if (!dot) return null;
     return {
@@ -514,9 +510,11 @@
     };
   }
 
+  // Горизонтальная кривая (вход/выход теперь слева/справа узла, а не
+  // сверху/снизу) — выгибается по X, а не по Y.
   function wirePath(p1, p2) {
-    const midY = (p1.y + p2.y) / 2;
-    return `M ${p1.x} ${p1.y} C ${p1.x} ${midY}, ${p2.x} ${midY}, ${p2.x} ${p2.y}`;
+    const midX = (p1.x + p2.x) / 2;
+    return `M ${p1.x} ${p1.y} C ${midX} ${p1.y}, ${midX} ${p2.y}, ${p2.x} ${p2.y}`;
   }
 
   // Укорачивает отрезок p1->p2 на marginPx с каждого конца (линейно, не по
@@ -549,101 +547,77 @@
     clear(wiresEl);
     if (!steps.length) return;
 
-    // Поток выполнения — строго по порядку массива steps, "Начало" -> 0-й
-    // шаг -> 1-й -> ... Никакого отдельного состояния, провода — просто
-    // текущий порядок массива, нарисованный заново. НЕ рисуем основную
-    // стрелку во вход шага, у которого уже есть условие (condition_var) —
-    // его входящая связь полностью представлена проводом условия (ниже) —
-    // ИЛИ который помечен "не привязан" (_detached, см. addNode) — только
-    // что созданный шаг ничего не показывает, пока пользователь сам не
-    // протянет провод. Сами провода потока кликабельны — клик отвязывает
-    // целевой шаг от текущего места (см. detachFlow), после чего его можно
-    // перетащить проводом куда угодно заново.
-    if (!steps[0].condition_var && !steps[0]._detached) {
-      appendWire("graph-wire-flow", socketPos(-1, "out"), socketPos(0, "in"), () => detachFlow(0));
-    }
-    for (let i = 0; i < steps.length - 1; i++) {
-      if (steps[i + 1].condition_var || steps[i + 1]._detached) continue;
-      appendWire("graph-wire-flow", socketPos(i, "out"), socketPos(i + 1, "in"), () => detachFlow(i + 1));
-    }
+    // "Начало" -> steps[0] — steps[0] всегда точка входа (см. шапку файла).
+    // Не кликабелен на разрыв — единственный способ сменить точку входа —
+    // перетащить провод "Начала" на другой узел (см. onWireDragEnd), это
+    // ставит ЕГО на позицию 0 автоматически.
+    appendWire("graph-wire-flow", socketPos(-1, "out"), socketPos(0, "in"), null);
 
-    // "Слияние веток" — дополнительные провода потока в уже РАЗМЕЩЁННЫЙ
-    // узел от ДРУГИХ узлов (см. connectFlow: mergeSources) — единственная
-    // РЕАЛЬНАЯ позиция узла в последовательности по-прежнему одна (см. цикл
-    // выше, определяется порядком массива steps), эти провода её не
-    // меняют — только показывают "сюда же ведёт и эта ветка", раз после
-    // разных вариантов проверки реально исполняется только одна ветка, а
-    // остальные пропускаются (см. пояснение пользователю). Только для
-    // текущего сеанса редактирования, не сохраняются между открытиями —
-    // это чисто наглядность, а не отдельные данные модели.
-    steps.forEach((step, targetIndex) => {
-      if (!step._mergeSources || !step._mergeSources.length) return;
-      for (const sourceStep of step._mergeSources) {
-        const sourceIndex = steps.indexOf(sourceStep);
-        if (sourceIndex === -1) continue;
-        const from = socketPos(sourceIndex, "out");
-        const to = socketPos(targetIndex, "in");
-        if (!from || !to) continue;
-        appendWire("graph-wire-flow", from, to, () => removeMergeSource(targetIndex, sourceStep));
+    // Дальше — то, что реально хранится в самих узлах (StepSpec.next/
+    // next_options), а не порядок массива. Несколько узлов могут независимо
+    // указывать next на ОДИН и тот же id — тогда сюда просто придёт
+    // несколько проводов, это штатный случай "разные пути ведут к одному
+    // этапу" (см. отчёт пользователя), никакой отдельной обработки не
+    // требует: каждый источник рисует и разрывает СВОЙ провод сам по себе.
+    steps.forEach((step, i) => {
+      if (step.type === "check") {
+        step.check_options.forEach((_, optIndex) => {
+          const targetId = step.next_options[optIndex];
+          if (targetId == null) return;
+          const targetIndex = indexById(targetId);
+          if (targetIndex === -1) return;
+          const from = checkOptionSocketPos(i, optIndex);
+          const to = socketPos(targetIndex, "in");
+          if (!from || !to) return;
+          appendWire("graph-wire-flow", from, to, () => {
+            step.next_options[optIndex] = null;
+            renderWires();
+            if (selectedIndex === i) renderProperties();
+          });
+        });
+        return;
       }
-    });
-
-    // Условная видимость — провод от каждого значения check_options
-    // узла-владельца (condition_var) к входу "условие" зависимого узла.
-    // Кликабельны — клик убирает именно эту связь (см. removeCondition), не
-    // трогая остальные условия этого же узла.
-    steps.forEach((step, targetIndex) => {
-      if (!step.condition_var) return;
-      const ownerIndex = steps.findIndex((s) => s.type === "check" && s.check_var === step.condition_var);
-      if (ownerIndex === -1) return;
-      const owner = steps[ownerIndex];
-      for (const value of step.condition_values) {
-        const optionIndex = owner.check_options.indexOf(value);
-        if (optionIndex === -1) continue;
-        const from = checkOptionSocketPos(ownerIndex, optionIndex);
-        const to = socketPos(targetIndex, "condition-in");
-        if (!from || !to) continue;
-        appendWire("graph-wire-condition", from, to, () => removeCondition(targetIndex, value));
-      }
+      if (step.next == null) return;
+      const targetIndex = indexById(step.next);
+      if (targetIndex === -1) return;
+      const from = socketPos(i, "out");
+      const to = socketPos(targetIndex, "in");
+      if (!from || !to) return;
+      appendWire("graph-wire-flow", from, to, () => {
+        step.next = null;
+        renderWires();
+        if (selectedIndex === i) renderProperties();
+      });
     });
   }
 
   // Перетаскивание нового провода от сокета "выход" узла-источника —
-  // kind="flow": обычный поток (sourceIndex === -1 — псевдо-узел "Начало"),
-  // на вход "поток" другого узла — переставляет целевой узел в массиве
-  // steps сразу после источника (или в начало, если источник — "Начало").
-  // kind="condition": выход конкретного варианта узла "Проверка/выбор"
-  // (optionIndex) на вход "условие" другого узла — устанавливает
-  // condition_var/condition_values. Никакого отдельного состояния "проводов"
-  // нет — оба случая просто меняют steps, провода перерисовываются заново.
-  function startWireDrag(e, sourceIndex, kind, optionIndex) {
+  // sourceIndex === -1 значит источник — псевдо-узел "Начало".
+  // optionIndex задан только для выхода конкретного варианта узла
+  // "Проверка/выбор". Отпущено не над сокетом "вход" — просто отменяется
+  // (см. onWireDragEnd), никакое состояние не остаётся висеть.
+  function startWireDrag(e, sourceIndex, optionIndex) {
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault(); // см. onViewportMouseDown — иначе может начаться выделение текста
-    const from = kind === "condition" ? checkOptionSocketPos(sourceIndex, optionIndex) : socketPos(sourceIndex, "out");
+    const from = optionIndex === undefined ? socketPos(sourceIndex, "out") : checkOptionSocketPos(sourceIndex, optionIndex);
     if (!from) return;
-    const wireClass = kind === "condition" ? "graph-wire-condition" : "graph-wire-flow";
-    const tempPath = svgEl("path", { class: `graph-wire ${wireClass} graph-wire-dragging` });
+    const tempPath = svgEl("path", { class: "graph-wire graph-wire-flow graph-wire-dragging" });
     wiresEl.appendChild(tempPath);
-    wireDragState = { sourceIndex, kind, optionIndex, from, tempPath };
+    wireDragState = { sourceIndex, optionIndex, from, tempPath };
     document.addEventListener("mousemove", onWireDragMove);
     document.addEventListener("mouseup", onWireDragEnd);
-    highlightDropTargets(kind);
+    highlightDropTargets();
   }
 
-  // Пока идёт перетаскивание провода — увеличиваем все подходящие
-  // сокеты-цели (крупнее и заметнее, см. .graph-drop-target в graph.css):
-  // условие можно бросить и на вход "поток", и на вход "условие" (см.
-  // onWireDragEnd), оба увеличиваются разом. Маленькая (12px) точка на
-  // конце длинного перетаскивания — сама по себе источник промахов, из-за
-  // которых казалось, что часть проводов "не получается провести" (см.
-  // отчёт пользователя) — крупная цель решает это прямее, чем гадать,
-  // почему именно промахивается конкретное перетаскивание.
-  function highlightDropTargets(kind) {
-    const selector = kind === "condition"
-      ? ".graph-socket-in, .graph-socket-condition-in"
-      : ".graph-socket-in";
-    worldEl.querySelectorAll(selector).forEach((s) => s.classList.add("graph-drop-target"));
+  // Во время перетаскивания провода — увеличиваем сокет "вход" у всех узлов
+  // (крупнее и заметнее, см. .graph-drop-target в graph.css). Маленькая
+  // (12px) точка на конце длинного перетаскивания — сама по себе источник
+  // промахов, из-за которых казалось, что часть проводов "не получается
+  // провести" (см. отчёт пользователя) — крупная цель решает это прямее,
+  // чем гадать, почему именно промахивается конкретное перетаскивание.
+  function highlightDropTargets() {
+    worldEl.querySelectorAll(".graph-socket-in").forEach((s) => s.classList.add("graph-drop-target"));
   }
 
   function clearDropTargetHighlights() {
@@ -662,7 +636,7 @@
     document.removeEventListener("mousemove", onWireDragMove);
     document.removeEventListener("mouseup", onWireDragEnd);
     if (!wireDragState) return;
-    const { sourceIndex, kind, optionIndex, tempPath } = wireDragState;
+    const { sourceIndex, optionIndex, tempPath } = wireDragState;
     tempPath.remove();
     wireDragState = null;
 
@@ -672,212 +646,53 @@
     const hit = document.elementFromPoint(e.clientX, e.clientY);
     clearDropTargetHighlights();
 
-    if (kind === "flow") {
-      const socket = hit ? hit.closest(".graph-socket-in") : null;
-      const nodeEl = socket ? socket.closest(".graph-node") : null;
-      const targetIndex = nodeEl ? Array.from(worldEl.querySelectorAll(".graph-node")).indexOf(nodeEl) : -1;
-      if (targetIndex === -1) {
-        console.warn("graph_wizard: flow-wire drop missed a socket", { hit });
-        renderWires();
-        return;
-      }
-      try {
-        connectFlow(sourceIndex, targetIndex);
-      } catch (err) {
-        console.error("graph_wizard: connectFlow failed", err);
-        window.notice(`Не удалось переставить этап: ${err && err.message ? err.message : err}`,
-          { title: "Ошибка (сообщите об этом)", danger: true });
-      }
-      return;
-    }
-
-    // kind === "condition" — можно сбросить и на верхний (поток), и на левый
-    // (условие) сокет цели, оба принимаются одинаково — connectConditionWire
-    // только добавляет условие, положение узла никогда не трогает (см. его
-    // комментарий).
-    const flowSocket = hit ? hit.closest(".graph-socket-in") : null;
-    const conditionSocket = hit ? hit.closest(".graph-socket-condition-in") : null;
-    const targetSocket = flowSocket || conditionSocket;
-    const nodeEl = targetSocket ? targetSocket.closest(".graph-node") : null;
+    const socket = hit ? hit.closest(".graph-socket-in") : null;
+    const nodeEl = socket ? socket.closest(".graph-node") : null;
     const targetIndex = nodeEl ? Array.from(worldEl.querySelectorAll(".graph-node")).indexOf(nodeEl) : -1;
     if (targetIndex === -1) {
-      console.warn("graph_wizard: condition-wire drop missed a socket", { hit });
-      renderWires();
-      return;
-    }
-    // Промах молча "ничего не делал" бы при любой брошенной сюда ошибке
-    // (async-функция без await на месте вызова = отклонённый promise без
-    // видимой обратной связи) — раз пользователь сообщает "не работает"
-    // без явной причины, ловим и показываем явно, а не гадаем вслепую ещё раз.
-    connectConditionWire(sourceIndex, optionIndex, targetIndex).catch((err) => {
-      console.error("graph_wizard: connectConditionWire failed", err);
-      window.notice(`Не удалось задать условие: ${err && err.message ? err.message : err}`,
-        { title: "Ошибка (сообщите об этом)", danger: true });
-    });
-  }
-
-  // Переставляет movedStep сразу после sourceStep в массиве steps (null —
-  // в самое начало, см. "Начало"). Общая часть connectFlow/
-  // connectConditionWire — работает по ссылкам на объекты, а не по
-  // индексам, чтобы не зависеть от того, что индексы могли сместиться
-  // из-за предыдущих операций в той же перестановке.
-  function moveStepAfter(sourceStep, movedStep) {
-    if (movedStep === sourceStep) return;
-    const idx = steps.indexOf(movedStep);
-    if (idx === -1) return;
-    steps.splice(idx, 1);
-    if (sourceStep === null) {
-      steps.unshift(movedStep);
-    } else {
-      const insertIndex = steps.indexOf(sourceStep) + 1;
-      steps.splice(insertIndex, 0, movedStep);
-    }
-  }
-
-  // Реальная позиция шага в последовательности — только одна (steps —
-  // плоский массив, на нём и построена настоящая установка у техника, см.
-  // stage_runner.py — это НЕ трогаем). Первый провод потока на узел, пока
-  // он ещё "не привязан" (_detached — только что создан), ставит его на
-  // это единственное место. Если узел УЖЕ размещён и провод потока тянут
-  // на него ЕЩЁ РАЗ от ДРУГОГО узла — это не переезд, а "сюда же ведёт и
-  // эта ветка": добавляем источник в mergeSources (см. renderWires) —
-  // чисто наглядный доп.провод для случая "после разных вариантов проверки
-  // — общий следующий этап" (реально исполнится только одна из веток, но
-  // на холсте видно, что от каждой есть путь сюда).
-  function connectFlow(sourceIndex, targetIndex) {
-    if (sourceIndex === targetIndex) return;
-    if (targetIndex < 0 || targetIndex >= steps.length) return;
-    const targetStep = steps[targetIndex];
-    const sourceStepRef = sourceIndex === -1 ? null : steps[sourceIndex];
-
-    if (!targetStep._detached) {
-      if (sourceStepRef && sourceStepRef !== targetStep) {
-        targetStep._mergeSources = targetStep._mergeSources || [];
-        if (!targetStep._mergeSources.includes(sourceStepRef)) targetStep._mergeSources.push(sourceStepRef);
-      }
       renderWires();
       return;
     }
 
-    const selectedStepRef = selectedIndex !== null ? steps[selectedIndex] : null;
-    moveStepAfter(sourceStepRef, targetStep);
-    targetStep._detached = false;
-
-    selectedIndex = selectedStepRef ? steps.indexOf(selectedStepRef) : null;
-    renderCanvas();
-  }
-
-  function removeMergeSource(targetIndex, sourceStep) {
-    const step = steps[targetIndex];
-    if (!step || !step._mergeSources) return;
-    step._mergeSources = step._mergeSources.filter((s) => s !== sourceStep);
-    renderWires();
-  }
-
-  // Устанавливает condition_var/condition_values у targetStep по варианту
-  // checkStep.check_options[optionIndex] — общая часть connectConditionWire.
-  // Если у targetStep уже есть условие от ДРУГОЙ переменной — спрашивает
-  // подтверждение перед заменой (тот же принцип, что раньше был у
-  // выпадающего списка в панели свойств, см. car_step_fields.js).
-  // Возвращает false, если пользователь отменил замену.
-  async function applyCondition(checkStep, optionIndex, targetStep) {
-    const optionValue = checkStep.check_options[optionIndex];
-    if (optionValue === undefined) return false;
-    // check_var обычно уже проставлен автоматически (см. newStep/open) —
-    // это просто защитный запасной случай, если он всё же пуст.
-    if (!checkStep.check_var) checkStep.check_var = generateCheckVar();
-    if (targetStep.condition_var && targetStep.condition_var !== checkStep.check_var) {
-      const ok = await window.confirmDialog(
-        `Этап уже показывается по условию «${targetStep.condition_var}». Заменить на «${checkStep.check_var}»?`);
-      if (!ok) return false;
-      targetStep.condition_values = [];
-    }
-    targetStep.condition_var = checkStep.check_var;
-    if (!targetStep.condition_values.includes(optionValue)) targetStep.condition_values.push(optionValue);
-    return true;
-  }
-
-  // Провод условия НИКОГДА не переставляет узел в последовательности — это
-  // всегда исключительно работа потокового провода (см. connectFlow),
-  // независимо от того, новый узел или уже размещённый. Раньше условие
-  // заодно переставляло узел при первом перетаскивании (пока он "не
-  // привязан", см. _detached) — из-за этого узел слияния, к которому по
-  // очереди тянут условия от НЕСКОЛЬКИХ разных вариантов одного и того же
-  // check-этапа, срабатывал только на первое перетаскивание: оно
-  // переставляло узел к check-этапу, и только оно визуально "цепляло" (см.
-  // отчёт пользователя) — остальные условия тихо добавлялись в данные, но
-  // без видимого перемещения это выглядело как "не работает". Теперь
-  // положение и условие — полностью независимые действия: чтобы поместить
-  // новый узел в ветку, сначала тяните ОБЫЧНЫЙ (зелёный) провод потока для
-  // позиции, потом — сколько угодно оранжевых проводов условия с любых
-  // вариантов, в любом порядке, положение узла они не тронут.
-  async function connectConditionWire(checkIndex, optionIndex, targetIndex) {
-    const checkStep = steps[checkIndex];
-    const targetStep = steps[targetIndex];
-    if (!checkStep || !targetStep || checkStep === targetStep) {
-      renderWires();
-      return;
-    }
-    // Если цель ещё "не привязана" (_detached — только что созданный узел,
-    // ни разу ещё никуда не подключённый) — первый же провод условия
-    // заодно ставит её на место в последовательности сразу после узла
-    // проверки. Именно так собирается частый случай "3 варианта — 1
-    // общий следующий этап": первый провод и позиционирует, и задаёт
-    // условие; второй и третий (target уже НЕ detached) только добавляют
-    // ещё значения в condition_values, положение не трогая — поэтому узел
-    // слияния, уже размещённый явным потоковым проводом, от повторных
-    // условий не дёргается.
-    const selectedStepRef = selectedIndex !== null ? steps[selectedIndex] : null;
-    if (targetStep._detached) {
-      moveStepAfter(checkStep, targetStep);
+    if (sourceIndex === -1) {
+      // "Начало" -> узел: делаем ЕГО точкой входа — переставляем на
+      // позицию 0, больше ничего не меняя (никакие .next/.next_options не
+      // трогаем — это ортогонально тому, кто на кого ссылается).
+      const selectedStepRef = selectedIndex !== null ? steps[selectedIndex] : null;
+      const [moved] = steps.splice(targetIndex, 1);
+      steps.unshift(moved);
       selectedIndex = selectedStepRef ? steps.indexOf(selectedStepRef) : null;
+      renderCanvas();
+      return;
     }
-    await applyCondition(checkStep, optionIndex, targetStep);
-    targetStep._detached = false;
+
+    const source = steps[sourceIndex];
+    const target = steps[targetIndex];
+    if (!source || !target || source === target) {
+      renderWires();
+      return;
+    }
+    if (source.type === "check") {
+      source.next_options[optionIndex] = target.id;
+    } else {
+      source.next = target.id;
+    }
     renderCanvas();
     renderProperties();
   }
 
-  // Полностью отвязывает targetIndex от последовательности — переносит шаг
-  // в конец массива (нейтральное, всегда валидное место — steps не может
-  // остаться без реальной позиции, см. пояснение пользователю) И помечает
-  // его "не привязан" (_detached, как у только что созданного узла, см.
-  // addNode), чтобы renderWires() не рисовал ему НИКАКОГО входящего
-  // провода — ни от старого соседа, ни от нового (без этого шаг молча
-  // "переподключался" к тому, что теперь оказалось перед ним — это и была
-  // жалоба "не могу полностью отцепить"). Условие (condition_var/values),
-  // если было, не трогаем — это отдельная связь, рвётся через
-  // removeCondition/clearCondition.
-  function detachFlow(targetIndex) {
-    const step = steps[targetIndex];
-    if (!step) return;
-    const selectedStepRef = selectedIndex !== null ? steps[selectedIndex] : null;
-    steps.splice(targetIndex, 1);
-    steps.push(step);
-    step._detached = true;
-    selectedIndex = selectedStepRef ? steps.indexOf(selectedStepRef) : null;
-    renderCanvas();
-  }
-
-  function removeCondition(targetIndex, value) {
-    const step = steps[targetIndex];
-    if (!step) return;
-    step.condition_values = step.condition_values.filter((v) => v !== value);
-    if (!step.condition_values.length) step.condition_var = "";
+  // Убирает ВСЕ провода, ведущие в узел с этим id, откуда бы они ни шли —
+  // по хватанию его сокета "вход" напрямую (см. renderCanvas).
+  function clearIncoming(targetId) {
+    steps.forEach((s) => {
+      if (s.type === "check") {
+        s.next_options = s.next_options.map((v) => (v === targetId ? null : v));
+      } else if (s.next === targetId) {
+        s.next = null;
+      }
+    });
     renderWires();
-    if (selectedIndex === targetIndex) renderProperties();
-  }
-
-  // Убирает условие целиком (а не одно значение) — по хватанию сокета
-  // "условие" узла напрямую (см. renderCanvas), а не клику по конкретному
-  // проводу конкретного варианта.
-  function clearCondition(targetIndex) {
-    const step = steps[targetIndex];
-    if (!step) return;
-    step.condition_var = "";
-    step.condition_values = [];
-    renderWires();
-    if (selectedIndex === targetIndex) renderProperties();
+    renderProperties();
   }
 
   function selectNode(index) {
@@ -961,11 +776,10 @@
     } else {
       pos = viewportCenterWorld();
     }
-    // _detached — новый узел появляется НЕ привязанным ни к одному якорю
-    // (см. отчёт пользователя): renderWires() не рисует ему входящий провод,
-    // пока пользователь сам не перетащит на него провод потока/условия (см.
-    // connectFlow/connectConditionWire — они снимают флаг).
-    steps.push({ ...newStep(type), title: `Этап ${index + 1}`, pos_x: pos.x, pos_y: pos.y, _detached: true });
+    // Новый узел получает свободный id сразу (нужен, чтобы на него можно
+    // было провести провод немедленно) и появляется без единой связи — ни
+    // входящей, ни исходящей — пока пользователь сам не протянет провод.
+    steps.push({ ...newStep(type), id: nextFreeId(), title: `Этап ${index + 1}`, pos_x: pos.x, pos_y: pos.y });
     renderCanvas();
     selectNode(index);
   }
@@ -977,11 +791,9 @@
       return;
     }
     const [removedStep] = steps.splice(selectedIndex, 1);
-    // Убираем удалённый узел из чужих mergeSources (см. connectFlow) —
-    // иначе останется висячая ссылка на объект, которого больше нет в steps.
-    steps.forEach((step) => {
-      if (step._mergeSources) step._mergeSources = step._mergeSources.filter((s) => s !== removedStep);
-    });
+    // Убираем удалённый узел из чужих next/next_options — иначе останется
+    // висячая ссылка на id, которого больше нет в steps.
+    clearIncoming(removedStep.id);
     selectedIndex = null;
     renderCanvas();
     renderProperties();
@@ -1021,11 +833,8 @@
     }
 
     stepFieldsController.renderTypeFields(step);
-    // renderConditionFields (выпадающий список + чекбоксы, см.
-    // car_step_fields.js) сюда сознательно не подключаем — условная
-    // видимость здесь полностью выражается проводами на холсте (см.
-    // renderWires/connectConditionWire/removeCondition), дублировать её текстовым
-    // виджетом с автосгенерированным именем переменной незачем.
+    // "Куда дальше" отсюда не редактируется текстом — только проводами на
+    // холсте (см. renderWires/onWireDragEnd/clearIncoming).
   }
 
   // ------------------------------------------------------------------

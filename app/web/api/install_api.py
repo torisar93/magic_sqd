@@ -168,8 +168,15 @@ class InstallApi:
             "description": stage.get("description"),
             "instruction_html": (_inline_relative_images(html_path.read_text(encoding="utf-8"), html_path.parent)
                                   if html_path else None),
-            "condition_var": stage.get("condition_var"),
-            "condition_values": stage.get("condition_values"),
+            # Граф исполнения (см. car_generator.py: StepSpec.next/
+            # next_options) — id этого этапа и, для обычных типов, id
+            # следующего; "check" вместо этого несёт next_options (id на
+            # каждый вариант из check_options, тот же индекс). id по
+            # умолчанию — позиция в списке, для моделей, ещё не
+            # пересохранённых после перехода на граф.
+            "id": stage.get("id", index),
+            "next": stage.get("next"),
+            "next_options": stage.get("next_options"),
             "variant_names": stage.get("variant_names"),
             "standard_label": stage.get("standard_label", "Стандартные приложения"),
             "usb_copy_selected_apks": stage.get("usb_copy_selected_apks", False),
@@ -196,7 +203,6 @@ class InstallApi:
             # UART — порт Wi-Fi ADB чисто справочно (см. StepSpec.
             # uart_wifi_port) — не используется рантаймом.
             "uart_wifi_port": stage.get("uart_wifi_port"),
-            "check_var": stage.get("check_var", ""),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,
             "exe_name": Path(exe_path).name if exe_path else None,

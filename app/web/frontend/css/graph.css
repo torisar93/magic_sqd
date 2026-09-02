@@ -112,13 +112,11 @@
   pointer-events: none;
 }
 
+/* Один-единственный вид провода — узел явно хранит id следующего этапа
+   (см. graph_wizard.js), больше нет отдельного "потока" и "условия"
+   разными цветами (сообщено пользователем как главная причина путаницы). */
 .graph-wire-flow {
   stroke: var(--accent);
-}
-
-.graph-wire-condition {
-  stroke: var(--accent-2);
-  stroke-dasharray: 4 3;
 }
 
 /* Широкая прозрачная линия поверх видимого провода — только она ловит
@@ -159,15 +157,17 @@
   text-align: center;
 }
 
-/* Сокеты — вход/выход "поток" (верх/низ узла). Перетаскивание от выхода
-   одного узла (или "Начала") на вход другого переставляет узлы в steps —
-   см. graph_wizard.js: connectFlow. */
+/* Сокеты — вход (слева) / выход (справа). Ровно один вход и один выход у
+   любого узла, кроме "Проверка/выбор" (у него выход — отдельная точка на
+   каждый вариант, см. .graph-socket-check-out ниже). Перетаскивание от
+   выхода одного узла (или "Начала") на вход другого записывает id цели в
+   .next/.next_options источника — см. graph_wizard.js: onWireDragEnd. */
 .graph-socket {
   position: absolute;
-  left: 50%;
+  top: 50%;
   width: 12px;
   height: 12px;
-  margin-left: -6px;
+  margin-top: -6px;
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--bg-card);
@@ -180,11 +180,11 @@
 }
 
 .graph-socket-in {
-  top: -6px;
+  left: -6px;
 }
 
 .graph-socket-out {
-  bottom: -6px;
+  right: -6px;
 }
 
 /* Во время перетаскивания провода — увеличивает все подходящие сокеты-цели
@@ -196,16 +196,6 @@
   transform: scale(2.2);
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.18);
   z-index: 3;
-}
-
-/* Вход "условие" — левый край узла, отдельный цвет (совпадает с проводом
-   условия), есть у любого типа узла. */
-.graph-socket-condition-in {
-  left: -6px;
-  top: 50%;
-  margin-top: -6px;
-  margin-left: 0;
-  background: var(--accent-2);
 }
 
 /* Выходы по вариантам "Проверка/выбор" — обычные элементы потока (не
@@ -229,11 +219,11 @@
   color: var(--text-dim);
 }
 
-.graph-socket-condition-out {
+.graph-socket-check-out {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--accent-2);
+  background: var(--accent);
   border: 2px solid var(--bg-card);
   cursor: crosshair;
   flex-shrink: 0;
@@ -244,7 +234,7 @@
   margin-right: -6px;
 }
 
-.graph-socket-condition-out:hover {
+.graph-socket-check-out:hover {
   background: var(--accent-hover);
 }
 

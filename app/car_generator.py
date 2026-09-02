@@ -213,16 +213,32 @@ class StepSpec:
     exe_file: Path | None = None
     # "check" — техник вручную определяет версию/вариант (например,
     # аппаратного обеспечения или прошивки), глядя на саму магнитолу, и
-    # выбирает ответ из check_options; ответ живёт только в рамках текущего
-    # сеанса мастера установки (app/stage_wizard.py) под именем check_var —
-    # им можно управлять видимостью последующих этапов (condition_var ниже)
-    check_var: str = ""
+    # выбирает ответ из check_options.
     check_options: list[str] = field(default_factory=list)
-    # Условная видимость — для ЛЮБОГО типа этапа (не только "check"): этап
-    # показывается только если технику уже задавали check-этап с таким же
-    # check_var, и ответ входит в condition_values. Пусто — всегда показывать.
-    condition_var: str = ""
-    condition_values: list[str] = field(default_factory=list)
+    # Граф исполнения — КАЖДЫЙ этап явно знает, что идёт ПОСЛЕ него, вместо
+    # старой схемы "порядок по списку + отдельные условия видимости"
+    # (condition_var/condition_values — убраны совсем, вместе с check_var,
+    # который был нужен только для связи с ними по имени переменной).
+    # Порядок элементов в STAGES/steps теперь ЧИСТО для хранения/читаемости
+    # файла — исполнение всегда начинается с ПЕРВОГО элемента и дальше идёт
+    # по next/next_options, независимо от их позиции в списке (см.
+    # app/web/api/install_api.py: _stage_to_dict строит id -> index один
+    # раз и дальше ходит по этой карте). id стабилен для конкретного шага
+    # (присваивается при создании), пока сам шаг существует — так проводы
+    # в графе (app/web/frontend/js/screens/graph_wizard.js) переживают
+    # перетаскивание/переупорядочивание узлов на холсте.
+    # None — ещё не назначен (например только что созданный в коде StepSpec
+    # без явного id) — _write_model_files сама назначит свободный номер
+    # перед сохранением (см. _assign_step_ids), звать это вручную не нужно.
+    id: int | None = None
+    # Для ЛЮБОГО типа, кроме "check" — id следующего этапа, или None, если
+    # это последний этап (после него мастер показывает "Готово").
+    next: int | None = None
+    # Только для "check" — id следующего этапа для КАЖДОГО варианта из
+    # check_options (тот же индекс, что и у соответствующего варианта;
+    # None на этой позиции — для этого варианта дальше пока ничего не
+    # подключено, мастер покажет "Готово" сразу после выбора).
+    next_options: list[int | None] = field(default_factory=list)
     # Несколько вариантов содержимого "usb"/"apps" (например Full/Lite) —
     # техник выбирает нужный прямо на этапе установки. Пусто — обычное
     # поведение (один набор файлов, см. usb_files/standard_apks выше).
@@ -604,10 +620,10 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             actions_wifi_port=step_data.get("actions_wifi_port"),
             uart_wifi_port=step_data.get("uart_wifi_port"),
             exe_file=exe_file,
-            check_var=step_data.get("check_var", ""),
             check_options=step_data.get("check_options", []),
-            condition_var=step_data.get("condition_var", ""),
-            condition_values=step_data.get("condition_values", []),
+            id=step_data.get("id", i - 1),
+            next=step_data.get("next"),
+            next_options=step_data.get("next_options", []),
             variants=variants,
             pos_x=step_data.get("pos_x", 0.0),
             pos_y=step_data.get("pos_y", 0.0),
@@ -671,6 +687,21 @@ def _copy_path(src: Path, dst: Path, keep_paths: set[Path]) -> None:
         keep_paths.add(dst)
 
 
+def _assign_step_ids(spec: NewCarSpec) -> None:
+    """Назначает id всем этапам, у которых он ещё не задан (None — только
+    что созданный в коде StepSpec, id вручную никто не проставляет) —
+    следующее свободное целое после максимального уже занятого. Вызывается
+    из _write_model_files перед КАЖДЫМ сохранением (create_car/update_car),
+    так что об этом не нужно думать нигде, кроме graph_wizard.js (там
+    новый узел создаётся без id, addNode) и скриптов, собирающих StepSpec
+    напрямую (id можно не указывать вовсе)."""
+    next_free = 1 + max((s.id for s in spec.steps if s.id is not None), default=-1)
+    for step in spec.steps:
+        if step.id is None:
+            step.id = next_free
+            next_free += 1
+
+
 def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     """Пишет files/usb_files/install.py/stages.py/_wizard_spec.json в
     model_dir — общая часть create_car/update_car. Копирование файлов идёт
@@ -680,6 +711,7 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     самого себя; а то, что раньше было скопировано, но больше не входит ни
     в один этап (переименовали/удалили/переставили этапы местами), удаляем,
     чтобы не копились сироты."""
+    _assign_step_ids(spec)
     files_dir = model_dir / "files"
     files_dir.mkdir(parents=True, exist_ok=True)
     usb_root = model_dir / "usb_files"
@@ -879,10 +911,10 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "actions_wifi_port": step.actions_wifi_port,
                 "uart_wifi_port": step.uart_wifi_port,
                 "exe_file": step.exe_file.name if step.exe_file else None,
-                "check_var": step.check_var,
                 "check_options": step.check_options,
-                "condition_var": step.condition_var,
-                "condition_values": step.condition_values,
+                "id": step.id,
+                "next": step.next,
+                "next_options": step.next_options,
                 "pos_x": step.pos_x,
                 "pos_y": step.pos_y,
                 "uart_baudrate": step.uart_baudrate,
@@ -1259,14 +1291,16 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
         entry.append(f'        "title": {title!r},')
         if step.description:
             entry.append(f'        "description": {step.description!r},')
-        if step.condition_var:
-            entry.append(f'        "condition_var": {step.condition_var!r},')
-            entry.append(f'        "condition_values": {step.condition_values!r},')
-
+        entry.append(f'        "id": {step.id!r},')
         if step.type == "check":
-            entry.append(f'        "check_var": {step.check_var!r},')
+            # Граф исполнения для "check" — один следующий id НА КАЖДЫЙ
+            # вариант (см. StepSpec.next_options), а не общий "next".
             entry.append(f'        "check_options": {step.check_options!r},')
-        elif step.type == "apps":
+            entry.append(f'        "next_options": {step.next_options!r},')
+        else:
+            entry.append(f'        "next": {step.next!r},')
+
+        if step.type == "apps":
             apps_index += 1
             pack_name = "pack" if apps_index == 1 else f"pack_{apps_index}"
             pack_expr = f'Path(__file__).resolve().parent / "files" / "{pack_name}"'

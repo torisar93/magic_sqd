@@ -33,7 +33,6 @@
   let hasIntro = false;
   let currentIndex = 0;
   const done = new Set();
-  let vars = {};
   let chosenVariants = {};
   let appSelection = {};
   const sectionCollapsed = {};
@@ -239,7 +238,7 @@
     ensureMounted();
     model = selectedModel;
     done.clear();
-    vars = {};
+    historyStack.length = 0;
     chosenVariants = {};
     appSelection = {};
     personalApks = [];
@@ -297,36 +296,42 @@
   }
 
   // -- навигация ----------------------------------------------------------
-  function isStageVisible(stage) {
-    if (!stage.condition_var) return true;
-    return (stage.condition_values || []).includes(vars[stage.condition_var]);
-  }
+  // Граф исполнения — полностью явный (см. car_generator.py: StepSpec.next/
+  // next_options): каждый этап хранит id следующего этапа (или, для
+  // "check", отдельный id на каждый вариант) — никаких отдельных "условий"
+  // и переменных здесь больше нет, "куда дальше" известно СРАЗУ в момент
+  // выбора, а не вычисляется заново разбором накопленных где-то ответов.
+  // historyStack — реально пройденный путь (что конкретно привело сюда),
+  // а не "предыдущий индекс по порядку массива" — раньше "Назад" был
+  // способен привести на этап, к которому текущий путь на самом деле не
+  // имеет отношения (см. отчёт пользователя про несброшенные vars).
+  const historyStack = [];
 
-  function firstPageIndex() {
-    return hasIntro ? -1 : 0;
-  }
-
-  function nextVisibleIndex(index) {
-    let candidate = index + 1;
-    while (candidate < stages.length && !isStageVisible(stages[candidate])) candidate += 1;
-    return candidate;
-  }
-
-  function prevVisibleIndex(index) {
-    const floor = firstPageIndex();
-    let candidate = index - 1;
-    while (candidate > floor && !isStageVisible(stages[candidate])) candidate -= 1;
-    return candidate;
+  function indexById(id) {
+    return stages.findIndex((s) => s.id === id);
   }
 
   function goBack() {
-    show(prevVisibleIndex(currentIndex));
+    if (!historyStack.length) return;
+    show(historyStack.pop());
   }
 
-  function advanceAfter(index) {
+  // optionIndex — только для стадии типа "check": какой вариант выбрал
+  // техник (см. renderCheckStage) — next для остальных типов уже известен
+  // без выбора.
+  function advanceAfter(index, optionIndex) {
     if (index >= 0) done.add(index);
-    const nxt = nextVisibleIndex(index);
-    if (nxt >= stages.length) {
+    if (index === -1) {
+      // Интро (см. hasIntro) -> первый реальный этап — steps[0] всегда
+      // точка входа, по графу переходить ещё не от чего.
+      if (!stages.length) { renderNav(); return; }
+      historyStack.push(-1);
+      show(0);
+      return;
+    }
+    const stage = stages[index];
+    const nextId = stage.type === "check" ? (stage.next_options || [])[optionIndex] : stage.next;
+    if (nextId == null) {
       renderNav();
       if (stages.length) {
         log("Все этапы установки выполнены.");
@@ -337,7 +342,15 @@
       }
       return;
     }
-    show(nxt);
+    const nextIndex = indexById(nextId);
+    if (nextIndex === -1) {
+      // Ссылка на несуществующий id — не должно происходить у корректно
+      // сохранённой модели, но лучше тихо завершить установку, чем упасть.
+      renderNav();
+      return;
+    }
+    historyStack.push(index);
+    show(nextIndex);
   }
 
   function show(index) {
@@ -382,12 +395,16 @@
   }
 
   function renderNav() {
-    navBackBtn.disabled = currentIndex <= firstPageIndex();
+    navBackBtn.disabled = !historyStack.length;
     if (stages.length === 0) {
       navNextBtn.style.display = "none";
     } else {
       navNextBtn.style.display = "";
-      const isLast = nextVisibleIndex(currentIndex) >= stages.length;
+      // "check" — у разных вариантов может быть разное продолжение (или
+      // вовсе никакого), заранее неизвестно, пока техник не выбрал —
+      // всегда "Далее →", "Готово" тут не показываем.
+      const stage = currentIndex >= 0 ? stages[currentIndex] : null;
+      const isLast = stage && stage.type !== "check" && stage.next == null;
       navNextBtn.textContent = isLast ? "Готово" : "Далее →";
     }
     if (!stages.length) navLabelEl.textContent = "";
@@ -429,12 +446,6 @@
     }
 
     const panel = buildActionPanel(stage.type);
-    if (!isStageVisible(stage)) {
-      panel.appendChild(el("div", {
-        class: "callout",
-        text: "Этот этап не требуется при текущем выборе на этапе проверки — можно пропустить («Далее») или всё равно выполнить вручную.",
-      }));
-    }
 
     const builders = {
       check: renderCheckStage, apps: renderAppsStage, manual: renderManualStage,
@@ -630,17 +641,15 @@
 
   // -- check -------------------------------------------------------------
   function renderCheckStage(panel, stage) {
-    const checkVar = stage.check_var || "";
     const options = stage.check_options || [];
-    const current = vars[checkVar] || options[0] || "";
     panel.appendChild(el("span", { class: "field-label", text: "Выберите значение" }));
     const select = el("select", { style: "width: 100%" },
-      options.map((opt) => el("option", { value: opt, text: opt, selected: opt === current ? "" : null })));
+      options.map((opt, i) => el("option", { value: String(i), text: opt })));
     panel.appendChild(select);
-    nextAction = () => {
-      if (checkVar) vars[checkVar] = select.value;
-      advanceAfter(stage.index);
-    };
+    // Куда дальше — сразу известно по выбранному варианту (см.
+    // car_generator.py: StepSpec.next_options), а не по имени переменной,
+    // которую пришлось бы помнить до следующего "check"-этапа.
+    nextAction = () => advanceAfter(stage.index, select.selectedIndex);
   }
 
   // -- apps ----------------------------------------------------------------

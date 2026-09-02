@@ -31,7 +31,6 @@
   let model = null;
   let stages = [];
   let currentIndex = 0;
-  let vars = {};
   let nextAction = () => advanceAfter(currentIndex);
 
   // Классификация строки лога по русским ключевым словам — та же логика
@@ -692,7 +691,7 @@
   let appsConnectionChoice = {};
 
   function openWizard() {
-    vars = {};
+    historyStack.length = 0;
     currentIndex = 0;
     stages = [];
     appsSelection = {};
@@ -1055,7 +1054,7 @@
     if (closeDismissibleModal()) return "handled";
     if (logOverlayEl.classList.contains("open")) { setLogOpen(false); return "handled"; }
     if (screenWizard.classList.contains("active")) {
-      if (currentIndex > 0) { show(prevVisibleIndex(currentIndex)); return "handled"; }
+      if (historyStack.length) { goBack(); return "handled"; }
       showScreen("picker");
       return "handled";
     }
@@ -1080,26 +1079,29 @@
     return p.split("/").pop();
   }
 
-  function isStageVisible(stage) {
-    if (!stage.condition_var) return true;
-    return (stage.condition_values || []).includes(vars[stage.condition_var]);
+  // Граф исполнения — полностью явный (см. app/car_generator.py: StepSpec.
+  // next/next_options, тот же _wizard_spec.json/wizard_spec.py, что и на
+  // desktop) — каждый этап хранит id следующего (или, для "check", id на
+  // каждый вариант отдельно), никаких переменных/условий здесь больше нет.
+  // historyStack — реально пройденный путь, а не "предыдущий индекс по
+  // порядку массива" (тот же фикс, что и в desktop stage_wizard.js).
+  const historyStack = [];
+
+  function indexById(id) {
+    return stages.findIndex((s) => s.id === id);
   }
 
-  function nextVisibleIndex(index) {
-    let candidate = index + 1;
-    while (candidate < stages.length && !isStageVisible(stages[candidate])) candidate += 1;
-    return candidate;
+  function goBack() {
+    if (!historyStack.length) return;
+    show(historyStack.pop());
   }
 
-  function prevVisibleIndex(index) {
-    let candidate = index - 1;
-    while (candidate > 0 && !isStageVisible(stages[candidate])) candidate -= 1;
-    return candidate;
-  }
-
-  function advanceAfter(index) {
-    const nxt = nextVisibleIndex(index);
-    if (nxt >= stages.length) {
+  // optionIndex — только для стадии типа "check": какой вариант выбрал
+  // техник (см. renderCheckStage-эквивалент ниже).
+  function advanceAfter(index, optionIndex) {
+    const stage = stages[index];
+    const nextId = stage.type === "check" ? (stage.next_options || [])[optionIndex] : stage.next;
+    if (nextId == null) {
       log("Все этапы установки выполнены.");
       if (!installCompletedShown && stages.length) {
         installCompletedShown = true;
@@ -1108,7 +1110,13 @@
       renderNav();
       return;
     }
-    show(nxt);
+    const nextIndex = indexById(nextId);
+    if (nextIndex === -1) {
+      renderNav();
+      return;
+    }
+    historyStack.push(index);
+    show(nextIndex);
   }
 
   function show(index) {
@@ -1155,12 +1163,16 @@
   }
 
   function renderNav() {
-    wizardBackBtn.disabled = currentIndex <= 0;
+    wizardBackBtn.disabled = !historyStack.length;
     if (!stages.length) {
       wizardNextBtn.style.display = "none";
     } else {
       wizardNextBtn.style.display = "";
-      wizardNextBtn.textContent = nextVisibleIndex(currentIndex) >= stages.length ? "Готово" : "Далее";
+      // "check" — у разных вариантов может быть разное продолжение (или
+      // вовсе никакого), заранее неизвестно, пока техник не выбрал.
+      const stage = stages[currentIndex];
+      const isLast = stage && stage.type !== "check" && stage.next == null;
+      wizardNextBtn.textContent = isLast ? "Готово" : "Далее";
     }
     wizardPageLabel.textContent = stages.length ? `Этап ${currentIndex + 1} из ${stages.length}` : "";
   }
@@ -1520,9 +1532,6 @@
     if (stage.description) {
       page.appendChild(el("div", { class: "stage-text", text: stage.description }));
     }
-    if (!isStageVisible(stage)) {
-      page.appendChild(el("div", { class: "stage-text", style: "color: var(--text-dim)", text: "Этот этап можно пропустить при текущем выборе." }));
-    }
 
     nextAction = () => advanceAfter(stage.index);
 
@@ -1530,11 +1539,10 @@
       const options = stage.check_options || [];
       const select = el("select", {}, options.map((o) => el("option", { value: o, text: o })));
       page.appendChild(select);
-      nextAction = () => {
-        if (stage.check_var) vars[stage.check_var] = select.value;
-        log(`Проверка: ${stage.check_var} = ${select.value}`);
-        advanceAfter(stage.index);
-      };
+      // Куда дальше — сразу известно по выбранному варианту (см.
+      // app/car_generator.py: StepSpec.next_options), а не по имени
+      // переменной, которую пришлось бы помнить до следующего "check".
+      nextAction = () => advanceAfter(stage.index, select.selectedIndex);
     } else if (stage.type === "manual") {
       page.appendChild(el("p", { class: "stage-text", text: "Выполните шаги из инструкции на самой магнитоле, затем нажмите «Далее»." }));
     } else if (stage.type === "instruction") {
@@ -1876,7 +1884,7 @@
     logCmdInput = document.getElementById("log-cmd-input");
     logCmdRunBtn = document.getElementById("log-cmd-run");
 
-    wizardBackBtn.addEventListener("click", () => show(prevVisibleIndex(currentIndex)));
+    wizardBackBtn.addEventListener("click", goBack);
     wizardNextBtn.addEventListener("click", () => nextAction());
     adbConnectBtn.addEventListener("click", onAdbConnect);
     adbModeWiredBtn.addEventListener("click", () => {
