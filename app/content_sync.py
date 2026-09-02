@@ -294,10 +294,57 @@ def _download_one(base_url: str, remote_path: str, local_path: Path,
         return False
 
 
+LOCAL_EDIT_MARKER_FILENAME = "_local_edit.json"
+
+
+def mark_local_edit(model_dir: Path) -> None:
+    """Ставится car_editor_api.py сразу после локального сохранения правки
+    моделью, которая НЕ ушла напрямую на сервер (обычный техник — заявка
+    уходит на модерацию, сама папка модели на сервере пока не тронута, см.
+    _worker() в car_editor_api.py). Пока маркер стоит, sync_model_files/
+    sync_scripts ниже не перекачивают файлы этой модели с сервера — иначе
+    старая (домодерационная) версия с сервера тихо перезаписывала бы поверх
+    только что сделанную правку при следующей же попытке установки или при
+    следующем запуске программы (реальный баг: техник убрал APK из
+    обязательных, сохранил, а этап установки продолжал его ставить — файл
+    возвращался обратно из sync_model_files прямо перед стартом этапа)."""
+    try:
+        (model_dir / LOCAL_EDIT_MARKER_FILENAME).write_text(
+            json.dumps({"saved_at": time.time()}), encoding="utf-8")
+    except OSError:
+        pass  # не смертельно — просто в редком случае старое содержимое может вернуться из sync
+
+
+def clear_local_edit_marker(model_dir: Path) -> None:
+    """Обратное к mark_local_edit — вызывается после успешной публикации
+    (см. _worker(): ветка admin_base_url and admin_session_cookie), когда
+    локальная копия и так только что стала совпадать с сервером."""
+    try:
+        (model_dir / LOCAL_EDIT_MARKER_FILENAME).unlink()
+    except OSError:
+        pass
+
+
+def _has_local_edit(model_dir: Path) -> bool:
+    return (model_dir / LOCAL_EDIT_MARKER_FILENAME).exists()
+
+
+def _locally_edited_prefixes(cars_dir: Path) -> set[str]:
+    """Все "cars/<Марка>/<Модель>[/<Модификация>]" с маркером локальной
+    правки (см. mark_local_edit) — для sync_scripts ниже, который в отличие
+    от sync_model_files обходит все модели разом одним sync_tree."""
+    prefixes = set()
+    for marker_path in cars_dir.rglob(LOCAL_EDIT_MARKER_FILENAME):
+        model_dir = marker_path.parent
+        prefixes.add("cars/" + model_dir.relative_to(cars_dir).as_posix())
+    return prefixes
+
+
 def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
               log=lambda m: None, check_cancelled=lambda: None, skip_dirs: tuple = (),
               no_recurse_dirs: tuple = (), manifest: dict[str, dict] | None = None,
-              on_progress=lambda done, total, *args: None) -> int:
+              on_progress=lambda done, total, *args: None,
+              skip_prefixes: tuple = ()) -> int:
     """Скачивает из remote_subpath в local_dir всё, чего там ещё нет (или
     что отличается по размеру). skip_dirs/no_recurse_dirs — см.
     list_files_recursive. Возвращает число скачанных файлов; сетевые ошибки
@@ -319,7 +366,12 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
     если он есть у вызывающего — тогда список получаем локальной фильтрацией
     (filter_manifest) вместо отдельного сетевого обхода remote_subpath.
     None (по умолчанию) — старое поведение, обходим сами через
-    list_files_recursive (для старых серверов без манифеста и как фолбэк)."""
+    list_files_recursive (для старых серверов без манифеста и как фолбэк).
+
+    skip_prefixes — полные "cars/<Марка>/<Модель>[/<Модификация>]" моделей с
+    несогласованной с сервером локальной правкой (см. mark_local_edit) —
+    их содержимое целиком пропускаем, а не только сверяем по размеру/mtime,
+    иначе домодерационная версия с сервера тихо перезаписывала бы правку."""
     remote_subpath = remote_subpath.strip("/")
     if manifest is not None:
         items = filter_manifest(manifest, remote_subpath, skip_dirs=skip_dirs,
@@ -333,6 +385,10 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
             if exc.code != 404:
                 log(f"Не удалось получить список файлов с сервера ({remote_subpath}): {exc}")
             return 0
+
+    if skip_prefixes:
+        items = [item for item in items
+                 if not any(item["path"] == p or item["path"].startswith(p + "/") for p in skip_prefixes)]
 
     to_download: list[tuple[str, Path, float | None, int]] = []
     for item in items:
@@ -414,12 +470,16 @@ def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
     разворачивать их вглубь: они подтягиваются точечно прямо перед
     использованием конкретного USB-этапа (см. sync_shared_folder,
     app/web/api/usb_api.py). Молча ничего не делает, если server.json не
-    настроен."""
+    настроен. Модели с несогласованной локальной правкой (см.
+    mark_local_edit/_locally_edited_prefixes) пропускаются целиком — иначе
+    домодерационная версия stages.py/_wizard_spec.json с сервера тихо
+    затёрла бы правку уже при следующем запуске программы."""
     url = get_base_url(base_dir)
     if not url:
         return 0
     return sync_tree(url, "cars", cars_dir, log=log, skip_dirs=("files", "usb_files"),
-                      no_recurse_dirs=("cars/_shared",), manifest=manifest, on_progress=on_progress)
+                      no_recurse_dirs=("cars/_shared",), manifest=manifest, on_progress=on_progress,
+                      skip_prefixes=tuple(_locally_edited_prefixes(cars_dir)))
 
 
 _KNOWN_MODELS_FILENAME = "known_models.json"
@@ -596,6 +656,11 @@ def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=
     вернёт None и sync_tree сам откатится на обход по HTTP, как раньше."""
     url = get_base_url(base_dir)
     if not url:
+        return 0
+    if _has_local_edit(model.dir):
+        # См. mark_local_edit — модель только что отредактирована локально
+        # и ещё не одобрена/опубликована, старая версия с сервера не должна
+        # затирать правку прямо перед установкой.
         return 0
     if manifest is None:
         manifest = fetch_manifest(url)

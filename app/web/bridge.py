@@ -253,13 +253,13 @@ class WebApi:
         return self._car_editor.instruction_render_preview(blocks)
 
     def car_get_publish_target(self) -> dict:
-        return self._car_editor.get_publish_target()
+        return self._car_editor.get_publish_target(self.admin_mode)
 
     def car_admin_login(self, base_url: str, username: str, password: str) -> dict:
         return self._car_editor.admin_login(base_url, username, password)
 
     def car_save(self, spec_data: dict, edit_model_key) -> dict:
-        return self._car_editor.save(spec_data, edit_model_key)
+        return self._car_editor.save(spec_data, edit_model_key, self.admin_mode)
 
     def car_cancel_save(self) -> dict:
         return self._car_editor.cancel_save()

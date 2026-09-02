@@ -31,6 +31,15 @@ _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _SALT_RE = re.compile(r"salt\s*=\s*\[([^\]]*)\]")
 _PASSWORD_RE = re.compile(r"password\s*=\s*\[([^\]]*)\]")
 _SN_RE = re.compile(r"\bsn\s*=\s*([A-Za-z0-9_.-]+)")
+# Реальный bugreport-*.txt — это полный дамп logcat, десятки мегабайт, где
+# "sn=" встречается тысячи раз в не связанных с ADB-паролем диагностических
+# строках (например DrFusionService печатает "sn=<счётчик>,time=..." на
+# каждый кадр). Поэтому sn нельзя искать по всему файлу первым совпадением
+# (было именно так и давало случайный неверный код на реальном устройстве,
+# см. отчёт техника) — реальный sn печатается тем же логгером сразу следующей
+# строкой после password=[...] (тег QRCodeDialog), поэтому ищем его только в
+# небольшом окне сразу после конца password-совпадения.
+_SN_SEARCH_WINDOW = 300
 
 
 def _hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
@@ -94,8 +103,12 @@ def _extract_fields(zip_path: Path) -> tuple[bytes, bytes, str]:
             content = zf.read(name).decode("utf-8", errors="ignore")
             salt_match = _SALT_RE.search(content)
             password_match = _PASSWORD_RE.search(content)
-            sn_match = _SN_RE.search(content)
-            if salt_match and password_match and sn_match:
+            if not (salt_match and password_match):
+                continue
+            sn_match = _SN_RE.search(
+                content, password_match.end(), password_match.end() + _SN_SEARCH_WINDOW
+            )
+            if sn_match:
                 salt = bytes(b & 0xFF for b in _parse_int_list(salt_match.group(1)))
                 password = bytes(b & 0xFF for b in _parse_int_list(password_match.group(1)))
                 return salt, password, sn_match.group(1).strip()

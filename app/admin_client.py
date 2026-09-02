@@ -18,6 +18,8 @@ import zipfile
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
+from .content_sync import LOCAL_EDIT_MARKER_FILENAME as _LOCAL_EDIT_MARKER_FILENAME
+
 CHUNK_SIZE = 1024 * 1024
 
 
@@ -126,7 +128,10 @@ def upload_model(base_url: str, session_cookie: str, cars_dir: Path, model_dir: 
         try:
             with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for file in model_dir.rglob("*"):
-                    if file.is_file():
+                    # _local_edit.json — чисто локальная пометка "эта копия
+                    # разошлась с сервером" (см. content_sync.py:
+                    # mark_local_edit), server её вообще не должен видеть.
+                    if file.is_file() and file.name != _LOCAL_EDIT_MARKER_FILENAME:
                         zf.write(file, file.relative_to(cars_dir))
                 for extra_dir in extra_dirs:
                     if not extra_dir.is_dir():
@@ -159,7 +164,7 @@ def upload_model_as(base_url: str, session_cookie: str, cars_dir: Path, model_di
         try:
             with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for file in model_dir.rglob("*"):
-                    if file.is_file():
+                    if file.is_file() and file.name != _LOCAL_EDIT_MARKER_FILENAME:
                         zf.write(file, f"{dest_root}/{file.relative_to(model_dir)}")
                 for extra_dir in extra_dirs:
                     if not extra_dir.is_dir():

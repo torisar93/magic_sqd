@@ -20,6 +20,10 @@ _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _SALT_RE = re.compile(r"salt\s*=\s*\[([^\]]*)\]")
 _PASSWORD_RE = re.compile(r"password\s*=\s*\[([^\]]*)\]")
 _SN_RE = re.compile(r"\bsn\s*=\s*([A-Za-z0-9_.-]+)")
+# См. app/qr_adb_password.py (desktop) — sn нельзя искать по всему файлу
+# первым совпадением (в реальном bugreport-*.txt "sn=" встречается тысячи
+# раз в несвязанных строках логов), только в окне сразу после password=[...].
+_SN_SEARCH_WINDOW = 300
 
 
 def _hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
@@ -62,7 +66,11 @@ def get_password_from_zip_b64(zip_b64: str) -> str:
                 content = zf.read(name).decode("utf-8", errors="ignore")
                 salt_match = _SALT_RE.search(content)
                 password_match = _PASSWORD_RE.search(content)
-                sn_match = _SN_RE.search(content)
+                sn_match = None
+                if salt_match and password_match:
+                    sn_match = _SN_RE.search(
+                        content, password_match.end(), password_match.end() + _SN_SEARCH_WINDOW
+                    )
                 if salt_match and password_match and sn_match:
                     salt = _parse_int_list(salt_match.group(1))
                     password = _parse_int_list(password_match.group(1))

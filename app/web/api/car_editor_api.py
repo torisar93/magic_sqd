@@ -23,7 +23,8 @@ from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cache
 from ...admin_config import get_admin_base_url
 from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec,
                                StandardApkSpec, StepSpec, StepVariant, create_car, load_car_spec, update_car)
-from ...content_sync import fetch_manifest, get_base_url, sync_model_subfolder
+from ...content_sync import (clear_local_edit_marker, fetch_manifest, get_base_url, mark_local_edit,
+                              sync_model_subfolder)
 from ...instruction_html import default_blocks, render_document
 from ...ping_client import get_or_create_client_id
 from ...submit_client import SubmitCancelled, SubmitError, submit_model
@@ -304,8 +305,14 @@ class CarEditorApi:
         return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
     # -- публикация на сервере после сохранения ----------------------------
-    def get_publish_target(self) -> dict:
-        admin_base_url = get_admin_base_url(self.base_dir)
+    def get_publish_target(self, admin_mode: bool = False) -> dict:
+        # admin_mode — реально разблокированный режим администратора (см.
+        # app/web/bridge.py: WebApi.admin_mode), а не просто наличие
+        # admin.json на диске (он есть в любой сборке — см. _worker за
+        # полным обоснованием того же самого фикса). Без этой проверки
+        # обычный техник видел запрос логина в админку, хотя должен просто
+        # сохранять локально и отправлять на модерацию без какого-либо входа.
+        admin_base_url = get_admin_base_url(self.base_dir) if admin_mode else None
         if admin_base_url:
             return {"mode": "admin", "base_url": admin_base_url,
                     "session_cached": get_cached_session(admin_base_url) is not None}
@@ -321,7 +328,7 @@ class CarEditorApi:
         return {"ok": True}
 
     # -- сохранение (создание/правка) — фоновый поток, прогресс через events --
-    def save(self, spec_data: dict, edit_model_key: str | None) -> dict:
+    def save(self, spec_data: dict, edit_model_key: str | None, admin_mode: bool = False) -> dict:
         if self._thread is not None and self._thread.is_alive():
             return {"ok": False, "error": "Сохранение уже выполняется."}
 
@@ -344,7 +351,7 @@ class CarEditorApi:
         )
 
         self._cancel_flag = threading.Event()
-        self._thread = threading.Thread(target=self._worker, args=(spec, edit_model_dir, is_pending), daemon=True)
+        self._thread = threading.Thread(target=self._worker, args=(spec, edit_model_dir, is_pending, admin_mode), daemon=True)
         self._thread.start()
         return {"ok": True}
 
@@ -359,7 +366,7 @@ class CarEditorApi:
     def _log(self, message) -> None:
         event_bridge.push({"kind": "car_save_log", "text": str(message)})
 
-    def _worker(self, spec: NewCarSpec, edit_model_dir, is_pending: bool = False) -> None:
+    def _worker(self, spec: NewCarSpec, edit_model_dir, is_pending: bool = False, admin_mode: bool = False) -> None:
         old_rel_path = None  # относительный путь ДО переименования (если оно было) — для удаления на сервере
         try:
             if edit_model_dir:
@@ -399,9 +406,31 @@ class CarEditorApi:
             event_bridge.push({"kind": "car_save_finished", "success": True, "message": "Сохранено."})
             return
 
-        admin_base_url = get_admin_base_url(self.base_dir)
+        # admin.json (адрес админ-API) шьётся в КАЖДУЮ сборку, не только
+        # админскую (см. app/web/bridge.py: WebApi.__init__) — раньше здесь
+        # проверялось только "есть ли admin_base_url на диске", а он есть
+        # всегда, поэтому обычный техник (без реально разблокированного
+        # admin_mode) молча проваливался мимо обеих веток ниже: ветка admin
+        # требовала сессии, которой у него нет и не будет, а ветка "submit"
+        # даже не рассматривалась (submit_config принудительно None, раз
+        # admin_base_url не пуст) — заявка на модерацию никуда не уходила,
+        # без единой ошибки в логе. Настоящий гейт — admin_mode (передан из
+        # bridge.py, живое значение на момент сохранения, не то, что было
+        # при старте программы).
+        admin_base_url = get_admin_base_url(self.base_dir) if admin_mode else None
         admin_session_cookie = get_cached_session(admin_base_url) if admin_base_url else None
         submit_config = get_submit_config(self.base_dir) if not admin_base_url else None
+
+        # Локальная копия только что стала отличаться от сервера (обычный
+        # техник — публикация ниже её ещё не коснулась, только заявка на
+        # модерацию). Ставим маркер заранее — даже если публикация ниже
+        # всё-таки случится и снимет его, до этого момента она может упасть
+        # (см. except-ветки) или вовсе не случиться (нет сохранённой сессии/
+        # submit.json), а между этим моментом и следующей попыткой
+        # установки этой модели sync_model_files не должен успеть затереть
+        # только что сохранённую правку версией с сервера (см.
+        # content_sync.py: mark_local_edit).
+        mark_local_edit(model_dir)
 
         if admin_base_url and admin_session_cookie:
             try:
@@ -411,6 +440,11 @@ class CarEditorApi:
                 upload_model(admin_base_url, admin_session_cookie, self.cars_dir, model_dir,
                              extra_dirs=extra_dirs, log=self._log, check_cancelled=self._check_cancelled)
                 self._log("Опубликовано на сервере.")
+                # Локальная копия только что стала совпадать с сервером —
+                # маркер (если остался от прошлой несинхронизированной
+                # правки) больше не нужен (см. mark_local_edit ниже/
+                # content_sync.py: sync_model_files/sync_scripts).
+                clear_local_edit_marker(model_dir)
                 if old_rel_path is not None:
                     old_rel = str(old_rel_path).replace("\\", "/")
                     try:

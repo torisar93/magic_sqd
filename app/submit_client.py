@@ -5,11 +5,12 @@ urllib.request.urlopen), чтобы отправлять файл кусками
 проверять отмену между кусками (прошивки — гигабайты, отправка не должна
 ни разбухать в памяти целиком, ни виснуть намертво по кнопке "Отмена")."""
 import http.client
-import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
+from .content_sync import LOCAL_EDIT_MARKER_FILENAME
 from .submit_config import SubmitConfig
 
 CHUNK_SIZE = 1024 * 1024
@@ -40,9 +41,19 @@ def submit_model(model_dir: Path, brand: str, model: str, config: SubmitConfig,
     исключение во время отправки."""
     with tempfile.TemporaryDirectory() as tmp:
         log("Упаковываю модель в архив...")
-        archive_base = Path(tmp) / "model"
+        archive_path = Path(tmp) / "model.zip"
         try:
-            archive_path = Path(shutil.make_archive(str(archive_base), "zip", root_dir=model_dir))
+            # Не shutil.make_archive (зеркалит всю папку как есть) — нужно
+            # исключить _local_edit.json, чисто локальную пометку "эта копия
+            # разошлась с сервером" (см. content_sync.py: mark_local_edit):
+            # разработчик её не должен видеть, а если бы её опубликовали как
+            # есть, она бы потом слепо прилетела и на машины других техников
+            # через content_sync, ошибочно помечая для них модель как
+            # локально отредактированную и блокируя её обновления навсегда.
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for file in model_dir.rglob("*"):
+                    if file.is_file() and file.name != LOCAL_EDIT_MARKER_FILENAME:
+                        zf.write(file, file.relative_to(model_dir))
         except OSError as exc:
             raise SubmitError(f"Не удалось собрать архив: {exc}") from exc
 
