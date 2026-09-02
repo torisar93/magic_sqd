@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ..events import event_bridge
 from ... import pending_submissions
-from ...admin_client import (AdminClientError, clear_cached_session, delete_submission,
+from ...admin_client import (AdminClientError, clear_cached_session, delete_cars_path, delete_submission,
                               download_submission, get_cached_session, list_submissions,
                               peek_submission, upload_model_as)
 from ...admin_config import get_admin_base_url
@@ -151,6 +151,20 @@ class SubmissionsApi:
     def _publish_worker(self, base_url, cookie, model: ModelInfo, key: str) -> None:
         try:
             self._log(f"Публикую {model.brand} / {model.name}...")
+            # upload_model_as ниже льёт строго слиянием и никогда сама не
+            # удаляет лишнее (см. тот же приём и полное обоснование в
+            # car_editor_api.py:_worker — если заявка правит уже
+            # опубликованную модель и что-то из неё убрала, старый файл
+            # иначе молча остался бы висеть на сервере). 404 (модели там
+            # ещё не было) — ожидаемо для действительно новой машины, не
+            # ошибка.
+            dest_rel = f"{model.brand}/{model.name}/{model.modification}" if model.modification \
+                else f"{model.brand}/{model.name}"
+            try:
+                delete_cars_path(base_url, cookie, dest_rel)
+            except AdminClientError as exc:
+                if "(404)" not in str(exc):
+                    raise
             upload_model_as(base_url, cookie, self.cars_dir, model.dir,
                              model.brand, model.name, model.modification or "", log=self._log)
             delete_submission(base_url, cookie, model.submission_name)

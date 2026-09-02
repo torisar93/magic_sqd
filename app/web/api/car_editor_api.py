@@ -434,6 +434,26 @@ class CarEditorApi:
 
         if admin_base_url and admin_session_cookie:
             try:
+                # upload_model ниже льёт строго слиянием (см. server/
+                # backend.py: _handle_cars_delete — "upload_dir/upload_model
+                # никогда сами не удаляют лишнее с сервера") — файл, который
+                # только что убрали из спеки (например APK из обязательных),
+                # локально пропадает из архива, но на сервере молча
+                # остаётся лежать в старой версии модели и потом снова
+                # подмешивается в список установки (см. install_api.py:
+                # standard_apks — сливает локальную папку с манифестом
+                # сервера). Поэтому сначала стираем текущую опубликованную
+                # версию этой модели целиком, а затем заливаем актуальную —
+                # реальный баг: техник убрал APK из обязательных, сохранил,
+                # опубликовал, а этап установки продолжал его предлагать.
+                new_rel = str(model_dir.relative_to(self.cars_dir)).replace("\\", "/")
+                try:
+                    delete_cars_path(admin_base_url, admin_session_cookie, new_rel)
+                except AdminClientError as exc:
+                    if "(404)" not in str(exc):
+                        raise
+                    # Модели ещё не было на сервере (первая публикация) —
+                    # нечего стирать, это ожидаемо, а не ошибка.
                 self._log("Упаковываю в архив...")
                 shared_names = {s.usb_shared_folder for s in spec.steps if s.usb_shared_folder}
                 extra_dirs = [self.cars_dir / "_shared" / name for name in shared_names]
