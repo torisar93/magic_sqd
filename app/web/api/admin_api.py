@@ -302,6 +302,16 @@ class AdminApi:
     def _local_root_dir(self, root: str) -> Path:
         return (self.base_dir / "cars") if root == "cars" else self.apk_dir
 
+    @staticmethod
+    def _local_apk_sibling_json(root: str, path: Path) -> Path | None:
+        """Зеркало server/backend.py:_apk_sibling_json — <файл>.json рядом
+        с .apk в дереве apk/ (не показывается в списке, см. browse_tree,
+        сервер уже фильтрует), которую нужно перенести/удалить заодно с
+        самим .apk, иначе локально на машине админа она осиротеет."""
+        if root != "apk" or path.suffix.lower() != ".apk":
+            return None
+        return path.with_suffix(".json")
+
     def browse_tree(self, root: str, rel_path: str) -> dict:
         session = self._require_session()
         if isinstance(session, dict):
@@ -332,6 +342,9 @@ class AdminApi:
                 shutil.rmtree(local_target)
             elif local_target.is_file():
                 local_target.unlink()
+                sibling = self._local_apk_sibling_json(root, local_target)
+                if sibling is not None:
+                    sibling.unlink(missing_ok=True)
         except OSError:
             pass  # не критично — при следующем запуске content_sync сам подчистит (prune_removed_*)
         return {"ok": True}
@@ -354,6 +367,11 @@ class AdminApi:
             if local_from.exists() and not local_to.exists():
                 local_to.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(local_from), str(local_to))
+                sibling = self._local_apk_sibling_json(root, local_from)
+                if sibling is not None and sibling.is_file():
+                    sibling_target = local_to.with_suffix(".json")
+                    if not sibling_target.exists():
+                        shutil.move(str(sibling), str(sibling_target))
         except OSError:
             pass  # не критично — та же причина, что и в delete_tree_path выше
         return {"ok": True}
