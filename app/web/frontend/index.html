@@ -219,7 +219,6 @@
       <div class="row">
         <select id="admin-apk-category" style="flex: 1"></select>
         <button id="admin-apk-new-folder">Новая папка...</button>
-        <button id="admin-apk-delete-folder" class="danger">Удалить папку</button>
       </div>
     </div>
     <div class="field">
@@ -245,22 +244,27 @@
     </div>
   </dialog>
 
-  <dialog id="admin-browse-dialog" class="dialog-large">
-    <h2>Файлы на сервере</h2>
+  <dialog id="admin-manager-dialog" class="dialog-large">
+    <h2>Файловый менеджер</h2>
     <p style="color: var(--text-dim); font-size: 12px">
-      Показывает то, что реально лежит в content/cars/ на сервере — модели и общие
-      наборы (_shared/). Удаление отсюда — единственный способ убрать то, что уже
-      опубликовано: "Выгрузить на сервер..."/автопубликация только сливают файлы,
-      сами ничего не удаляют.
+      Машины (cars/) и общая библиотека APK (apk/) на сервере одним деревом.
+      Перетащите строку на папку (или на путь выше в хлебных крошках), чтобы
+      перенести — работает и для переименования марки/модели простым переносом
+      в новое имя. Двойной клик по имени — переименовать на месте. Удаление
+      необратимо; "Выгрузить на сервер..."/автопубликация только сливают файлы,
+      сами ничего не удаляют — единственный способ убрать/переместить уже
+      опубликованное — этот менеджер.
     </p>
     <div class="row" style="margin-bottom: 8px">
-      <button id="admin-browse-up">Наверх</button>
-      <button id="admin-browse-refresh">Обновить</button>
-      <span id="admin-browse-path" style="color: var(--text-dim); margin-left: 8px"></span>
+      <button id="admin-manager-root-cars">Машины (cars/)</button>
+      <button id="admin-manager-root-apk">APK (apk/)</button>
+      <button id="admin-manager-up">Наверх</button>
+      <button id="admin-manager-refresh">Обновить</button>
     </div>
-    <div id="admin-browse-list" style="max-height: 400px; overflow-y: auto"></div>
+    <div class="row" id="admin-manager-breadcrumb" style="margin-bottom: 8px; flex-wrap: wrap"></div>
+    <div id="admin-manager-list" style="max-height: 400px; overflow-y: auto"></div>
     <div class="dialog-actions">
-      <button id="admin-browse-close">Закрыть</button>
+      <button id="admin-manager-close">Закрыть</button>
     </div>
   </dialog>
 
@@ -376,6 +380,7 @@
   <script src="js/screens/main_picker.js"></script>
   <script src="js/screens/stage_wizard.js"></script>
   <script src="js/screens/dialogs.js"></script>
+  <script src="js/screens/admin_file_manager.js"></script>
   <script src="js/screens/instruction_editor.js"></script>
   <script src="js/screens/car_step_fields.js"></script>
   <script src="js/screens/graph_wizard.js"></script>

@@ -221,9 +221,6 @@ class WebApi:
     def admin_create_apk_category(self, name: str) -> dict:
         return self._admin.create_apk_category(name)
 
-    def admin_delete_apk_category(self, name: str) -> dict:
-        return self._admin.delete_apk_category(name)
-
     def admin_add_apk(self, file_path: str, name: str, description: str, category: str) -> dict:
         return self._admin.add_apk(file_path, name, description, category)
 
@@ -232,6 +229,15 @@ class WebApi:
 
     def admin_delete_server_cars_path(self, rel_path: str) -> dict:
         return self._admin.delete_server_cars_path(rel_path)
+
+    def admin_browse_tree(self, root: str, rel_path: str) -> dict:
+        return self._admin.browse_tree(root, rel_path)
+
+    def admin_delete_tree_path(self, root: str, rel_path: str) -> dict:
+        return self._admin.delete_tree_path(root, rel_path)
+
+    def admin_move_path(self, root: str, from_rel: str, to_rel: str) -> dict:
+        return self._admin.move_path(root, from_rel, to_rel)
 
     # -- car_editor_api ---------------------------------------------------
     def car_load_spec(self, model_key: str) -> dict:

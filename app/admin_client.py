@@ -276,6 +276,60 @@ def delete_cars_path(base_url: str, session_cookie: str, rel_path: str) -> None:
     _request(base_url, session_cookie, "DELETE", f"/admin/api/cars?path={quote(rel_path)}")
 
 
+# -- единый файловый менеджер (см. server/backend.py: GET/DELETE
+# /admin/api/browse, POST /admin/api/move) — то же самое, что list_cars_path/
+# delete_cars_path выше, но параметризовано по дереву (cars или apk) вместо
+# отдельных ручек только под cars/; move — новая операция, которой раньше
+# не было вовсе (upload_dir/upload_model только сливают файлы, никогда не
+# переименовывают/переносят), см. app/web/api/admin_api.py: browse_tree/
+# move_path/delete_tree_path.
+
+def browse_tree(base_url: str, session_cookie: str, root: str, rel_path: str) -> list[dict]:
+    """Содержимое одной папки под деревом root ("cars" или "apk") — как
+    list_cars_path, только на оба дерева."""
+    data = _request(base_url, session_cookie, "GET",
+                     f"/admin/api/browse?root={quote(root)}&path={quote(rel_path)}")
+    return data.get("items", [])
+
+
+def delete_tree_path(base_url: str, session_cookie: str, root: str, rel_path: str) -> None:
+    """Удаляет файл или папку (рекурсивно) под деревом root — как
+    delete_cars_path, только на оба дерева (cars и apk)."""
+    _request(base_url, session_cookie, "DELETE",
+              f"/admin/api/browse?root={quote(root)}&path={quote(rel_path)}")
+
+
+def move_path(base_url: str, session_cookie: str, root: str, from_rel: str, to_rel: str) -> None:
+    """Переносит/переименовывает файл или папку ВНУТРИ одного дерева (root)
+    — POST /admin/api/move, {"root", "from", "to"}. Без тихой перезаписи:
+    сервер отказывает, если по to_rel уже что-то есть."""
+    body = json.dumps({"root": root, "from": from_rel, "to": to_rel}).encode("utf-8")
+    parts = urlsplit(base_url)
+    conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    conn = conn_cls(parts.netloc, timeout=30)
+    try:
+        conn.putrequest("POST", "/admin/api/move")
+        conn.putheader("Cookie", session_cookie)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.endheaders()
+        conn.send(body)
+        response = conn.getresponse()
+        raw = response.read()
+        if response.status == 401:
+            raise AdminClientError("Сессия входа истекла — войдите заново.")
+        if response.status != 200:
+            try:
+                error = json.loads(raw).get("error", raw.decode("utf-8", "replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error = raw.decode("utf-8", "replace")
+            raise AdminClientError(f"Сервер отклонил перенос {from_rel} -> {to_rel} ({response.status}): {error}")
+    except (OSError, http.client.HTTPException) as exc:
+        raise AdminClientError(f"Не удалось связаться с сервером: {exc}") from exc
+    finally:
+        conn.close()
+
+
 # -- очередь заявок клиентов (см. app/web/api/submissions_api.py) -----------
 # Тот же протокол, которым уже пользуется веб-админка (server/admin/
 # index.html) — см. server/backend.py: GET /admin/api/submissions[/peek],

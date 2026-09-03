@@ -446,7 +446,6 @@
 
       document.getElementById("admin-apk-pick-file").addEventListener("click", onPickFile);
       document.getElementById("admin-apk-new-folder").addEventListener("click", onNewFolder);
-      document.getElementById("admin-apk-delete-folder").addEventListener("click", onDeleteFolder);
       addBtn.addEventListener("click", onAdd);
       document.getElementById("admin-apk-close").addEventListener("click", onClose);
 
@@ -497,21 +496,6 @@
         return;
       }
       await reloadCategories(result.name);
-    }
-
-    async function onDeleteFolder() {
-      const name = categorySelect.value;
-      if (!name) {
-        await window.notice("Корневая папка apk/ не удаляется — выберите созданную вами папку.");
-        return;
-      }
-      if (!(await window.confirmDialog(`Удалить папку «${name}» вместе со всеми APK внутри неё? Это только локально — с сервера уже опубликованные файлы не удаляются автоматически.`))) return;
-      const result = await window.pywebview.api.admin_delete_apk_category(name);
-      if (!result.ok) {
-        await window.notice(result.error, { title: "Удаление папки", danger: true });
-        return;
-      }
-      await reloadCategories("");
     }
 
     function setPublishing(value) {
@@ -569,101 +553,6 @@
       clear(logEl);
       setPublishing(false);
       await reloadCategories("");
-      dialog.showModal();
-    }
-
-    return { init, open };
-  })();
-
-  // ==================================================================
-  // Файлы на сервере (только admin_mode, открывается из js/app.js) — см.
-  // app/web/api/admin_api.py: browse_server_cars/delete_server_cars_path,
-  // server/backend.py: /admin/api/cars/list, /admin/api/cars. Простой
-  // файловый браузер по content/cars/ на сервере (модели + _shared/) с
-  // удалением — единственный способ убрать то, что уже опубликовано
-  // (upload_dir/upload_model только сливают, никогда не удаляют).
-  // ==================================================================
-  const adminBrowse = (() => {
-    let dialog, pathLabel, upBtn, listEl;
-    let currentPath = "";
-
-    function init() {
-      dialog = document.getElementById("admin-browse-dialog");
-      pathLabel = document.getElementById("admin-browse-path");
-      upBtn = document.getElementById("admin-browse-up");
-      listEl = document.getElementById("admin-browse-list");
-
-      upBtn.addEventListener("click", () => {
-        const parts = currentPath.split("/").filter(Boolean);
-        parts.pop();
-        load(parts.join("/"));
-      });
-      document.getElementById("admin-browse-refresh").addEventListener("click", () => load(currentPath));
-      document.getElementById("admin-browse-close").addEventListener("click", () => dialog.close());
-    }
-
-    function formatSize(bytes) {
-      if (bytes == null) return "папка";
-      if (bytes < 1024) return `${bytes} Б`;
-      if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} КБ`;
-      return `${(bytes / 1024 ** 2).toFixed(1)} МБ`;
-    }
-
-    function renderList(items) {
-      clear(listEl);
-      if (!items.length) {
-        listEl.appendChild(el("p", { class: "app-desc", text: "Пусто." }));
-        return;
-      }
-      for (const item of items) {
-        const row = el("div", { class: "row", style: "justify-content: space-between; align-items: center; padding: 4px 0" });
-        const label = el("span", {
-          text: (item.is_dir ? "▸ " : "") + item.name + `  (${formatSize(item.size)})`,
-          style: item.is_dir ? "cursor: pointer; text-decoration: underline" : "",
-        });
-        if (item.is_dir) {
-          label.addEventListener("click", () => load(currentPath ? `${currentPath}/${item.name}` : item.name));
-        }
-        row.appendChild(label);
-        row.appendChild(el("button", { class: "danger", text: "Удалить", onclick: () => onDelete(item) }));
-        listEl.appendChild(row);
-      }
-    }
-
-    async function onDelete(item) {
-      const fullPath = currentPath ? `${currentPath}/${item.name}` : item.name;
-      const what = item.is_dir ? "папку со всем содержимым" : "файл";
-      if (!(await window.confirmDialog(`Удалить ${what} «${item.name}» с сервера? Это необратимо.`))) return;
-      const result = await window.pywebview.api.admin_delete_server_cars_path(fullPath);
-      if (!result.ok) {
-        await window.notice(result.error, { title: "Удаление", danger: true });
-        return;
-      }
-      load(currentPath);
-    }
-
-    async function load(path) {
-      const result = await window.pywebview.api.admin_browse_server_cars(path);
-      if (!result.ok) {
-        await window.notice(result.error, { title: "Файлы на сервере", danger: true });
-        return;
-      }
-      currentPath = path;
-      pathLabel.textContent = "cars/" + (path ? "/" + path.split("/").join(" / ") : "");
-      upBtn.disabled = !path;
-      renderList(result.items);
-    }
-
-    async function open() {
-      const result = await window.pywebview.api.admin_browse_server_cars("");
-      if (!result.ok) {
-        await window.notice(result.error, { title: "Файлы на сервере", danger: true });
-        return;
-      }
-      currentPath = "";
-      pathLabel.textContent = "cars/";
-      upBtn.disabled = true;
-      renderList(result.items);
       dialog.showModal();
     }
 
@@ -790,7 +679,6 @@
     adminLogin.init();
     admin.init();
     adminApk.init();
-    adminBrowse.init();
     update.init();
   }
 
@@ -799,7 +687,6 @@
   window.adminLoginDialog = adminLogin;
   window.adminDialog = admin;
   window.adminApkDialog = adminApk;
-  window.adminBrowseDialog = adminBrowse;
   window.updateDialog = update;
   window.initDialogs = initDialogs;
 })();

@@ -18,8 +18,8 @@ from ..events import event_bridge
 from ... import update_tracker
 from ...content_config import get_base_url
 from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
-                              list_shared_apk_catalog, prune_removed_models, sync_scripts,
-                              sync_shared_apk_metadata)
+                              list_shared_apk_catalog, prune_removed_apks, prune_removed_models,
+                              sync_scripts, sync_shared_apk_metadata)
 from ...ping_client import PingError, get_or_create_client_id, send_ping
 from ...scanner import flatten_models, scan_cars
 from ...submit_config import get_submit_config
@@ -114,6 +114,12 @@ class SyncApi:
                     sync_shared_apk_metadata(self.base_dir, self.apk_dir, log=self._log, items=apk_items)
                 except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
                     self._log(f"Не удалось получить метаданные общей библиотеки приложений: {exc}")
+
+                if manifest is not None:
+                    # См. prune_removed_apks — APK, удалённый на сервере
+                    # (например через веб-админку), иначе продолжал бы
+                    # висеть локально и предлагаться к установке вечно.
+                    prune_removed_apks(self.base_dir, self.apk_dir, manifest, log=self._log)
 
         self._start_heartbeat()
         return {"changes": changes}

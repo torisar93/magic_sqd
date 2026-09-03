@@ -573,6 +573,131 @@ def prune_removed_models(base_dir: Path, cars_dir: Path, manifest: dict[str, dic
     return removed
 
 
+_KNOWN_APKS_FILENAME = "known_apks.json"
+
+
+def _known_apks_path(base_dir: Path) -> Path:
+    return base_dir / _KNOWN_APKS_FILENAME
+
+
+def _load_known_apks(base_dir: Path) -> set[str]:
+    try:
+        data = json.loads(_known_apks_path(base_dir).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return set(data) if isinstance(data, list) else set()
+
+
+def _save_known_apks(base_dir: Path, paths: set[str]) -> None:
+    try:
+        _known_apks_path(base_dir).write_text(
+            json.dumps(sorted(paths), ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def prune_removed_apks(base_dir: Path, apk_dir: Path, manifest: dict[str, dict] | None,
+                        log=lambda m: None) -> list[str]:
+    """Аналог prune_removed_models, но на уровне отдельных файлов общей
+    библиотеки apk/ — sync_shared_apks/sync_shared_apk_metadata (см. выше)
+    только докачивают, никогда не удаляют, а scanner.py:scan_apks() при
+    построении списка приложений всегда отдаёт предпочтение уже скачанному
+    локальному файлу перед записью из манифеста сервера — значит, APK,
+    удалённый на сервере (например через веб-админку), продолжал бы
+    показываться и предлагаться к установке до посинения, пока кто-то не
+    удалит его на диске руками (реальный случай: админ удалил Fmplay из не
+    той категории на сервере, а в программе он остался).
+
+    Снимок предыдущего манифеста — base_dir/known_apks.json (тот же приём,
+    что known_models.json у prune_removed_models): удаляем только то, что
+    раньше реально БЫЛО в манифесте и с тех пор пропало, а не "есть
+    локально, но нет в манифесте прямо сейчас" — иначе под удаление попал
+    бы файл, который админ только что добавил локально и ещё не
+    опубликовал. Первый запуск после обновления программы (снимка ещё нет)
+    ничего не удаляет — только заводит базовую линию."""
+    if manifest is None:
+        return []
+    current = {path for path in manifest if path == "apk" or path.startswith("apk/")}
+    previous = _load_known_apks(base_dir)
+    removed: list[str] = []
+    if previous:
+        for path in sorted(previous - current):
+            rel = path[len("apk/"):] if path.startswith("apk/") else ""
+            if not rel:
+                continue
+            local_path = apk_dir / rel
+            if not local_path.is_file():
+                continue
+            log(f"Файл удалён на сервере, убираю локальную копию: {path}")
+            try:
+                local_path.unlink()
+            except OSError:
+                continue
+            removed.append(path)
+            _prune_empty_ancestors(local_path.parent, apk_dir)
+    _save_known_apks(base_dir, current)
+    return removed
+
+
+_KNOWN_MODEL_FILES_FILENAME = "_known_files.json"
+
+
+def prune_model_stale_files(base_dir: Path, model_dir: Path, manifest: dict[str, dict] | None,
+                             log=lambda m: None) -> list[str]:
+    """Тот же приём, что prune_removed_apks, но для files/ и usb_files/
+    ОДНОЙ модели — install_api.py:standard_apks() (через
+    scanner.scan_apk_dir_with_remote) точно так же отдаёт предпочтение уже
+    скачанному локальному файлу: APK, убранный из "обязательных"/
+    "необязательных" уже опубликованной модели, у техника, который его уже
+    когда-то скачивал, продолжал бы показываться в списке навсегда.
+
+    Снимок — скрытый model_dir/_known_files.json (рядом с _local_edit.json)
+    — своя папка, а не общий файл в base_dir, как у моделей/apk/. Пропускаем
+    целиком при активном маркере локальной правки (см. _has_local_edit) —
+    та же защита, что уже есть у sync_model_files."""
+    if manifest is None or _has_local_edit(model_dir):
+        return []
+    try:
+        remote_base = "cars/" + model_dir.relative_to(base_dir / "cars").as_posix()
+    except ValueError:
+        return []
+    prefix = remote_base + "/"
+
+    def _relevant(path: str) -> str | None:
+        if not path.startswith(prefix):
+            return None
+        rel = path[len(prefix):]
+        return rel if rel.startswith("files/") or rel.startswith("usb_files/") else None
+
+    current = {path for path in manifest if _relevant(path) is not None}
+    marker_path = model_dir / _KNOWN_MODEL_FILES_FILENAME
+    try:
+        previous = set(json.loads(marker_path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        previous = set()
+    removed: list[str] = []
+    if previous:
+        for path in sorted(previous - current):
+            rel = _relevant(path)
+            if not rel:
+                continue
+            local_path = model_dir / rel
+            if not local_path.is_file():
+                continue
+            log(f"Файл удалён на сервере, убираю локальную копию: {path}")
+            try:
+                local_path.unlink()
+            except OSError:
+                continue
+            removed.append(path)
+            _prune_empty_ancestors(local_path.parent, model_dir)
+    try:
+        marker_path.write_text(json.dumps(sorted(current), ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+    return removed
+
+
 def sync_shared_folder(base_dir: Path, name: str, log=lambda m: None,
                        check_cancelled=lambda: None, manifest: dict[str, dict] | None = None,
                        on_progress=lambda done, total, *args: None) -> int:
@@ -679,6 +804,11 @@ def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=
         downloaded += sync_tree(url, f"{remote_base}/{subfolder}", local_dir, log=log,
                                  check_cancelled=check_cancelled, manifest=manifest,
                                  on_progress=on_progress)
+    # См. prune_model_stale_files — APK/файл, убранный из спеки уже
+    # опубликованной модели, иначе продолжал бы висеть локально у техника,
+    # который его уже когда-то скачивал (та же причина, что и
+    # prune_removed_apks выше для общей библиотеки apk/).
+    prune_model_stale_files(base_dir, model.dir, manifest, log=log)
     return downloaded
 
 

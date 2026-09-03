@@ -4,7 +4,7 @@
 app/web/events.py вместо queue.Queue+self.after(100, ...).
 
 Плюс диалог "Добавить APK в общую библиотеку..." (см. add_apk/
-list_apk_categories/create_apk_category/delete_apk_category) — управление
+list_apk_categories/create_apk_category) — управление
 cars-независимой общей папкой apk/ (категории — подпапки верхнего уровня,
 см. app/scanner.py:scan_apks) прямо из программы, без похода руками в
 проводник: копирует файл, пишет рядом <файл>.json с "красивым" именем/
@@ -22,9 +22,12 @@ import threading
 from pathlib import Path
 
 from ..events import event_bridge
-from ...admin_client import (AdminClientError, clear_cached_session, delete_cars_path,
-                              edit_apk_metadata, get_cached_session, list_cars_path, login,
-                              set_cached_session, upload_dir, upload_single_apk)
+from ...admin_client import (AdminClientError, clear_cached_session, delete_cars_path, edit_apk_metadata,
+                              get_cached_session, list_cars_path, login, set_cached_session, upload_dir,
+                              upload_single_apk)
+from ...admin_client import browse_tree as _remote_browse_tree
+from ...admin_client import delete_tree_path as _remote_delete_tree_path
+from ...admin_client import move_path as _remote_move_path
 from ...admin_config import clear_saved_login, get_admin_base_url, load_saved_login, save_saved_login
 from ...car_generator import INVALID_NAME_CHARS
 from ...content_sync import list_shared_apk_catalog
@@ -182,13 +185,6 @@ class AdminApi:
         (self.apk_dir / name).mkdir(parents=True, exist_ok=True)
         return {"ok": True, "name": name}
 
-    def delete_apk_category(self, name: str) -> dict:
-        path = self.apk_dir / name.strip()
-        if not name.strip() or not path.is_dir():
-            return {"ok": False, "error": "Папка не найдена."}
-        shutil.rmtree(path)
-        return {"ok": True}
-
     def add_apk(self, file_path: str, name: str, description: str, category: str) -> dict:
         """Копирует выбранный APK в apk/<category>/ (или в корень apk/, если
         category пуста) и пишет рядом <файл>.json с "красивым" именем и
@@ -293,4 +289,71 @@ class AdminApi:
             if "истекла" in str(exc):
                 clear_cached_session(base_url)
             return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    # -- единый файловый менеджер (см. server/backend.py: GET/DELETE
+    # /admin/api/browse, POST /admin/api/move) — заменяет диалог "Файлы на
+    # сервере" (browse_server_cars/delete_server_cars_path выше — оставлены
+    # как есть для обратной совместимости, но новый UI ими не пользуется):
+    # работает и с cars/, и с apk/, умеет перенос/переименование, а не
+    # только просмотр/удаление. После успешной операции на сервере —
+    # best-effort то же самое над ЛОКАЛЬНОЙ копией этой машины (если файла
+    # тут вообще нет — например, ещё не скачивали — просто пропускаем).
+    def _local_root_dir(self, root: str) -> Path:
+        return (self.base_dir / "cars") if root == "cars" else self.apk_dir
+
+    def browse_tree(self, root: str, rel_path: str) -> dict:
+        session = self._require_session()
+        if isinstance(session, dict):
+            return session
+        base_url, cookie = session
+        try:
+            items = _remote_browse_tree(base_url, cookie, root, rel_path)
+        except AdminClientError as exc:
+            if "истекла" in str(exc):
+                clear_cached_session(base_url)
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "items": items}
+
+    def delete_tree_path(self, root: str, rel_path: str) -> dict:
+        session = self._require_session()
+        if isinstance(session, dict):
+            return session
+        base_url, cookie = session
+        try:
+            _remote_delete_tree_path(base_url, cookie, root, rel_path)
+        except AdminClientError as exc:
+            if "истекла" in str(exc):
+                clear_cached_session(base_url)
+            return {"ok": False, "error": str(exc)}
+        local_target = self._local_root_dir(root) / rel_path
+        try:
+            if local_target.is_dir():
+                shutil.rmtree(local_target)
+            elif local_target.is_file():
+                local_target.unlink()
+        except OSError:
+            pass  # не критично — при следующем запуске content_sync сам подчистит (prune_removed_*)
+        return {"ok": True}
+
+    def move_path(self, root: str, from_rel: str, to_rel: str) -> dict:
+        session = self._require_session()
+        if isinstance(session, dict):
+            return session
+        base_url, cookie = session
+        try:
+            _remote_move_path(base_url, cookie, root, from_rel, to_rel)
+        except AdminClientError as exc:
+            if "истекла" in str(exc):
+                clear_cached_session(base_url)
+            return {"ok": False, "error": str(exc)}
+        root_dir = self._local_root_dir(root)
+        local_from = root_dir / from_rel
+        local_to = root_dir / to_rel
+        try:
+            if local_from.exists() and not local_to.exists():
+                local_to.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(local_from), str(local_to))
+        except OSError:
+            pass  # не критично — та же причина, что и в delete_tree_path выше
         return {"ok": True}

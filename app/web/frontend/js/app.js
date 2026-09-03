@@ -419,6 +419,7 @@ window.addEventListener("pywebviewready", async () => {
   window.initResizer(document.getElementById("app-shell"), document.getElementById("resizer"));
 
   window.initDialogs();
+  window.adminFileManagerDialog.init();
   window.boostyDialogs.init();
   initAdbConsoleSuggestions();
   // admin_mode здесь уже полностью решён на стороне Python (тихий автовход
@@ -551,7 +552,7 @@ window.addEventListener("pywebviewready", async () => {
   document.getElementById("back-to-catalog").addEventListener("click", returnToCatalog);
   document.getElementById("admin-upload-btn").addEventListener("click", () => window.adminDialog.open());
   document.getElementById("admin-add-apk-btn").addEventListener("click", () => window.adminApkDialog.open());
-  document.getElementById("admin-browse-btn").addEventListener("click", () => window.adminBrowseDialog.open());
+  document.getElementById("admin-browse-btn").addEventListener("click", () => window.adminFileManagerDialog.open());
   document.getElementById("admin-logout-btn").addEventListener("click", async () => {
     if (!(await window.confirmDialog(
       "Выключить функции администратора на этой машине? Сохранённый вход будет забыт — "
