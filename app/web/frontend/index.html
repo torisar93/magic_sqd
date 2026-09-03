@@ -255,14 +255,16 @@
       сами ничего не удаляют — единственный способ убрать/переместить уже
       опубликованное — этот менеджер.
     </p>
-    <div class="row" style="margin-bottom: 8px">
-      <button id="admin-manager-root-cars">Машины (cars/)</button>
-      <button id="admin-manager-root-apk">APK (apk/)</button>
+    <div class="manager-toolbar">
+      <div class="manager-tabs">
+        <button id="admin-manager-root-cars" class="active">Машины (cars/)</button>
+        <button id="admin-manager-root-apk">APK (apk/)</button>
+      </div>
       <button id="admin-manager-up">Наверх</button>
       <button id="admin-manager-refresh">Обновить</button>
     </div>
-    <div class="row" id="admin-manager-breadcrumb" style="margin-bottom: 8px; flex-wrap: wrap"></div>
-    <div id="admin-manager-list" style="max-height: 400px; overflow-y: auto"></div>
+    <div class="manager-breadcrumb" id="admin-manager-breadcrumb"></div>
+    <div class="manager-list" id="admin-manager-list" style="max-height: 400px; overflow-y: auto"></div>
     <div class="dialog-actions">
       <button id="admin-manager-close">Закрыть</button>
     </div>

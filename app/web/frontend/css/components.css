@@ -1112,6 +1112,140 @@ select {
   accent-color: var(--accent);
 }
 
+/* Единый файловый менеджер (см. js/screens/admin_file_manager.js) —
+   карточные строки по образцу .app-row выше, с колонками имя/размер/
+   изменён/действие вместо голого flex space-between (тот на широком
+   диалоге давал один текст слева, кнопку справа и огромный пустой
+   зазор между ними, см. отчёт пользователя со скриншотом). */
+.manager-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.manager-tabs {
+  display: inline-flex;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--corner-radius);
+  overflow: hidden;
+}
+
+.manager-tabs button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.manager-tabs button:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.manager-tabs button.active {
+  background: linear-gradient(145deg, #0c8969, var(--accent));
+  color: #fff;
+}
+
+.manager-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.manager-crumb {
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: var(--accent-2);
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.manager-crumb:hover,
+.manager-crumb.drag-over {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
+.manager-crumb-sep {
+  color: var(--text-dim);
+}
+
+.manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.manager-row {
+  display: grid;
+  grid-template-columns: 1fr 84px 150px auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid rgba(187, 207, 222, 0.1);
+  border-radius: 8px;
+  background: rgba(12, 17, 23, 0.34);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.manager-row:hover,
+.manager-row.drag-over {
+  z-index: 2;
+  border-color: rgba(98, 153, 136, 0.6);
+  background: rgba(25, 34, 39, 0.82);
+}
+
+.manager-row-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-row-name.is-dir {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.manager-row-name.is-dir:hover { color: var(--accent-2); }
+
+.manager-row-size,
+.manager-row-date {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.manager-row-size { text-align: right; }
+
+.manager-rename-input {
+  width: 100%;
+  background: var(--glass-field);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 7px;
+}
+
+.manager-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--text-dim);
+}
+
 .app-description-tooltip {
   position: fixed;
   z-index: 9999;

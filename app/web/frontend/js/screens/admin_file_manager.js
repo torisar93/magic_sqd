@@ -6,7 +6,9 @@
 // только cars/) — теперь одно дерево на cars/ И apk/, плюс перенос/
 // переименование через drag-and-drop (тот же паттерн, что и в веб-админке
 // на сайте, server/admin/index.html — HTML5 DnD внутри pywebview работает
-// так же, это чисто DOM-перетаскивание, не файлы ОС).
+// так же, это чисто DOM-перетаскивание, не файлы ОС). Строки — карточки
+// по образцу .app-row (см. css/components.css: .manager-row), с колонками
+// имя/размер/изменён/действие, а не голый flex space-between.
 // ==================================================================
 (() => {
   const { el, clear } = window.dom;
@@ -38,16 +40,23 @@
 
     function setRoot(newRoot) {
       root = newRoot;
-      rootCarsBtn.className = root === "cars" ? "accent" : "";
-      rootApkBtn.className = root === "apk" ? "accent" : "";
+      rootCarsBtn.classList.toggle("active", root === "cars");
+      rootApkBtn.classList.toggle("active", root === "apk");
       load("");
     }
 
     function formatSize(bytes) {
-      if (bytes == null) return "папка";
+      if (bytes == null) return "—";
       if (bytes < 1024) return `${bytes} Б`;
       if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} КБ`;
       return `${(bytes / 1024 ** 2).toFixed(1)} МБ`;
+    }
+
+    function formatDate(mtime) {
+      if (!mtime) return "—";
+      const d = new Date(mtime * 1000);
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
     function joinPath(base, name) {
@@ -57,12 +66,12 @@
     function addDropTarget(node, targetPath) {
       node.addEventListener("dragover", (e) => {
         e.preventDefault();
-        node.style.background = "var(--accent)";
+        node.classList.add("drag-over");
       });
-      node.addEventListener("dragleave", () => { node.style.background = ""; });
+      node.addEventListener("dragleave", () => node.classList.remove("drag-over"));
       node.addEventListener("drop", (e) => {
         e.preventDefault();
-        node.style.background = "";
+        node.classList.remove("drag-over");
         if (draggedName === null) return;
         moveItem(joinPath(path, draggedName), joinPath(targetPath, draggedName));
       });
@@ -70,11 +79,7 @@
 
     function renderBreadcrumb() {
       clear(breadcrumbEl);
-      const rootCrumb = el("span", {
-        text: root + "/",
-        style: "cursor: pointer; text-decoration: underline; color: var(--accent)",
-        onclick: () => load(""),
-      });
+      const rootCrumb = el("span", { class: "manager-crumb", text: root + "/", onclick: () => load("") });
       addDropTarget(rootCrumb, "");
       breadcrumbEl.appendChild(rootCrumb);
 
@@ -82,19 +87,15 @@
       for (const part of path ? path.split("/") : []) {
         accum = accum ? `${accum}/${part}` : part;
         const crumbPath = accum;
-        breadcrumbEl.appendChild(el("span", { text: " / ", style: "color: var(--text-dim)" }));
-        const crumb = el("span", {
-          text: part,
-          style: "cursor: pointer; text-decoration: underline; color: var(--accent)",
-          onclick: () => load(crumbPath),
-        });
+        breadcrumbEl.appendChild(el("span", { class: "manager-crumb-sep", text: "/" }));
+        const crumb = el("span", { class: "manager-crumb", text: part, onclick: () => load(crumbPath) });
         addDropTarget(crumb, crumbPath);
         breadcrumbEl.appendChild(crumb);
       }
     }
 
     function startRename(nameCell, label, item) {
-      const input = el("input", { value: item.name, style: "width: 100%" });
+      const input = el("input", { class: "manager-rename-input", value: item.name });
       clear(nameCell);
       nameCell.appendChild(input);
       input.focus();
@@ -118,19 +119,13 @@
     }
 
     function buildRow(item) {
-      const row = el("div", {
-        class: "row",
-        style: "justify-content: space-between; align-items: center; padding: 4px 0",
-        draggable: "true",
-      });
+      const row = el("div", { class: "manager-row", draggable: "true" });
       row.addEventListener("dragstart", () => { draggedName = item.name; });
       row.addEventListener("dragend", () => { draggedName = null; });
 
-      const nameCell = el("span", { style: "flex: 1; min-width: 0" });
-      const label = el("span", {
-        text: (item.is_dir ? "▸ " : "") + item.name + `  (${formatSize(item.size)})`,
-        style: item.is_dir ? "cursor: pointer; text-decoration: underline" : "",
-      });
+      const nameCell = el("span", { class: "manager-row-name" });
+      const label = el("span", { text: (item.is_dir ? "▸ " : "") + item.name });
+      if (item.is_dir) nameCell.classList.add("is-dir");
       // Одиночный клик (открыть папку) и двойной (переименовать) целятся в
       // один и тот же текст — навигация синхронно перестраивает весь список
       // (см. load), из-за чего вторая половина двойного клика улетает мимо
@@ -153,6 +148,8 @@
       });
       row.appendChild(nameCell);
 
+      row.appendChild(el("span", { class: "manager-row-size", text: item.is_dir ? "папка" : formatSize(item.size) }));
+      row.appendChild(el("span", { class: "manager-row-date", text: formatDate(item.mtime) }));
       row.appendChild(el("button", { class: "danger", text: "Удалить", onclick: () => onDelete(item) }));
 
       if (item.is_dir) addDropTarget(row, joinPath(path, item.name));
@@ -190,7 +187,7 @@
       renderBreadcrumb();
       clear(listEl);
       if (!result.items.length) {
-        listEl.appendChild(el("p", { class: "app-desc", text: "Пусто." }));
+        listEl.appendChild(el("p", { class: "manager-empty", text: "Пусто." }));
         return;
       }
       for (const item of result.items) {
