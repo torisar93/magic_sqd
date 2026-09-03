@@ -22,7 +22,7 @@
   // #wizard-content).
   const TRANSPORT_STAGE_TYPES = new Set(["adb", "apps", "actions"]);
 
-  let containerEl, contentEl, navBackBtn, navNextBtn, navLabelEl;
+  let containerEl, contentEl, navBackBtn, navNextBtn, navLabelEl, navVideoBtn;
   let mounted = false;
   let logFn = () => {};
 
@@ -123,6 +123,7 @@
         <div class="wizard-content" id="wizard-content"></div>
         <div class="wizard-nav">
           <button id="wizard-back">← Назад</button>
+          <button id="wizard-video" style="display: none">▶ Смотреть видео</button>
           <span class="page-label" id="wizard-page-label"></span>
           <button id="wizard-next" class="accent">Далее →</button>
         </div>
@@ -143,8 +144,13 @@
     navBackBtn = container.querySelector("#wizard-back");
     navNextBtn = container.querySelector("#wizard-next");
     navLabelEl = container.querySelector("#wizard-page-label");
+    navVideoBtn = container.querySelector("#wizard-video");
     navBackBtn.addEventListener("click", goBack);
     navNextBtn.addEventListener("click", () => nextAction());
+    navVideoBtn.addEventListener("click", () => {
+      const stage = currentIndex >= 0 ? stages[currentIndex] : null;
+      if (stage && stage.video_path) window.pywebview.api.install_open_video(stage.video_path);
+    });
     setupAskInputDialog(container);
   }
 
@@ -410,6 +416,14 @@
     if (!stages.length) navLabelEl.textContent = "";
     else if (currentIndex === -1) navLabelEl.textContent = "Инструкция";
     else navLabelEl.textContent = `Этап ${currentIndex + 1} из ${stages.length}`;
+
+    const videoStage = currentIndex >= 0 ? stages[currentIndex] : null;
+    if (videoStage && videoStage.video_path) {
+      navVideoBtn.style.display = "";
+      navVideoBtn.textContent = `▶ ${videoStage.video_label || "Смотреть видео"}`;
+    } else {
+      navVideoBtn.style.display = "none";
+    }
   }
 
   function renderIntroPage() {

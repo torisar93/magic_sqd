@@ -325,18 +325,60 @@ def clear_local_edit_marker(model_dir: Path) -> None:
         pass
 
 
-def _has_local_edit(model_dir: Path) -> bool:
-    return (model_dir / LOCAL_EDIT_MARKER_FILENAME).exists()
+def _local_edit_superseded(marker_path: Path, model_rel: str, manifest: dict[str, dict]) -> bool:
+    """True, если на сервере уже лежит _wizard_spec.json НОВЕЕ момента
+    локальной правки (см. mark_local_edit: "saved_at") — значит эту правку
+    либо уже одобрили и переопубликовали, либо администратор внёс не
+    связанное с ней изменение уже ПОСЛЕ неё. В обоих случаях держать
+    модель отрезанной от sync дальше неправильно: реальный случай — техник
+    когда-то убрал APK из обязательных через редактор (маркер встал,
+    заявка ушла на модерацию), а спустя недели админ поправил ТЕКСТ
+    описания того же этапа и опубликовал — без этой проверки техник не
+    увидел бы новый текст никогда, сколько бы ни перезапускал программу и
+    ни жал "Обновить" в настройках (clear_cache чистит files/usb_files, но
+    не трогает сам маркер — он не про кэш, он про несогласованную с
+    сервером правку, см. докстринг mark_local_edit)."""
+    try:
+        saved_at = json.loads(marker_path.read_text(encoding="utf-8")).get("saved_at")
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(saved_at, (int, float)):
+        return False
+    spec_entry = manifest.get(f"{model_rel}/{_MODEL_MARKER}")
+    if spec_entry is None:
+        return False
+    remote_mtime = spec_entry.get("mtime")
+    return isinstance(remote_mtime, (int, float)) and remote_mtime > saved_at
 
 
-def _locally_edited_prefixes(cars_dir: Path) -> set[str]:
+def _has_local_edit(model_dir: Path, cars_dir: Path | None = None,
+                     manifest: dict[str, dict] | None = None) -> bool:
+    marker_path = model_dir / LOCAL_EDIT_MARKER_FILENAME
+    if not marker_path.exists():
+        return False
+    if manifest is not None and cars_dir is not None:
+        rel = "cars/" + model_dir.relative_to(cars_dir).as_posix()
+        if _local_edit_superseded(marker_path, rel, manifest):
+            marker_path.unlink(missing_ok=True)
+            return False
+    return True
+
+
+def _locally_edited_prefixes(cars_dir: Path, manifest: dict[str, dict] | None = None) -> set[str]:
     """Все "cars/<Марка>/<Модель>[/<Модификация>]" с маркером локальной
     правки (см. mark_local_edit) — для sync_scripts ниже, который в отличие
-    от sync_model_files обходит все модели разом одним sync_tree."""
+    от sync_model_files обходит все модели разом одним sync_tree. manifest
+    — см. _local_edit_superseded: если передан, устаревшие маркеры (сервер
+    уже ушёл вперёд) снимаются тут же, а не остаются блокировать sync
+    навсегда."""
     prefixes = set()
     for marker_path in cars_dir.rglob(LOCAL_EDIT_MARKER_FILENAME):
         model_dir = marker_path.parent
-        prefixes.add("cars/" + model_dir.relative_to(cars_dir).as_posix())
+        rel = "cars/" + model_dir.relative_to(cars_dir).as_posix()
+        if manifest is not None and _local_edit_superseded(marker_path, rel, manifest):
+            marker_path.unlink(missing_ok=True)
+            continue
+        prefixes.add(rel)
     return prefixes
 
 
@@ -479,7 +521,7 @@ def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
         return 0
     return sync_tree(url, "cars", cars_dir, log=log, skip_dirs=("files", "usb_files"),
                       no_recurse_dirs=("cars/_shared",), manifest=manifest, on_progress=on_progress,
-                      skip_prefixes=tuple(_locally_edited_prefixes(cars_dir)))
+                      skip_prefixes=tuple(_locally_edited_prefixes(cars_dir, manifest)))
 
 
 _KNOWN_MODELS_FILENAME = "known_models.json"
@@ -654,8 +696,10 @@ def prune_model_stale_files(base_dir: Path, model_dir: Path, manifest: dict[str,
     Снимок — скрытый model_dir/_known_files.json (рядом с _local_edit.json)
     — своя папка, а не общий файл в base_dir, как у моделей/apk/. Пропускаем
     целиком при активном маркере локальной правки (см. _has_local_edit) —
-    та же защита, что уже есть у sync_model_files."""
-    if manifest is None or _has_local_edit(model_dir):
+    та же защита, что уже есть у sync_model_files (включая авто-снятие
+    устаревшего маркера, если сервер уже ушёл вперёд, см.
+    _local_edit_superseded)."""
+    if manifest is None or _has_local_edit(model_dir, base_dir / "cars", manifest):
         return []
     try:
         remote_base = "cars/" + model_dir.relative_to(base_dir / "cars").as_posix()
@@ -782,13 +826,17 @@ def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=
     url = get_base_url(base_dir)
     if not url:
         return 0
-    if _has_local_edit(model.dir):
-        # См. mark_local_edit — модель только что отредактирована локально
-        # и ещё не одобрена/опубликована, старая версия с сервера не должна
-        # затирать правку прямо перед установкой.
-        return 0
     if manifest is None:
         manifest = fetch_manifest(url)
+    if _has_local_edit(model.dir, base_dir / "cars", manifest):
+        # См. mark_local_edit — модель только что отредактирована локально
+        # и ещё не одобрена/опубликована, старая версия с сервера не должна
+        # затирать правку прямо перед установкой. manifest тут же снимает
+        # маркер, если сервер уже ушёл вперёд момента правки (см.
+        # _local_edit_superseded) — иначе застрявший маркер блокировал бы
+        # докачку файлов этой модели навсегда, даже когда правку давно
+        # одобрили или админ поправил что-то не связанное с ней.
+        return 0
     # Путь строим из model.dir (а не brand+name), чтобы одинаково работать
     # и для обычных моделей (cars/<Марка>/<Модель>/), и для модификаций
     # (cars/<Марка>/<Модель>/<Модификация>/, см. scanner.py:ModelGroup) —

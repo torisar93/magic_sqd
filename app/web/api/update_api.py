@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -36,8 +37,16 @@ from ...content_config import get_download_base_url
 from ...version import APP_VERSION
 
 GITHUB_API_URL = "https://api.github.com/repos/torisar93/magic_sqd/releases"
-ASSET_NAME = "MagicSQD_Setup.exe"
-ASSET_NAME_WIN7 = "MagicSQD_Setup_Win7.exe"
+# С версии 0.8.0 сами файлы инсталляторов версионируются в имени (см.
+# installer.iss/installer_win7_x86.iss: OutputBaseFilename) — на GitHub
+# у каждого релиза свой уникальный ассет, точное имя заранее не известно,
+# поэтому ищем по регэкспу вместо точного совпадения (_ASSET_RE ниже).
+# Свой сервер (см. server/backend.py:_handle_exe_upload) от версии
+# файла независим — ВСЕГДА перезаписывает под фиксированным именем
+# OWN_SERVER_ASSET_NAME, для него версионировать нечего.
+_ASSET_RE = re.compile(r"^MagicSQD_Setup_\d+\.\d+\.\d+\.exe$", re.IGNORECASE)
+_ASSET_RE_WIN7 = re.compile(r"^MagicSQD_Setup_Win7_\d+\.\d+\.\d+\.exe$", re.IGNORECASE)
+OWN_SERVER_ASSET_NAME = "MagicSQD_Setup.exe"
 REQUEST_TIMEOUT_SECONDS = 8
 DOWNLOAD_TIMEOUT_SECONDS = 60
 
@@ -63,9 +72,10 @@ class UpdateApi:
         # инсталлятор в том же GitHub-релизе, что и обычная сборка (см.
         # server/README.md §9 — один тег на цикл, три ассета). Свой сервер
         # (магазин content_config.get_download_base_url) зеркалирует ТОЛЬКО
-        # MagicSQD_Setup.exe (см. server/backend.py:_handle_exe_upload) — для
-        # Win7 своего зеркала нет, поэтому этот источник ниже пропускается.
-        self.asset_name = ASSET_NAME_WIN7 if is_win7 else ASSET_NAME
+        # обычную x64-сборку под фиксированным OWN_SERVER_ASSET_NAME (см.
+        # server/backend.py:_handle_exe_upload) — для Win7 своего зеркала
+        # нет, поэтому этот источник ниже пропускается.
+        self._asset_re = _ASSET_RE_WIN7 if is_win7 else _ASSET_RE
         self._installing = False
 
     # -- проверка -----------------------------------------------------------
@@ -103,7 +113,8 @@ class UpdateApi:
             "available": True,
             "version": version,
             "changelog": str(data.get("changelog") or "").strip(),
-            "download_url": f"{url}/{self.asset_name}",
+            "download_url": f"{url}/{OWN_SERVER_ASSET_NAME}",
+            "asset_name": OWN_SERVER_ASSET_NAME,
         }
 
     def _check_github(self) -> dict | None:
@@ -124,7 +135,7 @@ class UpdateApi:
         version = str(latest.get("tag_name") or "")
         if not version or _parse_version(version) <= _parse_version(APP_VERSION):
             return None
-        asset = next((a for a in latest.get("assets", []) if a.get("name") == self.asset_name), None)
+        asset = next((a for a in latest.get("assets", []) if self._asset_re.match(a.get("name") or "")), None)
         if not asset:
             return None
         return {
@@ -132,6 +143,7 @@ class UpdateApi:
             "version": version,
             "changelog": str(latest.get("body") or "").strip(),
             "download_url": asset["browser_download_url"],
+            "asset_name": asset["name"],
         }
 
     # -- установка -----------------------------------------------------------
@@ -153,7 +165,11 @@ class UpdateApi:
 
     def _worker(self, download_url: str) -> None:
         try:
-            installer_path = Path(tempfile.gettempdir()) / self.asset_name
+            # Имя файла — из самого download_url (версионировано что на
+            # GitHub, что на своём сервере), а не фиксированная константа,
+            # раз конкретное имя ассета больше не известно заранее.
+            asset_name = Path(urllib.parse.urlsplit(download_url).path).name or "MagicSQD_Setup.exe"
+            installer_path = Path(tempfile.gettempdir()) / asset_name
             self._log("Скачивание обновления...")
             self._download(download_url, installer_path, on_progress=self._progress)
             self._log("Обновление скачано. Программа сейчас закроется для установки...")

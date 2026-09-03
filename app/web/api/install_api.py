@@ -13,6 +13,7 @@ import re
 import subprocess
 import threading
 import time
+import webbrowser
 from pathlib import Path
 
 from ..events import event_bridge, input_broker
@@ -189,6 +190,20 @@ class InstallApi:
                     remote = None
                 if remote:
                     exe_exists = remote in manifest
+        video_path = stage.get("video_path")
+        video_exists = None
+        if video_path:
+            # Та же ленивая докачка, что и exe_path выше — сам .mp4 (до
+            # 150 МБ) качается по факту клика "Смотреть видео" (open_video),
+            # а не заранее при открытии мастера.
+            video_exists = Path(video_path).exists()
+            if not video_exists and manifest is not None:
+                try:
+                    remote = "cars/" + Path(video_path).resolve().relative_to(self.base_dir / "cars").as_posix()
+                except ValueError:
+                    remote = None
+                if remote:
+                    video_exists = remote in manifest
         return {
             "index": index,
             "type": stage["type"],
@@ -237,6 +252,9 @@ class InstallApi:
             "exe_path": exe_path,
             "exe_name": Path(exe_path).name if exe_path else None,
             "exe_exists": exe_exists,
+            "video_path": video_path,
+            "video_label": stage.get("video_label") or "Смотреть видео",
+            "video_exists": video_exists,
             "actions": [{"label": a.get("label", ""), "kind": a.get("kind", "command")}
                         for a in (stage.get("actions") or [])],
         }
@@ -830,6 +848,29 @@ class InstallApi:
             subprocess.Popen([str(path)], cwd=str(path.parent))
         except OSError as exc:
             return {"ok": False, "error": f"Не удалось запустить {path.name}: {exc}"}
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    def open_video(self, video_path: str) -> dict:
+        """Кнопка "Смотреть видео" в нав-баре мастера (см. StepSpec.video_file
+        — не путать с video-блоком внутри instruction.html, у него своя
+        ссылка прямо в HTML, см. _resolve_video_hrefs). Та же ленивая
+        докачка, что и run_exe, открывается тем же способом, что и
+        video-блок — через системный обработчик file://, а не встраиванием
+        в pywebview (файл может весить до 150 МБ, см. instruction_html.
+        MAX_VIDEO_BYTES)."""
+        path = Path(video_path)
+        if not path.exists():
+            try:
+                sync_model_subfolder(self.base_dir, path.parent, log=self._on_log,
+                                      on_progress=self._on_sync_progress)
+            except Exception as exc:  # noqa: BLE001 - показываем понятную ошибку ниже
+                self._on_log(f"Не удалось скачать {path.name}: {exc}")
+            finally:
+                self._on_sync_progress(0, 0)
+        if not path.exists():
+            return {"ok": False, "error": f"Не удалось скачать {path.name} с сервера."}
+        webbrowser.open(path.resolve().as_uri())
         return {"ok": True}
 
     # ------------------------------------------------------------------

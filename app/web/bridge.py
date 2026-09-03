@@ -150,6 +150,9 @@ class WebApi:
     def install_run_exe(self, exe_path: str) -> dict:
         return self._install.run_exe(exe_path)
 
+    def install_open_video(self, video_path: str) -> dict:
+        return self._install.open_video(video_path)
+
     # -- usb_api ------------------------------------------------------------
     def usb_list_drives(self, include_all: bool = False) -> list:
         return self._usb.list_drives(include_all)

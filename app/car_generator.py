@@ -102,6 +102,16 @@ class StepSpec:
     type: str  # "usb" | "manual" | "adb" | "apps" | "exe" | "check" | "instruction" | "uart" | "telnet" | "actions" | "qr_adb"
     title: str = ""
     description: str = ""
+    # Видео-инструкция ЛЮБОГО этапа (не только "instruction" — там уже есть
+    # свой видео-блок внутри HTML, см. instruction_html.py) — кнопка
+    # "Смотреть видео" между "Назад"/"Далее" в панели навигации мастера
+    # (см. stage_wizard.js: renderNav), а не встроенная в текст. video_label
+    # — свой текст кнопки вместо дефолтного "Смотреть видео". Тот же формат
+    # файла/проверка (MP4/H.264, до MAX_VIDEO_BYTES), что и у видео-блока
+    # инструкции — см. instruction_html.validate_video_file, переиспользуем
+    # ту же функцию, а не дублируем правила.
+    video_file: Path | None = None
+    video_label: str = ""
     # "instruction" — часть общей инструкции (заголовки/шаги/плашки/фото),
     # собранная тем же блочным редактором, что и общая инструкция модели
     # (см. app/instruction_editor.py, app/instruction_html.py) — но
@@ -462,6 +472,8 @@ def _rebase_spec_paths(spec: NewCarSpec, old_dir: Path, new_dir: Path) -> None:
         step.adb_files = [rb(p) for p in step.adb_files]
         if step.exe_file:
             step.exe_file = rb(step.exe_file)
+        if step.video_file:
+            step.video_file = rb(step.video_file)
         for apk in step.standard_apks:
             apk.path = rb(apk.path)
         for apk in step.standard_apks_optional:
@@ -566,6 +578,11 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
                                            for item in step_data.get("standard_apks_optional", [])]
         elif step_type == "exe" and step_data.get("exe_file"):
             exe_file = files_dir / f"exe_{i}" / step_data["exe_file"]
+        # Видео-кнопка — своя папка files/video_<i>, не привязана к типу
+        # этапа (в отличие от exe_file/adb_files выше), поэтому парсится
+        # безусловно для любого step_type.
+        video_file = (files_dir / f"video_{i}" / step_data["video_file"]
+                      if step_data.get("video_file") else None)
         adb_files: list[Path] = []
         if step_type == "adb":
             adb_files = [files_dir / f"adb_{i}" / name for name in step_data.get("adb_files", [])]
@@ -620,6 +637,8 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             actions_wifi_port=step_data.get("actions_wifi_port"),
             uart_wifi_port=step_data.get("uart_wifi_port"),
             exe_file=exe_file,
+            video_file=video_file,
+            video_label=step_data.get("video_label", ""),
             check_options=step_data.get("check_options", []),
             id=step_data.get("id", i - 1),
             next=step_data.get("next"),
@@ -837,6 +856,17 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                             if f.is_file():
                                 keep_paths.add(f.resolve())
 
+        # Видео-кнопка нав-бара — своя папка files/video_<i>, копируется
+        # безусловно от step.type (в отличие от exe_file/instruction-блоков
+        # выше): её можно прицепить к любому этапу мастера.
+        if step.video_file:
+            video_step_dir = files_dir / f"video_{i}"
+            video_step_dir.mkdir(parents=True, exist_ok=True)
+            dst = (video_step_dir / step.video_file.name).resolve()
+            if step.video_file.resolve() != dst:
+                shutil.copy2(step.video_file, dst)
+            keep_paths.add(dst)
+
     for root in (files_dir, usb_root):
         if not root.exists():
             continue
@@ -929,6 +959,8 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "actions_wifi_port": step.actions_wifi_port,
                 "uart_wifi_port": step.uart_wifi_port,
                 "exe_file": step.exe_file.name if step.exe_file else None,
+                "video_file": step.video_file.name if step.video_file else None,
+                "video_label": step.video_label,
                 "check_options": step.check_options,
                 "id": step.id,
                 "next": step.next,
@@ -1389,6 +1421,17 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
             if step.instruction_blocks or (instr_html_path.is_file() and instr_html_path.stat().st_size > 0):
                 entry.append(f'        "instruction": {f"files/instruction_{i}/instruction.html"!r},')
         # "manual" — без "run"
+
+        # Кнопка "Смотреть видео" в нав-баре мастера — не привязана к типу
+        # этапа (в отличие от exe_path/instruction выше), поэтому пишется
+        # безусловно, любым этапом.
+        if step.video_file:
+            entry.append(
+                f'        "video_path": Path(__file__).resolve().parent / "files" / "video_{i}" '
+                f'/ {step.video_file.name!r},'
+            )
+            if step.video_label:
+                entry.append(f'        "video_label": {step.video_label!r},')
 
         entry.append("    },")
         lines.append("\n".join(entry))

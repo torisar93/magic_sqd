@@ -9,7 +9,7 @@
   const STATUS_TITLES = { green: "Актуально", yellow: "Черновой способ", blue: "Недавно обновлено", red: "Не работает" };
 
   let screenPicker, screenWizard, breadcrumbEl, listEl, syncStatusEl, pickerSearchEl;
-  let wizardContentEl, wizardBackBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl, topHelpBtn;
+  let wizardContentEl, wizardBackBtn, wizardVideoBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl, topHelpBtn;
   let adbStatusEl, adbConnectBtn, usbStatusEl, usbConnectBtn, usbFormatBtn, adbBarEl, usbBarEl;
   let adbModeToggleEl, adbModeWiredBtn, adbModeWifiBtn;
   let logBarEl, logLastLineEl, logExpandBtn, logOverlayEl, logCollapseBtn, logCmdInput, logCmdRunBtn;
@@ -1175,6 +1175,34 @@
       wizardNextBtn.textContent = isLast ? "Готово" : "Далее";
     }
     wizardPageLabel.textContent = stages.length ? `Этап ${currentIndex + 1} из ${stages.length}` : "";
+
+    const videoStage = stages.length ? stages[currentIndex] : null;
+    if (videoStage && videoStage.video_url) {
+      wizardVideoBtn.hidden = false;
+      wizardVideoBtn.textContent = `▶ ${videoStage.video_label || "Смотреть видео"}`;
+    } else {
+      wizardVideoBtn.hidden = true;
+    }
+  }
+
+  // Докачивает video_file (если ещё нет на диске) в фоне на Kotlin-стороне
+  // (см. WebBridge.kt: ensureVideoDownloaded — может быть до 150 МБ,
+  // Bridge.call синхронный и заблокировал бы JS-поток) и по готовности
+  // переходит на video_url — тот же appassets.androidplatform.net origin,
+  // что и у страницы, WebView штатно проигрывает mp4 при прямой навигации.
+  function playStageVideo() {
+    const stage = stages[currentIndex];
+    if (!stage || !stage.video_url) return;
+    wizardVideoBtn.disabled = true;
+    wizardVideoBtn.textContent = "Скачиваю...";
+    Bridge.call("ensure_video_downloaded", { path: stage.video_file });
+  }
+
+  function onVideoReady(event) {
+    const stage = stages[currentIndex];
+    if (!stage || stage.video_file !== event.path) return;
+    wizardVideoBtn.disabled = false;
+    window.location.href = stage.video_url;
   }
 
   function describeCommand(cmd) {
@@ -1860,6 +1888,7 @@
     topHelpBtn.addEventListener("click", showSettingsModal);
     wizardContentEl = document.getElementById("wizard-content");
     wizardBackBtn = document.getElementById("wizard-back");
+    wizardVideoBtn = document.getElementById("wizard-video");
     wizardNextBtn = document.getElementById("wizard-next");
     wizardPageLabel = document.getElementById("wizard-page-label");
     logPanelEl = document.getElementById("log-panel");
@@ -1885,6 +1914,7 @@
     logCmdRunBtn = document.getElementById("log-cmd-run");
 
     wizardBackBtn.addEventListener("click", goBack);
+    wizardVideoBtn.addEventListener("click", playStageVideo);
     wizardNextBtn.addEventListener("click", () => nextAction());
     adbConnectBtn.addEventListener("click", onAdbConnect);
     adbModeWiredBtn.addEventListener("click", () => {
@@ -1929,6 +1959,7 @@
     window.events.on("qr_adb_password_result", onQrAdbPasswordResult);
     window.events.on("apk_library_result", onApkLibraryResult);
     window.events.on("update_check_result", onUpdateCheckResult);
+    window.events.on("video_ready", onVideoReady);
 
     showScreen("picker");
     const preferences = Bridge.call("settings_preferences", {});

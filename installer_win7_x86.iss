@@ -20,7 +20,7 @@
 ; crash.log, докачанный контент cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.7.9"
+#define MyAppVersion "0.8.0"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -35,7 +35,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=installer_output
-OutputBaseFilename=MagicSQD_Setup_Win7
+OutputBaseFilename=MagicSQD_Setup_Win7_{#MyAppVersion}
 SetupIconFile=assets\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2

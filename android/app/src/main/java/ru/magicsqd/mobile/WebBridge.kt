@@ -128,6 +128,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "usb_run_stage" -> { usbRunStage(args); "{}" }
                 "qr_adb_write_flag" -> { qrAdbWriteFlag(); "{}" }
                 "qr_adb_get_password" -> { qrAdbGetPassword(); "{}" }
+                // Видео-кнопка нав-бара мастера (см. app.js: playStageVideo) —
+                // тот же общий "докачай, чего нет" хелпер, что и перед
+                // adb_install_apks/usb_run_stage (см. ensureApksDownloaded),
+                // но АСИНХРОННО (см. syncModelPayload выше) — файл до 150 МБ
+                // (см. instruction_html.MAX_VIDEO_BYTES на desktop), Bridge.call
+                // синхронный и заблокировал бы JS-поток на всё время скачивания.
+                "ensure_video_downloaded" -> { ensureVideoDownloaded(args.getString("path")); "{}" }
                 else -> JSONObject().put("error", "Неизвестный метод: $method").toString()
             }
         } catch (e: Exception) {
@@ -278,6 +285,18 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val result = JSONObject(resultJson)
         val logLines = result.optJSONArray("log") ?: JSONArray()
         for (i in 0 until logLines.length()) pushAdbLog(logLines.getString(i))
+    }
+
+    /** Докачивает один файл видео-кнопки нав-бара (см. wizard_spec.py:
+     * video_file/video_url), если его ещё нет на диске, в фоновом потоке —
+     * "video_ready" сообщает JS, что можно переходить на video_url (см.
+     * ensureApksDownloaded/apk_library.ensure_apks_downloaded, тот же общий
+     * резолвер путей apk_dir/cars_dir, что и для APK). */
+    private fun ensureVideoDownloaded(path: String) {
+        Thread {
+            ensureApksDownloaded(listOf(path))
+            pushEvent(JSONObject().put("kind", "video_ready").put("path", path))
+        }.start()
     }
 
     /** cars/_shared/<folderName>/ целиком (см. mobile_bridge.sync_shared_folder_for)

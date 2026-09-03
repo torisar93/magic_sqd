@@ -726,6 +726,48 @@
       }));
     }
 
+    // -- видео-кнопка нав-бара (универсально, для ЛЮБОГО типа этапа, в
+    // отличие от остального в этом файле — не через typeBuilders) --------
+    function renderVideoField(step) {
+      container.appendChild(el("span", { class: "field-label", text: "Видео-инструкция (кнопка «Смотреть видео» между «Назад»/«Далее», необязательно)" }));
+      const nameLabel = el("p", {
+        class: "app-desc",
+        text: step.video_file ? step.video_file.name : "(не выбрано)",
+      });
+      const errorLabel = el("span", { class: "app-desc", style: "color: var(--danger)" });
+      const row = el("div", { class: "row" });
+      row.appendChild(el("button", {
+        text: "Выбрать видео...",
+        onclick: async () => {
+          const picked = await window.pywebview.api.car_pick_files("video", false);
+          if (!picked.length) return;
+          nameLabel.textContent = "Проверка...";
+          errorLabel.textContent = "";
+          const result = await window.pywebview.api.car_validate_video(picked[0].path);
+          if (!result.ok) {
+            nameLabel.textContent = step.video_file ? step.video_file.name : "(не выбрано)";
+            errorLabel.textContent = result.error;
+            return;
+          }
+          step.video_file = picked[0];
+          nameLabel.textContent = step.video_file.name;
+        },
+      }));
+      row.appendChild(el("button", {
+        class: "danger", text: "Убрать",
+        onclick: () => { step.video_file = null; nameLabel.textContent = "(не выбрано)"; errorLabel.textContent = ""; },
+      }));
+      container.appendChild(row);
+      container.appendChild(nameLabel);
+      container.appendChild(errorLabel);
+
+      container.appendChild(el("span", { class: "field-label", text: "Текст на кнопке (необязательно, по умолчанию «Смотреть видео»)" }));
+      const labelInput = el("input", { type: "text", style: "margin-bottom: 10px" });
+      labelInput.value = step.video_label || "";
+      labelInput.addEventListener("input", () => { step.video_label = labelInput.value; });
+      container.appendChild(labelInput);
+    }
+
     // Видимость этапов ("куда дальше") теперь только графом — стрелками на
     // холсте (см. graph_wizard.js: renderWires/connectFlow/connectOption),
     // никакого текстового виджета для этого больше нет (раньше был
@@ -752,6 +794,9 @@
           text: "Дополнительных полей нет — этап самостоятельно находит флешку с папкой logs_* и считает пароль (см. app/qr_adb_password.py). Магнитола на этом этапе не обязана быть подключена.",
         }));
       }
+      // Универсально для ЛЮБОГО типа этапа (в отличие от всего выше) —
+      // см. renderVideoField.
+      renderVideoField(step);
     }
 
     function resetVariantIndex() {

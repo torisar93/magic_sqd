@@ -242,6 +242,23 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
                     for item in step_data.get("standard_apks_optional", [])]
         elif step_type == "exe" and step_data.get("exe_file"):
             exe_file = str(files_dir / f"exe_{i}" / step_data["exe_file"])
+        # Видео-кнопка нав-бара — не привязана к step_type (в отличие от
+        # exe_file выше), парсится безусловно для любого этапа. video_url —
+        # готовая для навигации ссылка (та же схема appassets.androidplatform.
+        # net/data/..., что и у видео внутри instruction.html, см.
+        # _rewrite_instruction_images) — WebView штатно проигрывает mp4 при
+        # прямой навигации на такой URL тем же origin, что и у страницы.
+        video_file = None
+        video_url = None
+        if step_data.get("video_file"):
+            video_dir = files_dir / f"video_{i}"
+            video_file = str(video_dir / step_data["video_file"])
+            if files_root is not None:
+                try:
+                    rel = video_dir.relative_to(files_root).as_posix()
+                    video_url = f"https://appassets.androidplatform.net/data/{rel}/{step_data['video_file']}"
+                except ValueError:
+                    video_url = None
 
         adb_files = []
         if step_type in ("adb",):
@@ -329,6 +346,9 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             "actions_connection": step_data.get("actions_connection", "wired"),
             "actions_wifi_port": step_data.get("actions_wifi_port"),
             "exe_file": exe_file,
+            "video_file": video_file,
+            "video_url": video_url,
+            "video_label": step_data.get("video_label", ""),
             "check_options": step_data.get("check_options", []),
             # Граф исполнения (см. app/car_generator.py: StepSpec.next/
             # next_options — то же самое, что и на desktop, тот же формат

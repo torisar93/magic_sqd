@@ -86,6 +86,8 @@ def _step_to_dict(step: StepSpec) -> dict:
         "actions_wifi_port": step.actions_wifi_port,
         "uart_wifi_port": step.uart_wifi_port,
         "exe_file": _file_dict(step.exe_file) if step.exe_file else None,
+        "video_file": _file_dict(step.video_file) if step.video_file else None,
+        "video_label": step.video_label,
         "check_options": step.check_options,
         "id": step.id, "next": step.next, "next_options": step.next_options,
         "variants": [_variant_to_dict(v) for v in step.variants],
@@ -120,6 +122,7 @@ def _variant_from_dict(data: dict) -> StepVariant:
 
 def _step_from_dict(data: dict) -> StepSpec:
     exe_file = data.get("exe_file")
+    video_file = data.get("video_file")
     return StepSpec(
         type=data["type"], title=data.get("title", ""), description=data.get("description", ""),
         instruction_blocks=data.get("instruction_blocks") or [],
@@ -139,6 +142,8 @@ def _step_from_dict(data: dict) -> StepSpec:
         actions_wifi_port=(int(data["actions_wifi_port"]) if data.get("actions_wifi_port") not in (None, "") else None),
         uart_wifi_port=(int(data["uart_wifi_port"]) if data.get("uart_wifi_port") not in (None, "") else None),
         exe_file=Path(exe_file["path"]) if exe_file else None,
+        video_file=Path(video_file["path"]) if video_file else None,
+        video_label=data.get("video_label", ""),
         check_options=data.get("check_options") or [],
         id=data.get("id"), next=data.get("next"), next_options=data.get("next_options") or [],
         variants=[_variant_from_dict(v) for v in (data.get("variants") or [])],
