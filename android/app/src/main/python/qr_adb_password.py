@@ -19,11 +19,12 @@ _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 _SALT_RE = re.compile(r"salt\s*=\s*\[([^\]]*)\]")
 _PASSWORD_RE = re.compile(r"password\s*=\s*\[([^\]]*)\]")
-_SN_RE = re.compile(r"\bsn\s*=\s*([A-Za-z0-9_.-]+)")
-# См. app/qr_adb_password.py (desktop) — sn нельзя искать по всему файлу
-# первым совпадением (в реальном bugreport-*.txt "sn=" встречается тысячи
-# раз в несвязанных строках логов), только в окне сразу после password=[...].
-_SN_SEARCH_WINDOW = 300
+# См. app/qr_adb_password.py (desktop) — пробел перед "sn" (не \b-граница)
+# плюс последнее найденное совпадение, 1:1 с эталонным скриптом поставщика
+# (deploy/QR.py из release-бандла MonGuard) — иначе в реальном bugreport-*.txt
+# "sn=" (без пробела, через TAB — DrFusionService) встречается тысячи раз в
+# несвязанных строках логов и даёт случайный неверный код.
+_SN_RE = re.compile(r" sn\s*=\s*([A-Za-z0-9_.-]+)")
 
 
 def _hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
@@ -64,17 +65,13 @@ def get_password_from_zip_b64(zip_b64: str) -> str:
                 return json.dumps({"ok": False, "error": "Внутри bugreport-zip нет .txt файлов"})
             for name in txt_names:
                 content = zf.read(name).decode("utf-8", errors="ignore")
-                salt_match = _SALT_RE.search(content)
-                password_match = _PASSWORD_RE.search(content)
-                sn_match = None
-                if salt_match and password_match:
-                    sn_match = _SN_RE.search(
-                        content, password_match.end(), password_match.end() + _SN_SEARCH_WINDOW
-                    )
-                if salt_match and password_match and sn_match:
-                    salt = _parse_int_list(salt_match.group(1))
-                    password = _parse_int_list(password_match.group(1))
-                    sn = sn_match.group(1).strip()
+                salt_matches = _SALT_RE.findall(content)
+                password_matches = _PASSWORD_RE.findall(content)
+                sn_matches = _SN_RE.findall(content)
+                if salt_matches and password_matches and sn_matches:
+                    salt = _parse_int_list(salt_matches[-1])
+                    password = _parse_int_list(password_matches[-1])
+                    sn = sn_matches[-1].strip()
                     prk = _hkdf_extract(salt, password)
                     six_bytes = _hkdf_expand(prk, sn.encode("utf-8"), 6)
                     code = _encode_alphanumeric(six_bytes)

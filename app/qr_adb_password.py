@@ -30,16 +30,18 @@ _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 _SALT_RE = re.compile(r"salt\s*=\s*\[([^\]]*)\]")
 _PASSWORD_RE = re.compile(r"password\s*=\s*\[([^\]]*)\]")
-_SN_RE = re.compile(r"\bsn\s*=\s*([A-Za-z0-9_.-]+)")
 # Реальный bugreport-*.txt — это полный дамп logcat, десятки мегабайт, где
-# "sn=" встречается тысячи раз в не связанных с ADB-паролем диагностических
-# строках (например DrFusionService печатает "sn=<счётчик>,time=..." на
-# каждый кадр). Поэтому sn нельзя искать по всему файлу первым совпадением
-# (было именно так и давало случайный неверный код на реальном устройстве,
-# см. отчёт техника) — реальный sn печатается тем же логгером сразу следующей
-# строкой после password=[...] (тег QRCodeDialog), поэтому ищем его только в
-# небольшом окне сразу после конца password-совпадения.
-_SN_SEARCH_WINDOW = 300
+# "sn=" (без пробела перед ним, например DrFusionService печатает
+# "...[DR]\tsn=<счётчик>,time=..." через TAB) встречается тысячи раз в не
+# связанных с ADB-паролем диагностических строках — искать по \b-границе
+# слова, как раньше, брало первую попавшуюся и давало случайный неверный
+# код на реальном устройстве (см. отчёт техника). Настоящий sn печатается
+# строкой "... I QRCodeDialog: sn=<серийник>" — ИМЕННО с пробелом перед
+# "sn" (после ": "). Взято 1:1 из эталонного скрипта поставщика платформы
+# (deploy/QR.py в release-бандле MonGuard), который использует тот же
+# HKDF-алгоритм — там тоже пробел перед "sn" и берётся последнее найденное
+# совпадение (findall(...)[-1]), а не первое.
+_SN_RE = re.compile(r" sn\s*=\s*([A-Za-z0-9_.-]+)")
 
 
 def _hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
@@ -101,17 +103,15 @@ def _extract_fields(zip_path: Path) -> tuple[bytes, bytes, str]:
             raise QrAdbError(f"Внутри {zip_path.name} нет .txt файлов")
         for name in txt_names:
             content = zf.read(name).decode("utf-8", errors="ignore")
-            salt_match = _SALT_RE.search(content)
-            password_match = _PASSWORD_RE.search(content)
-            if not (salt_match and password_match):
-                continue
-            sn_match = _SN_RE.search(
-                content, password_match.end(), password_match.end() + _SN_SEARCH_WINDOW
-            )
-            if sn_match:
-                salt = bytes(b & 0xFF for b in _parse_int_list(salt_match.group(1)))
-                password = bytes(b & 0xFF for b in _parse_int_list(password_match.group(1)))
-                return salt, password, sn_match.group(1).strip()
+            # findall(...)[-1] (последнее совпадение), не первое встречное —
+            # 1:1 с эталонным скриптом поставщика (см. комментарий у _SN_RE).
+            salt_matches = _SALT_RE.findall(content)
+            password_matches = _PASSWORD_RE.findall(content)
+            sn_matches = _SN_RE.findall(content)
+            if salt_matches and password_matches and sn_matches:
+                salt = bytes(b & 0xFF for b in _parse_int_list(salt_matches[-1]))
+                password = bytes(b & 0xFF for b in _parse_int_list(password_matches[-1]))
+                return salt, password, sn_matches[-1].strip()
     raise QrAdbError(f"Поля salt/password/sn не найдены ни в одном .txt внутри {zip_path.name}")
 
 
