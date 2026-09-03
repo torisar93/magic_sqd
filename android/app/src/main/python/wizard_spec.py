@@ -161,22 +161,33 @@ def _variant_dicts(variant_data, base_dir: Path, step_type: str) -> list:
 
 
 _IMG_SRC_RE = re.compile(r'(<img[^>]*\bsrc=")(?!https?://)([^"]+)(")', re.IGNORECASE)
+# Кнопка "Смотреть видео" (см. app/instruction_html.py: _render_block) —
+# та же задача, что и у _IMG_SRC_RE выше, но href, а не src, и класс вместо
+# произвольного тега (единственный <a> с classом video-btn во всём
+# документе — сама разметка пишется только этим одним местом).
+_VIDEO_HREF_RE = re.compile(r'(<a class="video-btn" href=")(?!https?://)([^"]+)(")', re.IGNORECASE)
 
 
 def _rewrite_instruction_images(html: str, instr_dir: Path, files_root: Path) -> str:
-    """Переписывает относительные <img src="images/...">  на абсолютные
-    https://appassets.androidplatform.net/data/... — origin, из которого
-    WebView реально отдаёт файлы приложения (см. MainActivity.kt:
-    WebViewAssetLoader, InternalStoragePathHandler("/data/", filesDir)).
-    Без этого картинки в instruction.html биты — HTML вставляется через
-    innerHTML в страницу с ДРУГИМ origin (assets/index.html), относительные
-    пути резолвятся от НЕЁ, а не от исходного instruction.html на диске."""
+    """Переписывает относительные <img src="images/..."> и <a class="video-btn"
+    href="videos/...">  на абсолютные https://appassets.androidplatform.net/
+    data/... — origin, из которого WebView реально отдаёт файлы приложения
+    (см. MainActivity.kt: WebViewAssetLoader, InternalStoragePathHandler
+    ("/data/", filesDir)). Без этого картинки/видео в instruction.html биты
+    — HTML вставляется через innerHTML в страницу с ДРУГИМ origin
+    (assets/index.html), относительные пути резолвятся от НЕЁ, а не от
+    исходного instruction.html на диске. Тот же origin, что и у страницы —
+    значит клик по кнопке видео не улетает во внешний Intent (см.
+    MainActivity.kt: shouldOverrideUrlLoading — не трогает URL с хостом
+    appassets.androidplatform.net), а открывается прямо в WebView, который
+    штатно показывает нативный проигрыватель при прямой навигации на mp4."""
     try:
         rel = instr_dir.relative_to(files_root).as_posix()
     except ValueError:
         return html  # instr_dir не под files_root — рассинхрон путей, не трогаем
     base = f"https://appassets.androidplatform.net/data/{rel}/"
-    return _IMG_SRC_RE.sub(lambda m: f"{m.group(1)}{base}{m.group(2)}{m.group(3)}", html)
+    html = _IMG_SRC_RE.sub(lambda m: f"{m.group(1)}{base}{m.group(2)}{m.group(3)}", html)
+    return _VIDEO_HREF_RE.sub(lambda m: f"{m.group(1)}{base}{m.group(2)}{m.group(3)}", html)
 
 
 def load_wizard_spec(model_dir: Path, files_root: Path | None = None):

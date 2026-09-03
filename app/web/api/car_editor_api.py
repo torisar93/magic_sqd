@@ -25,7 +25,7 @@ from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError
                                StandardApkSpec, StepSpec, StepVariant, create_car, load_car_spec, update_car)
 from ...content_sync import (clear_local_edit_marker, fetch_manifest, get_base_url, mark_local_edit,
                               sync_model_subfolder)
-from ...instruction_html import default_blocks, render_document
+from ...instruction_html import default_blocks, render_document, validate_video_file
 from ...ping_client import get_or_create_client_id
 from ...submit_client import SubmitCancelled, SubmitError, submit_model
 from ...submit_config import get_submit_config
@@ -33,6 +33,7 @@ from ...submit_config import get_submit_config
 APK_FILE_TYPES = ("APK (*.apk)", "Все файлы (*.*)")
 EXE_FILE_TYPES = ("Исполняемый файл (*.exe)", "Все файлы (*.*)")
 IMAGE_FILE_TYPES = ("Изображения (*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp)", "Все файлы (*.*)")
+VIDEO_FILE_TYPES = ("Видео H.264 (*.mp4)", "Все файлы (*.*)")
 ANY_FILE_TYPES = ("Все файлы (*.*)",)
 
 
@@ -228,7 +229,7 @@ class CarEditorApi:
             result = webview.windows[0].create_file_dialog(webview.FOLDER_DIALOG, allow_multiple=multiple)
         else:
             file_types = {"apk": APK_FILE_TYPES, "exe": EXE_FILE_TYPES,
-                          "image": IMAGE_FILE_TYPES}.get(kind, ANY_FILE_TYPES)
+                          "image": IMAGE_FILE_TYPES, "video": VIDEO_FILE_TYPES}.get(kind, ANY_FILE_TYPES)
             result = webview.windows[0].create_file_dialog(
                 webview.OPEN_DIALOG, allow_multiple=multiple, file_types=file_types)
         if not result:
@@ -291,8 +292,24 @@ class CarEditorApi:
         не-file:// документа. render_document (та же чистая функция
         instruction_html.py) уже параметризована по href_fn для ровно
         такого случая — tkinterweb (не Chromium) мог грузить file:// без
-        этого ограничения, поэтому render_preview там годился как есть."""
-        return render_document(blocks, self._photo_data_uri)
+        этого ограничения, поэтому render_preview там годился как есть.
+
+        Видео — исключение: там href не грузится В документ (не <img>, а
+        <a target="_blank"> — сама кнопка ничего не встраивает, см.
+        instruction_html._render_block), а уходит через pywebview во
+        внешний браузер/плеер (webbrowser.open() понимает file:// как
+        обычный URL) — значит ограничение Chromium тут вообще не
+        применяется, и base64 всего файла (до 150 МБ, см.
+        instruction_html.MAX_VIDEO_BYTES) в srcdoc предпросмотра был бы
+        просто прямым расточительством памяти/времени без всякой пользы."""
+        def href_fn(block: dict) -> str:
+            if block.get("type") == "video":
+                try:
+                    return Path(block["path"]).resolve().as_uri()
+                except (OSError, ValueError):
+                    return ""
+            return self._photo_data_uri(block)
+        return render_document(blocks, href_fn)
 
     @staticmethod
     def _photo_data_uri(block: dict) -> str:
@@ -303,6 +320,14 @@ class CarEditorApi:
             return ""
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+    def validate_video(self, path: str) -> dict:
+        """Проверка перед принятием файла в видео-блок (см.
+        instruction_html.validate_video_file — формат/размер/кодек) —
+        вызывается из instruction_editor.js сразу после выбора файла в
+        диалоге, до того как он попадёт в список блоков."""
+        error = validate_video_file(Path(path))
+        return {"ok": error is None, "error": error or ""}
 
     # -- публикация на сервере после сохранения ----------------------------
     def get_publish_target(self, admin_mode: bool = False) -> dict:

@@ -258,6 +258,9 @@ class WebApi:
     def car_instruction_render_preview(self, blocks: list) -> str:
         return self._car_editor.instruction_render_preview(blocks)
 
+    def car_validate_video(self, path: str) -> dict:
+        return self._car_editor.validate_video(path)
+
     def car_get_publish_target(self) -> dict:
         return self._car_editor.get_publish_target(self.admin_mode)
 

@@ -56,6 +56,34 @@ def _inline_relative_images(html_text: str, base_dir: Path) -> str:
     return _IMG_SRC_RE.sub(_replace, html_text)
 
 
+_VIDEO_HREF_RE = re.compile(r'(<a class="video-btn" href=")([^"]+)(")', re.IGNORECASE)
+
+
+def _resolve_video_hrefs(html_text: str, base_dir: Path) -> str:
+    """Кнопка "Смотреть видео" (см. instruction_html._render_block)
+    ссылается на файл ОТНОСИТЕЛЬНЫМ путём (videos/имя.mp4, та же причина
+    переносимости модели, что и у фото — см. instruction_html.
+    save_instruction), но сама инструкция отдаётся в <iframe srcdoc> со
+    страницы на http://127.0.0.1:.../ — относительный href резолвился бы
+    туда же, а не на реальный файл на диске. В отличие от фото видео НЕ
+    встраивается в документ — это просто внешняя ссылка (target="_blank",
+    уходит через pywebview в системный браузер/webbrowser.open(), который
+    прекрасно понимает file:// как обычный URL), поэтому вместо затратного
+    base64 всего файла (до 150 МБ, см. instruction_html.MAX_VIDEO_BYTES)
+    достаточно подменить относительный путь на абсолютный file:// URI."""
+    def _replace(match: re.Match) -> str:
+        prefix, href, suffix = match.group(1), match.group(2), match.group(3)
+        if href.startswith(("http://", "https://", "file://")):
+            return match.group(0)
+        try:
+            uri = (base_dir / href).resolve().as_uri()
+        except ValueError:
+            return match.group(0)
+        return f"{prefix}{uri}{suffix}"
+
+    return _VIDEO_HREF_RE.sub(_replace, html_text)
+
+
 class InstallApi:
     def __init__(self, adb_path: str, base_dir, scanner_api):
         self.adb_path = adb_path
@@ -166,7 +194,9 @@ class InstallApi:
             "type": stage["type"],
             "title": stage["title"],
             "description": stage.get("description"),
-            "instruction_html": (_inline_relative_images(html_path.read_text(encoding="utf-8"), html_path.parent)
+            "instruction_html": (_resolve_video_hrefs(
+                                      _inline_relative_images(html_path.read_text(encoding="utf-8"), html_path.parent),
+                                      html_path.parent)
                                   if html_path else None),
             # Граф исполнения (см. car_generator.py: StepSpec.next/
             # next_options) — id этого этапа и, для обычных типов, id

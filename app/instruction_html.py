@@ -10,6 +10,12 @@ cars/Geely/Atlas New — заголовки, нумерованные шаги, 
     {"type": "h1" | "h2" | "p" | "warn" | "danger", "text": "..."}
     {"type": "steps", "text": "шаг 1\\nшаг 2\\n..."}
     {"type": "photo", "path": "<абсолютный путь на диске>", "caption": "..."}
+    {"type": "video", "path": "<абсолютный путь на диске>", "caption": "..."}
+        — кнопка "Смотреть видео" (caption — свой текст кнопки вместо
+        дефолтного), открывает файл в системном браузере/плеере. Только
+        загрузка своего файла (не внешняя ссылка) — MP4/H.264, до
+        MAX_VIDEO_BYTES (см. validate_video_file) — то же обращение с
+        path/копированием в model_dir, что и у фото-блока.
     {"type": "html", "text": "<произвольная HTML-разметка>"} — вставляется
         как есть, БЕЗ экранирования (единственный такой тип блока) — для
         готовой разметки/виджетов на JS, которые не выразить остальными
@@ -30,6 +36,7 @@ import html
 import json
 import re
 import shutil
+import struct
 from pathlib import Path
 
 from . import colors as theme
@@ -44,6 +51,7 @@ BLOCK_TYPE_LABELS = {
     "warn": "Важно",
     "danger": "Осторожно",
     "photo": "Фото",
+    "video": "Видео",
     "qr_adb": "QR-код ADB (флешка)",
     "html": "HTML-код",
 }
@@ -62,6 +70,120 @@ _QR_ADB_BLOCK_HTML = (
     "<li>Вставьте флешку в USB-порт магнитолы и дождитесь надписи «QNX OK».</li>"
     "<li>Извлеките флешку и вставьте обратно в ноутбук/телефон — на ней появится пароль для подключения по ADB.</li></ol>"
 )
+
+# -- видео-блок: загрузка своего файла, не внешняя ссылка (техник может
+# выложить ролик на несколько минут, но не в произвольном формате/весе —
+# см. validate_video_file). MP4/H.264 — единственная комбинация контейнера
+# и кодека, которая гарантированно проигрывается и в системном браузере
+# (target="_blank" у самой кнопки, см. _render_block), и в WebView2/pywebview
+# без досборки собственного плеера или кодеков. HEVC ("эффективный" формат
+# по умолчанию на iPhone) — самый вероятный кандидат "почему видео не
+# играет" у техника, поэтому проверяем кодек, а не только расширение файла.
+MAX_VIDEO_BYTES = 150 * 1024 * 1024
+ALLOWED_VIDEO_EXTENSIONS = (".mp4",)
+_ALLOWED_VIDEO_CODECS = {"avc1", "avc3"}  # H.264 (Baseline/Main/High — все avc1, avc3 — редкий вариант с inline SPS/PPS)
+_VIDEO_CODEC_LABELS = {
+    "hev1": "HEVC/H.265", "hvc1": "HEVC/H.265", "vp09": "VP9", "av01": "AV1",
+    "mp4v": "MPEG-4 Part 2", "s263": "H.263",
+}
+
+
+def _iter_mp4_boxes(data: bytes, start: int, end: int):
+    """Плоский обход MP4/ISOBMFF-боксов на одном уровне вложенности —
+    [4 байта размер][4 байта тип (fourcc)][тело...], size==1 — расширенный
+    64-битный размер в следующих 8 байтах, size==0 — бокс до конца файла
+    (см. ISO/IEC 14496-12). Останавливается на первом повреждённом
+    заголовке, не поднимая исключение — вызывающий код (validate_video_file)
+    трактует "кодек не нашли" как отказ, а не падение с трассировкой на
+    файле от техника."""
+    pos = start
+    while pos + 8 <= end:
+        size = struct.unpack(">I", data[pos:pos + 4])[0]
+        box_type = data[pos + 4:pos + 8].decode("latin1")
+        header = 8
+        if size == 1:
+            if pos + 16 > end:
+                return
+            size = struct.unpack(">Q", data[pos + 8:pos + 16])[0]
+            header = 16
+        elif size == 0:
+            size = end - pos
+        if size < header or pos + size > end:
+            return
+        yield box_type, pos + header, pos + size
+        pos += size
+
+
+def _find_box(data: bytes, start: int, end: int, box_type: str) -> tuple[int, int] | None:
+    for bt, s, e in _iter_mp4_boxes(data, start, end):
+        if bt == box_type:
+            return s, e
+    return None
+
+
+def _mp4_video_codecs(data: bytes) -> list[str]:
+    """fourcc-коды кодеков всех ВИДЕО-дорожек файла (по одному на trak с
+    hdlr.handler_type == 'vide') — [] если это вообще не MP4/ISOBMFF
+    (нет moov) или в нём не нашлось ни одной видео-дорожки."""
+    moov = _find_box(data, 0, len(data), "moov")
+    if moov is None:
+        return []
+    codecs = []
+    for bt, s, e in _iter_mp4_boxes(data, *moov):
+        if bt != "trak":
+            continue
+        mdia = _find_box(data, s, e, "mdia")
+        if mdia is None:
+            continue
+        hdlr = _find_box(data, *mdia, "hdlr")
+        # hdlr: 4 байта version+flags, 4 байта pre_defined, 4 байта
+        # handler_type (fourcc) — дальше reserved/имя, не нужны.
+        if hdlr is None or hdlr[1] - hdlr[0] < 12:
+            continue
+        handler_type = data[hdlr[0] + 8:hdlr[0] + 12].decode("latin1")
+        if handler_type != "vide":
+            continue
+        minf = _find_box(data, *mdia, "minf")
+        stbl = _find_box(data, *minf, "stbl") if minf else None
+        stsd = _find_box(data, *stbl, "stsd") if stbl else None
+        if stsd is None or stsd[1] - stsd[0] < 8:
+            continue
+        # stsd: 4 байта version+flags, 4 байта entry_count, затем
+        # sample entries — у каждой свои [4 байта размер][4 байта
+        # fourcc-формат]. Кодек видео-дорожки — fourcc первой записи.
+        entry_start = stsd[0] + 8
+        if entry_start + 8 > stsd[1]:
+            continue
+        codecs.append(data[entry_start + 4:entry_start + 8].decode("latin1"))
+    return codecs
+
+
+def validate_video_file(path: Path) -> str | None:
+    """None — файл годится под видео-блок инструкции, иначе готовое
+    сообщение техпику (можно показывать как есть). Три независимые
+    проверки: расширение, размер, и — самое важное — реальный кодек внутри
+    контейнера (расширение .mp4 ничего не говорит о кодеке, см. докстринг
+    выше про HEVC с iPhone)."""
+    if path.suffix.lower() not in ALLOWED_VIDEO_EXTENSIONS:
+        return "Поддерживается только MP4 (H.264). Пересохраните видео в этом формате."
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return f"Не удалось прочитать файл: {exc}"
+    if size > MAX_VIDEO_BYTES:
+        limit_mb = MAX_VIDEO_BYTES // (1024 * 1024)
+        return f"Файл больше {limit_mb} МБ — пересожмите видео (ниже битрейт/разрешение) или сократите ролик."
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return f"Не удалось прочитать файл: {exc}"
+    codecs = _mp4_video_codecs(data)
+    if not codecs:
+        return "Не удалось найти видеодорожку — файл повреждён или это не настоящий MP4."
+    if not any(c in _ALLOWED_VIDEO_CODECS for c in codecs):
+        found = ", ".join(_VIDEO_CODEC_LABELS.get(c, c) for c in codecs)
+        return f"Кодек {found} не поддерживается, нужен H.264. Пересохраните/переконвертируйте видео."
+    return None
 
 # Та же палитра/классы, что уже вручную писались в существующих
 # instruction.html (.warn/.danger/.path/img.screenshot) — теперь взята из
@@ -166,6 +288,13 @@ INSTRUCTION_CSS = f"""
   .danger::before {{ background-image: url("{_DANGER_ICON}"); }}
   .path {{ background: {theme.BG_ELEVATED}; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; color: {theme.ACCENT_2}; }}
   .caption {{ color: {theme.TEXT_DIM}; font-size: 12px; margin-top: -4px; text-align: center; }}
+  .video-btn {{
+    display: inline-flex; align-items: center; gap: 8px; margin: 14px 0;
+    padding: 10px 18px; border-radius: 8px; background: {theme.ACCENT_2};
+    color: {theme.BG_CARD}; font-weight: 600; text-decoration: none;
+    transition: filter .15s ease;
+  }}
+  .video-btn:hover {{ filter: brightness(1.08); }}
   /* Раньше просто <img style="max-width:100%"> — фото разных размеров и
      пропорций (скриншот телефона рядом со скриншотом магнитолы) смотрелись
      вразнобой; пробовали единить их рамкой (border+padding+подложка), но
@@ -567,6 +696,16 @@ def _render_block(block: dict, href_fn) -> str:
         return block.get("text", "").strip()
     if block_type == "qr_adb":
         return _QR_ADB_BLOCK_HTML
+    if block_type == "video" and block.get("path"):
+        href = href_fn(block)
+        label = block.get("caption", "").strip() or "Смотреть видео"
+        # target="_blank" — открывается в системном браузере, а не подменяет
+        # саму инструкцию в iframe (та же причина, что и у _linkify выше).
+        # Кнопка, а не встроенный <video> — см. обсуждение фичи: технику
+        # проще открыть готовый плеер ОС/браузера, чем разбираться со
+        # встроенным плеером внутри песочницы предпросмотра.
+        return (f'<a class="video-btn" href="{html.escape(href)}" target="_blank" '
+                f'rel="noopener noreferrer">▶ {html.escape(label)}</a>')
     if block_type == "photo" and block.get("path"):
         href = href_fn(block)
         caption = block.get("caption", "").strip()
@@ -627,47 +766,58 @@ def parse_blocks(html_text: str, model_dir: Path) -> list[dict] | None:
         return None
     resolved = []
     for block in blocks:
-        if block.get("type") == "photo" and block.get("path"):
+        if block.get("type") in ("photo", "video") and block.get("path"):
             block = {**block, "path": str((model_dir / block["path"]).resolve())}
         resolved.append(block)
     return resolved
 
 
+BLOCK_FILE_SUBDIR = {"photo": "images", "video": "videos"}
+BLOCK_FILE_SUBDIRS = tuple(BLOCK_FILE_SUBDIR.values())
+
+
 def save_instruction(model_dir: Path, blocks: list[dict]) -> None:
-    """Копирует фото блоков в model_dir/images/ (кроме уже лежащих там —
-    см. модульный docstring) и пишет model_dir/instruction.html. Не трогает
-    список blocks вызывающего — работает с копиями."""
-    images_dir = (model_dir / "images").resolve()
+    """Копирует файлы фото/видео-блоков в model_dir/images или .../videos
+    (кроме уже лежащих там — см. модульный docstring) и пишет
+    model_dir/instruction.html. Не трогает список blocks вызывающего —
+    работает с копиями. Видео — отдельная подпапка от фото хотя бы потому,
+    что чистка осиротевших файлов ниже сверяет "что реально используется"
+    по каждой подпапке отдельно, и держать десятки/сотни МБ видео
+    вперемешку с картинками неудобно даже просто открыть проводником."""
     model_dir_resolved = model_dir.resolve()
+    dest_dirs = {block_type: (model_dir_resolved / subdir) for block_type, subdir in BLOCK_FILE_SUBDIR.items()}
     resolved_blocks = []
     for block in blocks:
-        if block.get("type") != "photo" or not block.get("path"):
+        dest_dir = dest_dirs.get(block.get("type"))
+        if dest_dir is None or not block.get("path"):
             resolved_blocks.append(block)
             continue
         source_path = Path(block["path"]).resolve()
-        if images_dir in source_path.parents:
+        if dest_dir in source_path.parents:
             rel = source_path.relative_to(model_dir_resolved).as_posix()
         else:
-            images_dir.mkdir(parents=True, exist_ok=True)
-            dest = images_dir / source_path.name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / source_path.name
             counter = 1
             while dest.exists():
-                dest = images_dir / f"{source_path.stem}_{counter}{source_path.suffix}"
+                dest = dest_dir / f"{source_path.stem}_{counter}{source_path.suffix}"
                 counter += 1
             shutil.copy2(source_path, dest)
             rel = dest.relative_to(model_dir_resolved).as_posix()
         resolved_blocks.append({**block, "path": rel})
 
-    # Убираем фото, которые раньше были скопированы сюда, но в текущем
+    # Убираем файлы, которые раньше были скопированы сюда, но в текущем
     # наборе блоков на них больше никто не ссылается (убрали блок/сменили
-    # фото) — тот же принцип, что и для files/usb_files в car_generator.py.
-    if images_dir.is_dir():
-        keep_names = {Path(b["path"]).name for b in resolved_blocks if b.get("type") == "photo"}
-        for existing in images_dir.iterdir():
+    # файл) — тот же принцип, что и для files/usb_files в car_generator.py.
+    for block_type, dest_dir in dest_dirs.items():
+        if not dest_dir.is_dir():
+            continue
+        keep_names = {Path(b["path"]).name for b in resolved_blocks if b.get("type") == block_type}
+        for existing in dest_dir.iterdir():
             if existing.is_file() and existing.name not in keep_names:
                 existing.unlink()
-        if not any(images_dir.iterdir()):
-            images_dir.rmdir()
+        if not any(dest_dir.iterdir()):
+            dest_dir.rmdir()
 
     html_text = render_document(resolved_blocks, lambda b: b["path"])
     (model_dir / "instruction.html").write_text(html_text, encoding="utf-8")

@@ -8,7 +8,7 @@
 
   const BLOCK_TYPE_LABELS = {
     h1: "Заголовок", h2: "Подзаголовок", p: "Текст", steps: "Шаги",
-    warn: "Важно", danger: "Осторожно", photo: "Фото",
+    warn: "Важно", danger: "Осторожно", photo: "Фото", video: "Видео",
     qr_adb: "QR-код ADB (флешка)", html: "HTML-код",
   };
 
@@ -38,7 +38,11 @@
   }
 
   function addBlock(type) {
-    blocks.push(type === "photo" ? { type: "photo", path: "", caption: "" } : { type, text: "" });
+    if (type === "photo" || type === "video") {
+      blocks.push({ type, path: "", caption: "" });
+    } else {
+      blocks.push({ type, text: "" });
+    }
     renderRows();
   }
 
@@ -139,13 +143,52 @@
       captionInput.value = block.caption || "";
       captionInput.addEventListener("input", () => { block.caption = captionInput.value; });
       row.appendChild(captionInput);
+    } else if (block.type === "video") {
+      row.appendChild(el("div", {
+        class: "app-desc",
+        text: "Только MP4 (H.264), до 150 МБ — другой кодек/формат отклонит проверка сразу после выбора файла.",
+      }));
+      const videoRow = el("div", { class: "row" });
+      const nameLabel = el("span", {
+        class: "app-desc",
+        text: block.path ? block.path.split(/[\\/]/).pop() : "(не выбрано)",
+      });
+      const errorLabel = el("span", { class: "app-desc", style: "color: var(--danger)" });
+      const pickBtn = el("button", {
+        text: "Выбрать видео...",
+        onclick: async () => {
+          const files = await window.pywebview.api.car_pick_files("video", false);
+          if (!files.length) return;
+          pickBtn.disabled = true;
+          nameLabel.textContent = "Проверка...";
+          errorLabel.textContent = "";
+          const result = await window.pywebview.api.car_validate_video(files[0].path);
+          pickBtn.disabled = false;
+          if (!result.ok) {
+            nameLabel.textContent = block.path ? block.path.split(/[\\/]/).pop() : "(не выбрано)";
+            errorLabel.textContent = result.error;
+            return;
+          }
+          block.path = files[0].path;
+          renderRows();
+        },
+      });
+      videoRow.appendChild(pickBtn);
+      videoRow.appendChild(nameLabel);
+      row.appendChild(videoRow);
+      row.appendChild(errorLabel);
+
+      const captionInput = el("input", { type: "text", placeholder: "Текст кнопки (необязательно, по умолчанию «Смотреть видео»)", style: "margin-top: 6px" });
+      captionInput.value = block.caption || "";
+      captionInput.addEventListener("input", () => { block.caption = captionInput.value; });
+      row.appendChild(captionInput);
     }
     return row;
   }
 
   async function refreshPreview() {
-    const withPhotos = blocks.filter((b) => b.type !== "photo" || b.path);
-    previewFrame.srcdoc = await window.pywebview.api.car_instruction_render_preview(withPhotos);
+    const withFiles = blocks.filter((b) => (b.type !== "photo" && b.type !== "video") || b.path);
+    previewFrame.srcdoc = await window.pywebview.api.car_instruction_render_preview(withFiles);
   }
 
   function onSave() {

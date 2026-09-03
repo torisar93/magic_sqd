@@ -814,11 +814,12 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                 instr_step_dir.mkdir(parents=True, exist_ok=True)
                 instruction_html.save_instruction(instr_step_dir, step.instruction_blocks)
                 keep_paths.add(existing_html.resolve())
-                images_dir = instr_step_dir / "images"
-                if images_dir.is_dir():
-                    for f in images_dir.iterdir():
-                        if f.is_file():
-                            keep_paths.add(f.resolve())
+                for subdir in instruction_html.BLOCK_FILE_SUBDIRS:
+                    media_dir = instr_step_dir / subdir
+                    if media_dir.is_dir():
+                        for f in media_dir.iterdir():
+                            if f.is_file():
+                                keep_paths.add(f.resolve())
             elif existing_html.is_file() and existing_html.stat().st_size > 0:
                 # instruction_blocks пуст в памяти — либо шаг реально без
                 # инструкции, либо (см. car_editor_api.py:
@@ -829,11 +830,12 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                 # именно так тихо остался без инструкции при массовой
                 # пересборке stages.py на машине с несинканными файлами.
                 keep_paths.add(existing_html.resolve())
-                images_dir = instr_step_dir / "images"
-                if images_dir.is_dir():
-                    for f in images_dir.iterdir():
-                        if f.is_file():
-                            keep_paths.add(f.resolve())
+                for subdir in instruction_html.BLOCK_FILE_SUBDIRS:
+                    media_dir = instr_step_dir / subdir
+                    if media_dir.is_dir():
+                        for f in media_dir.iterdir():
+                            if f.is_file():
+                                keep_paths.add(f.resolve())
 
     for root in (files_dir, usb_root):
         if not root.exists():
@@ -841,6 +843,22 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
         for path in root.rglob("*"):
             if path.is_file() and path.resolve() not in keep_paths:
                 path.unlink()
+        # Дополнительная страховка сверх общей очистки выше — только внутри
+        # required/optional (папки строго зарезервированы под APK-паки, см.
+        # _copy_apk — единственное место, что вообще пишет .json под
+        # files/, и делает это только парой со своим .apk в keep_paths).
+        # Внутри usb_files/adb_files/exe_* и прочих произвольных вложений
+        # техника .json НЕ трогаем — там это может быть его собственный
+        # обычный файл, а не сайдкар. .json без пары .apk рядом внутри
+        # required/optional не может быть ничем, кроме сироты, даже если
+        # по какой-то причине не попал под общую чистку выше (например
+        # перенос между required/optional за одно сохранение оставил его
+        # на старом месте — на практике не воспроизвёл детерминированно,
+        # но цена проверки нулевая, а инвариант стоит держать безусловно).
+        for json_path in root.rglob("*.json"):
+            if (json_path.is_file() and json_path.parent.name in ("required", "optional")
+                    and not json_path.with_suffix(".apk").exists()):
+                json_path.unlink()
         for path in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: -len(p.parts)):
             try:
                 path.rmdir()
