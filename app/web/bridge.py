@@ -242,6 +242,12 @@ class WebApi:
     def admin_move_path(self, root: str, from_rel: str, to_rel: str) -> dict:
         return self._admin.move_path(root, from_rel, to_rel)
 
+    def admin_copy_path(self, root: str, from_rel: str, to_rel: str) -> dict:
+        return self._admin.copy_path(root, from_rel, to_rel)
+
+    def admin_create_folder(self, root: str, rel_path: str) -> dict:
+        return self._admin.create_folder(root, rel_path)
+
     # -- car_editor_api ---------------------------------------------------
     def car_load_spec(self, model_key: str) -> dict:
         return self._car_editor.load_spec(model_key)

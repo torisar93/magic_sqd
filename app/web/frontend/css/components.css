@@ -1178,58 +1178,92 @@ select {
   color: var(--text-dim);
 }
 
-.manager-list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+.manager-clipboard-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: var(--corner-radius);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font-size: 12px;
 }
 
-.manager-row {
+.manager-clipboard-status .manager-clipboard-cancel {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+
+.manager-clipboard-status .manager-clipboard-cancel:hover { color: var(--text); }
+
+/* Сетка иконок вместо табличных строк — пользователь явно попросил вид как
+   в обычном файловом менеджере ОС (папки крупными иконками), все действия
+   теперь только через контекстное меню правой кнопкой (см. .context-menu
+   ниже), а не через отдельную колонку с кнопкой "Удалить". */
+.manager-grid {
   display: grid;
-  grid-template-columns: 1fr 84px 150px auto;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  align-content: start;
+  gap: 4px;
+  /* flex:1 внутри dialog.dialog-large (display:flex; flex-direction:column,
+     см. выше) — раньше тут был инлайновый max-height:400px, из-за чего на
+     большом окне снизу оставалась пустая полоса (см. отчёт пользователя);
+     min-height:0 обязателен, иначе flex-элемент не сжимается для скролла.
+     Фон чуть темнее и самого диалога, и окна — чтобы было видно, где
+     заканчивается сетка (тоже прямая просьба). */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: var(--corner-radius);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.manager-card {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  min-height: 38px;
-  padding: 6px 10px;
-  border: 1px solid rgba(187, 207, 222, 0.1);
-  border-radius: 8px;
-  background: rgba(12, 17, 23, 0.34);
+  gap: 6px;
+  padding: 10px 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: default;
+  user-select: none;
   transition: border-color 150ms ease, background 150ms ease;
 }
 
-.manager-row:hover,
-.manager-row.drag-over {
-  z-index: 2;
+.manager-card:hover,
+.manager-card.drag-over {
   border-color: rgba(98, 153, 136, 0.6);
   background: rgba(25, 34, 39, 0.82);
 }
 
-.manager-row-name {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.manager-card.is-dir { cursor: pointer; }
 
-.manager-row-name.is-dir {
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.manager-row-name.is-dir:hover { color: var(--accent-2); }
-
-.manager-row-size,
-.manager-row-date {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.manager-card-icon {
+  width: 44px;
+  height: 44px;
   color: var(--text-dim);
-  font-size: 12px;
 }
 
-.manager-row-size { text-align: right; }
+.manager-card.is-dir .manager-card-icon { color: var(--accent-2); }
+.manager-card-icon svg { width: 100%; height: 100%; }
+
+.manager-card-name {
+  width: 100%;
+  max-width: 100%;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
 
 .manager-rename-input {
   width: 100%;
@@ -1237,13 +1271,46 @@ select {
   border: 1px solid var(--accent);
   color: var(--text);
   border-radius: 6px;
-  padding: 3px 7px;
+  padding: 2px 4px;
+  font-size: 12px;
+  text-align: center;
 }
 
 .manager-empty {
+  grid-column: 1 / -1;
   padding: 24px 0;
   text-align: center;
   color: var(--text-dim);
+}
+
+/* Контекстное меню — правый клик по карточке (действия) или по пустому
+   месту сетки ("Обновить"). Позиционируется абсолютно под курсором,
+   закрывается кликом мимо (см. admin_file_manager.js). */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--corner-radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.context-menu-item {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.context-menu-item:hover { background: var(--accent-soft); }
+.context-menu-item.danger { color: #ff6b6b; }
+.context-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--glass-border);
 }
 
 .app-description-tooltip {

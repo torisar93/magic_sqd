@@ -330,6 +330,67 @@ def move_path(base_url: str, session_cookie: str, root: str, from_rel: str, to_r
         conn.close()
 
 
+def copy_path(base_url: str, session_cookie: str, root: str, from_rel: str, to_rel: str) -> None:
+    """Копирует файл или папку ВНУТРИ одного дерева (root) — POST
+    /admin/api/copy, тот же формат тела и та же защита от тихой
+    перезаписи, что и у move_path выше, но исходник остаётся на месте."""
+    body = json.dumps({"root": root, "from": from_rel, "to": to_rel}).encode("utf-8")
+    parts = urlsplit(base_url)
+    conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    conn = conn_cls(parts.netloc, timeout=30)
+    try:
+        conn.putrequest("POST", "/admin/api/copy")
+        conn.putheader("Cookie", session_cookie)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.endheaders()
+        conn.send(body)
+        response = conn.getresponse()
+        raw = response.read()
+        if response.status == 401:
+            raise AdminClientError("Сессия входа истекла — войдите заново.")
+        if response.status != 200:
+            try:
+                error = json.loads(raw).get("error", raw.decode("utf-8", "replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error = raw.decode("utf-8", "replace")
+            raise AdminClientError(f"Сервер отклонил копирование {from_rel} -> {to_rel} ({response.status}): {error}")
+    except (OSError, http.client.HTTPException) as exc:
+        raise AdminClientError(f"Не удалось связаться с сервером: {exc}") from exc
+    finally:
+        conn.close()
+
+
+def create_folder(base_url: str, session_cookie: str, root: str, rel_path: str) -> None:
+    """Создаёт пустую папку под деревом root — POST /admin/api/mkdir,
+    {"root", "path"}."""
+    body = json.dumps({"root": root, "path": rel_path}).encode("utf-8")
+    parts = urlsplit(base_url)
+    conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    conn = conn_cls(parts.netloc, timeout=30)
+    try:
+        conn.putrequest("POST", "/admin/api/mkdir")
+        conn.putheader("Cookie", session_cookie)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+        conn.endheaders()
+        conn.send(body)
+        response = conn.getresponse()
+        raw = response.read()
+        if response.status == 401:
+            raise AdminClientError("Сессия входа истекла — войдите заново.")
+        if response.status != 200:
+            try:
+                error = json.loads(raw).get("error", raw.decode("utf-8", "replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                error = raw.decode("utf-8", "replace")
+            raise AdminClientError(f"Сервер отклонил создание папки {rel_path} ({response.status}): {error}")
+    except (OSError, http.client.HTTPException) as exc:
+        raise AdminClientError(f"Не удалось связаться с сервером: {exc}") from exc
+    finally:
+        conn.close()
+
+
 # -- очередь заявок клиентов (см. app/web/api/submissions_api.py) -----------
 # Тот же протокол, которым уже пользуется веб-админка (server/admin/
 # index.html) — см. server/backend.py: GET /admin/api/submissions[/peek],

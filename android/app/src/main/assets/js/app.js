@@ -828,6 +828,19 @@
     } else {
       setAdbStatus(false, "ADB: не подключено");
       log(`ADB: не удалось подключиться — ${r.reason || "?"}`);
+      const stage = stages[currentIndex];
+      if (stage && connectionModeFor(stage) !== "wifi") {
+        // USB-C↔USB-C кабель напрямую часто не работает: обе стороны
+        // Type-C сами договариваются о роли host/device через CC-пин, и
+        // магнитола (тоже умеющая быть host — для флешек) может выиграть
+        // эту роль вместо телефона — тогда никто не enumerate-ится вообще,
+        // без единой ошибки на экране (см. переписку с клиентом на Huawei
+        // Pura 90S Pro — тот же профильный баг у Bugjaeger, официально
+        // задокументирован в их FAQ). USB-A↔C кабель через OTG-переходник
+        // жёстко фиксирует роль телефона как host — не даёт магнитоле
+        // шанса перехватить её.
+        log("Если это провод USB-C↔USB-C напрямую — попробуйте USB-A↔C кабель через OTG-переходник: с прямым C↔C телефон и магнитола могут не договориться, кто из них host, и тогда подключение вообще не происходит.");
+      }
     }
   }
 
@@ -1174,15 +1187,18 @@
       const isLast = stage && stage.type !== "check" && stage.next == null;
       wizardNextBtn.textContent = isLast ? "Готово" : "Далее";
     }
-    wizardPageLabel.textContent = stages.length ? `Этап ${currentIndex + 1} из ${stages.length}` : "";
-
     const videoStage = stages.length ? stages[currentIndex] : null;
-    if (videoStage && videoStage.video_url) {
+    const hasVideo = Boolean(videoStage && videoStage.video_url);
+    if (hasVideo) {
       wizardVideoBtn.hidden = false;
       wizardVideoBtn.textContent = `▶ ${videoStage.video_label || "Смотреть видео"}`;
     } else {
       wizardVideoBtn.hidden = true;
     }
+    // На узком экране "Этап X из Y" и кнопка видео вместе не помещаются
+    // рядом с "Назад"/"Далее" — кнопка видео нужнее (это действие, а не
+    // просто справочный текст), поэтому прячем подпись, пока она активна.
+    wizardPageLabel.textContent = (!hasVideo && stages.length) ? `Этап ${currentIndex + 1} из ${stages.length}` : "";
   }
 
   // Докачивает video_file (если ещё нет на диске) в фоне на Kotlin-стороне

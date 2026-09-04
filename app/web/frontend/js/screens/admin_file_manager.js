@@ -6,18 +6,89 @@
 // только cars/) — теперь одно дерево на cars/ И apk/, плюс перенос/
 // переименование через drag-and-drop (тот же паттерн, что и в веб-админке
 // на сайте, server/admin/index.html — HTML5 DnD внутри pywebview работает
-// так же, это чисто DOM-перетаскивание, не файлы ОС). Строки — карточки
-// по образцу .app-row (см. css/components.css: .manager-row), с колонками
-// имя/размер/изменён/действие, а не голый flex space-between.
+// так же, это чисто DOM-перетаскивание, не файлы ОС). Сетка иконок вместо
+// табличных строк (пользователь явно попросил вид как в обычном файловом
+// менеджере ОС) — все действия с файлом/папкой только через контекстное
+// меню правой кнопкой (см. .context-menu ниже), а не колонку с кнопками.
 // ==================================================================
 (() => {
   const { el, clear } = window.dom;
 
+  const FOLDER_ICON_SVG =
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18a2 2 0 0 0 2 2h16a2 2 0 0 0 ' +
+    '2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
+  const FILE_ICON_SVG =
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20a2 2 0 0 0 2 2h12a2 2 0 0 0 ' +
+    '2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z"/></svg>';
+
+  // Простое контекстное меню общего назначения — позиционируется под
+  // курсором, закрывается кликом мимо/Escape/скроллом диалога. container —
+  // куда добавлять узел меню: ОБЯЗАТЕЛЬНО сам открытый <dialog>, а не
+  // document.body — модальный showModal() рисуется в отдельном top layer
+  // браузера, который всегда поверх обычного body; меню, добавленное в
+  // body, было бы физически ПОД диалогом и невидимым (реальный баг —
+  // обработчики срабатывали, меню создавалось, но не показывалось).
+  function showContextMenu(x, y, items, container) {
+    closeContextMenu();
+    const menu = el("div", { class: "context-menu" });
+    for (const item of items) {
+      if (item === "sep") {
+        menu.appendChild(el("div", { class: "context-menu-sep" }));
+        continue;
+      }
+      menu.appendChild(el("div", {
+        class: "context-menu-item" + (item.danger ? " danger" : ""),
+        text: item.label,
+        onclick: () => { closeContextMenu(); item.onclick(); },
+      }));
+    }
+    container.appendChild(menu);
+    // <dialog> с backdrop-filter (см. css: dialog {}) сам становится
+    // containing block для position:fixed/absolute потомков (то же самое,
+    // что и transform/filter) — координаты x/y (clientX/clientY, от
+    // viewport) нужно пересчитать относительно РАМКИ ДИАЛОГА, а не окна,
+    // иначе меню уезжает далеко от курсора (реальный баг — обработчики
+    // срабатывали и позиционировали правильно математически, просто не в
+    // той системе координат).
+    const containerRect = container.getBoundingClientRect();
+    const localX = x - containerRect.left;
+    const localY = y - containerRect.top;
+    const rect = menu.getBoundingClientRect();
+    const maxX = containerRect.width - rect.width - 8;
+    const maxY = containerRect.height - rect.height - 8;
+    menu.style.left = `${Math.min(localX, maxX)}px`;
+    menu.style.top = `${Math.min(localY, maxY)}px`;
+    window._activeContextMenu = menu;
+    // Только "клик мимо" закрывает меню — НЕ "следующий contextmenu": этот
+    // же самый обработчик, зарегистрированный предыдущим открытием меню, до
+    // этого закрывал уже ОТКРЫВШЕЕСЯ здесь новое меню (правый клик всегда
+    // сам создаёт contextmenu, событие бы бублилось до document и мгновенно
+    // сносило меню, которое только что открыл этот же клик — второе правое
+    // нажатие подряд визуально выглядело как "меню вообще не показалось").
+    // Новый contextmenu и так уже закрывает старое меню — closeContextMenu()
+    // в начале этой функции.
+    setTimeout(() => {
+      document.addEventListener("click", closeContextMenu, { once: true });
+    }, 0);
+  }
+
+  function closeContextMenu() {
+    if (window._activeContextMenu) {
+      window._activeContextMenu.remove();
+      window._activeContextMenu = null;
+    }
+  }
+
   const adminFileManager = (() => {
-    let dialog, breadcrumbEl, listEl, upBtn, rootCarsBtn, rootApkBtn;
+    let dialog, breadcrumbEl, listEl, upBtn, rootCarsBtn, rootApkBtn, clipboardStatusEl;
     let root = "cars";
     let path = "";
     let draggedName = null;
+    // Буфер "Копировать"/"Переместить" -> "Вставить" (Explorer-стиль) —
+    // { root, relPath, name, mode: "copy"|"move" }. Вставка доступна только
+    // внутри того же root (cars/apk — структурно разные деревья, сервер и
+    // так отказал бы, см. server/backend.py:_handle_copy/_handle_move).
+    let clipboard = null;
 
     function init() {
       dialog = document.getElementById("admin-manager-dialog");
@@ -26,6 +97,7 @@
       upBtn = document.getElementById("admin-manager-up");
       rootCarsBtn = document.getElementById("admin-manager-root-cars");
       rootApkBtn = document.getElementById("admin-manager-root-apk");
+      clipboardStatusEl = document.getElementById("admin-manager-clipboard-status");
 
       rootCarsBtn.addEventListener("click", () => setRoot("cars"));
       rootApkBtn.addEventListener("click", () => setRoot("apk"));
@@ -36,6 +108,77 @@
       });
       document.getElementById("admin-manager-refresh").addEventListener("click", () => load(path));
       document.getElementById("admin-manager-close").addEventListener("click", () => dialog.close());
+
+      // Правый клик по пустому месту сетки (не по карточке) — контекстное
+      // меню с "Создать папку" и, если что-то скопировано/вырезано в этом
+      // же root, "Вставить" (в текущую папку).
+      listEl.addEventListener("contextmenu", (e) => {
+        // Клик по самой карточке уже обработан её собственным обработчиком
+        // (см. buildCard) и остановлен stopPropagation — сюда доходят только
+        // клики мимо карточек. closest(), а не строгое сравнение с listEl:
+        // e.target может быть текстовым узлом/промежуточным элементом
+        // разметки сетки, а не обязательно самим listEl.
+        if (e.target.closest(".manager-card")) return;
+        e.preventDefault();
+        const menuItems = [{ label: "Создать папку", onclick: onCreateFolder }];
+        if (clipboard && clipboard.root === root) {
+          menuItems.push("sep");
+          menuItems.push({ label: "Вставить", onclick: () => doPaste(path) });
+        }
+        menuItems.push("sep");
+        menuItems.push({ label: "Обновить", onclick: () => load(path) });
+        showContextMenu(e.clientX, e.clientY, menuItems, dialog);
+      });
+    }
+
+    function setClipboard(item, mode) {
+      clipboard = { root, relPath: joinPath(path, item.name), name: item.name, mode };
+      updateClipboardStatus();
+    }
+
+    function clearClipboard() {
+      clipboard = null;
+      updateClipboardStatus();
+    }
+
+    function updateClipboardStatus() {
+      clear(clipboardStatusEl);
+      if (!clipboard) {
+        clipboardStatusEl.hidden = true;
+        return;
+      }
+      clipboardStatusEl.hidden = false;
+      const verb = clipboard.mode === "copy" ? "Копирование" : "Перемещение";
+      clipboardStatusEl.appendChild(el("span", { text: `${verb}: ${clipboard.name}` }));
+      clipboardStatusEl.appendChild(el("span", {
+        class: "manager-clipboard-cancel", text: "✕", title: "Отменить", onclick: clearClipboard,
+      }));
+    }
+
+    async function doPaste(destRelPath) {
+      if (!clipboard) return;
+      const toRel = joinPath(destRelPath, clipboard.name);
+      const apiFn = clipboard.mode === "copy"
+        ? window.pywebview.api.admin_copy_path
+        : window.pywebview.api.admin_move_path;
+      const result = await apiFn(clipboard.root, clipboard.relPath, toRel);
+      if (!result.ok) {
+        await window.notice(result.error, { title: "Вставить", danger: true });
+        return;
+      }
+      clearClipboard();
+      load(path);
+    }
+
+    async function onCreateFolder() {
+      const name = (await window.promptDialog("Название новой папки:"))?.trim();
+      if (!name) return;
+      const result = await window.pywebview.api.admin_create_folder(root, joinPath(path, name));
+      if (!result.ok) {
+        await window.notice(result.error, { title: "Создать папку", danger: true });
+        return;
+      }
+      load(path);
     }
 
     function setRoot(newRoot) {
@@ -94,10 +237,10 @@
       }
     }
 
-    function startRename(nameCell, label, item) {
+    function startRename(card, nameEl, item) {
       const input = el("input", { class: "manager-rename-input", value: item.name });
-      clear(nameCell);
-      nameCell.appendChild(input);
+      clear(nameEl);
+      nameEl.appendChild(input);
       input.focus();
       input.select();
       let done = false;
@@ -118,42 +261,49 @@
       input.addEventListener("blur", () => finish(true));
     }
 
-    function buildRow(item) {
-      const row = el("div", { class: "manager-row", draggable: "true" });
-      row.addEventListener("dragstart", () => { draggedName = item.name; });
-      row.addEventListener("dragend", () => { draggedName = null; });
+    function buildCard(item) {
+      // Размер/дата ушли из видимой строки вместе с табличными колонками —
+      // остаются подсказкой при наведении, чтобы совсем не терять эту
+      // информацию.
+      const title = `${item.name}\n${item.is_dir ? "папка" : formatSize(item.size)} · ${formatDate(item.mtime)}`;
+      const card = el("div", { class: "manager-card" + (item.is_dir ? " is-dir" : ""), draggable: "true", title });
+      card.addEventListener("dragstart", () => { draggedName = item.name; });
+      card.addEventListener("dragend", () => { draggedName = null; });
 
-      const nameCell = el("span", { class: "manager-row-name" });
-      const label = el("span", { text: (item.is_dir ? "▸ " : "") + item.name });
-      if (item.is_dir) nameCell.classList.add("is-dir");
-      // Одиночный клик (открыть папку) и двойной (переименовать) целятся в
-      // один и тот же текст — навигация синхронно перестраивает весь список
-      // (см. load), из-за чего вторая половина двойного клика улетает мимо
-      // старого узла. Небольшая задержка перед навигацией даёт dblclick шанс
-      // отменить её и начать переименование вместо перехода внутрь папки.
-      let navTimer = null;
+      card.appendChild(el("div", { class: "manager-card-icon", html: item.is_dir ? FOLDER_ICON_SVG : FILE_ICON_SVG }));
+      const nameEl = el("div", { class: "manager-card-name", text: item.name });
+      card.appendChild(nameEl);
+
       if (item.is_dir) {
-        label.addEventListener("click", () => {
-          if (navTimer) return; // переход уже запланирован первым кликом — второй клик двойного клика ничего не переназначает
-          navTimer = setTimeout(() => {
-            navTimer = null;
-            load(joinPath(path, item.name));
-          }, 280);
-        });
+        card.addEventListener("click", () => load(joinPath(path, item.name)));
       }
-      nameCell.appendChild(label);
-      nameCell.addEventListener("dblclick", () => {
-        if (navTimer) { clearTimeout(navTimer); navTimer = null; }
-        startRename(nameCell, label, item);
-      });
-      row.appendChild(nameCell);
 
-      row.appendChild(el("span", { class: "manager-row-size", text: item.is_dir ? "папка" : formatSize(item.size) }));
-      row.appendChild(el("span", { class: "manager-row-date", text: formatDate(item.mtime) }));
-      row.appendChild(el("button", { class: "danger", text: "Удалить", onclick: () => onDelete(item) }));
+      // Все действия с файлом/папкой — только контекстным меню (правая
+      // кнопка), пользователь явно попросил убрать отдельные
+      // кнопки/двойной клик ради этого.
+      const openCardMenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const menuItems = [];
+        if (item.is_dir) {
+          menuItems.push({ label: "Открыть", onclick: () => load(joinPath(path, item.name)) });
+          menuItems.push("sep");
+        }
+        menuItems.push({ label: "Копировать", onclick: () => setClipboard(item, "copy") });
+        menuItems.push({ label: "Переместить", onclick: () => setClipboard(item, "move") });
+        if (item.is_dir && clipboard && clipboard.root === root) {
+          menuItems.push({ label: "Вставить сюда", onclick: () => doPaste(joinPath(path, item.name)) });
+        }
+        menuItems.push("sep");
+        menuItems.push({ label: "Переименовать", onclick: () => startRename(card, nameEl, item) });
+        menuItems.push("sep");
+        menuItems.push({ label: "Удалить", danger: true, onclick: () => onDelete(item) });
+        showContextMenu(e.clientX, e.clientY, menuItems, dialog);
+      };
+      card.addEventListener("contextmenu", openCardMenu);
 
-      if (item.is_dir) addDropTarget(row, joinPath(path, item.name));
-      return row;
+      if (item.is_dir) addDropTarget(card, joinPath(path, item.name));
+      return card;
     }
 
     async function onDelete(item) {
@@ -191,7 +341,7 @@
         return;
       }
       for (const item of result.items) {
-        listEl.appendChild(buildRow(item));
+        listEl.appendChild(buildCard(item));
       }
     }
 

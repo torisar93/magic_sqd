@@ -33,6 +33,17 @@
   --accent-2: #d98a3d;
 }
 
+/* Без этого `el.hidden = true` из app.js не прячет элемент, если у него
+   (или у совпадающего по тегу правила типа `button {}`) есть свой display —
+   авторские правила без !important перебивают дефолтное UA-правило
+   `[hidden] { display: none }` независимо от специфичности (см. реальный
+   баг: кнопка "Смотреть видео" в wizard-nav — `button { display: flex }`
+   выше побеждала [hidden], кнопка оставалась видна всегда). Раньше это
+   чинили точечно на паре элементов (.catalog-startup-overlay[hidden],
+   .log-cmd-suggestions-list[hidden] ниже) — тот же баг всплывал у каждого
+   нового элемента с .hidden, поэтому фиксируем один раз глобально. */
+[hidden] { display: none !important; }
+
 * { box-sizing: border-box; }
 
 html, body {

@@ -26,6 +26,8 @@ from ...admin_client import (AdminClientError, clear_cached_session, delete_cars
                               get_cached_session, list_cars_path, login, set_cached_session, upload_dir,
                               upload_single_apk)
 from ...admin_client import browse_tree as _remote_browse_tree
+from ...admin_client import copy_path as _remote_copy_path
+from ...admin_client import create_folder as _remote_create_folder
 from ...admin_client import delete_tree_path as _remote_delete_tree_path
 from ...admin_client import move_path as _remote_move_path
 from ...admin_config import clear_saved_login, get_admin_base_url, load_saved_login, save_saved_login
@@ -372,6 +374,53 @@ class AdminApi:
                     sibling_target = local_to.with_suffix(".json")
                     if not sibling_target.exists():
                         shutil.move(str(sibling), str(sibling_target))
+        except OSError:
+            pass  # не критично — та же причина, что и в delete_tree_path выше
+        return {"ok": True}
+
+    def copy_path(self, root: str, from_rel: str, to_rel: str) -> dict:
+        session = self._require_session()
+        if isinstance(session, dict):
+            return session
+        base_url, cookie = session
+        try:
+            _remote_copy_path(base_url, cookie, root, from_rel, to_rel)
+        except AdminClientError as exc:
+            if "истекла" in str(exc):
+                clear_cached_session(base_url)
+            return {"ok": False, "error": str(exc)}
+        root_dir = self._local_root_dir(root)
+        local_from = root_dir / from_rel
+        local_to = root_dir / to_rel
+        try:
+            if local_from.exists() and not local_to.exists():
+                local_to.parent.mkdir(parents=True, exist_ok=True)
+                if local_from.is_dir():
+                    shutil.copytree(local_from, local_to)
+                else:
+                    shutil.copy2(local_from, local_to)
+                    sibling = self._local_apk_sibling_json(root, local_from)
+                    if sibling is not None and sibling.is_file():
+                        sibling_target = local_to.with_suffix(".json")
+                        if not sibling_target.exists():
+                            shutil.copy2(sibling, sibling_target)
+        except OSError:
+            pass  # не критично — та же причина, что и в delete_tree_path выше
+        return {"ok": True}
+
+    def create_folder(self, root: str, rel_path: str) -> dict:
+        session = self._require_session()
+        if isinstance(session, dict):
+            return session
+        base_url, cookie = session
+        try:
+            _remote_create_folder(base_url, cookie, root, rel_path)
+        except AdminClientError as exc:
+            if "истекла" in str(exc):
+                clear_cached_session(base_url)
+            return {"ok": False, "error": str(exc)}
+        try:
+            (self._local_root_dir(root) / rel_path).mkdir(parents=True, exist_ok=True)
         except OSError:
             pass  # не критично — та же причина, что и в delete_tree_path выше
         return {"ok": True}
