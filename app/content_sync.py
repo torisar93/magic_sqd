@@ -258,6 +258,17 @@ def download_file(base_url: str, remote_path: str, dest: Path,
                 if total_bytes and (received >= total_bytes or now - last_report >= 0.12):
                     on_progress(received, total_bytes)
                     last_report = now
+            # Реальный случай: обрыв интернета на середине скачивания
+            # многосотмегабайтного .apk — urllib на некоторых обрывах
+            # соединения молча возвращает "конец потока" вместо исключения,
+            # без этой проверки получаем НЕПОЛНЫЙ файл, который выглядит как
+            # успешно скачанный (ensure_apks_downloaded ниже раньше проверял
+            # только факт существования файла — обрубленный .apk оставался
+            # навсегда и раз за разом проваливал установку на магнитоле с
+            # непонятной ошибкой парсинга).
+            if total_bytes and received != total_bytes:
+                raise ContentSyncError(
+                    f"Скачано {received} из {total_bytes} байт — соединение оборвалось")
     except (urllib.error.HTTPError, urllib.error.URLError) as exc:
         tmp_dest.unlink(missing_ok=True)
         raise ContentSyncError(f"Ошибка скачивания {remote_path}: {exc}") from exc
@@ -1047,8 +1058,6 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
     for raw_path in paths:
         check_cancelled()
         path = Path(raw_path).resolve()
-        if path.exists():
-            continue
         try:
             rel = path.relative_to(apk_dir)
             remote_path = f"apk/{rel.as_posix()}"
@@ -1059,6 +1068,15 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
             except ValueError:
                 continue
         size = (manifest or {}).get(remote_path, {}).get("size", 0)
+        if path.exists():
+            # Не просто "уже есть" — реальный случай: обрыв интернета на
+            # середине скачивания оставлял обрубленный .apk, который потом
+            # никогда не перекачивался (только факт существования и
+            # проверялся) и раз за разом проваливал установку на магнитоле.
+            if not size or path.stat().st_size == size:
+                continue
+            log(f"{path.name}: на диске {path.stat().st_size} байт, на сервере {size} — "
+                f"докачиваю заново (обрыв в прошлый раз)")
         pending.append((path, remote_path, rel, size))
 
     if not pending:

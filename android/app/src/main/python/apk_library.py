@@ -130,11 +130,19 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
     fallback на cars_dir, что и на desktop."""
     apk_dir = apk_dir.resolve()
     cars_dir = cars_dir.resolve()
+    # Без сверки размера с манифестом "файл уже есть" означало буквально
+    # "существует хоть один байт" — реальный случай: интернет у техника
+    # оборвался на середине скачивания monji.apk (сотни МБ), на диске
+    # остался обрубленный файл, который потом ФАКТИЧЕСКИ ПУШИЛСЯ на
+    # магнитолу раз за разом (PackageManager закономерно отказывал
+    # INSTALL_PARSE_FAILED_NOT_APK) — эта функция ни разу больше не
+    # пыталась перекачать его, раз он "уже существует". manifest — best
+    # effort (сеть могла и тут не ответить): при отсутствии манифеста
+    # откатываемся к старой проверке только по факту существования.
+    manifest = fetch_manifest(base_url)
     downloaded = 0
     for p in paths:
         local_path = Path(p).resolve()
-        if local_path.exists():
-            continue
         try:
             rel = local_path.relative_to(apk_dir).as_posix()
             remote_path = f"apk/{rel}"
@@ -144,6 +152,12 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
                 remote_path = f"cars/{rel}"
             except ValueError:
                 continue
+        if local_path.exists():
+            expected_size = manifest.get(remote_path, {}).get("size") if manifest else None
+            if expected_size is None or local_path.stat().st_size == expected_size:
+                continue
+            log(f"{local_path.name}: на диске {local_path.stat().st_size} байт, "
+                f"на сервере {expected_size} — докачиваю заново (обрыв в прошлый раз)")
         log(f"Скачиваю {local_path.name}...")
         try:
             download_file(base_url, remote_path, local_path)

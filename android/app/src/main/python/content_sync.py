@@ -84,11 +84,25 @@ def download_file(base_url: str, remote_path: str, dest: Path, chunk_size: int =
     tmp_dest = dest.with_name(dest.name + ".part")
     try:
         with urllib.request.urlopen(url, timeout=60) as resp, open(tmp_dest, "wb") as f:
+            expected = resp.headers.get("Content-Length")
+            expected = int(expected) if expected is not None and expected.isdigit() else None
+            received = 0
             while True:
                 chunk = resp.read(chunk_size)
                 if not chunk:
                     break
                 f.write(chunk)
+                received += len(chunk)
+            # Реальный случай (пуш большого .apk на магнитолу с обрубленным
+            # на телефоне файлом): resp.read() у urllib на некоторых обрывах
+            # соединения молча возвращает "конец потока" вместо исключения —
+            # без сверки с Content-Length получаем НЕПОЛНЫЙ файл, который
+            # выглядит как успешно скачанный (see ensure_apks_downloaded —
+            # она потом больше никогда не перескачает "уже существующий"
+            # обрубленный файл).
+            if expected is not None and received != expected:
+                raise ContentSyncError(
+                    f"Скачано {received} из {expected} байт — соединение оборвалось")
     except (urllib.error.HTTPError, urllib.error.URLError) as exc:
         try:
             tmp_dest.unlink()
