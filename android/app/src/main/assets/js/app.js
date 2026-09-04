@@ -12,7 +12,7 @@
   let wizardContentEl, wizardBackBtn, wizardVideoBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl, topHelpBtn;
   let adbStatusEl, adbConnectBtn, usbStatusEl, usbConnectBtn, usbFormatBtn, adbBarEl, usbBarEl;
   let adbModeToggleEl, adbModeWiredBtn, adbModeWifiBtn;
-  let logBarEl, logLastLineEl, logExpandBtn, logOverlayEl, logCollapseBtn, logCmdInput, logCmdRunBtn;
+  let logBarEl, logLastLineEl, logExpandBtn, logOverlayEl, logCollapseBtn, logCopyBtn, logCmdInput, logCmdRunBtn;
 
   // Один открытый скан за раз — достаточно, оба места, где он запускается
   // (Wi-Fi ADB / telnet), сами по себе модальные и блокируют остальной UI.
@@ -257,6 +257,15 @@
     if (!command) return;
     logCmdInput.value = "";
     hideLogCmdSuggestions();
+    // /clear, /clr — очищают лог локально, не ADB-команда, на устройство
+    // ничего не уходит (в отличие от остального, что через это же поле
+    // идёт в adb_shell_command).
+    if (command === "/clear" || command === "/clr") {
+      clear(logPanelEl);
+      logLastLineEl.textContent = "Лог";
+      logLastLineEl.className = "log-last-line";
+      return;
+    }
     logConsoleCommand(command);
     Bridge.call("adb_shell_command", { command });
   }
@@ -1249,14 +1258,14 @@
 
   function renderNav() {
     wizardBackBtn.disabled = !historyStack.length;
-    if (!stages.length) {
+    const stage = stages.length ? stages[currentIndex] : null;
+    // "check" продвигает сразу по клику на нужную кнопку-вариант (см.
+    // renderStage) — отдельная "Далее" тут только сбивала бы с толку.
+    if (!stages.length || (stage && stage.type === "check")) {
       wizardNextBtn.style.display = "none";
     } else {
       wizardNextBtn.style.display = "";
-      // "check" — у разных вариантов может быть разное продолжение (или
-      // вовсе никакого), заранее неизвестно, пока техник не выбрал.
-      const stage = stages[currentIndex];
-      const isLast = stage && stage.type !== "check" && stage.next == null;
+      const isLast = stage && stage.next == null;
       wizardNextBtn.textContent = isLast ? "Готово" : "Далее";
     }
     const videoStage = stages.length ? stages[currentIndex] : null;
@@ -1637,7 +1646,7 @@
       "Убедитесь, что флешка подключена (бар вверху), и запишите на неё файл-триггер.",
       [writeBtn, ...writeStatusNodes]));
     page.appendChild(qrAdbStepCard(2,
-      "Вставьте эту же флешку в магнитолу, зайдите в инженерное меню, откройте пункт «ADB» и оставайтесь на экране с QR-кодом."));
+      "Не закрывая экран с QR-кодом в инженерном меню, вставьте эту же флешку в магнитолу."));
     page.appendChild(qrAdbStepCard(3,
       "Дождитесь на экране магнитолы надписи «QNX OK», затем извлеките флешку."));
     page.appendChild(qrAdbStepCard(4,
@@ -1706,12 +1715,15 @@
 
     if (stage.type === "check") {
       const options = stage.check_options || [];
-      const select = el("select", {}, options.map((o) => el("option", { value: o, text: o })));
-      page.appendChild(select);
-      // Куда дальше — сразу известно по выбранному варианту (см.
-      // app/car_generator.py: StepSpec.next_options), а не по имени
-      // переменной, которую пришлось бы помнить до следующего "check".
-      nextAction = () => advanceAfter(stage.index, select.selectedIndex);
+      const list = el("div", { class: "check-options-list" });
+      options.forEach((opt, i) => {
+        const btn = el("button", { class: "accent", text: opt });
+        // Клик сразу продвигает по выбранной ветке (см. app/car_generator.py:
+        // StepSpec.next_options) — отдельная "Далее" не нужна.
+        btn.addEventListener("click", () => advanceAfter(stage.index, i));
+        list.appendChild(btn);
+      });
+      page.appendChild(list);
     } else if (stage.type === "manual") {
       page.appendChild(el("p", { class: "stage-text", text: "Выполните шаги из инструкции на самой магнитоле, затем нажмите «Далее»." }));
     } else if (stage.type === "instruction") {
@@ -2051,6 +2063,7 @@
     logExpandBtn = document.getElementById("log-expand-btn");
     logOverlayEl = document.getElementById("log-overlay");
     logCollapseBtn = document.getElementById("log-collapse-btn");
+    logCopyBtn = document.getElementById("log-copy-btn");
     logCmdInput = document.getElementById("log-cmd-input");
     logCmdRunBtn = document.getElementById("log-cmd-run");
 
@@ -2070,6 +2083,16 @@
     usbFormatBtn.addEventListener("click", onUsbFormat);
     logBarEl.addEventListener("click", () => setLogOpen(true));
     logCollapseBtn.addEventListener("click", () => setLogOpen(false));
+    logCopyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(logPanelEl.innerText);
+        const original = logCopyBtn.textContent;
+        logCopyBtn.textContent = "Скопировано";
+        setTimeout(() => { logCopyBtn.textContent = original; }, 1500);
+      } catch (_) {
+        log("Не удалось скопировать лог автоматически.");
+      }
+    });
     logOverlayEl.addEventListener("click", (e) => { if (e.target === logOverlayEl) setLogOpen(false); });
     logCmdRunBtn.addEventListener("click", onLogCmdRun);
     logCmdInput.addEventListener("keydown", (e) => { if (e.key === "Enter") onLogCmdRun(); });

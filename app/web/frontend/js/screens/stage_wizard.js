@@ -402,15 +402,15 @@
 
   function renderNav() {
     navBackBtn.disabled = !historyStack.length;
-    if (stages.length === 0) {
+    const stage = currentIndex >= 0 ? stages[currentIndex] : null;
+    // "check" продвигает сразу по клику на нужную кнопку-вариант (см.
+    // renderCheckStage) — отдельная "Далее" тут только сбивала бы с толку
+    // (непонятно, какой вариант она подтвердит, пока ни один не нажат).
+    if (stages.length === 0 || (stage && stage.type === "check")) {
       navNextBtn.style.display = "none";
     } else {
       navNextBtn.style.display = "";
-      // "check" — у разных вариантов может быть разное продолжение (или
-      // вовсе никакого), заранее неизвестно, пока техник не выбрал —
-      // всегда "Далее →", "Готово" тут не показываем.
-      const stage = currentIndex >= 0 ? stages[currentIndex] : null;
-      const isLast = stage && stage.type !== "check" && stage.next == null;
+      const isLast = stage && stage.next == null;
       navNextBtn.textContent = isLast ? "Готово" : "Далее →";
     }
     if (!stages.length) navLabelEl.textContent = "";
@@ -656,14 +656,16 @@
   // -- check -------------------------------------------------------------
   function renderCheckStage(panel, stage) {
     const options = stage.check_options || [];
-    panel.appendChild(el("span", { class: "field-label", text: "Выберите значение" }));
-    const select = el("select", { style: "width: 100%" },
-      options.map((opt, i) => el("option", { value: String(i), text: opt })));
-    panel.appendChild(select);
-    // Куда дальше — сразу известно по выбранному варианту (см.
-    // car_generator.py: StepSpec.next_options), а не по имени переменной,
-    // которую пришлось бы помнить до следующего "check"-этапа.
-    nextAction = () => advanceAfter(stage.index, select.selectedIndex);
+    panel.appendChild(el("span", { class: "field-label", text: "Выберите вариант" }));
+    const list = el("div", { class: "check-options-list" });
+    options.forEach((opt, i) => {
+      const btn = el("button", { class: "accent", text: opt });
+      // Клик сразу продвигает по выбранной ветке (см. car_generator.py:
+      // StepSpec.next_options) — отдельная "Далее" не нужна.
+      btn.addEventListener("click", () => advanceAfter(stage.index, i));
+      list.appendChild(btn);
+    });
+    panel.appendChild(list);
   }
 
   // -- apps ----------------------------------------------------------------
@@ -1020,7 +1022,7 @@
         writeStatusEl,
       ]));
     panel.appendChild(qrAdbStepCard(2,
-      "Вставьте эту же флешку в магнитолу, зайдите в инженерное меню, откройте пункт «ADB» и оставайтесь на экране с QR-кодом."));
+      "Не закрывая экран с QR-кодом в инженерном меню, вставьте эту же флешку в магнитолу."));
     panel.appendChild(qrAdbStepCard(3,
       "Дождитесь на экране магнитолы надписи «QNX OK», затем извлеките флешку."));
     panel.appendChild(qrAdbStepCard(4,

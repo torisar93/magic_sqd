@@ -741,6 +741,12 @@ button.danger {
   to { opacity: 1; transform: scale(1); }
 }
 
+.check-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .wizard-nav {
   display: flex;
   gap: 8px;
@@ -830,6 +836,8 @@ button.danger {
   font-size: 12px;
   border-radius: 6px;
 }
+
+.log-card-actions { display: flex; align-items: center; gap: 6px; }
 
 .log-panel {
   flex: 1;

@@ -20,7 +20,7 @@ from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
                            list_devices, scan_for_adb_hosts)
 from ...content_sync import (fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
-                             sync_model_subfolder)
+                             sync_model_subfolder, sync_shared_folder)
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir_with_remote
 from ...stage_runner import (StageDefinitionError, UnknownStageTypeError, load_model_wifi, load_stages,
@@ -750,6 +750,17 @@ class InstallApi:
             return {"ok": False, "error": f"Для этапа «{stage['title']}» не задан run(ctx)."}
         self._pending_stage_index = stage_index
         event_bridge.push({"kind": "install_log", "text": f"=== Этап {stage_index + 1}: {stage['title']} ==="})
+        # usb_shared_folder — раньше был возможен только на "usb"-этапах (см.
+        # usb_api.py), но StepSpec/stages.py его ни к какому типу не
+        # привязывает, это просто ключ в словаре. Реальный случай: ADB-этап,
+        # ссылающийся на тот же тяжёлый payload cars/_shared/<имя>/ (freetuga
+        # и т.п.), что раньше писался только на флешку — синхронизируем его
+        # так же, точечно перед запуском, а не при каждом старте программы.
+        if stage.get("usb_shared_folder"):
+            try:
+                sync_shared_folder(self.base_dir, stage["usb_shared_folder"], log=self._on_log)
+            except Exception as exc:  # noqa: BLE001 - не должно ронять запуск этапа
+                self._on_log(f"Не удалось синхронизировать {stage['usb_shared_folder']}: {exc}")
         try:
             self._runner.start(model, device_serial, selected_apk_paths, run_fn=run_fn,
                                 own_dirs=self._stage_own_dirs(model, stage, stage_index=stage_index),

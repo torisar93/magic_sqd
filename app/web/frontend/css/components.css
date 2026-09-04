@@ -979,6 +979,15 @@
   display: block;
 }
 
+/* Этап "Проверка/выбор" (см. stage_wizard.js: renderCheckStage) — кнопки
+   вместо выпадающего списка; клик подсвечивает выбор (accent), переход —
+   по общей "Далее →", как обычно. */
+.check-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 select {
   font-family: inherit;
   font-size: inherit;
