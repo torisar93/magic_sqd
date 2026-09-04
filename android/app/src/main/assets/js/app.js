@@ -1258,14 +1258,17 @@
 
   function renderNav() {
     wizardBackBtn.disabled = !historyStack.length;
-    const stage = stages.length ? stages[currentIndex] : null;
-    // "check" продвигает сразу по клику на нужную кнопку-вариант (см.
-    // renderStage) — отдельная "Далее" тут только сбивала бы с толку.
-    if (!stages.length || (stage && stage.type === "check")) {
+    if (!stages.length) {
       wizardNextBtn.style.display = "none";
     } else {
       wizardNextBtn.style.display = "";
-      const isLast = stage && stage.next == null;
+      // "check" — у разных вариантов может быть разное продолжение (или
+      // вовсе никакого), заранее неизвестно, пока техник не выбрал. Клик
+      // по кнопке-варианту продвигает сразу (см. renderStage), а "Далее" —
+      // на случай, когда техник и так знает, куда идти, и просто
+      // пролистывает мастер (по умолчанию первый вариант).
+      const stage = stages[currentIndex];
+      const isLast = stage && stage.type !== "check" && stage.next == null;
       wizardNextBtn.textContent = isLast ? "Готово" : "Далее";
     }
     const videoStage = stages.length ? stages[currentIndex] : null;
@@ -1719,11 +1722,14 @@
       options.forEach((opt, i) => {
         const btn = el("button", { class: "accent", text: opt });
         // Клик сразу продвигает по выбранной ветке (см. app/car_generator.py:
-        // StepSpec.next_options) — отдельная "Далее" не нужна.
+        // StepSpec.next_options).
         btn.addEventListener("click", () => advanceAfter(stage.index, i));
         list.appendChild(btn);
       });
       page.appendChild(list);
+      // "Далее" — для техника, который и так знает нужную ветку и просто
+      // пролистывает мастер: по умолчанию первый вариант.
+      nextAction = () => advanceAfter(stage.index, 0);
     } else if (stage.type === "manual") {
       page.appendChild(el("p", { class: "stage-text", text: "Выполните шаги из инструкции на самой магнитоле, затем нажмите «Далее»." }));
     } else if (stage.type === "instruction") {

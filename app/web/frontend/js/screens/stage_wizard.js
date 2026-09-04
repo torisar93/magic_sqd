@@ -402,15 +402,19 @@
 
   function renderNav() {
     navBackBtn.disabled = !historyStack.length;
-    const stage = currentIndex >= 0 ? stages[currentIndex] : null;
-    // "check" продвигает сразу по клику на нужную кнопку-вариант (см.
-    // renderCheckStage) — отдельная "Далее" тут только сбивала бы с толку
-    // (непонятно, какой вариант она подтвердит, пока ни один не нажат).
-    if (stages.length === 0 || (stage && stage.type === "check")) {
+    if (stages.length === 0) {
       navNextBtn.style.display = "none";
     } else {
       navNextBtn.style.display = "";
-      const isLast = stage && stage.next == null;
+      // "check" — у разных вариантов может быть разное продолжение (или
+      // вовсе никакого), заранее неизвестно, пока техник не выбрал —
+      // всегда "Далее →", "Готово" тут не показываем. Клик по кнопке-
+      // варианту продвигает сразу (см. renderCheckStage), а "Далее" —
+      // на случай, когда техник и так знает, куда идти, и просто
+      // пролистывает мастер, не глядя на сами варианты (по умолчанию
+      // первый вариант — тот же выбор, что раньше был у select).
+      const stage = currentIndex >= 0 ? stages[currentIndex] : null;
+      const isLast = stage && stage.type !== "check" && stage.next == null;
       navNextBtn.textContent = isLast ? "Готово" : "Далее →";
     }
     if (!stages.length) navLabelEl.textContent = "";
@@ -661,11 +665,15 @@
     options.forEach((opt, i) => {
       const btn = el("button", { class: "accent", text: opt });
       // Клик сразу продвигает по выбранной ветке (см. car_generator.py:
-      // StepSpec.next_options) — отдельная "Далее" не нужна.
+      // StepSpec.next_options).
       btn.addEventListener("click", () => advanceAfter(stage.index, i));
       list.appendChild(btn);
     });
     panel.appendChild(list);
+    // "Далее" — для техника, который и так знает нужную ветку и просто
+    // пролистывает мастер, не читая варианты: по умолчанию первый (тот же
+    // выбор, что раньше был у select с selectedIndex по умолчанию 0).
+    nextAction = () => advanceAfter(stage.index, 0);
   }
 
   // -- apps ----------------------------------------------------------------
