@@ -680,6 +680,13 @@
   // ниже) — список приходит сразу, сами .apk докачиваются точечно перед
   // adb_install_apks/usb_run_stage (см. WebBridge.kt: ensureApksDownloaded).
   let apkLibrary = [];
+  // Свои APK, добавленные техником прямо на этапе через "Добавить свой
+  // APK..." (см. renderApkTree) — портовый эквивалент desktop stage_wizard.js:
+  // personalApks, только файлы копируются в приватное хранилище приложения
+  // через SAF (см. WebBridge.kt: onApksPicked), а не читаются с диска
+  // напрямую. Живут только в памяти этого сеанса работы с моделью, как и на
+  // desktop — не сохраняются, не публикуются никуда.
+  let personalApks = [];
   // "wifi"/"wifi_port" — верхнеуровневые поля _wizard_spec.json (не привязаны
   // к конкретному этапу): если true, у модели нет доступного проводного ADB
   // на adb/apps/actions-этапах — подключение всегда по Wi-Fi (аналог desktop
@@ -702,6 +709,7 @@
     appsConnectionChoice = {};
     globalSelectedApks = new Set();
     apkLibrary = [];
+    personalApks = [];
     installCompletedShown = false;
     qrAdbWriteStatus = null;
     qrAdbResult = null;
@@ -961,6 +969,22 @@
     const cb = pendingPackagesCallback;
     pendingPackagesCallback = null;
     cb(event.packages || []);
+  }
+
+  // Результат "Добавить свой APK..." (см. renderApkTree, WebBridge.kt:
+  // onApksPicked) — файлы уже скопированы в приватное хранилище приложения,
+  // event.apks — готовые {path, name}, как car_pick_files на desktop.
+  // Прямой обработчик, а не pending-callback (как у onNetworkScanResult/
+  // onActionsPackagesResult) — тут нет конкретного запроса, ждущего именно
+  // этого ответа, просто добавляем в общий список и выбираем сразу.
+  function onPersonalApksPicked(event) {
+    const apks = event.apks || [];
+    if (!apks.length) { log("Не выбрано ни одного файла."); return; }
+    for (const apk of apks) {
+      if (!personalApks.some((a) => a.path === apk.path)) personalApks.push(apk);
+      globalSelectedApks.add(apk.path);
+    }
+    render();
   }
 
   // Модалка выбора установленного приложения — для actions-этапов kind
@@ -1432,6 +1456,39 @@
             else { selected.delete(apk.path); globalSelectedApks.delete(apk.path); }
           },
         ));
+      });
+      section.appendChild(list);
+      page.appendChild(section);
+    }
+
+    // Свои APK — техник сам выбирает файл(ы) на телефоне, минуя общую
+    // библиотеку apk/ (та наполняется только администратором) — портовый
+    // эквивалент desktop stage_wizard.js:pickPersonalApks. Кнопка всегда
+    // видна сверху, вне остальных секций — так же, как на desktop.
+    page.appendChild(el("button", {
+      class: "app-personal-apk-add", type: "button", text: "Добавить свой APK...",
+      onclick: () => {
+        log("Выберите файл...");
+        Bridge.call("pick_personal_apks", {});
+      },
+    }));
+    if (personalApks.length) {
+      const section = el("section", { class: "apps-section apps-section-personal" });
+      section.appendChild(el("h3", { class: "apps-section-title", text: "Свои APK" }));
+      const list = el("ul", { class: "stage-apps-list stage-apps-grid" });
+      personalApks.forEach((apk) => {
+        const row = buildAppRow(apk, false, globalSelectedApks.has(apk.path), (checked) => {
+          if (checked) globalSelectedApks.add(apk.path);
+          else globalSelectedApks.delete(apk.path);
+        });
+        const removeBtn = el("button", { type: "button", class: "app-personal-apk-remove", text: "Убрать" });
+        removeBtn.addEventListener("click", () => {
+          personalApks = personalApks.filter((a) => a.path !== apk.path);
+          globalSelectedApks.delete(apk.path);
+          render();
+        });
+        row.appendChild(removeBtn);
+        list.appendChild(row);
       });
       section.appendChild(list);
       page.appendChild(section);
@@ -2032,6 +2089,7 @@
     initLogCmdSuggestions();
     window.events.on("network_scan_result", onNetworkScanResult);
     window.events.on("actions_packages_result", onActionsPackagesResult);
+    window.events.on("personal_apks_picked", onPersonalApksPicked);
     window.events.on("sync_finished", onSyncFinished);
     window.events.on("model_sync_finished", onModelSyncFinished);
     window.events.on("adb_connect_result", onAdbConnectResult);

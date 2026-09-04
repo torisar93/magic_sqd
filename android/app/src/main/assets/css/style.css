@@ -1091,6 +1091,11 @@ html, body { background: var(--bg); }
 }
 .apps-section-required { border-color: rgba(55, 172, 140, 0.48); }
 .apps-section-optional { border-color: rgba(194, 153, 73, 0.42); }
+.apps-section-personal { border-color: rgba(93, 139, 194, 0.42); }
+/* "Добавить свой APK..." (см. app.js: renderApkTree) — вне остальных
+   секций, поэтому обычный класс кнопки, не apps-section-*. */
+.app-personal-apk-add { margin-bottom: 8px; }
+.app-personal-apk-remove { margin-left: auto; flex: none; padding: 6px 10px; font-size: 12px; }
 .apps-section-title, .apps-library-title { margin: 0 0 9px; color: #dce8eb; font-size: 14px; line-height: 1.25; }
 .apps-library-title { margin-top: 12px; }
 .stage-apps-grid { display: grid; grid-template-columns: 1fr; gap: 7px; margin: 0; }

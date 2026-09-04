@@ -9,6 +9,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -45,7 +46,19 @@ class MainActivity : AppCompatActivity() {
         val webView = findViewById<WebView>(R.id.webView)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true // localStorage — под будущий resizer/сохранение состояния
-        webView.addJavascriptInterface(WebBridge(this, webView), "AndroidBridge")
+        val bridge = WebBridge(this, webView)
+        webView.addJavascriptInterface(bridge, "AndroidBridge")
+
+        // "Добавить свой APK..." (см. WebBridge.kt: pickPersonalApks/
+        // onApksPicked) — регистрировать ActivityResultLauncher нужно ДО
+        // onStart, поэтому мост не может завести его сам, только вызвать
+        // через эту лямбду. OpenMultipleDocuments вместо GetMultipleContents
+        // — даёт долгоживущее разрешение на конкретный файл, а не только на
+        // время текущего запроса (не нужно здесь, но безопаснее по умолчанию).
+        val pickApksLauncher = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            bridge.onApksPicked(uris)
+        }
+        bridge.pickApksLauncher = { mimeTypes -> pickApksLauncher.launch(mimeTypes) }
 
         // targetSdk 35 включает edge-to-edge по умолчанию — без этого контент
         // рисуется ПОД статус-баром (часы/иконки поверх "Magic SQD"/кнопки

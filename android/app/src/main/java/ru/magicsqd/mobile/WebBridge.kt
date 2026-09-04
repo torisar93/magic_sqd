@@ -1,6 +1,8 @@
 package ru.magicsqd.mobile
 
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import com.chaquo.python.Python
@@ -52,6 +54,15 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     // давать двум таким операциям идти одновременно вообще, как и на
     // desktop (один adb.exe-процесс блокирующе выполняет этап за этапом).
     private val operationBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Устанавливается из MainActivity сразу после создания моста — сам
+     * ActivityResultLauncher должен быть зарегистрирован в Activity ДО
+     * onStart (см. registerForActivityResult), поэтому мост не может завести
+     * его сам, только запросить у Activity через эту функцию (см.
+     * pickPersonalApks/onApksPicked ниже — "Добавить свой APK..." на
+     * apps/usb-этапах, тот же порт desktop stage_wizard.js:pickPersonalApks,
+     * но там native-диалог pywebview, здесь — Storage Access Framework). */
+    var pickApksLauncher: ((Array<String>) -> Unit)? = null
 
     private fun runExclusive(onBusy: () -> Unit, body: () -> Unit) {
         if (!operationBusy.compareAndSet(false, true)) {
@@ -138,6 +149,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "actions_list_packages" -> { actionsListPackages(args.optBoolean("thirdPartyOnly", true)); "{}" }
                 "actions_grant_permissions" -> { actionsGrantPermissions(args.getString("pkg")); "{}" }
                 "actions_mock_location" -> { actionsMockLocation(args.getString("pkg")); "{}" }
+                "pick_personal_apks" -> { pickPersonalApks(); "{}" }
                 // Видео-кнопка нав-бара мастера (см. app.js: playStageVideo) —
                 // тот же общий "докачай, чего нет" хелпер, что и перед
                 // adb_install_apks/usb_run_stage (см. ensureApksDownloaded),
@@ -673,6 +685,55 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     private fun actionsMockLocation(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
         AdbPermissions.setMockLocationApp(pkg, ::pushAdbLog)
+    }
+
+    /** "Добавить свой APK..." на apps/usb-этапах (см. app.js: renderApkTree) —
+     * портовый эквивалент desktop stage_wizard.js:pickPersonalApks, но через
+     * системный выбор документов (SAF) вместо нативного диалога pywebview:
+     * у Android-приложения нет прямого доступа к произвольному пути на
+     * диске без разрешения на конкретный файл, поэтому сам выбор идёт через
+     * MainActivity (см. pickApksLauncher), а результат (список content://
+     * Uri) возвращается сюда через onApksPicked. */
+    private fun pickPersonalApks() {
+        val launcher = pickApksLauncher
+        if (launcher == null) {
+            pushEvent(JSONObject().put("kind", "personal_apks_picked").put("apks", JSONArray()))
+            return
+        }
+        launcher(arrayOf("application/vnd.android.package-archive", "application/octet-stream"))
+    }
+
+    /** Копирует выбранные через SAF файлы в приватное хранилище приложения
+     * (content:// Uri нельзя напрямую передать в File.readBytes(), которым
+     * пользуется InstallEngine.installApks) и сообщает JS готовые локальные
+     * пути — та же роль, что и у {path, name} из car_pick_files на desktop. */
+    fun onApksPicked(uris: List<Uri>) {
+        Thread {
+            val destDir = File(context.filesDir, "personal_apks").apply { mkdirs() }
+            val apks = JSONArray()
+            for (uri in uris) {
+                val name = queryDisplayName(uri) ?: continue
+                val dest = File(destDir, name)
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        dest.outputStream().use { output -> input.copyTo(output) }
+                    } ?: continue
+                } catch (e: Exception) {
+                    pushAdbLog("Не удалось прочитать $name: ${e.message}")
+                    continue
+                }
+                apks.put(JSONObject().put("path", dest.absolutePath).put("name", name))
+            }
+            pushEvent(JSONObject().put("kind", "personal_apks_picked").put("apks", apks))
+        }.start()
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            val col = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (col >= 0 && cursor.moveToFirst()) return cursor.getString(col)
+        }
+        return uri.lastPathSegment
     }
 
     private fun pushStageResult(stageIndex: Int, result: StageRunResult) {
