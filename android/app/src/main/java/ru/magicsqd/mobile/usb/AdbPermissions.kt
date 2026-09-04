@@ -84,6 +84,36 @@ object AdbPermissions {
             else -> ""
         }
 
+    /** Список установленных на магнитоле пакетов (для выбора приложения
+     * перед grantAllPermissions/setMockLocationApp ниже) — портовая копия
+     * cars/_shared/adb_permissions.py:list_installed_packages. thirdPartyOnly
+     * — без системных пакетов производителя/Android (иначе список из сотен
+     * записей неудобно листать ради обычно нужных технику сторонних APK). */
+    fun listInstalledPackages(thirdPartyOnly: Boolean, log: (String) -> Unit): List<String> {
+        val flag = if (thirdPartyOnly) "-3" else ""
+        val output = shellText("pm list packages $flag".trim(), log)
+        return output.lineSequence()
+            .map { it.trim() }
+            .filter { it.startsWith("package:") }
+            .map { it.removePrefix("package:").trim() }
+            .filter { it.isNotEmpty() }
+            .sorted()
+            .toList()
+    }
+
+    /** Назначает приложение "приложением для фиктивных местоположений"
+     * (имитация GPS, как в Настройки → Для разработчиков) и включает саму
+     * возможность — портовая копия cars/_shared/adb_permissions.py:
+     * set_mock_location_app. appops — актуальный механизм (Android 6+);
+     * settings put secure mock_location — для более старых прошивок, где
+     * appops эту операцию не знает. */
+    fun setMockLocationApp(pkg: String, log: (String) -> Unit) {
+        log("Приложение для фиктивных местоположений: $pkg")
+        AdbSession.shell("appops set $pkg android:mock_location allow", log)
+        AdbSession.shell("settings put secure mock_location 1", log)
+        log("Готово.")
+    }
+
     /** Выдаёт пакету все разрешения, которые он запрашивает в манифесте
      * (см. dumpsys), плюс WRITE_SECURE_SETTINGS и appops-спецдоступы —
      * то, что на большинстве магнитол нельзя дать через штатный экран

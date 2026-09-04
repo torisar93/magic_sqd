@@ -17,6 +17,10 @@
   // Один открытый скан за раз — достаточно, оба места, где он запускается
   // (Wi-Fi ADB / telnet), сами по себе модальные и блокируют остальной UI.
   let pendingScanCallback = null;
+  // Тот же принцип для actions_list_packages (см. renderActionsStage: kind
+  // grant_permissions/mock_location) — список пакетов приходит отдельным
+  // событием, не синхронным возвратом из Bridge.call.
+  let pendingPackagesCallback = null;
 
   // Какие типы этапов реально используют ADB/флешку — панели подключения
   // показываются только для них, а не постоянно на весь мастер (иначе на
@@ -952,6 +956,50 @@
     cb(event.hosts || [], event.recommended || null);
   }
 
+  function onActionsPackagesResult(event) {
+    if (!pendingPackagesCallback) return;
+    const cb = pendingPackagesCallback;
+    pendingPackagesCallback = null;
+    cb(event.packages || []);
+  }
+
+  // Модалка выбора установленного приложения — для actions-этапов kind
+  // grant_permissions/mock_location (см. renderActionsStage), тот же ask_choice,
+  // что и на desktop (app/adb_permissions.py). Список может быть длинным
+  // (все сторонние APK на магнитоле), поэтому с фильтром по подстроке имени
+  // пакета — тот же приём, что и у promptHostPicker выше со списком хостов.
+  function promptPackagePicker(title, packages, onSubmit) {
+    const overlay = el("div", { class: "modal-overlay dismissible" });
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeDismissibleModal(); });
+    const listWrap = el("div", { class: "host-scan-list" });
+    const filterInput = el("input", { type: "text", placeholder: "Фильтр по имени пакета" });
+    const submit = (pkg) => { overlay.remove(); onSubmit(pkg); };
+    function renderList() {
+      clear(listWrap);
+      const f = filterInput.value.trim().toLowerCase();
+      const filtered = f ? packages.filter((p) => p.toLowerCase().includes(f)) : packages;
+      if (!filtered.length) {
+        listWrap.appendChild(el("p", { class: "stage-text", style: "color: var(--text-dim)", text: "Ничего не найдено." }));
+        return;
+      }
+      filtered.forEach((pkg) => {
+        const btn = el("button", { text: pkg });
+        btn.addEventListener("click", () => submit(pkg));
+        listWrap.appendChild(btn);
+      });
+    }
+    filterInput.addEventListener("input", renderList);
+    renderList();
+    const box = el("div", { class: "modal-box" }, [
+      el("p", { class: "stage-text", text: title }),
+      filterInput,
+      listWrap,
+    ]);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    filterInput.focus();
+  }
+
   // Закрываемая модалка (тап мимо карточки/системный "назад" — см.
   // window.__handleBackPress) — в отличие от promptText ("#ask" из
   // running-этапа, где Kotlin-сторона реально блокирующе ждёт ответ в
@@ -1260,10 +1308,30 @@
     (stage.actions || []).forEach((action) => {
       const btn = el("button", { text: action.label || action.kind });
       btn.addEventListener("click", () => {
-        // kind != "command" (grant_permissions/mock_location/disable_app/
-        // enable_app) на desktop идёт через ctx.ask_choice + adb_permissions.py,
-        // не через мини-DSL команд — action.commands там пуст. Явно говорим
-        // "не поддерживается", а не молча выполняем 0 команд как "успех".
+        // grant_permissions/mock_location — техник выбирает установленное
+        // приложение (ask_choice на desktop), дальше AdbPermissions.kt (см.
+        // WebBridge.kt: actionsGrantPermissions/actionsMockLocation, портовая
+        // копия cars/_shared/adb_permissions.py). disable_app/enable_app пока
+        // не портированы — остаются с явным "не поддерживается" ниже, вместо
+        // того чтобы молча выполнить 0 команд как "успех".
+        if (action.kind === "grant_permissions" || action.kind === "mock_location") {
+          if (!adbConnected) { log("Сначала подключись к ADB (кнопка вверху)."); return; }
+          log("Получаю список приложений...");
+          pendingPackagesCallback = (packages) => {
+            if (!packages.length) { log("Не удалось получить список приложений."); return; }
+            promptPackagePicker("Выберите приложение", packages, (pkg) => {
+              if (action.kind === "grant_permissions") {
+                log(`Выдаю разрешения: ${pkg}`);
+                Bridge.call("actions_grant_permissions", { pkg });
+              } else {
+                log(`Приложение для фиктивных местоположений: ${pkg}`);
+                Bridge.call("actions_mock_location", { pkg });
+              }
+            });
+          };
+          Bridge.call("actions_list_packages", { thirdPartyOnly: true });
+          return;
+        }
         if (action.kind && action.kind !== "command") {
           log(`Действие "${action.label}" (${action.kind}) пока не поддерживается в мобильной версии.`);
           return;
@@ -1963,6 +2031,7 @@
     });
     initLogCmdSuggestions();
     window.events.on("network_scan_result", onNetworkScanResult);
+    window.events.on("actions_packages_result", onActionsPackagesResult);
     window.events.on("sync_finished", onSyncFinished);
     window.events.on("model_sync_finished", onModelSyncFinished);
     window.events.on("adb_connect_result", onAdbConnectResult);

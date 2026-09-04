@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import ru.magicsqd.mobile.usb.AdbConsoleFormat
 import ru.magicsqd.mobile.usb.AdbHandshakeResult
+import ru.magicsqd.mobile.usb.AdbPermissions
 import ru.magicsqd.mobile.usb.AdbSession
 import ru.magicsqd.mobile.usb.AdbShellResult
 import ru.magicsqd.mobile.usb.AskInputBroker
@@ -128,6 +129,15 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "usb_run_stage" -> { usbRunStage(args); "{}" }
                 "qr_adb_write_flag" -> { qrAdbWriteFlag(); "{}" }
                 "qr_adb_get_password" -> { qrAdbGetPassword(); "{}" }
+                // "actions"-этап с kind=grant_permissions/mock_location (см.
+                // app/car_generator.py: ActionSpec.kind) — техник выбирает
+                // установленное приложение (ask_choice на desktop), дальше
+                // AdbPermissions.kt (портовая копия cars/_shared/
+                // adb_permissions.py). disable_app/enable_app пока не
+                // портированы — там же в app.js остаётся "не поддерживается".
+                "actions_list_packages" -> { actionsListPackages(args.optBoolean("thirdPartyOnly", true)); "{}" }
+                "actions_grant_permissions" -> { actionsGrantPermissions(args.getString("pkg")); "{}" }
+                "actions_mock_location" -> { actionsMockLocation(args.getString("pkg")); "{}" }
                 // Видео-кнопка нав-бара мастера (см. app.js: playStageVideo) —
                 // тот же общий "докачай, чего нет" хелпер, что и перед
                 // adb_install_apks/usb_run_stage (см. ensureApksDownloaded),
@@ -638,6 +648,31 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
         }
         pushEvent(JSONObject().put("kind", "qr_adb_password_result").put("result", event))
+    }
+
+    /** Список установленных пакетов — для модалки выбора приложения перед
+     * actionsGrantPermissions/actionsMockLocation ниже (см. app.js:
+     * renderActionsStage). Отдельным событием, а не синхронным возвратом из
+     * call() — pm list packages идёт через тот же единственный ADB-транспорт,
+     * что и всё остальное (runExclusive), не должен блокировать JS-поток. */
+    private fun actionsListPackages(thirdPartyOnly: Boolean) = runExclusive(::onBusy) {
+        val packages = if (!AdbSession.isConnected) {
+            pushAdbLog("ADB не подключён — команда не выполнена.")
+            emptyList()
+        } else {
+            AdbPermissions.listInstalledPackages(thirdPartyOnly, ::pushAdbLog)
+        }
+        pushEvent(JSONObject().put("kind", "actions_packages_result").put("packages", JSONArray(packages)))
+    }
+
+    private fun actionsGrantPermissions(pkg: String) = runExclusive(::onBusy) {
+        if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        AdbPermissions.grantAllPermissions(pkg, ::pushAdbLog)
+    }
+
+    private fun actionsMockLocation(pkg: String) = runExclusive(::onBusy) {
+        if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        AdbPermissions.setMockLocationApp(pkg, ::pushAdbLog)
     }
 
     private fun pushStageResult(stageIndex: Int, result: StageRunResult) {
