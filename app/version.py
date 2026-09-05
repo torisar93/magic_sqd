@@ -2,4 +2,4 @@
 (см. app/web/api/update_api.py). Синхронизировать вручную с MyAppVersion в
 installer.iss при каждом релизе (см. server/README.md §9) — иначе программа
 либо не заметит новый релиз, либо решит, что уже виденная версия новее."""
-APP_VERSION = "0.8.6"
+APP_VERSION = "0.8.7"

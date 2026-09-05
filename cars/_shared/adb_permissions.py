@@ -53,11 +53,32 @@ _COMMON_DANGEROUS_PERMISSIONS = [
 # "Спецдоступы" — НЕ обычные runtime-разрешения (pm grant их не выдаёт),
 # управляются через AppOpsManager. android:mock_location — отдельно, см.
 # set_mock_location_app ниже (сам по себе бесполезен без выбора приложения).
+# MANAGE_EXTERNAL_STORAGE ("доступ ко всем файлам") сюда добавлен не сразу —
+# первая версия выдавала его через pm grant вместе с обычными runtime-
+# разрешениями (он тоже попадает в "requested permissions:" из dumpsys), и
+# это тихо ничего не давало: с Android 11 это appops-доступ, pm grant для
+# него не предназначен и код возврата не отражает, что реального эффекта
+# не было. Баг всплыл на Geely Cityray/Monji (OneOS, приложения ставятся не
+# штатным adb install, а через dex-хелпер — см. apk_install.py:
+# dex_shell_install) — файловому менеджеру не давался доступ ко всем
+# файлам, хотя лог показывал "разрешения выданы".
 _APPOPS = {
     "android.permission.SYSTEM_ALERT_WINDOW": "SYSTEM_ALERT_WINDOW",
     "android.permission.WRITE_SETTINGS": "WRITE_SETTINGS",
     "android.permission.PACKAGE_USAGE_STATS": "GET_USAGE_STATS",
+    "android.permission.MANAGE_EXTERNAL_STORAGE": "MANAGE_EXTERNAL_STORAGE",
 }
+
+# На части прошивок (подтверждено на Geely Cityray/Monji, OneOS) обычная
+# форма "appops set <пакет> MANAGE_EXTERNAL_STORAGE allow" молча не
+# применяется именно после установки через dex-хелпер (см. apk_install.py:
+# dex_shell_install) — похоже, резолвинг package -> uid для этого op не
+# успевает обновиться. Техник вручную нашёл рабочую команду с --uid (не
+# стандартный флаг AOSP appops, добавлен в прошивку этого OEM) — она заново
+# резолвит uid и реально применяет доступ. Выполняем оба варианта: на
+# прошивках без --uid вторая команда просто молча завершится ошибкой
+# (check=False), первая уже сработала.
+_MANAGE_EXTERNAL_STORAGE_OP = "MANAGE_EXTERNAL_STORAGE"
 
 # Доп. appops без прямого аналога в списке "запрошенных разрешений" из
 # манифеста (не permission, а именно op) — выдаются безусловно всем, не
@@ -67,7 +88,15 @@ _APPOPS = {
 #   RuStore, которые сами ставят другие приложения).
 #   ACTIVATE_VPN — VPN-клиент может поднять соединение без системного
 #   диалога подтверждения VPN.
-_EXTRA_APPOPS = ["REQUEST_INSTALL_PACKAGES", "ACTIVATE_VPN"]
+#   ACCESS_RESTRICTED_SETTINGS — с Android 13 система блокирует включение
+#   спецвозможностей и доступа к уведомлениям для приложений, поставленных
+#   не через "доверенный" магазин (в т.ч. через adb/сторонний sideload) —
+#   ровно наш случай. Без этого appops _enable_accessibility_service/
+#   _enable_notification_listener ниже пишут нужные settings, но система
+#   их не применяет, и в самом приложении провал выглядит как обычный
+#   "нужно открыть", будто мы вообще не пытались. Безвредно для приложений,
+#   которым это не нужно.
+_EXTRA_APPOPS = ["REQUEST_INSTALL_PACKAGES", "ACTIVATE_VPN", "ACCESS_RESTRICTED_SETTINGS"]
 
 # WRITE_SECURE_SETTINGS — обычное (не appops) разрешение, но с protection
 # level signature|privileged — недоступно приложению через диалог, зато
@@ -77,7 +106,7 @@ _WRITE_SECURE_SETTINGS = "android.permission.WRITE_SECURE_SETTINGS"
 
 _REQUESTED_PERMISSIONS_RE = re.compile(r"^requested permissions:\s*$")
 _PERMISSION_LINE_RE = re.compile(r"^([\w.]+)(?::.*)?$")
-_ACCESSIBILITY_NAME_RE = re.compile(r"name=([\w.]+)")
+_COMPONENT_NAME_RE = re.compile(r"name=([\w.]+)")
 
 
 def list_installed_packages(ctx, third_party_only=True):
@@ -115,17 +144,19 @@ def _parse_requested_permissions(dumpsys_output: str) -> list[str]:
     return result
 
 
-def _find_accessibility_service(package: str, dumpsys_output: str) -> str | None:
-    """Best-effort поиск класса службы спецвозможностей приложения в
-    dumpsys package — формат вывода не стандартизован между версиями
-    Android/прошивками, поэтому если не нашли, просто не включаем эту
-    часть (не критично, остальные разрешения всё равно выдаются)."""
+def _find_service_component(package: str, dumpsys_output: str, marker: str) -> str | None:
+    """Best-effort поиск класса службы (спецвозможности/слушателя
+    уведомлений — marker разный, логика одна) в dumpsys package — формат
+    вывода не стандартизован между версиями Android/прошивками, поэтому
+    если не нашли, просто не включаем эту часть (не критично, остальные
+    разрешения всё равно выдаются, но см. вызывающих — там теперь честно
+    логируется, что именно не получилось найти)."""
     lines = dumpsys_output.splitlines()
     for i, line in enumerate(lines):
-        if "BIND_ACCESSIBILITY_SERVICE" not in line:
+        if marker not in line:
             continue
         for back in reversed(lines[max(0, i - 15):i]):
-            m = _ACCESSIBILITY_NAME_RE.search(back.strip())
+            m = _COMPONENT_NAME_RE.search(back.strip())
             if m:
                 cls = m.group(1)
                 if cls.startswith("."):
@@ -137,8 +168,10 @@ def _find_accessibility_service(package: str, dumpsys_output: str) -> str | None
 
 
 def _enable_accessibility_service(ctx, package: str, dumpsys_output: str) -> None:
-    component = _find_accessibility_service(package, dumpsys_output)
+    component = _find_service_component(package, dumpsys_output, "BIND_ACCESSIBILITY_SERVICE")
     if not component:
+        ctx.log(f"Служба спецвозможностей не найдена в dumpsys ({package}) — "
+                f"похоже, приложение её не объявляет, либо включить придётся вручную.")
         return
     current = (ctx.shell("settings get secure enabled_accessibility_services", check=False).stdout or "").strip()
     existing = [c for c in current.split(":") if c] if current and current != "null" else []
@@ -149,14 +182,39 @@ def _enable_accessibility_service(ctx, package: str, dumpsys_output: str) -> Non
     ctx.log(f"Служба специальных возможностей включена: {component}")
 
 
+def _enable_notification_listener(ctx, package: str, dumpsys_output: str) -> None:
+    """Доступ к уведомлениям (NotificationListenerService) — тот же
+    принцип, что и спецвозможности выше: обычно даётся только через экран
+    настроек, тут выставляем settings secure напрямую. cmd notification
+    allow_listener — более новый и надёжный путь (Android 11+), settings
+    put secure enabled_notification_listeners ниже — для более старых
+    прошивок, где этой команды ещё нет. См. также ACCESS_RESTRICTED_SETTINGS
+    в _EXTRA_APPOPS — без него на Android 13+ ни то, ни другое не
+    применяется для приложений, поставленных не через "доверенный" магазин."""
+    component = _find_service_component(package, dumpsys_output, "BIND_NOTIFICATION_LISTENER_SERVICE")
+    if not component:
+        ctx.log(f"Служба доступа к уведомлениям не найдена в dumpsys ({package}) — "
+                f"похоже, приложение её не объявляет, либо включить придётся вручную.")
+        return
+    current = (ctx.shell("settings get secure enabled_notification_listeners", check=False).stdout or "").strip()
+    existing = [c for c in current.split(":") if c] if current and current != "null" else []
+    if component not in existing:
+        existing.append(component)
+        ctx.shell(f"settings put secure enabled_notification_listeners {':'.join(existing)}", check=False)
+    ctx.shell(f"cmd notification allow_listener {component}", check=False)
+    ctx.log(f"Доступ к уведомлениям включён: {component}")
+
+
 def grant_all_permissions(ctx, package: str) -> None:
     """Выдаёт приложению все разрешения, которые оно запрашивает в
     манифесте (обычные runtime + WRITE_SECURE_SETTINGS), плюс "спецдоступы"
     через AppOps (показ поверх других окон, изменение системных настроек,
-    статистика использования, установка APK без диалога, активация VPN без
-    диалога) и, если удалось найти, включает его службу специальных
-    возможностей — то, что на большинстве магнитол нельзя сделать штатным
-    экраном настроек. Плюс освобождает приложение от ограничений
+    статистика использования, доступ ко всем файлам, установка APK без
+    диалога, активация VPN без диалога, снятие ограничения Android 13+ на
+    включение спецвозможностей/уведомлений для не-"доверенных" приложений)
+    и, если удалось найти, включает его службу специальных возможностей и
+    доступ к уведомлениям — то, что на большинстве магнитол нельзя сделать
+    штатным экраном настроек. Плюс освобождает приложение от ограничений
     энергосбережения (Doze/App Standby) — иначе Android рано или поздно
     убивает его в фоне, частая жалоба именно на магнитолах."""
     ctx.log(f"Выдаю разрешения: {package}")
@@ -182,12 +240,15 @@ def grant_all_permissions(ctx, package: str) -> None:
 
     for op in _APPOPS.values():
         ctx.shell(f"appops set {package} {op} allow", check=False)
+        if op == _MANAGE_EXTERNAL_STORAGE_OP:
+            ctx.shell(f"appops set --uid {package} {op} allow", check=False)
     for op in _EXTRA_APPOPS:
         ctx.shell(f"appops set {package} {op} allow", check=False)
     ctx.shell(f"pm grant {package} {_WRITE_SECURE_SETTINGS}", check=False)
     ctx.shell(f"dumpsys deviceidle whitelist +{package}", check=False)
 
     _enable_accessibility_service(ctx, package, dumpsys_output)
+    _enable_notification_listener(ctx, package, dumpsys_output)
     if failed:
         # "Внимание" в начале — сознательно (см. app/web/frontend/js/
         # log_format.js: classifyLogLevel), чтобы эта строка красилась как
