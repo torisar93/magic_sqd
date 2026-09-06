@@ -46,12 +46,16 @@ object AdbSession {
     fun connectBlocking(context: Context, log: (String) -> Unit): AdbHandshakeResult {
         disconnect()
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-        val target = usbManager.deviceList.values.firstOrNull { findAdbInterface(it) != null }
+        // Ищем устройство и его ADB-интерфейс ОДНИМ проходом (не два отдельных
+        // — раньше второй повторный findAdbInterface(target) был обёрнут в "!!"
+        // и мог упасть NPE, если устройство отвалилось по USB между первым и
+        // вторым поиском, например от дёрнувшегося кабеля/OTG-переходника).
+        val (target, targetIface) = usbManager.deviceList.values
+            .firstNotNullOfOrNull { device -> findAdbInterface(device)?.let { device to it } }
             ?: return AdbHandshakeResult.Failed(
                 "Устройство с ADB-интерфейсом не найдено среди подключённых по USB — " +
                     "проверь, что на магнитоле включена отладка по USB и это OTG-подключение."
             )
-        val targetIface = findAdbInterface(target)!!
 
         if (!requestUsbPermissionBlocking(context, target)) {
             return AdbHandshakeResult.Failed("Пользователь отклонил разрешение на доступ к USB-устройству")

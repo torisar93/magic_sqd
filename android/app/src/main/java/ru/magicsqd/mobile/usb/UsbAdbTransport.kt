@@ -90,19 +90,38 @@ class UsbAdbTransport(
     private val iface: AdbUsbInterface,
 ) : AdbTransport {
     override fun write(bytes: ByteArray, timeoutMs: Int): Boolean {
-        val sent = connection.bulkTransfer(iface.endpointOut, bytes, bytes.size, timeoutMs)
+        // bulkTransfer нормально возвращает -1 при обрыве, НО на части
+        // устройств/прошивок реально бросает исключение (IllegalStateException
+        // и т.п.), если USB-устройство физически исчезло прямо во время
+        // передачи (отключили кабель) — непойманное исключение здесь убивает
+        // весь процесс приложения (реальный краш и при подключении, если
+        // кабель/OTG-переходник дёрнулся прямо во время CNXN-хендшейка, и при
+        // отключении кабеля посреди уже идущей команды). См. TcpAdbTransport
+        // ниже — там та же защита для Wi-Fi-транспорта.
+        val sent = try {
+            connection.bulkTransfer(iface.endpointOut, bytes, bytes.size, timeoutMs)
+        } catch (_: Exception) {
+            -1
+        }
         return sent == bytes.size
     }
 
     override fun read(buffer: ByteArray, timeoutMs: Int): Int =
-        connection.bulkTransfer(iface.endpointIn, buffer, buffer.size, timeoutMs)
+        try {
+            connection.bulkTransfer(iface.endpointIn, buffer, buffer.size, timeoutMs)
+        } catch (_: Exception) {
+            -1
+        }
 
     override fun close() {
         try {
             connection.releaseInterface(iface.usbInterface)
         } catch (_: Exception) {
         }
-        connection.close()
+        try {
+            connection.close()
+        } catch (_: Exception) {
+        }
     }
 }
 
