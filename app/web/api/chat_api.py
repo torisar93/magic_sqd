@@ -9,7 +9,8 @@ from __future__ import annotations
 import threading
 
 from ..events import event_bridge
-from ...adb_utils import SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, split_top_level_command
+from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, normalize_console_command,
+                           split_top_level_command)
 from ...chat_client import ChatError, send_chat_turn
 from ...submit_config import get_submit_config
 
@@ -41,7 +42,11 @@ class ChatApi:
 
     # ------------------------------------------------------------------
     def chat_confirm_command(self, device: str | None, command: str) -> dict:
-        command = (command or "").strip()
+        # Тот же приём, что и у свободной ADB-консоли (см.
+        # InstallApi.console_send) — модель иногда пишет "adb ..."/"-s
+        # <serial> ..." по привычке к настоящему терминалу, хотя устройство
+        # уже выбрано и adb уже подразумевается этим каналом.
+        command = normalize_console_command(command or "")
         if not command:
             return {"ok": False}
         threading.Thread(target=self._confirm_worker, args=(device, command), daemon=True).start()

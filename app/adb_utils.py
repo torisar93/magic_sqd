@@ -141,6 +141,35 @@ TOP_LEVEL_COMMANDS = {
 SERVER_LEVEL_COMMANDS = {"connect", "disconnect", "pair", "devices", "kill-server", "start-server"}
 
 
+def normalize_console_command(command: str) -> str:
+    """Срезает лишние префиксы, с которыми и человек по привычке к
+    настоящему терминалу, и ИИ-чат (см. app/web/api/chat_api.py) иногда
+    пишут команду — оба канала ожидают ввод БЕЗ них:
+    - "adb " в начале (сама консоль уже подразумевает adb) — иначе первым
+      словом становится "adb", в TOP_LEVEL_COMMANDS такого нет, и вся
+      команда вместо adb.exe на ПК уходит КАК ЕСТЬ в шелл подключённого
+      устройства ("/system/bin/sh: adb: inaccessible or not found").
+    - "-s <serial>"/"--serial <serial>" сразу после (не)срезанного "adb " —
+      устройство уже выбрано через Adb(self.adb_path, device) на стороне
+      Python, эту привязку не нужно (и рискованно, если ИИ ошибётся в
+      серийнике) дублировать вручную; после среза "adb" первым словом
+      осталось бы "-s", которое ТОЖЕ не top-level-команда — та же ошибка
+      "inaccessible or not found", только с другim первым словом."""
+    import re
+    command = command.strip()
+    if not command:
+        return command
+    if command.lower() == "adb":
+        return ""
+    match = re.match(r"^adb\s+", command, re.IGNORECASE)
+    if match:
+        command = command[match.end():]
+    match = re.match(r"^(?:-s|--serial)\s+\S+\s*", command, re.IGNORECASE)
+    if match:
+        command = command[match.end():]
+    return command
+
+
 def split_top_level_command(command: str) -> list[str]:
     """Разбивает top-level adb-команду (см. TOP_LEVEL_COMMANDS) на argv с
     учётом кавычек — питоновский str.split() рвёт по КАЖДОМУ пробелу вслепую,

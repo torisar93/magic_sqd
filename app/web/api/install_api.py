@@ -18,7 +18,8 @@ from pathlib import Path
 
 from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
-                           list_devices, scan_for_adb_hosts, split_top_level_command)
+                           list_devices, normalize_console_command, scan_for_adb_hosts,
+                           split_top_level_command)
 from ...content_sync import (fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
                              sync_model_subfolder, sync_shared_folder)
 from ...runner import InstallRunner
@@ -328,21 +329,12 @@ class InstallApi:
     # git) — свободная "adb shell <команда>" на выбранное устройство, не
     # привязанная к конкретному этапу мастера установки. -------------------
     def console_send(self, device: str | None, command: str) -> dict:
-        command = command.strip()
-        if not command:
-            return {"ok": False}
         # Перед вводом уже стоит статичная подпись "adb" (см. index.html:
-        # adb-console-label) — сама команда вводится БЕЗ этого слова
-        # ("install foo.apk", "devices", "shell pm list packages"). По
-        # привычке к настоящему терминалу его всё равно иногда дописывают
-        # ("adb install foo.apk") — раньше это ломало разбор: первым словом
-        # оказывалось "adb", в TOP_LEVEL_COMMANDS такого нет, и всё
-        # уходило в шелл устройства как есть (устройство такой команды не
-        # знает). Срезаем один лишний "adb" в начале, если он есть.
-        if command.lower() == "adb":
-            command = ""
-        elif command[:4].lower() == "adb ":
-            command = command[4:].lstrip()
+        # adb-console-label) — сама команда вводится БЕЗ этого слова и без
+        # "-s <serial>" (устройство уже выбрано слева от поля). См.
+        # normalize_console_command в adb_utils.py — тот же приём нужен и
+        # ИИ-чату (chat_api.py), поэтому вынесен в общую функцию.
+        command = normalize_console_command(command)
         if not command:
             return {"ok": False}
         threading.Thread(target=self._console_worker, args=(device, command), daemon=True).start()
