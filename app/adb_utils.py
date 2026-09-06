@@ -141,6 +141,20 @@ TOP_LEVEL_COMMANDS = {
 SERVER_LEVEL_COMMANDS = {"connect", "disconnect", "pair", "devices", "kill-server", "start-server"}
 
 
+def split_top_level_command(command: str) -> list[str]:
+    """Разбивает top-level adb-команду (см. TOP_LEVEL_COMMANDS) на argv с
+    учётом кавычек — питоновский str.split() рвёт по КАЖДОМУ пробелу вслепую,
+    что ломает "install -r "C:\\...\\Модель ОД\\...\\file.apk"" (реальный
+    путь с пробелом в кириллическом имени модели) на несколько кусков и
+    протаскивает кавычку прямо в имя файла (adb потом ругается на
+    "filename doesn't end .apk"). shlex(posix=False) не трогает обратные
+    слэши (важно для путей Windows — posix-режим воспринял бы их как
+    escape-символы), но и не снимает кавычки сам — снимаем вручную."""
+    import shlex
+    tokens = shlex.split(command, posix=False)
+    return [t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in ('"', "'") else t for t in tokens]
+
+
 class Adb:
     def __init__(self, adb_path: str, device: str | None = None, log=None):
         self.adb_path = adb_path

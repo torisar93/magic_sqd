@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
-                           list_devices, scan_for_adb_hosts)
+                           list_devices, scan_for_adb_hosts, split_top_level_command)
 from ...content_sync import (fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
                              sync_model_subfolder, sync_shared_folder)
 from ...runner import InstallRunner
@@ -362,7 +362,7 @@ class InstallApi:
                 # при "connect" оно ещё и не может быть известно заранее.
                 target = None if first_word in SERVER_LEVEL_COMMANDS else device
                 adb = Adb(self.adb_path, target, log=self._console_log)
-                result = adb.run(*command.split(), check=False)
+                result = adb.run(*split_top_level_command(command), check=False)
             else:
                 adb = Adb(self.adb_path, device, log=self._console_log)
                 result = adb.shell(command, check=False)

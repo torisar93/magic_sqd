@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 
 from ..events import event_bridge
-from ...adb_utils import SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb
+from ...adb_utils import SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, split_top_level_command
 from ...chat_client import ChatError, send_chat_turn
 from ...submit_config import get_submit_config
 
@@ -53,7 +53,7 @@ class ChatApi:
             if first_word in TOP_LEVEL_COMMANDS:
                 target = None if first_word in SERVER_LEVEL_COMMANDS else device
                 adb = Adb(self.adb_path, target)
-                result = adb.run(*command.split(), check=False)
+                result = adb.run(*split_top_level_command(command), check=False)
             else:
                 adb = Adb(self.adb_path, device)
                 result = adb.shell(command, check=False)
