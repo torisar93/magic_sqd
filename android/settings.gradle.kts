@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MagicSqdMobile"
 include(":app")
+include(":adbdiag")

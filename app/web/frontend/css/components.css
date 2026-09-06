@@ -875,6 +875,39 @@
   backdrop-filter: blur(8px);
 }
 
+/* ---- Чат с ИИ (см. js/screens/chat_panel.js) — реплики и предложенные
+   команды рендерятся ПРЯМО В #log-panel, теми же строками лога, что и
+   обычный вывод adb — никакой отдельной "чатовой" панели/пузырей, лог
+   остаётся консольным. .log-line-command (эхо ввода) уже есть выше,
+   переиспользуется для эха вопроса техника. */
+.chat-command-line {
+  border-left: 2px solid var(--accent-2);
+  padding-left: 8px;
+  margin: 6px 0;
+}
+
+.chat-command-line code {
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.chat-command-reason {
+  display: block;
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 2px 0 6px;
+}
+
+.chat-command-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-command-actions button {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
 /* ---- Stage wizard (см. js/screens/stage_wizard.js) ---- */
 .wizard {
   display: flex;

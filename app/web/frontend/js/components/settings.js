@@ -36,10 +36,12 @@
       checkbox("Обновлять каталог при запуске", "auto_sync", info.preferences.auto_sync, savePreference),
       checkbox("Уменьшить анимации", "reduced_motion", info.preferences.reduced_motion, savePreference),
       checkbox("Компактный лог", "compact_log", info.preferences.compact_log, savePreference),
+      checkbox("Чат с ИИ (вопрос по-русски в консоли под логом)", "chat_enabled", info.preferences.chat_enabled, savePreference),
     );
     async function savePreference(key, value) {
       const preferences = await window.pywebview.api.settings_set_preferences({ [key]: value });
       document.documentElement.classList.toggle("reduce-motion", preferences.reduced_motion);
+      window.chatPanel.setEnabled(preferences.chat_enabled);
     }
     dialog.querySelector("[data-clear]").addEventListener("click", async (event) => {
       if (!(await window.confirmDialog("Очистить скачанные файлы и кэш? Их можно будет скачать снова."))) return;

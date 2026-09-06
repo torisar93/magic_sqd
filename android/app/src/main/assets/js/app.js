@@ -174,10 +174,13 @@
   function updateLogCmdSuggestions() {
     if (!logCmdSuggestionsListEl) return;
     const normalized = stripRedundantPrefix(logCmdInput.value).toLowerCase();
-    const matches = (normalized
-      ? SHELL_CMD_SUGGESTIONS.filter((s) => s.value.toLowerCase().startsWith(normalized))
-      : SHELL_CMD_SUGGESTIONS
-    ).slice(0, 8);
+    // Пустое поле — подсказки скрыты (не показываем весь список сразу же с
+    // пустым вводом), только фильтрация по уже введённому тексту.
+    if (!normalized) {
+      hideLogCmdSuggestions();
+      return;
+    }
+    const matches = SHELL_CMD_SUGGESTIONS.filter((s) => s.value.toLowerCase().startsWith(normalized)).slice(0, 8);
     renderLogCmdSuggestions(matches);
   }
 
@@ -252,6 +255,21 @@
     logPanelEl.scrollTop = logPanelEl.scrollHeight;
   }
 
+  // Тот же ряд ввода обслуживает и свободную ADB-консоль, и чат с ИИ — без
+  // отдельного поля/кнопки-переключателя режима: реальные adb/shell-команды
+  // (см. SHELL_CMD_SUGGESTIONS выше) всегда латиницей, а вопрос технику
+  // естественнее печатать по-русски — кириллица в тексте достаточно
+  // надёжно отличает одно от другого.
+  const CYRILLIC_RE = /[а-яёА-ЯЁ]/;
+  // Кириллица не поможет технику, который решит спросить по-английски (редко,
+  // но бывает) — явная команда "/ask <текст>" всегда уходит в чат, независимо
+  // от языка, тем же приёмом, что и /clear чуть ниже.
+  const CHAT_ASK_PREFIX_RE = /^\/ask\s+/i;
+
+  function isChatQuestion(text) {
+    return CYRILLIC_RE.test(text) || CHAT_ASK_PREFIX_RE.test(text);
+  }
+
   function onLogCmdRun() {
     const command = logCmdInput.value.trim();
     if (!command) return;
@@ -266,8 +284,107 @@
       logLastLineEl.className = "log-last-line";
       return;
     }
+    if (isChatQuestion(command)) {
+      chatSendMessage(command.replace(CHAT_ASK_PREFIX_RE, ""));
+      return;
+    }
     logConsoleCommand(command);
     Bridge.call("adb_shell_command", { command });
+  }
+
+  // -- Чат с ИИ (см. chat_bridge.py, WebBridge.kt: chatSend/chatConfirmCommand,
+  // server/backend.py: POST /chat) — прямо в этом же логе, никакой отдельной
+  // панели/пузырей: вопрос техника, ответ и предложенная команда — обычные
+  // строки .log-line. Команда, предложенная моделью, — отдельная строка с
+  // кнопками "Выполнить"/"Отклонить", ничего не выполняется без явного
+  // клика. После подтверждения результат уходит обратно в переписку, и чат
+  // сам продолжает диалог (агентный цикл) — до CHAT_MAX_AUTO_TURNS
+  // автоматических шагов подряд на одно сообщение техника.
+  const CHAT_MAX_AUTO_TURNS = 6;
+  const CHAT_HISTORY_SENT_TURNS = 16;
+  const CHAT_RECENT_LOG_LINES = 40;
+  let chatHistory = [];
+  let chatAutoTurnsLeft = 0;
+
+  function chatRecentLogLines() {
+    return Array.from(logPanelEl.querySelectorAll(".log-line")).map((e) => e.textContent).slice(-CHAT_RECENT_LOG_LINES);
+  }
+
+  function renderChatCommandLine(command, reason) {
+    const line = el("div", { class: "log-line chat-command-line" });
+    line.appendChild(el("code", { text: `❯ ${command}` }));
+    if (reason) line.appendChild(el("span", { class: "chat-command-reason", text: reason }));
+    const actions = el("div", { class: "chat-command-actions" });
+    const confirmBtn = el("button", { class: "accent", text: "Выполнить" });
+    const rejectBtn = el("button", { text: "Отклонить" });
+    actions.append(confirmBtn, rejectBtn);
+    line.appendChild(actions);
+    logPanelEl.appendChild(line);
+    logPanelEl.scrollTop = logPanelEl.scrollHeight;
+
+    confirmBtn.addEventListener("click", () => {
+      confirmBtn.disabled = true;
+      rejectBtn.disabled = true;
+      Bridge.call("chat_confirm_command", { command });
+    });
+    rejectBtn.addEventListener("click", () => {
+      confirmBtn.disabled = true;
+      rejectBtn.disabled = true;
+      log("Команда отклонена — не выполнена.");
+      chatHistory.push({ role: "tool_result", command, output: "техник отклонил выполнение команды", ok: false });
+    });
+  }
+
+  function chatSendTurn() {
+    if (chatAutoTurnsLeft <= 0) {
+      log("ИИ: достигнут лимит автоматических шагов подряд — напишите новое сообщение, чтобы продолжить.");
+      return;
+    }
+    chatAutoTurnsLeft -= 1;
+    Bridge.call("chat_send", {
+      history: JSON.stringify(chatHistory.slice(-CHAT_HISTORY_SENT_TURNS)),
+      recent_log: JSON.stringify(chatRecentLogLines()),
+    });
+    // Ответ придёт отдельным событием "chat_reply" — chatSend в Kotlin
+    // работает в фоновом потоке и возвращается сразу.
+  }
+
+  function chatSendMessage(text) {
+    if (!Bridge.call("settings_preferences", {}).chat_enabled) {
+      log("ИИ-чат отключён в настройках.");
+      return;
+    }
+    const line = el("div", { class: "log-line log-line-command", text: `💬 ${text}` });
+    logPanelEl.appendChild(line);
+    logPanelEl.scrollTop = logPanelEl.scrollHeight;
+    chatHistory.push({ role: "user", content: text });
+    chatAutoTurnsLeft = CHAT_MAX_AUTO_TURNS;
+    chatSendTurn();
+  }
+
+  function onChatReply(event) {
+    const reply = event.reply || {};
+    if (!reply.ok && reply.error) {
+      log(`ИИ: ${reply.error}`);
+      return;
+    }
+    if (reply.type === "command" && reply.command) {
+      const summary = `Предлагаю выполнить: ${reply.command}` + (reply.reason ? ` — ${reply.reason}` : "");
+      chatHistory.push({ role: "assistant", content: summary });
+      renderChatCommandLine(reply.command, reply.reason);
+      return;
+    }
+    const text = reply.content || "";
+    log(`ИИ: ${text}`);
+    chatHistory.push({ role: "assistant", content: text });
+  }
+
+  function onChatCommandResult(event) {
+    log(event.output || "(пусто)");
+    chatHistory.push({ role: "tool_result", command: event.command, output: event.output, ok: !!event.ok });
+    // Замыкаем агентный цикл — модель видит результат и может предложить
+    // следующий шаг или завершить обычным текстовым ответом.
+    chatSendTurn();
   }
 
   // cars/<brand>/logo.png качается вместе со скриптами модели (см.
@@ -1981,7 +2098,7 @@
       el("div", { class: "settings-modal-header" }, [el("p", { class: "stage-text", style: "font-weight: 650; font-size: 17px", text: "Настройки" }), close]),
       el("section", { class: "settings-section" }, [el("strong", { text: "Хранилище" }), el("span", { class: "settings-muted", text: `Приложение: ${formatBytes(info.app_bytes)} · кэш: ` }), cacheLabel, clear, el("small", { text: "Сценарии и настройки останутся на месте." })]),
       el("section", { class: "settings-section" }, [el("strong", { text: "Синхронизация" }), el("span", { class: "settings-muted", text: "Сервер подключён" }), sync, makeToggle("Обновлять каталог при запуске", "auto_sync")]),
-      el("section", { class: "settings-section" }, [el("strong", { text: "Интерфейс" }), makeToggle("Уменьшить анимации", "reduced_motion"), makeToggle("Не выключать экран во время работы", "keep_screen_on"), makeToggle("Компактный лог", "compact_log")]),
+      el("section", { class: "settings-section" }, [el("strong", { text: "Интерфейс" }), makeToggle("Уменьшить анимации", "reduced_motion"), makeToggle("Не выключать экран во время работы", "keep_screen_on"), makeToggle("Компактный лог", "compact_log"), makeToggle("ИИ-чат (вопрос по-русски в том же поле команды)", "chat_enabled")]),
       el("section", { class: "settings-section" }, [el("strong", { text: "Диагностика" }), copyLog, el("a", { href: "https://github.com/torisar93/magic_sqd", target: "_blank", text: "GitHub проекта" })]),
       el("button", { class: "accent", text: "Готово", onclick: () => overlay.remove() }),
     ]);
@@ -2108,7 +2225,11 @@
     // затемнённый фон (см. logOverlayEl выше) — эта же кнопка "закрыть
     // куда-то мимо" уже работает одинаково независимо от того, открыли лог
     // вручную или так, отдельного "автозакрытия" не нужно.
-    logCmdInput.addEventListener("focus", () => { setLogOpen(true); updateLogCmdSuggestions(); });
+    // updateLogCmdSuggestions() тут раньше вызывался и на "focus" — с пустым
+    // полем это показывало ВЕСЬ список подсказок сразу же по клику в поле,
+    // ещё до того как техник начал печатать. Подсказки теперь появляются
+    // только по вводу текста (см. "input" listener в initLogCmdSuggestions).
+    logCmdInput.addEventListener("focus", () => { setLogOpen(true); });
     logCmdInput.addEventListener("blur", () => {
       // Небольшая задержка — подстраховка для выбора подсказки тачем/
       // клавиатурной навигацией без mousedown (см. initLogCmdSuggestions
@@ -2116,6 +2237,8 @@
       setTimeout(hideLogCmdSuggestions, 150);
     });
     initLogCmdSuggestions();
+    window.events.on("chat_reply", onChatReply);
+    window.events.on("chat_command_result", onChatCommandResult);
     window.events.on("network_scan_result", onNetworkScanResult);
     window.events.on("actions_packages_result", onActionsPackagesResult);
     window.events.on("personal_apks_picked", onPersonalApksPicked);

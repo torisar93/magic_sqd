@@ -66,9 +66,19 @@ class MainActivity : AppCompatActivity() {
         // WebView — у WebView свой Chromium-компоузитор, который сбрасывал
         // padding при переключении экранов picker/wizard (сильное изменение
         // высоты DOM триггерило релэйаут, съедавший applied padding).
+        // В edge-to-edge (см. setDecorFitsSystemWindows(false) выше) system
+        // сам НЕ ужимает окно под клавиатуру — windowSoftInputMode="adjustResize"
+        // в этом режиме не действует вообще, только insets-события. Раньше
+        // здесь учитывались только systemBars() — клавиатура просто перекрывала
+        // строку ввода чата/консоли внизу лога (см. .log-cmd-row, position:
+        // fixed внутри .log-overlay), никакой отступ под неё не подставлялся.
+        // Берём максимум из системных баров и текущей высоты IME — так нижний
+        // отступ растёт, когда клавиатура открыта, и возвращается к обычному
+        // (высота навбара) размеру, когда она скрыта.
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             insets
         }
 

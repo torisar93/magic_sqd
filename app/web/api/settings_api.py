@@ -106,14 +106,14 @@ class SettingsApi:
 
     def set_preferences(self, preferences: dict) -> dict:
         current = self._preferences()
-        for key in ("auto_sync", "reduced_motion", "compact_log"):
+        for key in ("auto_sync", "reduced_motion", "compact_log", "chat_enabled"):
             if key in preferences:
                 current[key] = bool(preferences[key])
         self.preferences_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
         return current
 
     def _preferences(self) -> dict:
-        defaults = {"auto_sync": True, "reduced_motion": False, "compact_log": True}
+        defaults = {"auto_sync": True, "reduced_motion": False, "compact_log": True, "chat_enabled": True}
         try:
             loaded = json.loads(self.preferences_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

@@ -40,6 +40,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // Тот же адрес, что и в server.json на десктопе — публичный
         // content-сервер, не секрет.
         private const val BASE_URL = "https://magicsqd.ru/content"
+        // ИИ-чат (см. chat_bridge.py, server/backend.py: POST /chat) — тот же
+        // сервер/ключ, что и в submit.json на десктопе (X-Submit-Key — не
+        // настоящий секрет, анти-спам заглушка, лежит в каждом установленном
+        // клиенте, см. server/backend.py докстринг).
+        private const val CHAT_URL = "https://magicsqd.ru/chat"
+        private const val CHAT_KEY = "61e6801f05e4c1a86d9e7175bfd64b1b3d02fa35d20618b5"
     }
 
     // AdbSession/UsbFlashSession — общие на процесс синглтоны БЕЗ внутренней
@@ -128,6 +134,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "adb_install_apks" -> { adbInstallApks(args); "{}" }
                 "telnet_run_stage" -> { telnetRunStage(args); "{}" }
                 "adb_shell_command" -> { adbShellCommand(args.getString("command")); "{}" }
+                "chat_send" -> { chatSend(args.getString("history"), args.getString("recent_log")); "{}" }
+                "chat_confirm_command" -> { chatConfirmCommand(args.getString("command")); "{}" }
                 "scan_hosts" -> { scanHosts(args.optInt("port", 5555)); "{}" }
                 "adb_ask_input_response" -> {
                     AskInputBroker.resolve(args.getString("requestId"), args.getString("value"))
@@ -184,12 +192,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             .put("reduced_motion", prefs.getBoolean("reduced_motion", false))
             .put("compact_log", prefs.getBoolean("compact_log", true))
             .put("keep_screen_on", prefs.getBoolean("keep_screen_on", true))
+            .put("chat_enabled", prefs.getBoolean("chat_enabled", true))
     }
 
     private fun setSettingsPreferences(args: JSONObject): JSONObject {
         val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
         val editor = prefs.edit()
-        listOf("auto_sync", "reduced_motion", "compact_log", "keep_screen_on").forEach { key ->
+        listOf("auto_sync", "reduced_motion", "compact_log", "keep_screen_on", "chat_enabled").forEach { key ->
             if (args.has(key)) editor.putBoolean(key, args.getBoolean(key))
         }
         editor.apply()
@@ -383,6 +392,53 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             }
             pushStageResult(stageIndex, result)
         }
+    }
+
+    /** Ход переписки с ИИ-чатом (см. assets/js/app.js — рендерится прямо в
+     * логе, как и мини-консоль) — сервер (Gemini/Groq) отвечает текстом или
+     * предлагает ОДНУ shell-команду; техник подтверждает её перед выполнением
+     * (см. chatConfirmCommand). historyJson/recentLogJson уже сериализованы
+     * JS-стороной — Chaquopy строкам доверяет проще, чем вложенным объектам. */
+    private fun chatSend(historyJson: String, recentLogJson: String) {
+        Thread {
+            val resultJson = try {
+                pyModule("chat_bridge").callAttr(
+                    "send_chat_turn", historyJson, recentLogJson, CHAT_URL, CHAT_KEY
+                ).toString()
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
+            }
+            pushEvent(JSONObject().put("kind", "chat_reply").put("reply", JSONObject(resultJson)))
+        }.start()
+    }
+
+    /** Техник подтвердил команду, предложенную ИИ-чатом — выполняется тем же
+     * путём, что и свободный ввод в мини-консоли (adbShellCommand), результат
+     * же идёт отдельным событием "chat_command_result" в ленту чата, а не
+     * только в общий лог. */
+    private fun chatConfirmCommand(command: String) {
+        val trimmed = AdbConsoleFormat.stripRedundantPrefix(command)
+        if (trimmed.isEmpty()) return
+        if (!AdbSession.isConnected) {
+            pushAdbLog("ADB не подключён — команда не выполнена: $trimmed")
+            pushEvent(JSONObject().put("kind", "chat_command_result")
+                .put("command", trimmed).put("output", "ADB не подключён").put("ok", false))
+            return
+        }
+        Thread {
+            val (text, ok) = when (val r = AdbSession.shell(trimmed, ::pushAdbLog)) {
+                is AdbShellResult.Output -> {
+                    val out = r.text.trim()
+                    (AdbConsoleFormat.translateError(out) ?: AdbConsoleFormat.formatOutput(trimmed, out) ?: out) to true
+                }
+                is AdbShellResult.Rejected ->
+                    (AdbConsoleFormat.translateError(r.reason) ?: "Команда отклонена устройством: ${r.reason}") to false
+                is AdbShellResult.Failed ->
+                    (AdbConsoleFormat.translateError(r.reason) ?: "Ошибка: ${r.reason}") to false
+            }
+            pushEvent(JSONObject().put("kind", "chat_command_result")
+                .put("command", trimmed).put("output", text).put("ok", ok))
+        }.start()
     }
 
     /** Ручной ввод произвольной shell-команды из развёрнутой карточки лога

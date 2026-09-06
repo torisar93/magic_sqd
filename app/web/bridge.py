@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .api.admin_api import AdminApi
 from .api.car_editor_api import CarEditorApi
+from .api.chat_api import ChatApi
 from .api.install_api import InstallApi
 from .api.qr_adb_api import QrAdbApi
 from .api.report_api import ReportApi
@@ -69,6 +70,7 @@ class WebApi:
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
         self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
         self._update = UpdateApi(base_dir, is_win7=is_win7)
+        self._chat = ChatApi(base_dir, self.adb_path)
 
     # -- метаданные окна ------------------------------------------------
     def app_get_info(self) -> dict:
@@ -152,6 +154,13 @@ class WebApi:
 
     def install_open_video(self, video_path: str) -> dict:
         return self._install.open_video(video_path)
+
+    # -- chat_api (ИИ-чат под логом установки) -------------------------------
+    def chat_send(self, history: list, recent_log: list) -> dict:
+        return self._chat.chat_send(history, recent_log)
+
+    def chat_confirm_command(self, device, command: str) -> dict:
+        return self._chat.chat_confirm_command(device, command)
 
     # -- usb_api ------------------------------------------------------------
     def usb_list_drives(self, include_all: bool = False) -> list:

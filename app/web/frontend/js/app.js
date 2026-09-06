@@ -232,11 +232,28 @@ function stripAdbPrefix(command) {
   return command;
 }
 
-function sendAdbConsoleCommand() {
-  const input = document.getElementById("adb-console-input");
-  const command = input.value.trim();
-  if (!command) return;
-  input.value = "";
+// Один и тот же ряд ввода/кнопки "Отправить" обслуживает и свободную
+// ADB-консоль, и чат с ИИ — без отдельной кнопки-переключателя режима:
+// реальные adb/shell-команды (см. ADB_CONSOLE_SUGGESTIONS выше) всегда
+// латиницей, а вопрос технику удобнее и естественнее печатать по-русски —
+// наличие кириллицы в введённом тексте достаточно надёжно отличает одно от
+// другого, чтобы не заставлять переключать режим руками.
+const CYRILLIC_RE = /[а-яёА-ЯЁ]/;
+// Кириллица не поможет технику, который решит спросить по-английски (редко,
+// но бывает) — явная команда "/ask <текст>" всегда уходит в чат, независимо
+// от языка, так же как /clear в мини-консоли Android — часть текста,
+// набираемого в это же поле, а не отдельная команда adb.
+const CHAT_ASK_PREFIX_RE = /^\/ask\s+/i;
+
+function isChatQuestion(text) {
+  return CYRILLIC_RE.test(text) || CHAT_ASK_PREFIX_RE.test(text);
+}
+
+function stripChatAskPrefix(text) {
+  return text.replace(CHAT_ASK_PREFIX_RE, "");
+}
+
+function sendAdbConsoleCommand(command) {
   const select = document.getElementById("adb-console-device");
   const device = adbConsoleDeviceByLabel[select.value] || null;
   // Раньше в логе была видна только реакция на команду (или вообще ничего,
@@ -250,6 +267,18 @@ function sendAdbConsoleCommand() {
   const firstWord = command.split(/\s+/, 1)[0].toLowerCase();
   if (ADB_DEVICE_LIST_COMMANDS.has(firstWord)) {
     setTimeout(refreshAdbConsoleDevices, 1500);
+  }
+}
+
+function sendConsoleInput() {
+  const input = document.getElementById("adb-console-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  if (isChatQuestion(text)) {
+    window.chatPanel.sendMessage(stripChatAskPrefix(text));
+  } else {
+    sendAdbConsoleCommand(text);
   }
 }
 
@@ -606,10 +635,25 @@ window.addEventListener("pywebviewready", async () => {
   });
 
   document.getElementById("adb-console-refresh").addEventListener("click", () => refreshAdbConsoleDevices());
-  document.getElementById("adb-console-send").addEventListener("click", () => sendAdbConsoleCommand());
+  document.getElementById("adb-console-send").addEventListener("click", () => sendConsoleInput());
   document.getElementById("adb-console-input").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") sendAdbConsoleCommand();
+    if (event.key === "Enter") sendConsoleInput();
+  });
+  // <datalist> подсказок нарочно НЕ привязан статичным атрибутом list= в
+  // разметке (см. index.html) — иначе браузер показывает ВЕСЬ список сразу
+  // же по фокусу/клику в пустое поле, ещё до того как человек начал печатать
+  // команду. Подключаем datalist только когда в поле уже что-то введено —
+  // тогда подсказки фильтруются по совпадению с начала строки, как и
+  // задумано, а не вываливаются все разом на пустой ввод.
+  document.getElementById("adb-console-input").addEventListener("input", (event) => {
+    if (event.target.value.length > 0) {
+      event.target.setAttribute("list", "adb-console-suggestions");
+    } else {
+      event.target.removeAttribute("list");
+    }
   });
   refreshAdbConsoleDevices();
+
+  window.chatPanel.init(settingsPreferences.chat_enabled);
 
 });

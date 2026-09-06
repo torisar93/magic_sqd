@@ -39,6 +39,12 @@ class SubmitConfig:
         # server/backend.py: DIAGNOSTICS_DIR).
         return self.submit_url.rsplit("/", 1)[0] + "/diagnostics"
 
+    @property
+    def chat_url(self) -> str:
+        # Тот же сервер/ключ, путь "/submit" -> "/chat" (см. app/chat_client.py,
+        # server/backend.py: POST /chat).
+        return self.submit_url.rsplit("/", 1)[0] + "/chat"
+
 
 def get_submit_config(base_dir: Path) -> SubmitConfig | None:
     path = base_dir / "submit.json"

@@ -898,6 +898,38 @@ button.danger {
   padding: 8px 14px;
 }
 
+/* Чат с ИИ — тот же ряд ввода, что и у мини-консоли ADB выше (см. js/app.js:
+   isChatQuestion/onLogCmdRun — кириллица в тексте отличает вопрос ИИ от
+   adb-команды, без отдельного поля/переключателя режима). Ответы/
+   предложенные команды рендерятся теми же строками .log-line. */
+.chat-command-line {
+  border-left: 2px solid var(--info);
+  padding-left: 8px;
+  margin: 6px 0;
+}
+
+.chat-command-line code {
+  color: var(--info);
+  font-weight: 700;
+}
+
+.chat-command-reason {
+  display: block;
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 2px 0 6px;
+}
+
+.chat-command-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-command-actions button {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
 /* Свой список подсказок вместо нативного <datalist> — на Android WebView
    он открывается как полноэкранный системный оверлей поверх ВСЕГО экрана,
    включая клавиатуру (реальная жалоба). Абсолютно позиционирован НАД полем
