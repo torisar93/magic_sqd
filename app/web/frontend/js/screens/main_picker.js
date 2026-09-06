@@ -36,11 +36,48 @@
             <button class="catalog-settings" id="catalog-settings" type="button" aria-label="Настройки приложения" title="Настройки">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9.7 3.7h4.6l.7 2.1c.5.2 1 .5 1.4.8l2.1-.4 2.3 4-1.4 1.6v1.6l1.4 1.6-2.3 4-2.1-.4c-.4.3-.9.6-1.4.8l-.7 2.1H9.7L9 19.4c-.5-.2-1-.5-1.4-.8l-2.1.4-2.3-4 1.4-1.6v-1.6L3.2 10l2.3-4 2.1.4c.4-.3.9-.6 1.4-.8l.7-2.1Z"/><circle cx="12" cy="12" r="3.1"/></svg>
             </button>
-            <button class="catalog-topbar-link catalog-admin-trigger" id="catalog-admin-toggle" type="button" hidden aria-expanded="false">Админ</button>
+            <button class="catalog-topbar-link catalog-admin-trigger" id="catalog-admin-toggle" type="button" aria-expanded="false">Вход</button>
           </nav>
         </header>
-        <aside class="catalog-admin-popover" id="catalog-admin-popover" hidden aria-label="Инструменты администратора">
-          <header><strong>Управление каталогом</strong><span>Публикация, APK и заявки пользователей</span></header>
+        <aside class="catalog-admin-popover" id="catalog-admin-popover" hidden aria-label="Аккаунт">
+          <header><strong id="catalog-account-title">Вход</strong><span id="catalog-account-subtitle">Аккаунт техника — email и пароль</span></header>
+          <div id="catalog-account-guest">
+            <div class="field">
+              <span class="field-label">Email</span>
+              <input type="text" inputmode="email" id="catalog-account-email-input" autocomplete="email" />
+            </div>
+            <div class="field">
+              <span class="field-label">Пароль</span>
+              <input type="password" id="catalog-account-password-input" autocomplete="current-password" />
+            </div>
+            <button id="catalog-account-forgot" class="link-btn" hidden>Забыли пароль?</button>
+            <p id="catalog-account-status" style="color: var(--text-dim); font-size: 12px"></p>
+            <div class="dialog-actions spread">
+              <button id="catalog-account-submit" class="accent">Войти</button>
+              <button id="catalog-account-switch">Нет аккаунта? Зарегистрироваться</button>
+            </div>
+          </div>
+          <div id="catalog-account-loggedin" hidden>
+            <p id="catalog-account-loggedin-email" style="color: var(--text-dim); font-size: 12px"></p>
+            <button id="catalog-account-change-password-toggle" class="link-btn">Сменить пароль</button>
+            <div id="catalog-account-change-password" hidden>
+              <div class="field">
+                <span class="field-label">Текущий пароль</span>
+                <input type="password" id="catalog-account-current-password" autocomplete="current-password" />
+              </div>
+              <div class="field">
+                <span class="field-label">Новый пароль</span>
+                <input type="password" id="catalog-account-new-password" autocomplete="new-password" />
+              </div>
+              <div class="field">
+                <span class="field-label">Повторите новый пароль</span>
+                <input type="password" id="catalog-account-new-password-repeat" autocomplete="new-password" />
+              </div>
+              <p id="catalog-account-change-password-status" style="color: var(--text-dim); font-size: 12px"></p>
+              <button id="catalog-account-change-password-submit" class="accent">Сохранить пароль</button>
+            </div>
+            <button id="catalog-account-logout" class="danger">Выйти</button>
+          </div>
           <div id="catalog-admin-actions"></div>
           <div id="catalog-admin-pending"></div>
         </aside>
@@ -69,6 +106,34 @@
     adminPopoverEl = container.querySelector("#catalog-admin-popover");
     adminActionsEl = container.querySelector("#catalog-admin-actions");
     adminPendingEl = container.querySelector("#catalog-admin-pending");
+    // Одна и та же кнопка/попап — и для входа в аккаунт (email+пароль,
+    // регистрация), и (если у аккаунта есть права) для админ-функций (см.
+    // auth_dialog.js: attach — владеет содержимым попапа, здесь только
+    // открытие/закрытие самого попапа, всегда доступно, не только в
+    // admin_mode).
+    window.authDialog.attach({
+      toggleEl: adminToggleEl,
+      popoverEl: adminPopoverEl,
+      titleEl: container.querySelector("#catalog-account-title"),
+      guestEl: container.querySelector("#catalog-account-guest"),
+      loggedinEl: container.querySelector("#catalog-account-loggedin"),
+    });
+    const closeAccountPopover = () => {
+      adminPopoverEl.hidden = true;
+      adminToggleEl.setAttribute("aria-expanded", "false");
+    };
+    adminToggleEl.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const willOpen = adminPopoverEl.hidden;
+      adminPopoverEl.hidden = !willOpen;
+      adminToggleEl.setAttribute("aria-expanded", String(willOpen));
+    });
+    document.addEventListener("click", (event) => {
+      if (!adminPopoverEl.hidden && !adminPopoverEl.contains(event.target) && event.target !== adminToggleEl) {
+        closeAccountPopover();
+      }
+    });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeAccountPopover(); });
     startupOverlayEl = container.querySelector("#catalog-startup-overlay");
     startupProgressFillEl = container.querySelector("#catalog-startup-progress-fill");
     startupProgressLabelEl = container.querySelector("#catalog-startup-progress-label");
@@ -86,14 +151,15 @@
     await reload();
   }
 
+  // Кнопка/попап сама теперь ВСЕГДА видна (см. init() — общий вход в
+  // аккаунт техника, не только админ-функции) — эта функция только
+  // показывает/прячет ВНУТРИ уже открытого попапа блок админ-действий
+  // (см. auth_dialog.js — она же управляет блоками входа/аккаунта рядом).
   function setAdminMode(enabled) {
     if (!adminToggleEl) return;
-    // Разовая настройка (переносит .left-actions/#pending-section внутрь
-    // поповера, вешает обработчики) — только при ПЕРВОМ включении за этот
-    // запуск программы; переносить элементы обратно при выходе из
-    // admin-режима незачем, достаточно спрятать сам переключатель и его
-    // поповер целиком (см. ниже) — см. admin-logout-btn в app.js, который
-    // теперь может вызвать это и с enabled=false в течение того же сеанса.
+    // Разовый перенос .left-actions/#pending-section внутрь поповера — при
+    // ПЕРВОМ включении за этот запуск программы; переносить обратно при
+    // выходе незачем, достаточно спрятать сам блок (см. ниже).
     if (enabled && !adminModeReady) {
       adminModeReady = true;
       adminToggleEl.closest(".catalog").classList.add("is-admin-mode");
@@ -101,27 +167,10 @@
       const pending = document.querySelector("#left-panel > #pending-section");
       if (actions) adminActionsEl.appendChild(actions);
       if (pending) adminPendingEl.appendChild(pending);
-
-      const close = () => {
-        adminPopoverEl.hidden = true;
-        adminToggleEl.setAttribute("aria-expanded", "false");
-      };
-      adminToggleEl.addEventListener("click", (event) => {
-        event.stopPropagation();
-        const willOpen = adminPopoverEl.hidden;
-        adminPopoverEl.hidden = !willOpen;
-        adminToggleEl.setAttribute("aria-expanded", String(willOpen));
-      });
-      document.addEventListener("click", (event) => {
-        if (!adminPopoverEl.hidden && !adminPopoverEl.contains(event.target) && event.target !== adminToggleEl) close();
-      });
-      document.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
     }
-    adminToggleEl.hidden = !enabled;
-    if (!enabled) {
-      adminPopoverEl.hidden = true;
-      adminToggleEl.setAttribute("aria-expanded", "false");
-    }
+    adminActionsEl.hidden = !enabled;
+    adminPendingEl.hidden = !enabled;
+    if (!enabled) adminToggleEl.closest(".catalog").classList.remove("is-admin-mode");
   }
 
   async function reload() {

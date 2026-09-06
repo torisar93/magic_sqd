@@ -44,7 +44,7 @@
           <button id="workspace-edit-car" type="button" disabled>Редактировать</button>
         </div>
       </header>
-      <div class="card" style="flex: 1; margin-bottom: 4px">
+      <div class="card" style="flex: 1; min-height: 0">
         <div class="card-header">
           <span class="section-label">Инструкция и установка</span>
           <button id="report-btn" disabled>Сообщить о проблеме</button>
@@ -55,6 +55,7 @@
           </p>
         </div>
       </div>
+      <div class="row-resizer" id="log-resizer"></div>
       <div class="card" id="log-card">
         <div class="card-header">
           <span class="section-label">Лог</span>
@@ -382,12 +383,14 @@
   <script src="js/log_format.js"></script>
   <script src="js/graph/svg.js"></script>
   <script src="js/components/modal.js"></script>
+  <script src="js/components/context_menu.js"></script>
   <script src="js/components/boosty.js"></script>
   <script src="js/components/settings.js"></script>
   <script src="js/components/resizer.js"></script>
   <script src="js/screens/main_picker.js"></script>
   <script src="js/screens/stage_wizard.js"></script>
   <script src="js/screens/dialogs.js"></script>
+  <script src="js/screens/auth_dialog.js"></script>
   <script src="js/screens/admin_file_manager.js"></script>
   <script src="js/screens/instruction_editor.js"></script>
   <script src="js/screens/car_step_fields.js"></script>

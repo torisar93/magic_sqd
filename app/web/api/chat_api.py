@@ -15,9 +15,10 @@ from ...submit_config import get_submit_config
 
 
 class ChatApi:
-    def __init__(self, base_dir, adb_path: str):
+    def __init__(self, base_dir, adb_path: str, auth_api=None):
         self.base_dir = base_dir
         self.adb_path = adb_path
+        self._auth_api = auth_api
 
     # ------------------------------------------------------------------
     def chat_send(self, history: list, recent_log: list) -> dict:
@@ -26,12 +27,14 @@ class ChatApi:
             return {"ok": False, "error": "чат не настроен (нет submit.json)"}
         if not isinstance(history, list) or not history:
             return {"ok": False, "error": "пустое сообщение"}
-        threading.Thread(target=self._send_worker, args=(history, recent_log, config), daemon=True).start()
+        session_cookie = (self._auth_api.user_cookie if self._auth_api else None) or ""
+        threading.Thread(target=self._send_worker, args=(history, recent_log, config, session_cookie),
+                          daemon=True).start()
         return {"ok": True}
 
-    def _send_worker(self, history: list, recent_log: list, config) -> None:
+    def _send_worker(self, history: list, recent_log: list, config, session_cookie: str) -> None:
         try:
-            reply = send_chat_turn(history, recent_log, config)
+            reply = send_chat_turn(history, recent_log, config, session_cookie=session_cookie)
         except ChatError as exc:
             reply = {"type": "text", "content": f"Не удалось получить ответ: {exc}"}
         event_bridge.push({"kind": "chat_reply", "reply": reply})

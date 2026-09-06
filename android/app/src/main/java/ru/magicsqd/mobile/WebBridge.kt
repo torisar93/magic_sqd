@@ -46,6 +46,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // клиенте, см. server/backend.py докстринг).
         private const val CHAT_URL = "https://magicsqd.ru/chat"
         private const val CHAT_KEY = "61e6801f05e4c1a86d9e7175bfd64b1b3d02fa35d20618b5"
+        // Аккаунт техника (см. auth_bridge.py, server/backend.py: протокол
+        // /auth/*) — голый хост, auth_bridge.py сам достраивает конкретные
+        // пути. Отдельно от BASE_URL/CHAT_URL просто для читаемости.
+        private const val AUTH_BASE_URL = "https://magicsqd.ru"
     }
 
     // AdbSession/UsbFlashSession — общие на процесс синглтоны БЕЗ внутренней
@@ -88,6 +92,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         if (!Python.isStarted()) Python.start(AndroidPlatform(context))
         webView.keepScreenOn = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
             .getBoolean("keep_screen_on", true)
+        // Если техник уже входил раньше — сразу подтягиваем его заявки на
+        // модерации в фоне, без отдельного действия (см. app/web/api/
+        // auth_api.py:status на desktop — та же идея, тут ещё проще: сама
+        // cookie либо ещё валидна 30 дней, либо auth_bridge.py тихо
+        // вернёт ok:false, и JS просто ничего не покажет).
+        authSyncMyCars()
     }
 
     private val carsDir get() = java.io.File(context.filesDir, "cars").apply { mkdirs() }.absolutePath
@@ -136,6 +146,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "adb_shell_command" -> { adbShellCommand(args.getString("command")); "{}" }
                 "chat_send" -> { chatSend(args.getString("history"), args.getString("recent_log")); "{}" }
                 "chat_confirm_command" -> { chatConfirmCommand(args.getString("command")); "{}" }
+                "auth_status" -> authStatus().toString()
+                "auth_register" -> { authRegister(args.getString("email"), args.getString("password")); "{}" }
+                "auth_login" -> { authLogin(args.getString("email"), args.getString("password")); "{}" }
+                "auth_logout" -> { authLogout(); "{}" }
+                "auth_forgot_password" -> { authForgotPassword(args.getString("email")); "{}" }
                 "scan_hosts" -> { scanHosts(args.optInt("port", 5555)); "{}" }
                 "adb_ask_input_response" -> {
                     AskInputBroker.resolve(args.getString("requestId"), args.getString("value"))
@@ -173,6 +188,84 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     }
 
     private fun pyModule(name: String) = Python.getInstance().getModule(name)
+
+    // -- Аккаунт техника (см. auth_bridge.py, server/backend.py: /auth/*) --
+    // Отдельный SharedPreferences-файл (не "settings" — это про UI-настройки,
+    // а не про сессию), только email + уже выданный сервером session-токен
+    // (НЕ пароль — логаут на сервере/истечение делают его бесполезным).
+    private fun authPrefs() = context.getSharedPreferences("auth", Context.MODE_PRIVATE)
+    private fun authEmail(): String? = authPrefs().getString("email", null)
+    private fun authUserCookie(): String? = authPrefs().getString("user_cookie", null)
+    private fun saveAuthSession(email: String, userCookie: String) {
+        authPrefs().edit().putString("email", email).putString("user_cookie", userCookie).apply()
+    }
+    private fun clearAuthSession() { authPrefs().edit().clear().apply() }
+
+    private fun authStatus(): JSONObject = JSONObject().put("email", authEmail())
+
+    private fun authRegister(email: String, password: String) {
+        Thread {
+            val resultJson = try {
+                pyModule("auth_bridge").callAttr("register", AUTH_BASE_URL, email, password).toString()
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
+            }
+            pushEvent(JSONObject().put("kind", "auth_register_result").put("result", JSONObject(resultJson)))
+        }.start()
+    }
+
+    private fun authLogin(email: String, password: String) {
+        Thread {
+            val resultJson = try {
+                pyModule("auth_bridge").callAttr("login", AUTH_BASE_URL, email, password).toString()
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
+            }
+            val result = JSONObject(resultJson)
+            if (result.optBoolean("ok")) {
+                saveAuthSession(result.getString("email"), result.getString("user_cookie"))
+            }
+            pushEvent(JSONObject().put("kind", "auth_login_result").put("result", result))
+            if (result.optBoolean("ok")) authSyncMyCars()
+        }.start()
+    }
+
+    private fun authForgotPassword(email: String) {
+        Thread {
+            val resultJson = try {
+                pyModule("auth_bridge").callAttr("forgot_password", AUTH_BASE_URL, email).toString()
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
+            }
+            pushEvent(JSONObject().put("kind", "auth_forgot_password_result").put("result", JSONObject(resultJson)))
+        }.start()
+    }
+
+    private fun authLogout() {
+        val cookie = authUserCookie()
+        clearAuthSession()
+        Thread {
+            if (cookie != null) {
+                try { pyModule("auth_bridge").callAttr("logout", AUTH_BASE_URL, cookie) } catch (e: Exception) { /* локально уже вышли — не критично */ }
+            }
+            pushEvent(JSONObject().put("kind", "auth_logout_result").put("result", JSONObject().put("ok", true)))
+        }.start()
+    }
+
+    /** Тянет+распаковывает свои заявки на модерации прямо в cars/<Марка>/
+     * <Модель>/ (см. auth_bridge.py:sync_my_cars) — вызывается и при старте
+     * (см. init выше, если сессия уже была), и сразу после успешного входа. */
+    private fun authSyncMyCars() {
+        val cookie = authUserCookie() ?: return
+        Thread {
+            val resultJson = try {
+                pyModule("auth_bridge").callAttr("sync_my_cars", AUTH_BASE_URL, cookie, carsDir).toString()
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
+            }
+            pushEvent(JSONObject().put("kind", "auth_sync_finished").put("result", JSONObject(resultJson)))
+        }.start()
+    }
 
     private fun settingsInfo(): JSONObject {
         val preferences = settingsPreferences()

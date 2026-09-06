@@ -158,10 +158,11 @@ def _step_from_dict(data: dict) -> StepSpec:
 
 
 class CarEditorApi:
-    def __init__(self, base_dir, cars_dir, scanner_api):
+    def __init__(self, base_dir, cars_dir, scanner_api, auth_api=None):
         self.base_dir = base_dir
         self.cars_dir = cars_dir
         self._scanner_api = scanner_api
+        self._auth_api = auth_api
         self._thread: threading.Thread | None = None
         self._cancel_flag = threading.Event()
 
@@ -512,9 +513,11 @@ class CarEditorApi:
         elif submit_config:
             try:
                 client_id = get_or_create_client_id(self.base_dir)
+                session_cookie = self._auth_api.user_cookie if self._auth_api else None
                 self._log("Отправляю на проверку разработчику...")
                 submit_model(model_dir, spec.brand, spec.model, submit_config,
                              modification=spec.modification, client_id=client_id,
+                             session_cookie=session_cookie or "",
                              log=self._log, check_cancelled=self._check_cancelled)
             except SubmitCancelled:
                 self._log("Отправка на проверку отменена (локально сохранено).")

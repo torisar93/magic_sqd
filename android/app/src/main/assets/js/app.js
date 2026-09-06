@@ -9,7 +9,7 @@
   const STATUS_TITLES = { green: "Актуально", yellow: "Черновой способ", blue: "Недавно обновлено", red: "Не работает" };
 
   let screenPicker, screenWizard, breadcrumbEl, listEl, syncStatusEl, pickerSearchEl;
-  let wizardContentEl, wizardBackBtn, wizardVideoBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl, topHelpBtn;
+  let wizardContentEl, wizardBackBtn, wizardVideoBtn, wizardNextBtn, wizardPageLabel, logPanelEl, topTitleEl, topBackBtn, topbarEl, topHelpBtn, topAccountBtn;
   let adbStatusEl, adbConnectBtn, usbStatusEl, usbConnectBtn, usbFormatBtn, adbBarEl, usbBarEl;
   let adbModeToggleEl, adbModeWiredBtn, adbModeWifiBtn;
   let logBarEl, logLastLineEl, logExpandBtn, logOverlayEl, logCollapseBtn, logCopyBtn, logCmdInput, logCmdRunBtn;
@@ -17,6 +17,13 @@
   // Один открытый скан за раз — достаточно, оба места, где он запускается
   // (Wi-Fi ADB / telnet), сами по себе модальные и блокируют остальной UI.
   let pendingScanCallback = null;
+  // Аккаунт техника (см. auth_bridge.py, WebBridge.kt: authLogin/
+  // authRegister) — Bridge.call() возвращает "{}" сразу (работа идёт в
+  // фоновом Kotlin-потоке), настоящий результат приходит отдельным
+  // событием. Пока открыты "Настройки" с разделом "Аккаунт", сюда
+  // записана функция перерисовки этого раздела; закрытие модалки её
+  // обнуляет (см. showSettingsModal/buildAccountSection ниже).
+  let accountRenderCallback = null;
   // Тот же принцип для actions_list_packages (см. renderActionsStage: kind
   // grant_permissions/mock_location) — список пакетов приходит отдельным
   // событием, не синхронным возвратом из Bridge.call.
@@ -400,8 +407,9 @@
     screenPicker.classList.toggle("active", name === "picker");
     screenWizard.classList.toggle("active", name === "wizard");
     updateTopBack();
-    // Кнопка настроек показывается только в каталоге, как и на desktop.
+    // Кнопки настроек и аккаунта показываются только в каталоге, как и на desktop.
     topHelpBtn.style.visibility = name === "picker" ? "visible" : "hidden";
+    topAccountBtn.style.visibility = name === "picker" ? "visible" : "hidden";
     clear(topTitleEl);
     topTitleEl.classList.remove("marquee");
     topTitleEl.style.left = "";
@@ -2037,6 +2045,131 @@
     ]);
   }
 
+  // Аккаунт техника (см. auth_bridge.py, WebBridge.kt) — вход/регистрация
+  // email+пароль (подтверждение почты по ссылке при регистрации, как и на
+  // desktop), либо "Вы вошли как ..." + "Выйти", если сессия уже есть.
+  // Только вход/просмотр своих машин на модерации — редактирования на
+  // Android нет вовсе (см. план: сначала нужен сам редактор).
+  function buildAccountSection() {
+    const container = el("section", { class: "settings-section" });
+    let mode = "login"; // "login" | "register"
+
+    function render(email) {
+      clear(container);
+      container.appendChild(el("strong", { text: "Аккаунт" }));
+      if (email) {
+        container.appendChild(el("p", {
+          class: "settings-muted",
+          text: `Вы вошли как ${email} — свои машины на модерации подтягиваются автоматически.`,
+        }));
+        const logoutBtn = el("button", { class: "danger", text: "Выйти" });
+        logoutBtn.addEventListener("click", () => {
+          logoutBtn.disabled = true;
+          Bridge.call("auth_logout", {});
+        });
+        container.appendChild(logoutBtn);
+        return;
+      }
+      const emailInput = el("input", { type: "text", placeholder: "Email" });
+      const passwordInput = el("input", { type: "password", placeholder: "Пароль" });
+      // Появляется только после неудачного входа (не при регистрации) — до
+      // этого её показ намекал бы, что с паролем уже что-то не так.
+      const forgotBtn = el("button", { class: "link-btn account-forgot-btn", text: "Забыли пароль?", hidden: true });
+      const statusEl = el("p", { class: "settings-muted", text: "" });
+      const submitBtn = el("button", {
+        class: "accent",
+        text: mode === "login" ? "Войти" : "Зарегистрироваться",
+      });
+      const switchBtn = el("button", {
+        class: "link-btn",
+        text: mode === "login" ? "Нет аккаунта? Зарегистрироваться" : "Уже есть аккаунт? Войти",
+      });
+      switchBtn.addEventListener("click", () => {
+        mode = mode === "login" ? "register" : "login";
+        render(null);
+      });
+      submitBtn.addEventListener("click", () => {
+        const email = emailInput.value.trim();
+        const password = passwordInput.value;
+        if (!email || !password) { statusEl.textContent = "Введите email и пароль."; return; }
+        submitBtn.disabled = true;
+        forgotBtn.hidden = true;
+        statusEl.textContent = mode === "login" ? "Вхожу..." : "Регистрирую...";
+        Bridge.call(mode === "login" ? "auth_login" : "auth_register", { email, password });
+        // Результат придёт событием auth_login_result/auth_register_result
+        // (см. accountRenderCallback выше) — Bridge.call тут же возвращает
+        // "{}", реальная сетевая работа идёт в фоновом Kotlin-потоке.
+      });
+      forgotBtn.addEventListener("click", () => {
+        const email = emailInput.value.trim();
+        if (!email) { statusEl.textContent = "Введите email, на который зарегистрирован аккаунт."; return; }
+        forgotBtn.disabled = true;
+        statusEl.textContent = "Отправляю письмо...";
+        Bridge.call("auth_forgot_password", { email });
+        // Результат — событием auth_forgot_password_result (см. ниже).
+      });
+      container.append(emailInput, passwordInput, forgotBtn, statusEl, submitBtn, switchBtn);
+    }
+
+    accountRenderCallback = (kind, result) => {
+      if (kind === "logout") {
+        render(null);
+        return;
+      }
+      if (kind === "forgot_password") {
+        const statusEl = container.querySelector("p.settings-muted");
+        const forgotBtn = container.querySelector("button.account-forgot-btn");
+        if (forgotBtn) forgotBtn.disabled = false;
+        // Сервер намеренно отвечает одинаково независимо от того, есть ли
+        // такой email в базе (см. server/backend.py:_handle_auth_forgot_
+        // password) — не подтверждаем/опровергаем существование аккаунта.
+        if (statusEl) {
+          statusEl.textContent = result.ok
+            ? "Если такой аккаунт есть, письмо со ссылкой для сброса пароля отправлено."
+            : result.error;
+        }
+        return;
+      }
+      if (!result.ok) {
+        const statusEl = container.querySelector("p.settings-muted");
+        if (statusEl) statusEl.textContent = result.error;
+        const submitBtn = container.querySelector("button.accent");
+        if (submitBtn) submitBtn.disabled = false;
+        if (kind === "login") {
+          const forgotBtn = container.querySelector("button.account-forgot-btn");
+          if (forgotBtn) forgotBtn.hidden = false;
+        }
+        return;
+      }
+      if (kind === "register") {
+        mode = "login";
+        render(null);
+        const statusEl = container.querySelector("p.settings-muted");
+        if (statusEl) {
+          statusEl.textContent = "Письмо с подтверждением отправлено — перейдите по ссылке, потом войдите здесь.";
+        }
+        return;
+      }
+      render(result.email); // kind === "login"
+    };
+
+    const initialInfo = Bridge.call("auth_status", {});
+    render(initialInfo.email);
+    return container;
+  }
+
+  function showAccountModal() {
+    let overlay;
+    const closeX = el("button", { class: "modal-close-x", type: "button", "aria-label": "Закрыть", text: "×" });
+    closeX.addEventListener("click", () => overlay.remove());
+    overlay = showModal([
+      closeX,
+      el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
+      buildAccountSection(),
+      el("button", { class: "accent", text: "Готово", onclick: () => overlay.remove() }),
+    ]);
+  }
+
   function showSettingsModal() {
     const formatBytes = (value) => {
       const units = ["Б", "КБ", "МБ", "ГБ"]; let size = value || 0; let index = 0;
@@ -2162,6 +2295,8 @@
     });
     topHelpBtn = document.getElementById("top-help");
     topHelpBtn.addEventListener("click", showSettingsModal);
+    topAccountBtn = document.getElementById("top-account");
+    topAccountBtn.addEventListener("click", showAccountModal);
     wizardContentEl = document.getElementById("wizard-content");
     wizardBackBtn = document.getElementById("wizard-back");
     wizardVideoBtn = document.getElementById("wizard-video");
@@ -2239,6 +2374,19 @@
     initLogCmdSuggestions();
     window.events.on("chat_reply", onChatReply);
     window.events.on("chat_command_result", onChatCommandResult);
+    window.events.on("auth_register_result", (event) => { if (accountRenderCallback) accountRenderCallback("register", event.result); });
+    window.events.on("auth_login_result", (event) => { if (accountRenderCallback) accountRenderCallback("login", event.result); });
+    window.events.on("auth_logout_result", (event) => { if (accountRenderCallback) accountRenderCallback("logout", event.result); });
+    window.events.on("auth_forgot_password_result", (event) => { if (accountRenderCallback) accountRenderCallback("forgot_password", event.result); });
+    // Свои заявки на модерации подтянулись (при старте с сохранённой
+    // сессией или сразу после входа, см. WebBridge.kt: authSyncMyCars) —
+    // список машин нужно перечитать, иначе они не появятся в каталоге до
+    // ручного перезапуска приложения.
+    window.events.on("auth_sync_finished", (event) => {
+      if (event.result && event.result.ok && event.result.synced && event.result.synced.length) {
+        loadCars();
+      }
+    });
     window.events.on("network_scan_result", onNetworkScanResult);
     window.events.on("actions_packages_result", onActionsPackagesResult);
     window.events.on("personal_apks_picked", onPersonalApksPicked);

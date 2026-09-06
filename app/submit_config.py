@@ -45,6 +45,16 @@ class SubmitConfig:
         # server/backend.py: POST /chat).
         return self.submit_url.rsplit("/", 1)[0] + "/chat"
 
+    @property
+    def auth_base_url(self) -> str:
+        # Голый хост (без пути) — auth_client.py сам достраивает конкретные
+        # /auth/register, /auth/login и т.п. (см. app/auth_client.py,
+        # server/backend.py: протокол /auth/*). В отличие от остальных
+        # *_url выше, аккаунты не требуют X-Submit-Key вовсе — эндпоинт
+        # просто использует submit.json как "сервер вообще настроен",
+        # тот же признак, что и у чата/жалоб.
+        return self.submit_url.rsplit("/", 1)[0]
+
 
 def get_submit_config(base_dir: Path) -> SubmitConfig | None:
     path = base_dir / "submit.json"

@@ -223,6 +223,27 @@
   background: var(--accent);
 }
 
+/* Граница между карточками "Инструкция" и "Лог" (см. js/app.js:
+   initLogResizer) — тот же приём, что и у #resizer выше, только по
+   вертикали: сам этот элемент несёт высоту (тут нет grid-строк, которые
+   отдавали бы это #resizer). Нарочно БЕЗ видимого фона (даже на hover) —
+   только зона перетаскивания с нужным курсором, попросили не показывать
+   саму полоску.
+*/
+.row-resizer {
+  height: 8px;
+  margin: 2px 0;
+  flex: 0 0 auto;
+  cursor: row-resize;
+  background: transparent;
+}
+
+body.resizing-log,
+body.resizing-log * {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
 .workspace-nav {
   display: flex;
   align-items: center;
@@ -280,6 +301,7 @@
     #log-panel: длинная строка лога без пробелов, например ADB-стектрейс)
     раздвигает grid-колонку 1fr шире доступного окна вместо переноса. */
 }
+
 
 .card {
   background:
@@ -451,6 +473,7 @@
   box-shadow: 0 0 0 2px rgba(14, 143, 109, 0.25);
 }
 
+.catalog-auth-trigger,
 .catalog-admin-trigger { color: #b9e8db; }
 .catalog-admin-trigger[hidden] { display: none; }
 .catalog.is-admin-mode #catalog-boosty,
@@ -480,6 +503,27 @@
 .catalog-admin-popover #pending-section .card-header { margin: 0; }
 .catalog-admin-popover #pending-section .picker-list { max-height: min(270px, 42vh); overflow: auto; }
 .catalog-admin-popover #pending-refresh-btn { min-height: 30px; padding: 4px 9px; font-size: 12px; }
+
+/* Вход/аккаунт (см. js/screens/auth_dialog.js) — "Забыли пароль?"/"Сменить
+   пароль" как обычные текстовые ссылки, а не полноразмерные кнопки, чтобы
+   не спорить визуально с основными "Войти"/"Выйти". */
+.catalog-admin-popover .link-btn {
+  display: block;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-decoration: underline;
+  text-align: left;
+}
+.catalog-admin-popover .link-btn:hover { color: var(--text); }
+.catalog-admin-popover .link-btn[hidden] { display: none; }
+.catalog-admin-popover #catalog-account-change-password { margin: 8px 0 12px; padding: 10px; border: 1px solid rgba(117, 142, 165, 0.28); border-radius: 12px; background: rgba(7, 12, 17, 0.26); }
+.catalog-admin-popover #catalog-account-loggedin-email { margin: 0 0 10px; }
+.catalog-admin-popover #catalog-account-logout { margin-top: 4px; }
+.catalog-admin-popover #catalog-account-guest .field:last-of-type { margin-bottom: 4px; }
 
 .catalog-header {
   display: flex;
@@ -803,6 +847,13 @@
   font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
+  /* pywebview по умолчанию (text_select=False, см. main_web.py:
+     webview.create_window) отключает выделение текста на ВСЕЙ странице —
+     без этого исключения из лога (в том числе ответов ИИ-чата) нельзя
+     ничего скопировать, даже мышью. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
   /* Длинные строки без пробелов (ADB-стектрейсы вроде "выдать разрешения")
      иначе не переносятся даже при pre-wrap (он переносит только по пробелам)
      и раздвигают окно вширь — см. .panel/.card выше за остальной частью
@@ -1468,7 +1519,9 @@ dialog .dialog-actions.spread {
   justify-content: space-between;
 }
 
-dialog input[type="text"], dialog input[type="password"], dialog textarea, dialog select {
+dialog input[type="text"], dialog input[type="email"], dialog input[type="password"], dialog textarea, dialog select,
+.catalog-admin-popover input[type="text"], .catalog-admin-popover input[type="email"],
+.catalog-admin-popover input[type="password"] {
   width: 100%;
   background: var(--glass-field);
   color: var(--text);

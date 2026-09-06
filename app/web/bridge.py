@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .api.admin_api import AdminApi
+from .api.auth_api import AuthApi
 from .api.car_editor_api import CarEditorApi
 from .api.chat_api import ChatApi
 from .api.install_api import InstallApi
@@ -53,24 +54,29 @@ class WebApi:
         self._qr_adb = QrAdbApi(self.cars_dir)
         self._report = ReportApi(base_dir)
         self._admin = AdminApi(base_dir, self.apk_dir)
+        self._auth = AuthApi(base_dir, self._scanner)
         # Раньше отдельная admin-сборка (admin_main_web.py, убрана) — теперь
         # одна и та же программа, admin_mode просто определяет видимость
-        # соответствующих кнопок (см. app.js). Помимо явного параметра (dev-
-        # флаг main_web.py --admin) — тихая попытка входа сохранёнными
-        # логином/паролем (см. admin_config.save_saved_login,
-        # AdminApi.try_saved_login): если на этой машине уже разблокировали
-        # функции администратора раньше (см. admin_login ниже — "Настройки"
-        # → 10 тапов по версии → вход, всегда с запоминанием), они снова
-        # включатся сами, без повторного входа. Без admin.json (обычная
-        # свежая установка) try_saved_login тут же возвращает {"ok": False}
-        # без сетевого запроса — старту это ничего не стоит.
-        self.admin_mode = admin_mode or self._admin.try_saved_login().get("ok", False)
-        self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner)
+        # соответствующих кнопок (см. app.js). Единая кнопка "Войти" (см.
+        # auth_login ниже) — тихая попытка восстановить сохранённую сессию
+        # аккаунта техника (auth_config.py, НЕ логин/пароль в открытом виде,
+        # а уже выданный сервером токен) сама включает admin_mode, если у
+        # этого аккаунта есть права администратора (см. AuthApi.status —
+        # заодно поднимает и кешированную ADMIN_SESSION_COOKIE, которой
+        # пользуется весь существующий admin_client.py). Старый отдельный
+        # admin_saved_login.json (AdminApi.try_saved_login) оставлен как
+        # запасной путь для уже разблокировавших админ-режим ДО этой правки
+        # — но новых входов через него больше нет, только через auth_login.
+        auth_status = self._auth.status()
+        self.auth_email = auth_status.get("email") if auth_status.get("ok") else None
+        self.admin_mode = (admin_mode or auth_status.get("is_admin", False)
+                            or self._admin.try_saved_login().get("ok", False))
+        self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner, self._auth)
         self._submissions = SubmissionsApi(base_dir, self.cars_dir, self._scanner)
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
         self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
         self._update = UpdateApi(base_dir, is_win7=is_win7)
-        self._chat = ChatApi(base_dir, self.adb_path)
+        self._chat = ChatApi(base_dir, self.adb_path, self._auth)
 
     # -- метаданные окна ------------------------------------------------
     def app_get_info(self) -> dict:
@@ -78,6 +84,7 @@ class WebApi:
             "admin_mode": self.admin_mode, "debug_mode": self.debug_mode,
             "client_id": self.client_id, "is_win7": self.is_win7,
             "under_program_files": is_under_program_files(self.base_dir),
+            "auth_email": self.auth_email,
         }
 
     # -- sync_api -----------------------------------------------------------
@@ -223,6 +230,34 @@ class WebApi:
 
     def admin_start_upload(self, username: str, password: str) -> dict:
         return self._admin.start_upload(username, password)
+
+    # -- auth_api (единая кнопка "Войти" — аккаунт техника, заодно и
+    # admin_mode, если у аккаунта есть права, см. app/web/api/auth_api.py) --
+    def auth_register(self, email: str, password: str) -> dict:
+        return self._auth.register(email, password)
+
+    def auth_login(self, email: str, password: str) -> dict:
+        result = self._auth.login(email, password)
+        if result.get("ok"):
+            self.auth_email = result.get("email")
+            if result.get("is_admin"):
+                self.admin_mode = True
+                self._settings.admin_mode = True
+        return result
+
+    def auth_logout(self) -> dict:
+        result = self._auth.logout()
+        if result.get("ok"):
+            self.auth_email = None
+            self.admin_mode = False
+            self._settings.admin_mode = False
+        return result
+
+    def auth_change_password(self, current_password: str, new_password: str) -> dict:
+        return self._auth.change_password(current_password, new_password)
+
+    def auth_forgot_password(self, email: str) -> dict:
+        return self._auth.forgot_password(email)
 
     def admin_cancel_upload(self) -> dict:
         return self._admin.cancel_upload()

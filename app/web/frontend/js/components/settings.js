@@ -104,29 +104,13 @@
       });
     dialog.querySelector("[data-debug-toggle]").append(debugCheckbox);
 
-    // Разблокировка функций администратора — 10 тапов подряд по версии (см.
-    // dialogs.js: adminLogin.openUnlock). Раньше для этого ставилась
-    // отдельная admin-сборка — теперь одна программа для всех.
-    // Выход из режима администратора — кнопка "Выйти" в самом попапе
-    // админки (main_picker.js), не здесь: там же остальные admin-кнопки
-    // ("Выгрузить на сервер...", "Добавить APK..." и т.п.), логичнее одно
-    // место, а не ещё и здесь дублировать.
+    // Функции администратора теперь включаются через общую кнопку "Войти"
+    // в левой панели (см. auth_dialog.js) — отдельного скрытого жеста
+    // (раньше — 10 тапов по версии) больше нет. Выход — кнопка "Выйти" в
+    // самом попапе админки (main_picker.js), не здесь: там же остальные
+    // admin-кнопки ("Выгрузить на сервер...", "Добавить APK..." и т.п.).
     const adminStatusEl = dialog.querySelector("[data-admin-status]");
     adminStatusEl.textContent = info.admin_mode ? "Функции администратора включены." : "";
-    let tapCount = 0;
-    let tapTimer = null;
-    dialog.querySelector("[data-version]").addEventListener("click", () => {
-      tapCount += 1;
-      clearTimeout(tapTimer);
-      tapTimer = setTimeout(() => { tapCount = 0; }, 2000);
-      if (tapCount < 10) return;
-      tapCount = 0;
-      close();
-      window.adminLoginDialog.openUnlock(() => {
-        window.applyAdminMode(true);
-        window.notice("Функции администратора включены.");
-      });
-    });
 
     document.documentElement.classList.toggle("reduce-motion", info.preferences.reduced_motion);
     dialog.showModal();

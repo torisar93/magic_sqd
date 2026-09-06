@@ -104,6 +104,10 @@ admin.json
 # входа admin-сборки, см. app/admin_config.py) — секрет конкретной машины.
 admin_saved_login.json
 
+# Сохранённая сессия аккаунта техника (см. app/auth_config.py) — только
+# session-токен (не пароль), но всё равно секрет конкретной машины/юзера.
+auth_saved_session.json
+
 # Приватный ключ и конфиг публикации в RuStore (public-api.rustore.ru) —
 # секрет конкретной машины, как и остальные *.json выше.
 rustore_key.pem

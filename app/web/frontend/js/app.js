@@ -4,16 +4,76 @@
 let currentModel = null;
 let stageUiReady = null;
 
-// См. использование ниже (log-toggle / adb-console-input focus / карточка
-// инструкции) — true только пока лог развёрнут АВТОМАТИЧЕСКИ (фокусом в
-// поле ввода консоли), не вручную кнопкой "Развернуть".
-let autoExpandedLog = false;
+// Высота развёрнутого лога — не фиксированная (было 230px в CSS), а
+// перетаскиваемая границей между карточками "Инструкция" и "Лог" (см.
+// initLogResizer) и запоминается между запусками, как и ширина левой
+// колонки (см. components/resizer.js: тот же приём, localStorage).
+const LOG_HEIGHT_STORAGE_KEY = "magicsqd.logPanelHeight";
+const DEFAULT_LOG_HEIGHT = 230;
+const MIN_LOG_HEIGHT = 100;
 
+function getSavedLogHeight() {
+  const saved = parseInt(localStorage.getItem(LOG_HEIGHT_STORAGE_KEY), 10);
+  return Number.isNaN(saved) ? DEFAULT_LOG_HEIGHT : Math.max(MIN_LOG_HEIGHT, saved);
+}
+
+// Разворачивает лог до высоты, которую пользователь оставил в прошлый раз
+// (или до дефолтной, если ещё ни разу не тянул границу) — как кнопкой
+// "Развернуть"/"Свернуть", так и кликом по карточкам (см. ниже), так и
+// автоматически при фокусе в поле консоли/чата.
 function setLogExpanded(expanded) {
-  document.getElementById("log-card").classList.toggle("is-expanded", expanded);
+  const card = document.getElementById("log-card");
+  const panel = document.getElementById("log-panel");
+  card.classList.toggle("is-expanded", expanded);
+  // Пустая строка — не инлайновая высота, а откат к базовому CSS-правилу
+  // #log-panel{height:54px} (свёрнутое состояние); инлайн выставляем только
+  // на развёрнутом, он и перекрывает #log-card.is-expanded #log-panel{...}
+  // из CSS (тот теперь просто дефолт на случай ошибки JS).
+  panel.style.height = expanded ? `${getSavedLogHeight()}px` : "";
   const button = document.getElementById("log-toggle");
   button.textContent = expanded ? "Свернуть" : "Развернуть";
   button.setAttribute("aria-expanded", String(expanded));
+}
+
+// Перетаскиваемая граница между карточкой инструкции и карточкой лога (см.
+// #log-resizer в index.html) — тянуть можно только вверх/вниз, тот же
+// mousedown/mousemove/mouseup приём, что и у левого/правого разделителя
+// (components/resizer.js), только по вертикали и с высотой вместо ширины.
+// Само перетаскивание уже РАЗВОРАЧИВАЕТ лог (если он был свёрнут) — тянуть
+// границу от свёрнутого состояния так же естественно, как и от развёрнутого.
+function initLogResizer(handleEl) {
+  handleEl.addEventListener("mousedown", (event) => {
+    const panel = document.getElementById("log-panel");
+    const card = document.getElementById("log-card");
+    const startY = event.clientY;
+    const startHeight = panel.getBoundingClientRect().height;
+    document.body.classList.add("resizing-log");
+    card.classList.add("is-expanded");
+    // #log-panel has "transition: height 180ms ease" for плавного авто-
+    // разворачивания по клику/фокусу — во время живого перетаскивания та же
+    // анимация заставляет высоту "гнаться" за курсором с задержкой вместо
+    // мгновенного 1:1 отклика. Отключаем на время драга, возвращаем на mouseup.
+    panel.style.transition = "none";
+
+    function onMove(moveEvent) {
+      const delta = startY - moveEvent.clientY; // тянем вверх -> лог растёт
+      const maxHeight = window.innerHeight - 260; // не даём логу съесть всё окно
+      const height = Math.min(Math.max(MIN_LOG_HEIGHT, startHeight + delta), maxHeight);
+      panel.style.height = `${height}px`;
+    }
+
+    function onUp() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("resizing-log");
+      panel.style.transition = "";
+      localStorage.setItem(LOG_HEIGHT_STORAGE_KEY, parseInt(panel.style.height, 10));
+    }
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    event.preventDefault();
+  });
 }
 
 function initializeStageUi() {
@@ -338,6 +398,7 @@ function logConsoleCommand(command) {
 // enabled=true, дальше no-op) — безопасно звать оба раза.
 function applyAdminMode(enabled) {
   window.mainPicker.setAdminMode(enabled);
+  window.authDialog.setAdminVisible(enabled);
   const display = enabled ? "" : "none";
   document.getElementById("admin-upload-btn").style.display = display;
   document.getElementById("admin-add-apk-btn").style.display = display;
@@ -473,6 +534,14 @@ window.addEventListener("pywebviewready", async () => {
   // опоздавших слушателей. Из-за этого лог при первом запуске выглядел
   // пустым, будто программа зависла, хотя синхронизация шла нормально.
   window.events.on("log", (event) => log(event.text));
+  // Свои заявки на модерации (см. app/web/api/auth_api.py: sync_my_cars) —
+  // подтягиваются в фоне сразу после входа/при старте с сохранённой
+  // сессией; когда хотя бы одна застейджилась, каталог нужно перечитать,
+  // иначе она не появится в списке до ручного обновления (см.
+  // pending_list.js — тот же приём после ручного стейджинга админом).
+  window.events.on("auth_sync_finished", (event) => {
+    if (event.success && event.models && event.models.length) window.mainPicker.reload();
+  });
   window.events.on("sync_progress", (event) => window.mainPicker.setStartupProgress(
     event.done, event.total, event.files_done, event.files_total,
   ));
@@ -535,6 +604,7 @@ window.addEventListener("pywebviewready", async () => {
   }
 
   applyAdminMode(info.admin_mode);
+  window.authDialog.setLoggedIn(info.auth_email || null);
   // Диагностика (см. main_web.py:_enable_debug_log_all, переключается из
   // "Настроек" — settings.js) — показываем client_id в углу, чтобы можно
   // было сверить с папкой debug_logs/<id>/, если включена у нескольких
@@ -583,42 +653,31 @@ window.addEventListener("pywebviewready", async () => {
   document.getElementById("admin-add-apk-btn").addEventListener("click", () => window.adminApkDialog.open());
   document.getElementById("admin-browse-btn").addEventListener("click", () => window.adminFileManagerDialog.open());
   document.getElementById("admin-logout-btn").addEventListener("click", async () => {
-    if (!(await window.confirmDialog(
-      "Выключить функции администратора на этой машине? Сохранённый вход будет забыт — "
-      + "чтобы включить снова, потребуется войти заново через 10 тапов по версии в Настройках."))) return;
+    // Админ теперь просто аккаунт с правами (см. auth_dialog.js) — выход
+    // из режима администратора и выход из аккаунта это одно и то же
+    // действие, отдельного "выключить админку, но остаться в аккаунте"
+    // больше не бывает.
+    if (!(await window.confirmDialog("Выйти из аккаунта?"))) return;
+    await window.pywebview.api.auth_logout();
     await window.pywebview.api.admin_logout();
     applyAdminMode(false);
-    window.notice("Функции администратора выключены.");
+    window.authDialog.setLoggedIn(null);
   });
   document.getElementById("log-toggle").addEventListener("click", () => {
     const card = document.getElementById("log-card");
-    // Дальше это уже ручное состояние — клик в карточке инструкции (см.
-    // ниже) больше не должен его трогать, только автоматическое
-    // разворачивание по фокусу в поле ввода само себя сворачивает так.
-    autoExpandedLog = false;
     setLogExpanded(!card.classList.contains("is-expanded"));
   });
 
-  // Разворачиваем лог сам, когда начинают печатать команду в консоли — поле
-  // ввода лежит в свёрнутой по умолчанию карточке лога, и результат команды
-  // (см. install_console_send) иначе просто не виден без ручного клика по
-  // "Развернуть" каждый раз. Сворачивается обратно кликом где-то в карточке
-  // инструкции выше — но только если разворачивание было именно
-  // автоматическим: ручное состояние (кнопка "Развернуть"/"Свернуть") этим
-  // не трогаем — см. autoExpandedLog выше.
-  document.getElementById("adb-console-input").addEventListener("focus", () => {
-    const card = document.getElementById("log-card");
-    if (!card.classList.contains("is-expanded")) {
-      autoExpandedLog = true;
-      setLogExpanded(true);
-    }
-  });
-  document.getElementById("install-content").closest(".card").addEventListener("click", () => {
-    if (autoExpandedLog) {
-      autoExpandedLog = false;
-      setLogExpanded(false);
-    }
-  });
+  // Разворачиваем лог сам, когда начинают печатать команду в консоли/чате —
+  // поле ввода лежит в свёрнутой по умолчанию карточке лога, и результат
+  // (см. install_console_send/chat_send) иначе не виден без ручного клика
+  // по "Развернуть". Клик где-то в карточке инструкции сворачивает лог
+  // обратно, а клик обратно по логу — снова разворачивает (до последней
+  // запомненной перетаскиванием высоты, см. getSavedLogHeight) — тот же
+  // приём, что и сворачивание/разворачивание боковых панелей в некоторых
+  // IDE, просто по клику, а не отдельной кнопкой каждый раз.
+  document.getElementById("adb-console-input").addEventListener("focus", () => setLogExpanded(true));
+  document.getElementById("install-content").closest(".card").addEventListener("click", () => setLogExpanded(false));
   // Сам текст инструкции рендерится в sandboxed <iframe> (см. stage_wizard.js:
   // buildInstructionBlock) — клики внутри него вообще не всплывают в
   // родительский документ (другой browsing context), поэтому клик-обработчик
@@ -628,11 +687,16 @@ window.addEventListener("pywebviewready", async () => {
   // становится самим элементом <iframe> (что внутри него — родителю не видно
   // из-за sandbox без allow-same-origin, но этого и не нужно).
   window.addEventListener("blur", () => {
-    if (autoExpandedLog && document.activeElement && document.activeElement.tagName === "IFRAME") {
-      autoExpandedLog = false;
-      setLogExpanded(false);
-    }
+    if (document.activeElement && document.activeElement.tagName === "IFRAME") setLogExpanded(false);
   });
+  // Клик по самой карточке лога (не по кнопке/полю/выпадающему списку —
+  // у них уже есть свои обработчики) снова разворачивает её, если до этого
+  // была свёрнута кликом по инструкции.
+  document.getElementById("log-card").addEventListener("click", (event) => {
+    if (event.target.closest("button, input, select, a")) return;
+    setLogExpanded(true);
+  });
+  initLogResizer(document.getElementById("log-resizer"));
 
   document.getElementById("adb-console-refresh").addEventListener("click", () => refreshAdbConsoleDevices());
   document.getElementById("adb-console-send").addEventListener("click", () => sendConsoleInput());
@@ -653,6 +717,30 @@ window.addEventListener("pywebviewready", async () => {
     }
   });
   refreshAdbConsoleDevices();
+
+  // pywebview по умолчанию (text_select=False) отключает не только
+  // выделение текста на странице, но и штатное браузерное контекстное меню
+  // (в нём и было бы "Копировать") — выделение мышью/Ctrl+C уже работает
+  // (см. #log-panel: user-select в css/components.css), но правой кнопкой
+  // скопировать было нечем. Свой пункт "Копировать" поверх уже выделенного
+  // текста — тот же общий модуль контекстного меню, что и в файловом
+  // менеджере (см. js/components/context_menu.js). Лог не в <dialog>, а в
+  // обычном содержимом главного окна — container для позиционирования
+  // здесь document.body, а не сам #log-panel.
+  document.getElementById("log-panel").addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const selectedText = window.getSelection().toString();
+    const items = [];
+    if (selectedText) {
+      items.push({ label: "Копировать", onclick: () => navigator.clipboard.writeText(selectedText) });
+      items.push("sep");
+    }
+    items.push({
+      label: "Копировать весь лог",
+      onclick: () => navigator.clipboard.writeText(document.getElementById("log-panel").innerText),
+    });
+    window.contextMenu.show(event.clientX, event.clientY, items, document.body);
+  });
 
   window.chatPanel.init(settingsPreferences.chat_enabled);
 

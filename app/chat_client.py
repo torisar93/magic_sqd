@@ -15,25 +15,27 @@ class ChatError(RuntimeError):
 
 
 def send_chat_turn(history: list[dict], recent_log: list[str], config: SubmitConfig,
-                    client_id: str = "") -> dict:
+                    client_id: str = "", session_cookie: str = "") -> dict:
     """history — [{"role": "user"|"assistant", "content": "..."} |
     {"role": "tool_result", "command": "...", "output": "...", "ok": bool}].
     Возвращает {"type": "text", "content": "..."} или
-    {"type": "command", "command": "...", "reason": "..."}."""
+    {"type": "command", "command": "...", "reason": "..."}. session_cookie —
+    если техник залогинен (см. app/auth_client.py), сервер считает лимит
+    запросов по его аккаунту, а не по IP (см. server/backend.py:_handle_chat)
+    — так администратор может выдать доверенному техническому аккаунту
+    повышенный лимит (см. set_user_chat_rate_limit)."""
     body = json.dumps({
         "history": history,
         "recent_log": recent_log,
         "client_id": client_id,
     }).encode("utf-8")
-    request = urllib.request.Request(
-        config.chat_url,
-        data=body,
-        method="POST",
-        headers={
-            "X-Submit-Key": config.submit_key,
-            "Content-Type": "application/json",
-        },
-    )
+    headers = {
+        "X-Submit-Key": config.submit_key,
+        "Content-Type": "application/json",
+    }
+    if session_cookie:
+        headers["Cookie"] = session_cookie
+    request = urllib.request.Request(config.chat_url, data=body, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=45) as resp:
             data = json.loads(resp.read().decode("utf-8"))

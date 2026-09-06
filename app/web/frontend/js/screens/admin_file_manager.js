@@ -21,63 +21,13 @@
     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20a2 2 0 0 0 2 2h12a2 2 0 0 0 ' +
     '2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z"/></svg>';
 
-  // Простое контекстное меню общего назначения — позиционируется под
-  // курсором, закрывается кликом мимо/Escape/скроллом диалога. container —
-  // куда добавлять узел меню: ОБЯЗАТЕЛЬНО сам открытый <dialog>, а не
-  // document.body — модальный showModal() рисуется в отдельном top layer
-  // браузера, который всегда поверх обычного body; меню, добавленное в
-  // body, было бы физически ПОД диалогом и невидимым (реальный баг —
-  // обработчики срабатывали, меню создавалось, но не показывалось).
-  function showContextMenu(x, y, items, container) {
-    closeContextMenu();
-    const menu = el("div", { class: "context-menu" });
-    for (const item of items) {
-      if (item === "sep") {
-        menu.appendChild(el("div", { class: "context-menu-sep" }));
-        continue;
-      }
-      menu.appendChild(el("div", {
-        class: "context-menu-item" + (item.danger ? " danger" : ""),
-        text: item.label,
-        onclick: () => { closeContextMenu(); item.onclick(); },
-      }));
-    }
-    container.appendChild(menu);
-    // <dialog> с backdrop-filter (см. css: dialog {}) сам становится
-    // containing block для position:fixed/absolute потомков (то же самое,
-    // что и transform/filter) — координаты x/y (clientX/clientY, от
-    // viewport) нужно пересчитать относительно РАМКИ ДИАЛОГА, а не окна,
-    // иначе меню уезжает далеко от курсора (реальный баг — обработчики
-    // срабатывали и позиционировали правильно математически, просто не в
-    // той системе координат).
-    const containerRect = container.getBoundingClientRect();
-    const localX = x - containerRect.left;
-    const localY = y - containerRect.top;
-    const rect = menu.getBoundingClientRect();
-    const maxX = containerRect.width - rect.width - 8;
-    const maxY = containerRect.height - rect.height - 8;
-    menu.style.left = `${Math.min(localX, maxX)}px`;
-    menu.style.top = `${Math.min(localY, maxY)}px`;
-    window._activeContextMenu = menu;
-    // Только "клик мимо" закрывает меню — НЕ "следующий contextmenu": этот
-    // же самый обработчик, зарегистрированный предыдущим открытием меню, до
-    // этого закрывал уже ОТКРЫВШЕЕСЯ здесь новое меню (правый клик всегда
-    // сам создаёт contextmenu, событие бы бублилось до document и мгновенно
-    // сносило меню, которое только что открыл этот же клик — второе правое
-    // нажатие подряд визуально выглядело как "меню вообще не показалось").
-    // Новый contextmenu и так уже закрывает старое меню — closeContextMenu()
-    // в начале этой функции.
-    setTimeout(() => {
-      document.addEventListener("click", closeContextMenu, { once: true });
-    }, 0);
-  }
-
-  function closeContextMenu() {
-    if (window._activeContextMenu) {
-      window._activeContextMenu.remove();
-      window._activeContextMenu = null;
-    }
-  }
+  // Контекстное меню правой кнопкой — общий модуль (см.
+  // js/components/context_menu.js, вынесен оттуда же, где изначально была
+  // долгая борьба за позиционирование поверх <dialog>). container —
+  // ОБЯЗАТЕЛЬНО сам открытый <dialog>, а не document.body (см. комментарий
+  // в context_menu.js).
+  const showContextMenu = window.contextMenu.show;
+  const closeContextMenu = window.contextMenu.close;
 
   const adminFileManager = (() => {
     let dialog, breadcrumbEl, listEl, upBtn, rootCarsBtn, rootApkBtn, clipboardStatusEl;
