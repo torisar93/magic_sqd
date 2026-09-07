@@ -163,8 +163,8 @@ class WebApi:
         return self._install.open_video(video_path)
 
     # -- chat_api (ИИ-чат под логом установки) -------------------------------
-    def chat_send(self, history: list, recent_log: list) -> dict:
-        return self._chat.chat_send(history, recent_log)
+    def chat_send(self, history: list, recent_log: list, provider: str | None = None) -> dict:
+        return self._chat.chat_send(history, recent_log, provider)
 
     def chat_confirm_command(self, device, command: str) -> dict:
         return self._chat.chat_confirm_command(device, command)

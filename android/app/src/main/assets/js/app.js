@@ -272,9 +272,12 @@
   // но бывает) — явная команда "/ask <текст>" всегда уходит в чат, независимо
   // от языка, тем же приёмом, что и /clear чуть ниже.
   const CHAT_ASK_PREFIX_RE = /^\/ask\s+/i;
+  // /deepseek, /qwen, /auto — принудительное переключение провайдера
+  // ИИ-чата (см. chatSendMessage ниже) — тоже команды этого поля, не adb.
+  const CHAT_PROVIDER_PREFIX_RE = /^\/(deepseek|qwen|auto)\b/i;
 
   function isChatQuestion(text) {
-    return CYRILLIC_RE.test(text) || CHAT_ASK_PREFIX_RE.test(text);
+    return CYRILLIC_RE.test(text) || CHAT_ASK_PREFIX_RE.test(text) || CHAT_PROVIDER_PREFIX_RE.test(text);
   }
 
   function onLogCmdRun() {
@@ -312,14 +315,21 @@
   const CHAT_RECENT_LOG_LINES = 40;
   let chatHistory = [];
   let chatAutoTurnsLeft = 0;
+  // Принудительный выбор провайдера — команды /deepseek, /qwen, /auto (см.
+  // chatSendMessage ниже). null — обычный автоматический режим (DeepSeek
+  // первым, Qwen запасным на сервере). "Липкий" на всю сессию чата, пока не
+  // сменят другой командой.
+  let chatForcedProvider = null;
+  const CHAT_PROVIDER_COMMAND_RE = /^\/(deepseek|qwen|auto)\b\s*(.*)$/is;
+  const CHAT_PROVIDER_LABELS = { deepseek: "DeepSeek", qwen: "Qwen" };
 
   function chatRecentLogLines() {
     return Array.from(logPanelEl.querySelectorAll(".log-line")).map((e) => e.textContent).slice(-CHAT_RECENT_LOG_LINES);
   }
 
-  function renderChatCommandLine(command, reason) {
+  function renderChatCommandLine(command, reason, providerTag) {
     const line = el("div", { class: "log-line chat-command-line" });
-    line.appendChild(el("code", { text: `❯ ${command}` }));
+    line.appendChild(el("code", { text: `❯${providerTag || ""} ${command}` }));
     if (reason) line.appendChild(el("span", { class: "chat-command-reason", text: reason }));
     const actions = el("div", { class: "chat-command-actions" });
     const confirmBtn = el("button", { class: "accent", text: "Выполнить" });
@@ -351,6 +361,7 @@
     Bridge.call("chat_send", {
       history: JSON.stringify(chatHistory.slice(-CHAT_HISTORY_SENT_TURNS)),
       recent_log: JSON.stringify(chatRecentLogLines()),
+      provider: chatForcedProvider || "",
     });
     // Ответ придёт отдельным событием "chat_reply" — chatSend в Kotlin
     // работает в фоновом потоке и возвращается сразу.
@@ -360,6 +371,22 @@
     if (!Bridge.call("settings_preferences", {}).chat_enabled) {
       log("ИИ-чат отключён в настройках.");
       return;
+    }
+    // /deepseek, /qwen — закрепить провайдера на все следующие сообщения
+    // (без автофолбэка на сервере при его ошибке); /auto — обычный режим.
+    // Текст после команды ("/qwen почему упала установка?") — уже реальный
+    // вопрос, уходит сразу с новым провайдером; голая команда — просто
+    // подтверждение режима.
+    const commandMatch = CHAT_PROVIDER_COMMAND_RE.exec(text);
+    if (commandMatch) {
+      const mode = commandMatch[1].toLowerCase();
+      const rest = commandMatch[2].trim();
+      chatForcedProvider = mode === "auto" ? null : mode;
+      log(chatForcedProvider
+        ? `Режим чата: только ${CHAT_PROVIDER_LABELS[chatForcedProvider]}, без автопереключения.`
+        : "Режим чата: автоматический (DeepSeek, при недоступности — Qwen).");
+      if (!rest) return;
+      text = rest;
     }
     const line = el("div", { class: "log-line log-line-command", text: `💬 ${text}` });
     logPanelEl.appendChild(line);
@@ -375,14 +402,16 @@
       log(`ИИ: ${reply.error}`);
       return;
     }
+    const providerTag = reply.provider && CHAT_PROVIDER_LABELS[reply.provider]
+      ? ` [${CHAT_PROVIDER_LABELS[reply.provider]}]` : "";
     if (reply.type === "command" && reply.command) {
       const summary = `Предлагаю выполнить: ${reply.command}` + (reply.reason ? ` — ${reply.reason}` : "");
       chatHistory.push({ role: "assistant", content: summary });
-      renderChatCommandLine(reply.command, reply.reason);
+      renderChatCommandLine(reply.command, reply.reason, providerTag);
       return;
     }
     const text = reply.content || "";
-    log(`ИИ: ${text}`);
+    log(`ИИ${providerTag}: ${text}`);
     chatHistory.push({ role: "assistant", content: text });
   }
 

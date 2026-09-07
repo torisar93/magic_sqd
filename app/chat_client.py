@@ -15,19 +15,24 @@ class ChatError(RuntimeError):
 
 
 def send_chat_turn(history: list[dict], recent_log: list[str], config: SubmitConfig,
-                    client_id: str = "", session_cookie: str = "") -> dict:
+                    client_id: str = "", session_cookie: str = "", provider: str | None = None) -> dict:
     """history — [{"role": "user"|"assistant", "content": "..."} |
     {"role": "tool_result", "command": "...", "output": "...", "ok": bool}].
-    Возвращает {"type": "text", "content": "..."} или
-    {"type": "command", "command": "...", "reason": "..."}. session_cookie —
-    если техник залогинен (см. app/auth_client.py), сервер считает лимит
-    запросов по его аккаунту, а не по IP (см. server/backend.py:_handle_chat)
-    — так администратор может выдать доверенному техническому аккаунту
-    повышенный лимит (см. set_user_chat_rate_limit)."""
+    Возвращает {"provider": "deepseek"|"qwen", "type": "text", "content": "..."}
+    или {"provider": "...", "type": "command", "command": "...", "reason": "..."}.
+    session_cookie — если техник залогинен (см. app/auth_client.py), сервер
+    считает лимит запросов по его аккаунту, а не по IP (см.
+    server/backend.py:_handle_chat) — так администратор может выдать
+    доверенному техническому аккаунту повышенный лимит (см.
+    set_user_chat_rate_limit). provider — принудительный выбор ("deepseek"/
+    "qwen", команды /deepseek и /qwen в чате, см. chat_panel.js) БЕЗ
+    автоматического фолбэка на другой при ошибке; None — обычный
+    автоматический режим (DeepSeek первым, Qwen запасным)."""
     body = json.dumps({
         "history": history,
         "recent_log": recent_log,
         "client_id": client_id,
+        "provider": provider,
     }).encode("utf-8")
     headers = {
         "X-Submit-Key": config.submit_key,

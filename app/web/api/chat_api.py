@@ -22,20 +22,21 @@ class ChatApi:
         self._auth_api = auth_api
 
     # ------------------------------------------------------------------
-    def chat_send(self, history: list, recent_log: list) -> dict:
+    def chat_send(self, history: list, recent_log: list, provider: str | None = None) -> dict:
         config = get_submit_config(self.base_dir)
         if config is None:
             return {"ok": False, "error": "чат не настроен (нет submit.json)"}
         if not isinstance(history, list) or not history:
             return {"ok": False, "error": "пустое сообщение"}
         session_cookie = (self._auth_api.user_cookie if self._auth_api else None) or ""
-        threading.Thread(target=self._send_worker, args=(history, recent_log, config, session_cookie),
+        threading.Thread(target=self._send_worker, args=(history, recent_log, config, session_cookie, provider),
                           daemon=True).start()
         return {"ok": True}
 
-    def _send_worker(self, history: list, recent_log: list, config, session_cookie: str) -> None:
+    def _send_worker(self, history: list, recent_log: list, config, session_cookie: str,
+                      provider: str | None = None) -> None:
         try:
-            reply = send_chat_turn(history, recent_log, config, session_cookie=session_cookie)
+            reply = send_chat_turn(history, recent_log, config, session_cookie=session_cookie, provider=provider)
         except ChatError as exc:
             reply = {"type": "text", "content": f"Не удалось получить ответ: {exc}"}
         event_bridge.push({"kind": "chat_reply", "reply": reply})

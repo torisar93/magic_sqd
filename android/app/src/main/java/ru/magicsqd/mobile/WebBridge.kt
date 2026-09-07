@@ -144,7 +144,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "adb_install_apks" -> { adbInstallApks(args); "{}" }
                 "telnet_run_stage" -> { telnetRunStage(args); "{}" }
                 "adb_shell_command" -> { adbShellCommand(args.getString("command")); "{}" }
-                "chat_send" -> { chatSend(args.getString("history"), args.getString("recent_log")); "{}" }
+                "chat_send" -> {
+                    chatSend(args.getString("history"), args.getString("recent_log"), args.optString("provider", ""))
+                    "{}"
+                }
                 "chat_confirm_command" -> { chatConfirmCommand(args.getString("command")); "{}" }
                 "auth_status" -> authStatus().toString()
                 "auth_register" -> { authRegister(args.getString("email"), args.getString("password")); "{}" }
@@ -492,11 +495,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * предлагает ОДНУ shell-команду; техник подтверждает её перед выполнением
      * (см. chatConfirmCommand). historyJson/recentLogJson уже сериализованы
      * JS-стороной — Chaquopy строкам доверяет проще, чем вложенным объектам. */
-    private fun chatSend(historyJson: String, recentLogJson: String) {
+    private fun chatSend(historyJson: String, recentLogJson: String, provider: String = "") {
         Thread {
             val resultJson = try {
                 pyModule("chat_bridge").callAttr(
-                    "send_chat_turn", historyJson, recentLogJson, CHAT_URL, CHAT_KEY
+                    "send_chat_turn", historyJson, recentLogJson, CHAT_URL, CHAT_KEY, provider
                 ).toString()
             } catch (e: Exception) {
                 JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()

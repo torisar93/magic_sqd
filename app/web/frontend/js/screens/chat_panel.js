@@ -20,6 +20,14 @@ window.chatPanel = (() => {
   let autoTurnsLeft = 0;
   let panelEl;
   let enabled = true;
+  // Принудительный выбор провайдера — команды /deepseek, /qwen, /auto
+  // (см. sendMessage ниже). null — обычный автоматический режим (DeepSeek
+  // первым, Qwen запасным на сервере, см. backend.py:_handle_chat).
+  // "Липкий" — раз выбранный держится для всех следующих сообщений этой
+  // сессии чата, пока не сменят явно другой командой.
+  let forcedProvider = null;
+  const PROVIDER_COMMAND_RE = /^\/(deepseek|qwen|auto)\b\s*(.*)$/is;
+  const PROVIDER_LABELS = { deepseek: "DeepSeek", qwen: "Qwen" };
 
   function addLine(text, extraClass) {
     const line = document.createElement("div");
@@ -44,12 +52,12 @@ window.chatPanel = (() => {
     return adbConsoleDeviceByLabel[select.value] || null;
   }
 
-  function renderCommandLine(command, reason) {
+  function renderCommandLine(command, reason, providerTag) {
     const line = document.createElement("div");
     line.className = "log-line chat-command-line";
 
     const commandEl = document.createElement("code");
-    commandEl.textContent = `❯ ${command}`;
+    commandEl.textContent = `❯${providerTag || ""} ${command}`;
     line.appendChild(commandEl);
 
     if (reason) {
@@ -91,7 +99,7 @@ window.chatPanel = (() => {
       return;
     }
     autoTurnsLeft -= 1;
-    window.pywebview.api.chat_send(history.slice(-HISTORY_SENT_TURNS), recentLogLines()).then((result) => {
+    window.pywebview.api.chat_send(history.slice(-HISTORY_SENT_TURNS), recentLogLines(), forcedProvider).then((result) => {
       if (!result || !result.ok) {
         addLine(`ИИ: ${(result && result.error) || "не удалось отправить сообщение"}`, "log-line-error");
       }
@@ -105,6 +113,23 @@ window.chatPanel = (() => {
       addLine("ИИ-чат отключён в настройках.", "log-line-error");
       return;
     }
+    // /deepseek, /qwen — принудительно закрепить провайдера на все
+    // следующие сообщения этой сессии (без автофолбэка на сервере при его
+    // ошибке); /auto — вернуть обычный режим. Если после команды есть ещё
+    // текст ("/qwen почему упала установка?") — это уже реальный вопрос,
+    // отправляется сразу с новым провайдером; если команда одна — просто
+    // подтверждение режима, к ИИ ничего не уходит.
+    const commandMatch = PROVIDER_COMMAND_RE.exec(text);
+    if (commandMatch) {
+      const mode = commandMatch[1].toLowerCase();
+      const rest = commandMatch[2].trim();
+      forcedProvider = mode === "auto" ? null : mode;
+      addLine(forcedProvider
+        ? `Режим чата: только ${PROVIDER_LABELS[forcedProvider]}, без автопереключения.`
+        : "Режим чата: автоматический (DeepSeek, при недоступности — Qwen).");
+      if (!rest) return;
+      text = rest;
+    }
     addLine(`💬 ${text}`, "log-line-command");
     history.push({ role: "user", content: text });
     autoTurnsLeft = MAX_AUTO_TURNS;
@@ -113,14 +138,16 @@ window.chatPanel = (() => {
 
   function onChatReply(event) {
     const reply = event.reply || {};
+    const providerTag = reply.provider && PROVIDER_LABELS[reply.provider]
+      ? ` [${PROVIDER_LABELS[reply.provider]}]` : "";
     if (reply.type === "command" && reply.command) {
       const summary = `Предлагаю выполнить: ${reply.command}` + (reply.reason ? ` — ${reply.reason}` : "");
       history.push({ role: "assistant", content: summary });
-      renderCommandLine(reply.command, reply.reason);
+      renderCommandLine(reply.command, reply.reason, providerTag);
       return;
     }
     const text = reply.content || "";
-    addLine(`ИИ: ${text}`);
+    addLine(`ИИ${providerTag}: ${text}`);
     history.push({ role: "assistant", content: text });
   }
 

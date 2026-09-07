@@ -304,9 +304,14 @@ const CYRILLIC_RE = /[а-яёА-ЯЁ]/;
 // от языка, так же как /clear в мини-консоли Android — часть текста,
 // набираемого в это же поле, а не отдельная команда adb.
 const CHAT_ASK_PREFIX_RE = /^\/ask\s+/i;
+// /deepseek, /qwen, /auto — принудительное переключение провайдера ИИ-чата
+// (см. chat_panel.js) — тоже команды ЭТОГО поля, не adb (тех же букв нет ни
+// в одном реальном adb/shell-имени, но начинаются с "/", как и "/ask", так
+// что распознаём явно, а не полагаемся на кириллицу).
+const CHAT_PROVIDER_PREFIX_RE = /^\/(deepseek|qwen|auto)\b/i;
 
 function isChatQuestion(text) {
-  return CYRILLIC_RE.test(text) || CHAT_ASK_PREFIX_RE.test(text);
+  return CYRILLIC_RE.test(text) || CHAT_ASK_PREFIX_RE.test(text) || CHAT_PROVIDER_PREFIX_RE.test(text);
 }
 
 function stripChatAskPrefix(text) {

@@ -7,18 +7,25 @@ import urllib.error
 import urllib.request
 
 
-def send_chat_turn(history_json: str, recent_log_json: str, chat_url: str, chat_key: str) -> str:
+def send_chat_turn(history_json: str, recent_log_json: str, chat_url: str, chat_key: str,
+                    provider: str = "") -> str:
     """history_json/recent_log_json — уже сериализованные с Kotlin-стороны
-    JSON-массивы (Chaquopy строкам доверяет проще, чем объектам). Возвращает
-    JSON-строку {"ok": true, "type": "text"/"command", ...} / {"ok": false,
-    "error": "..."}, разбирается на стороне WebBridge.kt."""
+    JSON-массивы (Chaquopy строкам доверяет проще, чем объектам). provider —
+    "deepseek"/"qwen"/"" (принудительный выбор, команды /deepseek /qwen в
+    чате — см. app.js), пустая строка = обычный автоматический режим на
+    сервере. Возвращает JSON-строку {"ok": true, "provider": "...",
+    "type": "text"/"command", ...} / {"ok": false, "error": "..."},
+    разбирается на стороне WebBridge.kt."""
     try:
         history = json.loads(history_json)
         recent_log = json.loads(recent_log_json)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return json.dumps({"ok": False, "error": "некорректный запрос"})
 
-    body = json.dumps({"history": history, "recent_log": recent_log, "client_id": ""}).encode("utf-8")
+    body = json.dumps({
+        "history": history, "recent_log": recent_log, "client_id": "",
+        "provider": provider or None,
+    }).encode("utf-8")
     request = urllib.request.Request(
         chat_url, data=body, method="POST",
         headers={"X-Submit-Key": chat_key, "Content-Type": "application/json"})
