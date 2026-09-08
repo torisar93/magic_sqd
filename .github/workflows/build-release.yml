@@ -1,0 +1,161 @@
+name: Build Windows & Android releases
+
+# Ручной запуск (Actions -> Build Windows & Android releases -> Run workflow)
+# для сборки без релиза, либо пуш тега vX.Y.Z (как в server/README.md §9) —
+# тогда после сборки ещё создаётся/обновляется GitHub Release с ассетами
+# под теми именами, которые ждут лендинг и app/web/api/update_api.py.
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  windows-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      # server.json/submit.json/admin.json не в git (см. .gitignore) —
+      # installer.iss их ждёт рядом с собой (Source: "server.json" и т.д.).
+      - name: Write local config files from secrets
+        shell: bash
+        run: |
+          printf '%s' "${{ secrets.MAGICSQD_SERVER_JSON }}" > server.json
+          printf '%s' "${{ secrets.MAGICSQD_SUBMIT_JSON }}" > submit.json
+          printf '%s' "${{ secrets.MAGICSQD_ADMIN_JSON }}" > admin.json
+
+      - name: PyInstaller build
+        run: python -m PyInstaller magic_sqd.spec --noconfirm
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: cmd
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MagicSQD_Setup
+          path: installer_output/MagicSQD_Setup_*.exe
+
+  windows-win7:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 32-битный Python 3.8 — последняя версия CPython, ещё официально
+      # поддерживающая Windows 7 (см. шапку magic_sqd_win7.spec).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+          architecture: x86
+
+      - name: Install Python deps (Win7 stack — PyQt5, не PySide2, см. spec)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt PyQt5==5.15.4 PyQtWebEngine==5.15.4 qtpy
+
+      - name: Write local config files from secrets
+        shell: bash
+        run: |
+          printf '%s' "${{ secrets.MAGICSQD_SERVER_JSON }}" > server.json
+          printf '%s' "${{ secrets.MAGICSQD_SUBMIT_JSON }}" > submit.json
+          printf '%s' "${{ secrets.MAGICSQD_ADMIN_JSON }}" > admin.json
+
+      - name: PyInstaller build (Win7)
+        run: python -m PyInstaller magic_sqd_win7.spec --noconfirm --distpath dist_win7 --workpath build_win7
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: cmd
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_win7_x86.iss'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MagicSQD_Setup_Win7
+          path: installer_output/MagicSQD_Setup_Win7_*.exe
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      # keystore/keystore.properties не в git (см. .gitignore) — без него
+      # build.gradle.kts просто соберёт неподписанный релиз (см. комментарий
+      # там же), а нам для обновлений на телефонах/головных устройствах нужен
+      # тот же ключ, что и раньше.
+      - name: Decode signing keystore
+        shell: bash
+        run: |
+          mkdir -p android/keystore
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/keystore/magicsqd-release.jks
+          cat > android/keystore/keystore.properties <<EOF
+          storeFile=keystore/magicsqd-release.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      # gradlew/gradlew.bat в репозитории нет (см. reference_android_gradle_build
+      # в памяти) — вызываем main-класс из gradle-wrapper.jar напрямую, он
+      # сам докачает нужный Gradle по gradle-wrapper.properties.
+      - name: Build release APK
+        working-directory: android
+        run: java -cp gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain :app:assembleRelease
+
+      - name: Rename APK to release convention
+        shell: bash
+        working-directory: android
+        run: |
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          mkdir -p ../installer_output
+          cp app/build/outputs/apk/release/app-release.apk "../installer_output/MagicSQD_Android_${VERSION}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MagicSQD_Android
+          path: installer_output/MagicSQD_Android_*.apk
+
+  # Только при пуше тега vX.Y.Z — собирает готовые артефакты трёх джобов
+  # выше в один GitHub Release. Имена НЕ переименовываем: app/web/api/
+  # update_api.py сам ищет ассет по регэкспу MagicSQD_Setup_X.Y.Z.exe /
+  # MagicSQD_Setup_Win7_X.Y.Z.exe (версия в имени, проверено по актуальному
+  # релизу v0.9.2) — ровно то имя, что и даёт installer.iss/
+  # installer_win7_x86.iss (OutputBaseFilename) без каких-либо изменений.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-desktop, windows-win7, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: false
+          files: |
+            artifacts/MagicSQD_Setup/MagicSQD_Setup_*.exe
+            artifacts/MagicSQD_Setup_Win7/MagicSQD_Setup_Win7_*.exe
+            artifacts/MagicSQD_Android/MagicSQD_Android_*.apk
