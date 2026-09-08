@@ -26,9 +26,9 @@ req android/keystore/keystore.properties
 
 get_prop() { grep -m1 "^$1=" android/keystore/keystore.properties | cut -d= -f2-; }
 
-"$GH" secret set MAGICSQD_SERVER_JSON  --body-file server.json
-"$GH" secret set MAGICSQD_SUBMIT_JSON  --body-file submit.json
-"$GH" secret set MAGICSQD_ADMIN_JSON   --body-file admin.json
+"$GH" secret set MAGICSQD_SERVER_JSON  < server.json
+"$GH" secret set MAGICSQD_SUBMIT_JSON  < submit.json
+"$GH" secret set MAGICSQD_ADMIN_JSON   < admin.json
 
 base64 -w0 android/keystore/magicsqd-release.jks | "$GH" secret set ANDROID_KEYSTORE_BASE64
 get_prop storePassword | "$GH" secret set ANDROID_KEYSTORE_PASSWORD
