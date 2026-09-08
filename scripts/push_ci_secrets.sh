@@ -13,7 +13,23 @@ cd "$(dirname "$0")/.."
 
 GH="gh"
 if ! command -v gh >/dev/null 2>&1; then
-  GH="/c/Program Files/GitHub CLI/gh.exe"
+  # gh не на PATH в этой оболочке — пробуем оба стиля пути к одному и тому
+  # же файлу: /c/... (Git Bash/MSYS) и /mnt/c/... (WSL, если голый `bash`
+  # из PowerShell запустил именно его, а не Git Bash — тогда /c/... не
+  # существует, нужен /mnt/c/...).
+  for candidate in \
+    "/c/Program Files/GitHub CLI/gh.exe" \
+    "/mnt/c/Program Files/GitHub CLI/gh.exe"
+  do
+    if [ -f "$candidate" ]; then
+      GH="$candidate"
+      break
+    fi
+  done
+  if [ "$GH" = "gh" ]; then
+    echo "Не нашёл gh.exe. Запусти этот скрипт из Git Bash (не из PowerShell голой командой bash — это может открыть WSL, где другие пути), либо укажи путь вручную: GH=\"путь\\к\\gh.exe\" bash scripts/push_ci_secrets.sh" >&2
+    exit 1
+  fi
 fi
 
 req() { [ -f "$1" ] || { echo "Нет файла: $1" >&2; exit 1; }; }
