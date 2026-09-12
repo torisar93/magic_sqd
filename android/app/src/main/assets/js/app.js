@@ -17,6 +17,10 @@
   // Один открытый скан за раз — достаточно, оба места, где он запускается
   // (Wi-Fi ADB / telnet), сами по себе модальные и блокируют остальной UI.
   let pendingScanCallback = null;
+  // Отдельный callback для mDNS-поиска порта "Беспроводной отладки" (см.
+  // scanAdbService в WebBridge.kt) — работает ПАРАЛЛЕЛЬНО с pendingScanCallback
+  // выше (тот сканирует хосты по фиксированному порту), не заменяет его.
+  let pendingAdbServiceScanCallback = null;
   // Аккаунт техника (см. auth_bridge.py, WebBridge.kt: authLogin/
   // authRegister) — Bridge.call() возвращает "{}" сразу (работа идёт в
   // фоновом Kotlin-потоке), настоящий результат приходит отдельным
@@ -987,7 +991,7 @@
           setAdbStatus(false, "ADB: подключаюсь по Wi-Fi...");
           Bridge.call("adb_connect_wifi", { host, port });
         },
-        { editablePort: true }
+        { editablePort: true, discoverAdbService: true }
       );
       return;
     }
@@ -1127,6 +1131,16 @@
     cb(event.hosts || [], event.recommended || null);
   }
 
+  // Ответ на scan_adb_service (см. WebBridge.kt/MdnsResolve.kt) — готовые
+  // host:port "Беспроводной отладки" (порт у неё динамический, угадать
+  // нельзя, только узнать через mDNS-анонс самого устройства).
+  function onAdbServiceScanResult(event) {
+    if (!pendingAdbServiceScanCallback) return;
+    const cb = pendingAdbServiceScanCallback;
+    pendingAdbServiceScanCallback = null;
+    cb(event.endpoints || []);
+  }
+
   function onActionsPackagesResult(event) {
     if (!pendingPackagesCallback) return;
     const cb = pendingPackagesCallback;
@@ -1195,6 +1209,7 @@
     const overlay = document.querySelector(".modal-overlay.dismissible");
     if (!overlay) return false;
     pendingScanCallback = null;
+    pendingAdbServiceScanCallback = null;
     overlay.remove();
     return true;
   }
@@ -1202,8 +1217,12 @@
   // opts.editablePort — показать поле порта рядом со сканом (по умолчанию
   // то, что задано в _wizard_spec.json редактором на desktop, см. onAdbConnect)
   // с возможностью поменять "на всякий случай" и пересканировать по новому
-  // порту, не закрывая модалку. onSubmit(host, port) — port тот, что был
-  // актуален на момент выбора адреса (изменённый техником или дефолтный).
+  // порту, не закрывая модалку. opts.discoverAdbService — дополнительно
+  // искать актуальный порт "Беспроводной отладки" по mDNS (см. onAdbConnect,
+  // MdnsResolve.resolveAdbTlsConnectEndpoints) — только для Wi-Fi ADB, не
+  // для telnet (там фиксированный порт 23, mDNS-служба другая). onSubmit(host,
+  // port) — port тот, что был актуален на момент выбора адреса (свой у
+  // найденной через mDNS службы, иначе — изменённый техником или дефолтный).
   function promptHostPicker(title, port, onSubmit, opts) {
     opts = opts || {};
     // port может быть null (заранее не известен — см. connectionPortFor) —
@@ -1213,18 +1232,41 @@
     let currentPort = port || 5555;
     const overlay = el("div", { class: "modal-overlay dismissible" });
     overlay.addEventListener("click", (e) => { if (e.target === overlay) closeDismissibleModal(); });
+    const serviceListWrap = el("div", { class: "host-scan-list" });
     const listWrap = el("div", { class: "host-scan-list" });
     const input = el("input", { type: "text" });
     input.value = lastWifiHost || "";
-    const submitHost = (host) => {
+    const submitHost = (host, overridePort) => {
       pendingScanCallback = null;
+      pendingAdbServiceScanCallback = null;
       overlay.remove();
-      onSubmit(host, currentPort);
+      onSubmit(host, overridePort != null ? overridePort : currentPort);
     };
     const manualSubmit = () => {
       if (!input.value.trim()) return;
       submitHost(input.value.trim());
     };
+
+    // Отдельно от runScan() ниже — порт "Беспроводной отладки" динамический
+    // и не связан с currentPort/полем "Порт", поэтому не пересканируем это
+    // при каждой правке поля порта, только один раз при открытии модалки.
+    function runAdbServiceScan() {
+      if (!opts.discoverAdbService) return;
+      pendingAdbServiceScanCallback = (endpoints) => {
+        clear(serviceListWrap);
+        if (!endpoints.length) return;
+        serviceListWrap.appendChild(el("p", {
+          class: "stage-text", style: "color: var(--text-dim)",
+          text: "Беспроводная отладка (порт определён автоматически):",
+        }));
+        endpoints.forEach((ep) => {
+          const btn = el("button", { class: "accent", text: `${ep.host}:${ep.port}` });
+          btn.addEventListener("click", () => submitHost(ep.host, ep.port));
+          serviceListWrap.appendChild(btn);
+        });
+      };
+      Bridge.call("scan_adb_service", {});
+    }
 
     function runScan() {
       clear(listWrap);
@@ -1282,6 +1324,7 @@
       ]));
     }
     boxChildren.push(
+      serviceListWrap,
       listWrap,
       input,
       el("button", { class: "accent", text: "Подключиться по этому адресу", onclick: manualSubmit }),
@@ -1290,6 +1333,7 @@
     overlay.appendChild(box);
     document.body.appendChild(overlay);
     runScan();
+    runAdbServiceScan();
   }
 
   // Системный жест/кнопка "назад" (см. MainActivity.kt: onBackPressedDispatcher
@@ -2417,6 +2461,7 @@
       }
     });
     window.events.on("network_scan_result", onNetworkScanResult);
+    window.events.on("adb_service_scan_result", onAdbServiceScanResult);
     window.events.on("actions_packages_result", onActionsPackagesResult);
     window.events.on("personal_apks_picked", onPersonalApksPicked);
     window.events.on("sync_finished", onSyncFinished);

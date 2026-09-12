@@ -155,6 +155,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "auth_logout" -> { authLogout(); "{}" }
                 "auth_forgot_password" -> { authForgotPassword(args.getString("email")); "{}" }
                 "scan_hosts" -> { scanHosts(args.optInt("port", 5555)); "{}" }
+                "scan_adb_service" -> { scanAdbService(); "{}" }
                 "adb_ask_input_response" -> {
                     AskInputBroker.resolve(args.getString("requestId"), args.getString("value"))
                     "{}"
@@ -622,6 +623,35 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 event.put("hosts", JSONArray(hosts))
                 if (mdns.ipv4 != null) event.put("recommended", mdns.ipv4)
             }
+            pushEvent(event)
+        }.start()
+    }
+
+    /**
+     * Ищет актуальный порт "Беспроводной отладки" по mDNS (см.
+     * MdnsResolve.resolveAdbTlsConnectEndpoints) — отдельно от scanHosts
+     * выше, т.к. не привязан к конкретному "предполагаемому" порту вообще
+     * (в отличие от scanSubnetForPort, который проверяет ОДИН заданный
+     * порт на всех хостах). Найденные тут host:port подсвечиваются в
+     * promptHostPicker отдельно от обычного списка хостов — с уже готовым
+     * своим портом, ничего вводить руками не нужно (тот самый "bugjaeger
+     * умеет сам перебирать динамические порты" — только не перебором, а
+     * через официальный mDNS-анонс этой службы). Не через runExclusive —
+     * та же причина, что и у scanHosts.
+     */
+    private fun scanAdbService() {
+        Thread {
+            val event = JSONObject().put("kind", "adb_service_scan_result")
+            val endpoints = try {
+                MdnsResolve.resolveAdbTlsConnectEndpoints(context)
+            } catch (e: Exception) {
+                pushAdbLog("Скан сети (Беспроводная отладка, mDNS): ${e.message ?: "неизвестная ошибка"}")
+                emptyList()
+            }
+            pushAdbLog("Скан сети (Беспроводная отладка, mDNS): найдено ${endpoints.size}.")
+            event.put("endpoints", JSONArray(endpoints.map {
+                JSONObject().put("host", it.host).put("port", it.port)
+            }))
             pushEvent(event)
         }.start()
     }

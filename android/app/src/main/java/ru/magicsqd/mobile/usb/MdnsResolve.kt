@@ -34,8 +34,15 @@ object MdnsResolve {
     private const val TYPE_A = 1
     private const val TYPE_PTR = 12
     private const val TYPE_AAAA = 28
+    private const val TYPE_SRV = 33
+
+    // Стандартное DNS-SD имя службы "Беспроводной отладки" (Android 11+,
+    // frameworks/base AdbDebuggingManager) — см. resolveAdbTlsConnectEndpoints.
+    private const val ADB_TLS_CONNECT_SERVICE = "_adb-tls-connect._tcp.local"
 
     data class Result(val ipv4: String?, val ipv6: String?)
+
+    data class AdbServiceEndpoint(val host: String, val port: Int)
 
     fun resolveAndroidLocal(context: Context, timeoutMs: Int = 1200): Result {
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
@@ -53,6 +60,73 @@ object MdnsResolve {
                 "$ipv6Raw%${iface.name}"
             } else ipv6Raw
             Result(ipv4, ipv6)
+        } finally {
+            try { lock?.release() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Находит актуальный порт "Беспроводной отладки" (Android 11+) через
+     * настоящий DNS-SD (RFC 6763), а не догадку/фиксированный `wifi_port` из
+     * _wizard_spec.json — этот порт СЛУЧАЙНЫЙ и переназначается заново при
+     * каждом включении тумблера "Беспроводная отладка" (в отличие от
+     * `adb tcpip 5555`, где порт фиксирован), поэтому старый/угаданный порт
+     * может просто перестать быть актуальным между подключениями. Именно для
+     * этого Android сам анонсирует службу "_adb-tls-connect._tcp" по mDNS —
+     * тем же способом ей пользуется официальный `adb pair`/Android Studio на
+     * десктопе, и, судя по всему, BugJaeger на телефоне (запрос техника,
+     * увидевшего разницу вживую на магнитоле: наше приложение требовало ввод
+     * порта руками, BugJaeger сам его находил).
+     *
+     * Респондеры на PTR-запрос практически всегда сразу докладывают SRV (и
+     * A/AAAA) в ADDITIONAL-секции ТОГО ЖЕ ответа — стандартная mDNS-экономия
+     * лишнего round-trip (RFC 6763 §12) — поэтому второй SRV-запрос не нужен,
+     * читаем сразу из первого ответа. Имя цели SRV-записи (сам хост) НЕ
+     * разбираем отдельно — вместо этого используем IP-адрес ОТПРАВИТЕЛЯ
+     * UDP-пакета: он и есть устройство, ответившее на запрос именно этой
+     * службы, надёжный и достаточный источник адреса в пределах одной
+     * локальной сети (та же логика, что уже используется в scanIpv6Neighbors
+     * ниже). Порт может встретиться несколько раз (несколько ответов на
+     * multicast-запрос) — dedup по ключу "host:port".
+     *
+     * ПРОВЕРЕНО ТОЛЬКО разбором формата (нет доступа к реальной магнитоле с
+     * "Беспроводной отладкой" прямо сейчас) — при первом реальном тесте
+     * сверить лог "adb service scan: найдено N" с тем, что видно в
+     * "Настройки -> Беспроводная отладка -> IP-адрес и порт" на экране
+     * устройства.
+     */
+    fun resolveAdbTlsConnectEndpoints(context: Context, timeoutMs: Int = 1500): List<AdbServiceEndpoint> {
+        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val lock = wifi?.createMulticastLock("magicsqd-mdns-adbtls")?.apply { setReferenceCounted(true) }
+        lock?.acquire()
+        return try {
+            DatagramSocket().use { socket ->
+                NetworkScan.wifiNetwork(context)?.bindSocket(socket)
+                socket.soTimeout = timeoutMs
+                val query = buildQuery(ADB_TLS_CONNECT_SERVICE, TYPE_PTR, quBit = false)
+                val dest = InetSocketAddress(InetAddress.getByName("224.0.0.251"), MDNS_PORT)
+                socket.send(DatagramPacket(query, query.size, dest))
+                val found = LinkedHashMap<String, AdbServiceEndpoint>()
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (System.currentTimeMillis() < deadline) {
+                    try {
+                        val buf = ByteArray(4096)
+                        val packet = DatagramPacket(buf, buf.size)
+                        socket.receive(packet)
+                        val host = packet.address?.hostAddress ?: continue
+                        for (port in findSrvPorts(buf, packet.length)) {
+                            found["$host:$port"] = AdbServiceEndpoint(host, port)
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        // просто продолжаем ждать до дедлайна
+                    } catch (_: Exception) {
+                        break
+                    }
+                }
+                found.values.toList()
+            }
+        } catch (_: Exception) {
+            emptyList()
         } finally {
             try { lock?.release() } catch (_: Exception) {}
         }
@@ -209,6 +283,41 @@ object MdnsResolve {
             pos = rdataStart + rdlength
         }
         return null
+    }
+
+    /**
+     * Достаёт порт из ВСЕХ SRV-записей ответа — не только из ANSWER, но и из
+     * AUTHORITY/ADDITIONAL секций (в отличие от parseResponse выше, которая
+     * ищет только среди ancount ответов): респондеры на PTR обычно как раз
+     * докладывают SRV именно в ADDITIONAL, см. resolveAdbTlsConnectEndpoints.
+     * Имя каждой RR не разбираем, только пропускаем (skipName) — нам не
+     * важно, к какому конкретно инстансу относится запись, весь пакет — это
+     * ответ ровно на наш запрос "_adb-tls-connect._tcp.local".
+     */
+    private fun findSrvPorts(buf: ByteArray, length: Int): List<Int> {
+        if (length < 12) return emptyList()
+        val qdcount = u16At(buf, 4)
+        val ancount = u16At(buf, 6)
+        val nscount = u16At(buf, 8)
+        val arcount = u16At(buf, 10)
+        val ports = ArrayList<Int>()
+        var pos = 12
+        repeat(qdcount) { pos = skipName(buf, pos) + 4 } // +QTYPE(2)+QCLASS(2)
+        repeat(ancount + nscount + arcount) {
+            if (pos >= length) return ports
+            pos = skipName(buf, pos)
+            if (pos + 10 > length) return ports
+            val rtype = u16At(buf, pos)
+            val rdlength = u16At(buf, pos + 8)
+            val rdataStart = pos + 10
+            if (rdataStart + rdlength > length) return ports
+            // SRV RDATA: priority(2) + weight(2) + port(2) + target(name).
+            if (rtype == TYPE_SRV && rdlength >= 6) {
+                ports.add(u16At(buf, rdataStart + 4))
+            }
+            pos = rdataStart + rdlength
+        }
+        return ports
     }
 
     private fun u16At(buf: ByteArray, offset: Int): Int =

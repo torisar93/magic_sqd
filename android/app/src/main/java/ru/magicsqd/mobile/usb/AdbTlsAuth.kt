@@ -1,7 +1,9 @@
 package ru.magicsqd.mobile.usb
 
+import android.content.Context
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.math.BigInteger
 import java.security.KeyPair
 import java.security.KeyStore
@@ -134,6 +136,39 @@ object AdbTlsAuth {
         val certificateDer = Der.sequence(tbsCertificate, sigAlgDer, Der.bitString(signature))
         val cf = CertificateFactory.getInstance("X.509")
         return cf.generateCertificate(ByteArrayInputStream(certificateDer)) as X509Certificate
+    }
+
+    /**
+     * Персистентный сертификат — та же логика, что и AdbAuth.loadOrCreateKeyPair
+     * для ключа, и по той же причине критично важная: buildSelfSignedCertificate
+     * каждый раз кладёт НОВЫЙ случайный serial и notBefore/notAfter, то есть
+     * даёт байт-в-байт РАЗНЫЙ сертификат при каждом вызове, даже с тем же
+     * RSA-ключом внутри. На реальной магнитоле (Geely, Android 11) это ломало
+     * повторное подключение: первый Wi-Fi/TLS коннект прошёл (доверие
+     * подтвердили на экране), но следующий — с новым сертификатом — TLS-
+     * хендшейк отработал (крипто-уровень успешен), а сразу после этого
+     * устройство молча оборвало соединение при повторном CNXN внутри TLS
+     * (ровно симптом "неизвестный сертификат", см. комментарий выше и в
+     * performTlsUpgrade). Похоже, у этой прошивки доверие к TLS-ADB привязано
+     * к отпечатку ИМЕННО сертификата, а не только к обёрнутому в нём
+     * RSA-ключу (в отличие от двух телефонов, на которых тестировалось
+     * изначально — там смена сертификата, судя по всему, не имела значения).
+     * Настоящий adb-клиент на компьютере тоже генерирует такой сертификат
+     * РОВНО ОДИН РАЗ и переиспользует его вечно — здесь та же схема.
+     */
+    fun loadOrCreateCertificate(context: Context, keyPair: KeyPair, commonName: String = "magicsqd-mobile"): X509Certificate {
+        val certFile = File(context.filesDir, "adb_tls_cert.der")
+        if (certFile.exists()) {
+            try {
+                val cf = CertificateFactory.getInstance("X.509")
+                return cf.generateCertificate(ByteArrayInputStream(certFile.readBytes())) as X509Certificate
+            } catch (_: Exception) {
+                // Повреждённый файл — сгенерируем и перезапишем заново ниже.
+            }
+        }
+        val cert = buildSelfSignedCertificate(keyPair, commonName)
+        certFile.writeBytes(cert.encoded)
+        return cert
     }
 
     /** KeyManager, предъявляющий этот ключ+сертификат серверу при TLS-хендшейке. */

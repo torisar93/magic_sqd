@@ -31,8 +31,9 @@ import java.util.zip.CRC32
  * TCP-транспорт (classic AUTH) и STLS/TLS-хендшейк (см. performTlsUpgrade)
  * проверены Python-прототипом на двух реальных телефонах (Android 11 и 16,
  * штатная "Беспроводная отладка") — байт-в-байт та же раскладка, что шлёт
- * этот Kotlin-код. На самой магнитоле (ради которой всё затевалось) пока
- * не проверялось — недоступна на момент реализации.
+ * этот Kotlin-код. Позже проверено и на реальной магнитоле (Geely,
+ * Android 11) — нашёлся и исправлен баг с повторным подключением, см.
+ * performTlsUpgrade/AdbTlsAuth.loadOrCreateCertificate.
  */
 object AdbProtocol {
     const val A_SYNC = 0x434e5953
@@ -330,8 +331,15 @@ fun performCnxnHandshake(
  * рвёт соединение, диалога в этом случае не будет, см. AdbTlsAuth).
  *
  * ПРОВЕРЕНО Python-прототипом на двух реальных телефонах (Android 11 и 16)
- * с той же самой раскладкой байт до этого места — не подтверждено ТОЛЬКО
- * на самой магнитоле (недоступна на момент реализации).
+ * с той же самой раскладкой байт до этого места, и позже — на реальной
+ * магнитоле (Geely, Android 11): первое подключение прошло, но повторное
+ * (после disconnect/connect) ломалось ровно с симптомом "неизвестный
+ * сертификат" — оказалось, что каждый вызов buildSelfSignedCertificate
+ * заново генерил СЛУЧАЙНЫЙ сертификат (новый serial/notBefore/notAfter) с
+ * тем же RSA-ключом внутри, а эта прошивка, в отличие от двух тестовых
+ * телефонов, проверяет доверие TLS-ADB именно по отпечатку сертификата —
+ * исправлено через AdbTlsAuth.loadOrCreateCertificate (сертификат теперь
+ * персистентный, как и сам RSA-ключ).
  */
 private fun performTlsUpgrade(
     transport: AdbTransport,
@@ -359,7 +367,10 @@ private fun performTlsUpgrade(
 
     val plainSocket = transport.socket
     val keyPair = AdbAuth.loadOrCreateKeyPair(context)
-    val certificate = AdbTlsAuth.buildSelfSignedCertificate(keyPair)
+    // loadOrCreateCertificate, а не buildSelfSignedCertificate напрямую — сертификат
+    // должен быть байт-в-байт ТЕМ ЖЕ при каждом подключении, см. комментарий в
+    // AdbTlsAuth.loadOrCreateCertificate (реальный баг на живой магнитоле).
+    val certificate = AdbTlsAuth.loadOrCreateCertificate(context, keyPair)
     val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.3")
     sslContext.init(
         AdbTlsAuth.buildKeyManagers(keyPair, certificate),
