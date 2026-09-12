@@ -6,7 +6,6 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.math.BigInteger
 import java.security.KeyPair
-import java.security.KeyStore
 import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
@@ -15,7 +14,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import javax.net.ssl.KeyManager
-import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.X509TrustManager
 
 /**
@@ -161,7 +159,22 @@ object AdbTlsAuth {
         if (certFile.exists()) {
             try {
                 val cf = CertificateFactory.getInstance("X.509")
-                return cf.generateCertificate(ByteArrayInputStream(certFile.readBytes())) as X509Certificate
+                val cert = cf.generateCertificate(ByteArrayInputStream(certFile.readBytes())) as X509Certificate
+                // Сертификат должен быть ИМЕННО от текущего keyPair — иначе на
+                // TLS-рукопожатии подпись (CertificateVerify) будет посчитана
+                // приватным ключом, который не соответствует публичному ключу
+                // внутри сертификата, и сервер закономерно отклонит хендшейк
+                // (реальный симптом на живом телефоне: TLS-хендшейк "успешен"
+                // на нашей стороне, adbd рвёт его с CERTIFICATE_VERIFY_FAILED).
+                // Рассинхрон возможен, если файл ключа (adb_auth_priv.der/
+                // adb_auth_pub.der, см. AdbAuth.loadOrCreateKeyPair) когда-либо
+                // менялся без соответствующей перегенерации этого файла —
+                // сравниваем закодированные публичные ключи побайтово, без
+                // этой проверки старый файл сертификата тихо переживает смену
+                // ключа и ломает TLS каждый раз заново.
+                if (cert.publicKey.encoded.contentEquals(keyPair.public.encoded)) {
+                    return cert
+                }
             } catch (_: Exception) {
                 // Повреждённый файл — сгенерируем и перезапишем заново ниже.
             }
@@ -171,14 +184,58 @@ object AdbTlsAuth {
         return cert
     }
 
-    /** KeyManager, предъявляющий этот ключ+сертификат серверу при TLS-хендшейке. */
+    /**
+     * KeyManager, предъявляющий этот ключ+сертификат серверу при TLS-хендшейке.
+     *
+     * НЕ через стандартный KeyManagerFactory("PKIX")/KeyStore — тот САМ решает,
+     * подходит ли наш ключ под запрос сервера (по keyType/issuers из
+     * CertificateRequest), и на практике эта автоматика на части устройств
+     * (проверено на реальном телефоне через logcat adbd) отказывается выбрать
+     * единственный лежащий в keystore alias — TLS-рукопожатие после этого
+     * "успешно" завершается, но КЛИЕНТ НЕ ОТПРАВЛЯЕТ СЕРТИФИКАТ ВООБЩЕ:
+     * adbd закономерно рвёт соединение с "Handshake failed in SSL_accept/
+     * SSL_connect [PEER_DID_NOT_RETURN_A_CERTIFICATE]" — то есть дело не в
+     * доверии/повторных подключениях (см. UsbAdbTransport.performTlsUpgrade),
+     * а в том, что наш клиент ни разу не пытался предъявить ключ на этом
+     * шаге. У нас всегда РОВНО ОДИН ключ и ОДИН сертификат — выбирать
+     * реально не из чего, поэтому вместо того, чтобы полагаться на
+     * автоматический подбор alias'а, отдаём его руками, безусловно, при
+     * любом запросе сервера (и по классическому X509KeyManager API, и по
+     * chooseEngineClientAlias — TLS 1.3 на Android идёт через SSLEngine
+     * даже за фасадом SSLSocket, и именно Engine-вариант используется при
+     * реальном выборе сертификата в этом случае).
+     */
     fun buildKeyManagers(keyPair: KeyPair, certificate: X509Certificate): Array<KeyManager> {
-        val keyStore = KeyStore.getInstance("PKCS12")
-        keyStore.load(null, null)
-        keyStore.setKeyEntry("adb-tls", keyPair.private, CharArray(0), arrayOf(certificate))
-        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-        kmf.init(keyStore, CharArray(0))
-        return kmf.keyManagers
+        return arrayOf(SingleIdentityKeyManager(keyPair.private, arrayOf(certificate)))
+    }
+
+    private class SingleIdentityKeyManager(
+        private val privateKey: java.security.PrivateKey,
+        private val chain: Array<X509Certificate>,
+    ) : javax.net.ssl.X509ExtendedKeyManager() {
+        companion object {
+            private const val ALIAS = "adb-tls"
+        }
+
+        override fun getClientAliases(keyType: String?, issuers: Array<out java.security.Principal>?) =
+            arrayOf(ALIAS)
+
+        override fun chooseClientAlias(
+            keyType: Array<out String>?,
+            issuers: Array<out java.security.Principal>?,
+            socket: java.net.Socket?,
+        ) = ALIAS
+
+        override fun chooseEngineClientAlias(
+            keyType: Array<out String>?,
+            issuers: Array<out java.security.Principal>?,
+            engine: javax.net.ssl.SSLEngine?,
+        ) = ALIAS
+
+        override fun getServerAliases(keyType: String?, issuers: Array<out java.security.Principal>?): Array<String>? = null
+        override fun chooseServerAlias(keyType: String?, issuers: Array<out java.security.Principal>?, socket: java.net.Socket?): String? = null
+        override fun getCertificateChain(alias: String?): Array<X509Certificate> = chain
+        override fun getPrivateKey(alias: String?): java.security.PrivateKey = privateKey
     }
 
     /**
