@@ -26,15 +26,58 @@ jobs:
 
       # server.json/submit.json/admin.json не в git (см. .gitignore) —
       # installer.iss их ждёт рядом с собой (Source: "server.json" и т.д.).
+      # ВАЖНО: секреты идут через env:, а не подставляются прямо в run:
+      # ("${{ secrets.X }}" внутри уже двойных кавычек) — сами эти файлы
+      # валидный JSON, то есть содержат двойные кавычки, а GitHub
+      # подставляет ${{ }} ТЕКСТОМ до того, как строку увидит bash. Кавычки
+      # из секрета закрывают внешнюю кавычку printf раньше времени, bash
+      # склеивает всё в одно "слово" без единой кавычки вообще — итоговый
+      # файл получается невалидным JSON (реальный случай: сломал server.json/
+      # submit.json/admin.json во ВСЕХ релизах с момента перехода на CI,
+      # 0.9.3-0.9.5 — json.loads() в content_config.py/submit_config.py/
+      # admin_config.py ловит JSONDecodeError и молча возвращает {}, поэтому
+      # приложение просто вело себя как "сервер не настроен", без единой
+      # видимой ошибки). "$VAR" внутри run: — обычное bash-раскрытие
+      # переменной, никакой повторной подстановки/парсинга содержимого как
+      # синтаксиса — кавычки внутри секрета сохраняются как есть.
       - name: Write local config files from secrets
         shell: bash
+        env:
+          SERVER_JSON: ${{ secrets.MAGICSQD_SERVER_JSON }}
+          SUBMIT_JSON: ${{ secrets.MAGICSQD_SUBMIT_JSON }}
+          ADMIN_JSON: ${{ secrets.MAGICSQD_ADMIN_JSON }}
         run: |
-          printf '%s' "${{ secrets.MAGICSQD_SERVER_JSON }}" > server.json
-          printf '%s' "${{ secrets.MAGICSQD_SUBMIT_JSON }}" > submit.json
-          printf '%s' "${{ secrets.MAGICSQD_ADMIN_JSON }}" > admin.json
+          printf '%s' "$SERVER_JSON" > server.json
+          printf '%s' "$SUBMIT_JSON" > submit.json
+          printf '%s' "$ADMIN_JSON" > admin.json
 
       - name: PyInstaller build
         run: python -m PyInstaller magic_sqd.spec --noconfirm
+
+      # tools/*.exe, tools/*.dll, tools/apksigner.jar, tools/jre_minimal/ —
+      # НЕ в git (см. .gitignore и tools/README.txt: скачиваются/собираются
+      # отдельно, вручную, на машине разработчика при подготовке к релизу).
+      # PyInstaller их тоже не бандлит (см. magic_sqd.spec — Analysis.datas
+      # содержит только app/web/frontend), а installer.iss пакует
+      # dist\magic_sqd\* как есть — без этого шага итоговый инсталлятор
+      # тихо остаётся БЕЗ adb.exe (нет ни одного способа установить модель
+      # по USB/Wi-Fi ADB) и без tools/jre_minimal+apksigner.jar (не работает
+      # переподпись APK на моделях, которым она нужна), просто на ~39 МБ
+      # легче — без единой ошибки при сборке (реальный случай: ровно так
+      # похудели инсталляторы 0.9.3-0.9.5 после перехода на этот workflow,
+      # никто не заметил, пока техник не пожаловался).
+      # Собранный заранее zip (adb+fastboot+dll из platform-tools + свежий
+      # apksigner.jar из Android SDK build-tools + tools/jre_minimal,
+      # собранный через jlink) лежит на своём сервере — обновлять его нужно
+      # вручную (см. tools/README.txt) при обновлении adb/JDK/build-tools,
+      # это не делается автоматически.
+      - name: Restore tools/ + cars/_shared (не в git, см. tools/README.txt)
+        run: |
+          Invoke-WebRequest -Uri "https://magicsqd.ru/ci-tools/tools_x64.zip" -OutFile tools_ci.zip
+          New-Item -ItemType Directory -Force -Path dist\magic_sqd\tools | Out-Null
+          Expand-Archive -Path tools_ci.zip -DestinationPath dist\magic_sqd\tools -Force
+          New-Item -ItemType Directory -Force -Path dist\magic_sqd\cars\_shared | Out-Null
+          Get-ChildItem cars\_shared -File | Copy-Item -Destination dist\magic_sqd\cars\_shared
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
@@ -65,15 +108,33 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt PyQt5==5.15.4 PyQtWebEngine==5.15.4 qtpy
 
+      # См. комментарий в windows-desktop про env: вместо прямой подстановки
+      # ${{ secrets.X }} — та же самая правка, тот же баг (эти три файла
+      # ломались и в Win7-сборке ровно так же).
       - name: Write local config files from secrets
         shell: bash
+        env:
+          SERVER_JSON: ${{ secrets.MAGICSQD_SERVER_JSON }}
+          SUBMIT_JSON: ${{ secrets.MAGICSQD_SUBMIT_JSON }}
+          ADMIN_JSON: ${{ secrets.MAGICSQD_ADMIN_JSON }}
         run: |
-          printf '%s' "${{ secrets.MAGICSQD_SERVER_JSON }}" > server.json
-          printf '%s' "${{ secrets.MAGICSQD_SUBMIT_JSON }}" > submit.json
-          printf '%s' "${{ secrets.MAGICSQD_ADMIN_JSON }}" > admin.json
+          printf '%s' "$SERVER_JSON" > server.json
+          printf '%s' "$SUBMIT_JSON" > submit.json
+          printf '%s' "$ADMIN_JSON" > admin.json
 
       - name: PyInstaller build (Win7)
         run: python -m PyInstaller magic_sqd_win7.spec --noconfirm --distpath dist_win7 --workpath build_win7
+
+      # См. комментарий в windows-desktop — тот же баг, отдельный zip: старый
+      # platform-tools r29.0.6 (см. tools_win7/README.txt — свежий adb.exe
+      # падает на настоящей Windows 7), плюс тот же apksigner.jar/jre_minimal.
+      - name: Restore tools/ + cars/_shared (не в git, см. tools_win7/README.txt)
+        run: |
+          Invoke-WebRequest -Uri "https://magicsqd.ru/ci-tools/tools_win7.zip" -OutFile tools_ci.zip
+          New-Item -ItemType Directory -Force -Path dist_win7\magic_sqd\tools | Out-Null
+          Expand-Archive -Path tools_ci.zip -DestinationPath dist_win7\magic_sqd\tools -Force
+          New-Item -ItemType Directory -Force -Path dist_win7\magic_sqd\cars\_shared | Out-Null
+          Get-ChildItem cars\_shared -File | Copy-Item -Destination dist_win7\magic_sqd\cars\_shared
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
