@@ -3,6 +3,8 @@
 Ключи API нигде в клиенте не хранятся — только адрес/ключ нашего сервера
 из submit.json (см. app/submit_config.py). Только стандартная библиотека,
 как и report_client.py — небольшой JSON, urllib.request напрямую."""
+from __future__ import annotations
+
 import json
 import urllib.error
 import urllib.request
