@@ -220,15 +220,27 @@ jobs:
       # (git tag -a vX.Y.Z -m "..." при релизе — см. server/README.md §9) —
       # значит, каждый релиз-тег ОБЯЗАН быть annotated с нормальным
       # пользовательским (не техническим) описанием, иначе changelog снова
-      # будет пустым. fetch-depth:0 + fetch-tags — иначе неглубокий чекаут
-      # тега может не принести само сообщение аннотации.
+      # будет пустым.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
 
+      # НЕ читаем refs/tags/$TAG напрямую после чекаута — реальный случай
+      # (release v0.9.8): actions/checkout при пуше тега сам создаёт локально
+      # refs/tags/$TAG как ОБЛЕГЧЁННЫЙ (lightweight) указатель прямо на
+      # коммит, каким бы ни был тег на GitHub — это ПЕРЕКРЫВАЕТ настоящий
+      # annotated-объект тем же именем, и git for-each-ref видит objecttype
+      # commit вместо tag, а %(contents) молча отдаёт сообщение КОММИТА
+      # вместо аннотации тега (никакой ошибки, просто не тот текст — поймано
+      # только визуальной проверкой самой странички релиза). Явный отдельный
+      # `git fetch` в СВОЁ имя рефа (не refs/tags/...) обходит это — обычный
+      # fetch всегда приносит объект как он есть на remote, без оптимизации
+      # чекаута под конкретный коммит.
       - name: Extract changelog from the annotated tag message
-        run: git for-each-ref "refs/tags/${{ github.ref_name }}" --format='%(contents)' > changelog.txt
+        run: |
+          git fetch origin "refs/tags/${{ github.ref_name }}:refs/release_tag_ref" --force
+          git for-each-ref "refs/release_tag_ref" --format='%(contents)' > changelog.txt
 
       - uses: actions/download-artifact@v4
         with:
