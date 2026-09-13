@@ -80,6 +80,8 @@ def run() -> None:
         from app.adb_utils import kill_server
         kill_server(api.adb_path)
         main_web._log_step("kill_server() done")
+        api.flush_abandoned_install_log()
+        main_web._log_step("flush_abandoned_install_log() done")
         if debug_upload_once is not None:
             debug_upload_once()
             main_web._log_step("debug_upload_once() done")

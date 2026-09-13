@@ -40,6 +40,14 @@ class SubmitConfig:
         return self.submit_url.rsplit("/", 1)[0] + "/diagnostics"
 
     @property
+    def install_log_url(self) -> str:
+        # Тот же сервер/ключ, путь "/submit" -> "/install_log" (см.
+        # app/install_log_client.py, server/backend.py: POST /install_log) —
+        # лог одной попытки установки, шлётся сам по завершении/уходу из
+        # мастера, без участия техника.
+        return self.submit_url.rsplit("/", 1)[0] + "/install_log"
+
+    @property
     def chat_url(self) -> str:
         # Тот же сервер/ключ, путь "/submit" -> "/chat" (см. app/chat_client.py,
         # server/backend.py: POST /chat).

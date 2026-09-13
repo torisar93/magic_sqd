@@ -102,7 +102,20 @@
     return html;
   }
 
+  // Автоматический лог одной попытки установки (см. server/backend.py:
+  // POST /install_log, app/web/frontend/js/screens/stage_wizard.js — тот же
+  // приём на десктопе) — весь текст, что видел техник в этой log-панели за
+  // текущий сеанс работы с моделью, плюс отдельный флаг "было ли что-то,
+  // кроме чтения инструкции" (sessionHasActivity — взводится ТОЛЬКО в
+  // onAdbLog, т.е. реальным действием Kotlin-стороны: ADB/USB/действия;
+  // чистая навигация по инструкции/этапам такого не порождает). Сбрасывается
+  // в openWizard() на каждую новую модель.
+  let sessionLog = [];
+  let sessionHasActivity = false;
+  let sessionSent = false;
+
   function log(text) {
+    sessionLog.push(text);
     const level = classifyLogLevel(text);
     const line = el("div", { class: `log-line log-line-${level}` });
     line.innerHTML = highlightKeywords(text);
@@ -114,6 +127,21 @@
     // происходит" — та же логика, что и в desktop-версии (нижняя строка).
     logLastLineEl.textContent = text;
     logLastLineEl.className = `log-last-line log-line-${level}`;
+  }
+
+  // success=true — все этапы пройдены (см. advanceAfter); false — техник
+  // явно ушёл из мастера (см. __handleBackPress) или открыл другую модель,
+  // не долистав эту (см. openWizard). Не шлём, если реальной активности не
+  // было (открыл/пролистал инструкцию и ушёл) — незачем копить мусор.
+  function flushSessionLog(success) {
+    if (sessionSent || !sessionHasActivity || !sessionLog.length) return;
+    sessionSent = true;
+    Bridge.call("install_log_send", {
+      brand: model ? model.brand : "",
+      model: model ? (model.display_label || model.name) : "",
+      modification: model ? (model.modification || "") : "",
+      success, log: sessionLog.join("\n"),
+    });
   }
 
   function setLogOpen(open) {
@@ -668,6 +696,13 @@
   }
 
   function openModel(modelSummary) {
+    // Флашим лог ПРЕДЫДУЩЕЙ модели (если была реальная активность и его ещё
+    // не отправили) — обязательно ДО того, как model перезапишется новой,
+    // иначе flushSessionLog отправит уже данные новой модели под старым
+    // логом. Обычный уход через "Назад" в каталог обрабатывается отдельно
+    // (см. __handleBackPress) — это специально на случай прямого перехода
+    // к другой модели, минуя экран каталога.
+    if (model) flushSessionLog(false);
     model = Bridge.call("scanner_select_model", {
       key: modelSummary.key,
       brand: modelSummary.brand,
@@ -869,6 +904,9 @@
   let appsConnectionChoice = {};
 
   function openWizard() {
+    sessionLog = [];
+    sessionHasActivity = false;
+    sessionSent = false;
     historyStack.length = 0;
     currentIndex = 0;
     stages = [];
@@ -1024,6 +1062,7 @@
   }
 
   function onAdbLog(event) {
+    sessionHasActivity = true;
     log(event.line);
   }
 
@@ -1341,12 +1380,21 @@
   // тоже тут: закрыть модалку/лог, если открыты; иначе на шаг назад по
   // мастеру или пикеру; и только если деться больше некуда — реально выйти
   // из приложения (Kotlin делает это по возврату "exit").
+  // Best-effort на случай, если техник свернул/закрыл приложение, не
+  // долистав мастер до конца и не нажав "Назад" явно (см. MainActivity.kt:
+  // onStop) — WebView в этот момент ещё жив, в отличие от полного убийства
+  // процесса системой, которое поймать вообще нечем.
+  window.__flushInstallLogOnStop = function () {
+    flushSessionLog(false);
+  };
+
   window.__handleBackPress = function () {
     if (closePhotoLightbox()) return "handled";
     if (closeDismissibleModal()) return "handled";
     if (logOverlayEl.classList.contains("open")) { setLogOpen(false); return "handled"; }
     if (screenWizard.classList.contains("active")) {
       if (historyStack.length) { goBack(); return "handled"; }
+      flushSessionLog(false);
       showScreen("picker");
       return "handled";
     }
@@ -1395,6 +1443,7 @@
     const nextId = stage.type === "check" ? (stage.next_options || [])[optionIndex] : stage.next;
     if (nextId == null) {
       log("Все этапы установки выполнены.");
+      flushSessionLog(true);
       if (!installCompletedShown && stages.length) {
         installCompletedShown = true;
         showCompletionModal();

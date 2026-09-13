@@ -431,6 +431,7 @@ function onModelSelected(model) {
 
 function returnToCatalog() {
   const previousModel = currentModel;
+  window.stageWizard.flushAbandoned();
   currentModel = null;
   const shell = document.getElementById("app-shell");
   shell.classList.remove("workspace-open");

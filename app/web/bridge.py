@@ -6,6 +6,7 @@ JSON-совместимые dict/list/str/bool/number/None. Каждая гру�
 существующий бизнес-код (scanner.py, runner.py, ...) — см. критичные файлы в
 плане миграции."""
 from __future__ import annotations
+import threading
 from pathlib import Path
 
 from .api.admin_api import AdminApi
@@ -13,6 +14,7 @@ from .api.auth_api import AuthApi
 from .api.car_editor_api import CarEditorApi
 from .api.chat_api import ChatApi
 from .api.install_api import InstallApi
+from .api.install_log_api import InstallLogApi
 from .api.qr_adb_api import QrAdbApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
@@ -53,6 +55,7 @@ class WebApi:
         self._usb = UsbApi(base_dir, self._scanner)
         self._qr_adb = QrAdbApi(self.cars_dir)
         self._report = ReportApi(base_dir)
+        self._install_log = InstallLogApi(base_dir)
         self._admin = AdminApi(base_dir, self.apk_dir)
         self._auth = AuthApi(base_dir, self._scanner)
         # Раньше отдельная admin-сборка (admin_main_web.py, убрана) — теперь
@@ -195,6 +198,39 @@ class WebApi:
 
     def report_send(self, brand: str, model: str, reason: str, description: str) -> dict:
         return self._report.send(brand, model, reason, description)
+
+    # -- install_log_api --------------------------------------------------
+    def install_log_send(self, brand: str, model: str, modification: str,
+                          success: bool, log_text: str) -> None:
+        # Фоновым потоком и без возврата результата в JS (тот и не ждёт
+        # промис, см. stage_wizard.js: flushSessionLog) — сеть может занять
+        # время, а это должно происходить незаметно, не задерживая ничего в
+        # интерфейсе (в отличие от report_send, где отправка — явное действие
+        # с "Отправка..." в диалоге и есть что ждать).
+        platform = "win7" if self.is_win7 else "windows"
+        # Помечаем сессию отправленной СРАЗУ, а не после ответа сети —
+        # аварийная отправка того же самого при закрытии окна (см.
+        # flush_abandoned_install_log) была бы хуже, чем редкая потеря одной
+        # попытки при обрыве сети (best-effort телеметрия).
+        self._install.mark_install_log_sent()
+        threading.Thread(
+            target=self._install_log.send,
+            args=(platform, brand, model, modification, success, log_text),
+            daemon=True,
+        ).start()
+
+    def flush_abandoned_install_log(self) -> None:
+        """Аварийный запасной путь на случай, если окно закрыли раньше, чем
+        JS успела сама отправить лог сессии (см. install_log_send выше) —
+        зовётся из main_web.py/main_web_win7.py в finally-блоке при закрытии
+        окна. Молча ничего не делает, если сессии в процессе не было, или
+        JS уже её отправила."""
+        pending = self._install.pending_session_log()
+        if pending is None:
+            return
+        platform = "win7" if self.is_win7 else "windows"
+        self._install_log.send(platform, pending["brand"], pending["model"],
+                                pending["modification"], False, pending["log_text"])
 
     # -- admin_api ------------------------------------------------------
     def admin_get_info(self) -> dict:

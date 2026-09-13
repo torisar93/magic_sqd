@@ -99,6 +99,18 @@ class InstallApi:
         self._pending_stage_index: int | None = None
         self._manifest_cache: dict | None = None
         self._manifest_cache_time: float = 0.0
+        # Лог текущей попытки установки (см. POST /install_log,
+        # app/install_log_client.py) — только бэкендовые строки (ADB/
+        # установка/действия), не JS-навигация. Сбрасывается в load_stages()
+        # на каждое открытие модели; JS-сторона (stage_wizard.js) шлёт СВОЙ,
+        # более полный, буфер сама при успехе/явном уходе из мастера и
+        # помечает сессию отправленной через mark_install_log_sent() — этот
+        # бэкендовый буфер существует только как аварийный запасной путь на
+        # случай, если окно закрыли раньше, чем JS успела сама отправить
+        # (см. main_web.py/main_web_win7.py: finally-блок).
+        self._session_log_lines: list[str] = []
+        self._session_meta: dict | None = None
+        self._session_flushed = True
 
     # ------------------------------------------------------------------
     def _get_manifest(self) -> dict | None:
@@ -122,6 +134,10 @@ class InstallApi:
         model = self._scanner_api.get_model(model_key)
         if model is None:
             return {"error": "unknown model key"}
+        self._session_log_lines = []
+        self._session_meta = {"brand": model.brand, "model": model.name,
+                               "modification": model.modification or ""}
+        self._session_flushed = True  # ничего слать не нужно, пока не появится реальная активность
         if not model.stages_script:
             return {"stages": []}
         try:
@@ -881,7 +897,27 @@ class InstallApi:
     # только толкают событие в очередь (см. app/web/events.py), ничего не
     # трогают в webview напрямую.
     def _on_log(self, message: str) -> None:
+        self._session_log_lines.append(str(message))
+        self._session_flushed = False
         event_bridge.push({"kind": "install_log", "text": message})
+
+    def mark_install_log_sent(self) -> None:
+        """Зовётся из WebApi.install_log_send сразу после того, как JS сама
+        успешно/неуспешно ПОПЫТАЛАСЬ отправить лог этой сессии (успех
+        установки или явный уход из мастера) — чтобы аварийная отправка при
+        закрытии окна (см. pending_session_log/main_web.py) не продублировала
+        то же самое ещё раз."""
+        self._session_flushed = True
+
+    def pending_session_log(self) -> dict | None:
+        """Для аварийной отправки при закрытии окна, если JS не успела сама
+        (см. main_web.py/main_web_win7.py: finally-блок). Видит только
+        бэкендовые строки (ADB/установка/действия из _on_log) — чисто-JS-шную
+        навигацию (см. stage_wizard.js) не видит, но именно бэкендовые
+        строки и есть содержательная часть лога."""
+        if self._session_flushed or not self._session_log_lines:
+            return None
+        return {**(self._session_meta or {}), "log_text": "\n".join(self._session_log_lines)}
 
     def _on_sync_progress(self, done: int, total: int, files_done: int | None = None,
                           files_total: int | None = None) -> None:

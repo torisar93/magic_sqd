@@ -52,8 +52,34 @@
   // приём).
   let installCompletedShown = false;
 
+  // Автоматический лог одной попытки установки (см. server/backend.py:
+  // POST /install_log) — весь текст, что видел техник в log-панели за этот
+  // сеанс работы с моделью, плюс отдельный флаг "было ли что-то, кроме
+  // чтения инструкции" (sessionHasActivity — взводится ТОЛЬКО событием
+  // install_log, т.е. реальным действием бэкенда: ADB/установка/действия;
+  // чистая навигация по инструкции таких событий не порождает). Сбрасывается
+  // в open() на каждую новую модель; предыдущая сессия (если была активность
+  // и её ещё не отправили) при этом флашится как "брошена" — см. flush().
+  let sessionLog = [];
+  let sessionHasActivity = false;
+  let sessionSent = false;
+
   function log(message) {
+    sessionLog.push(message);
     logFn(`[${model.display_label}] ${message}`);
+  }
+
+  // success=true — все этапы пройдены (см. advanceAfter); false — техник
+  // явно ушёл из мастера (см. app.js: returnToCatalog) или открыл другую
+  // модель, не долистав эту. Не шлём, если реальной активности не было
+  // (открыл/пролистал инструкцию и ушёл) — незачем копить мусор.
+  function flushSessionLog(success) {
+    if (sessionSent || !sessionHasActivity || !sessionLog.length) return;
+    sessionSent = true;
+    window.pywebview.api.install_log_send(
+      model.brand || "", model.display_label || model.name || "", model.modification || "",
+      success, sessionLog.join("\n"),
+    );
   }
 
   // -- инициализация экрана (один раз, до выбора модели) ------------------
@@ -65,7 +91,7 @@
     // при каждом open()/render(): воркер-поток на стороне Python один на
     // всю программу (см. app/web/api/install_api.py), слушатель тоже нужен
     // только один, иначе он задваивался бы при каждом выборе модели.
-    window.events.on("install_log", (event) => log(event.text));
+    window.events.on("install_log", (event) => { sessionHasActivity = true; log(event.text); });
     window.events.on("install_finished", onInstallFinished);
     window.events.on("ask_input", (event) => showAskInputDialog(event));
     window.events.on("sync_progress", (event) => updateSyncProgress(
@@ -242,6 +268,15 @@
   // -- открытие модели --------------------------------------------------
   async function open(selectedModel) {
     ensureMounted();
+    // Модель сменили, не долистав предыдущую (см. app.js: returnToCatalog
+    // — обычный уход обрабатывается ТАМ, до вызова open() заново; этот флаш
+    // — на случай прямого перехода к другой модели из каталога/поиска, минуя
+    // "Назад к каталогу") — если там была реальная активность, шлём её как
+    // брошенную, прежде чем затереть буфер под новую модель.
+    if (model) flushSessionLog(false);
+    sessionLog = [];
+    sessionHasActivity = false;
+    sessionSent = false;
     model = selectedModel;
     done.clear();
     historyStack.length = 0;
@@ -341,6 +376,7 @@
       renderNav();
       if (stages.length) {
         log("Все этапы установки выполнены.");
+        flushSessionLog(true);
         if (!installCompletedShown) {
           installCompletedShown = true;
           window.boostyDialogs.showCompletionDialog();
@@ -1212,5 +1248,11 @@
     }));
   }
 
-  window.stageWizard = { init, open };
+  // Явный уход из мастера (см. app.js: returnToCatalog, "Назад к каталогу")
+  // — считается брошенной попыткой, если была реальная активность.
+  function flushAbandoned() {
+    flushSessionLog(false);
+  }
+
+  window.stageWizard = { init, open, flushAbandoned };
 })();

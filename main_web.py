@@ -466,6 +466,8 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
         from app.adb_utils import kill_server
         kill_server(api.adb_path)
         _log_step("kill_server() done")
+        api.flush_abandoned_install_log()
+        _log_step("flush_abandoned_install_log() done")
         if debug_upload_once is not None:
             debug_upload_once()
             _log_step("debug_upload_once() done")

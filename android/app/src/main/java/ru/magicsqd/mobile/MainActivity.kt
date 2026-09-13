@@ -31,6 +31,9 @@ import androidx.webkit.WebViewClientCompat
  * через adb для будущей отладки транспортного слоя в отрыве от UI.
  */
 class MainActivity : AppCompatActivity() {
+    // Класс-уровня, не локальная в onCreate — нужна ещё и в onStop() ниже
+    // (флаш лога установки при сворачивании/закрытии).
+    private lateinit var webView: WebView
 
     @SuppressLint("SetJavaScriptEnabled") // локальный ассет, не произвольные сайты — безопасно
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,7 +46,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_webview)
 
         val root = findViewById<android.widget.FrameLayout>(R.id.root)
-        val webView = findViewById<WebView>(R.id.webView)
+        webView = findViewById(R.id.webView)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true // localStorage — под будущий resizer/сохранение состояния
         val bridge = WebBridge(this, webView)
@@ -138,5 +141,19 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Лучшее из возможного на случай, если техник свернул/закрыл
+        // приложение, не долистав мастер до конца и не нажав "Назад" явно
+        // (window.__handleBackPress выше ловит только явный уход) — WebView
+        // ещё жив на onStop (в отличие от полного убийства процесса системой,
+        // которое поймать вообще нечем), так что JS успевает отправить лог
+        // сессии как брошенной, если было что слать (см. app.js:
+        // flushSessionLog/window.__flushInstallLogOnStop).
+        webView.evaluateJavascript(
+            "(window.__flushInstallLogOnStop && window.__flushInstallLogOnStop())", null
+        )
     }
 }

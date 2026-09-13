@@ -50,6 +50,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // /auth/*) — голый хост, auth_bridge.py сам достраивает конкретные
         // пути. Отдельно от BASE_URL/CHAT_URL просто для читаемости.
         private const val AUTH_BASE_URL = "https://magicsqd.ru"
+        // Лог одной попытки установки (см. installLogSend, server/backend.py:
+        // POST /install_log) — тот же ключ-заглушка от спама, что и у чата,
+        // не отдельный секрет (см. комментарий про CHAT_KEY выше).
+        private const val INSTALL_LOG_URL = "https://magicsqd.ru/install_log"
     }
 
     // AdbSession/UsbFlashSession — общие на процесс синглтоны БЕЗ внутренней
@@ -149,6 +153,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     "{}"
                 }
                 "chat_confirm_command" -> { chatConfirmCommand(args.getString("command")); "{}" }
+                "install_log_send" -> {
+                    installLogSend(
+                        args.getString("brand"), args.getString("model"), args.optString("modification", ""),
+                        args.getBoolean("success"), args.getString("log"),
+                    )
+                    "{}"
+                }
                 "auth_status" -> authStatus().toString()
                 "auth_register" -> { authRegister(args.getString("email"), args.getString("password")); "{}" }
                 "auth_login" -> { authLogin(args.getString("email"), args.getString("password")); "{}" }
@@ -496,6 +507,39 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * предлагает ОДНУ shell-команду; техник подтверждает её перед выполнением
      * (см. chatConfirmCommand). historyJson/recentLogJson уже сериализованы
      * JS-стороной — Chaquopy строкам доверяет проще, чем вложенным объектам. */
+    /** Персистентный случайный id (тот же смысл, что и get_or_create_client_id
+     * на десктопе, см. app/ping_client.py) — в отличие от desktop, на Android
+     * ничего подобного раньше не было вовсе (chat_bridge.py всегда слал
+     * client_id="" — см. историю), заводим здесь то же самое хранилище, где
+     * уже лежит keep_screen_on. */
+    private fun getOrCreateClientId(): String {
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        prefs.getString("client_id", null)?.let { return it }
+        val id = java.util.UUID.randomUUID().toString()
+        prefs.edit().putString("client_id", id).apply()
+        return id
+    }
+
+    /** Лог одной попытки установки (см. server/backend.py: POST
+     * /install_log) — вызывается из app.js по завершении/уходу из мастера,
+     * только если лог не пустой (была реальная активность). Best-effort,
+     * фоновым потоком — ошибка сети тут не должна ничего показывать
+     * технику, поэтому результат никуда не пробрасывается событием. */
+    private fun installLogSend(brand: String, model: String, modification: String,
+                                success: Boolean, logText: String) {
+        Thread {
+            try {
+                pyModule("install_log_bridge").callAttr(
+                    "send_install_log", brand, model, modification, success, logText,
+                    getOrCreateClientId(), INSTALL_LOG_URL, CHAT_KEY,
+                )
+            } catch (_: Exception) {
+                // best-effort — сетевая ошибка тут не критична, следующая
+                // попытка установки пришлёт свой лог независимо от этой.
+            }
+        }.start()
+    }
+
     private fun chatSend(historyJson: String, recentLogJson: String, provider: String = "") {
         Thread {
             val resultJson = try {
