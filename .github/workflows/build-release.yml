@@ -209,6 +209,27 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Без явного body/body_path softprops/action-gh-release создаёт релиз
+      # с ПУСТЫМ описанием (реальный случай — releases v0.9.4/v0.9.6/v0.9.7,
+      # проверено через `gh release view --json body`) — GitHub тогда
+      # показывает под тегом мелким серым текстом первую строку commit
+      # message вместо описания (это и есть "мелкий шрифт", на который
+      # пожаловался пользователь), а app/web/api/update_api.py читает то же
+      # пустое поле body как changelog — апдейт в приложении показывается
+      # вообще без описания. Берём текст из СООБЩЕНИЯ АННОТИРОВАННОГО ТЕГА
+      # (git tag -a vX.Y.Z -m "..." при релизе — см. server/README.md §9) —
+      # значит, каждый релиз-тег ОБЯЗАН быть annotated с нормальным
+      # пользовательским (не техническим) описанием, иначе changelog снова
+      # будет пустым. fetch-depth:0 + fetch-tags — иначе неглубокий чекаут
+      # тега может не принести само сообщение аннотации.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Extract changelog from the annotated tag message
+        run: git for-each-ref "refs/tags/${{ github.ref_name }}" --format='%(contents)' > changelog.txt
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -216,6 +237,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           prerelease: false
+          body_path: changelog.txt
           files: |
             artifacts/MagicSQD_Setup/MagicSQD_Setup_*.exe
             artifacts/MagicSQD_Setup_Win7/MagicSQD_Setup_Win7_*.exe
