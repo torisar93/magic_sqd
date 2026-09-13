@@ -173,7 +173,7 @@ class InstallApi:
                 if stage["type"] == "instruction" and stage.get("instruction"):
                     instr_dir = (model.dir / stage["instruction"]).parent
                     try:
-                        sync_model_subfolder(self.base_dir, instr_dir, log=self._on_log,
+                        sync_model_subfolder(self.base_dir, instr_dir, log=self._on_log_passive,
                                               manifest=manifest, on_progress=self._on_sync_progress)
                     except Exception as exc:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
                         self._on_log(f"Не удалось проверить обновления инструкции: {exc}")
@@ -326,7 +326,7 @@ class InstallApi:
         # описание, поэтому подтягиваем их уже для списка выбора. Без этого
         # у свежей установки вместо «Monjaro Panel» показывалось имя файла.
         sync_model_apk_metadata(self.base_dir, [required_dir, optional_dir],
-                                log=self._on_log, manifest=manifest,
+                                log=self._on_log_passive, manifest=manifest,
                                 on_progress=self._on_sync_progress)
         self._on_sync_progress(0, 0)
         return {
@@ -900,6 +900,22 @@ class InstallApi:
         self._session_log_lines.append(str(message))
         self._session_flushed = False
         event_bridge.push({"kind": "install_log", "text": message})
+
+    def _on_log_passive(self, message: str) -> None:
+        """Как _on_log, но для фоновой докачки контента, нужной ПРОСТО ЧТОБЫ
+        ПОКАЗАТЬ экран (превью инструкции при открытии модели, список
+        приложений этапа apps) — не реальное действие техника. Строка всё
+        равно попадает в буфер (пригодится как контекст, если дальше пойдёт
+        настоящая активность), но НЕ взводит "есть реальная активность":
+        ни _session_flushed (аварийная Python-отправка при закрытии окна не
+        должна сработать на сессии, где техник только открыл модель и ничего
+        не нажал), ни JS-сторону (event.passive — см. stage_wizard.js,
+        sessionHasActivity игнорирует такие события). Настоящие ошибки
+        ВНУТРИ этой докачки (см. load_stages: except-ветка) шлются через
+        обычный _on_log, а не этот метод — сама неудача синхронизации это
+        уже не «просто открыл», а информация, достойная внимания."""
+        self._session_log_lines.append(str(message))
+        event_bridge.push({"kind": "install_log", "text": message, "passive": True})
 
     def mark_install_log_sent(self) -> None:
         """Зовётся из WebApi.install_log_send сразу после того, как JS сама

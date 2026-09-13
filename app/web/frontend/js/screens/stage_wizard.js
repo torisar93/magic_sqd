@@ -55,11 +55,17 @@
   // Автоматический лог одной попытки установки (см. server/backend.py:
   // POST /install_log) — весь текст, что видел техник в log-панели за этот
   // сеанс работы с моделью, плюс отдельный флаг "было ли что-то, кроме
-  // чтения инструкции" (sessionHasActivity — взводится ТОЛЬКО событием
-  // install_log, т.е. реальным действием бэкенда: ADB/установка/действия;
-  // чистая навигация по инструкции таких событий не порождает). Сбрасывается
-  // в open() на каждую новую модель; предыдущая сессия (если была активность
-  // и её ещё не отправили) при этом флашится как "брошена" — см. flush().
+  // чтения инструкции" (sessionHasActivity — взводится событием install_log
+  // БЕЗ пометки passive, т.е. реальным действием бэкенда: ADB/установка/
+  // действия. Фоновая докачка контента для показа экрана — превью
+  // инструкции при открытии модели, список приложений этапа apps, см.
+  // install_api.py: _on_log_passive — приходит тем же событием, но с
+  // event.passive=true, и активность не взводит: раньше взводила (реальный
+  // случай — открытие модели само по себе слало на сервер логи вида
+  // "Скачано файлов (.../instruction_1): 3." без единого реального
+  // действия техника, чистый шум). Сбрасывается в open() на каждую новую
+  // модель; предыдущая сессия (если была активность и её ещё не отправили)
+  // при этом флашится как "брошена" — см. flush().
   let sessionLog = [];
   let sessionHasActivity = false;
   let sessionSent = false;
@@ -91,7 +97,10 @@
     // при каждом open()/render(): воркер-поток на стороне Python один на
     // всю программу (см. app/web/api/install_api.py), слушатель тоже нужен
     // только один, иначе он задваивался бы при каждом выборе модели.
-    window.events.on("install_log", (event) => { sessionHasActivity = true; log(event.text); });
+    window.events.on("install_log", (event) => {
+      if (!event.passive) sessionHasActivity = true;
+      log(event.text);
+    });
     window.events.on("install_finished", onInstallFinished);
     window.events.on("ask_input", (event) => showAskInputDialog(event));
     window.events.on("sync_progress", (event) => updateSyncProgress(
