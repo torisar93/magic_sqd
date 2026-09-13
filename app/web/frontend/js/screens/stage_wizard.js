@@ -30,6 +30,10 @@
   let stages = [];
   let loadError = null;
   let loadErrorNeedsUpdate = false;
+  // Показываем один раз за сессию программы, не при каждом открытии модели
+  // (см. install_api.py: write_permission_warning) — иначе техник видел бы
+  // одно и то же модальное окно на каждой второй открытой модели.
+  let writePermissionWarningShown = false;
   let hasIntro = false;
   let currentIndex = 0;
   const done = new Set();
@@ -307,6 +311,16 @@
       stages = result.stages;
       modelWifiPort = result.wifi_port || 5555;
       await initAppSelectionDefaults();
+      if (result.write_permission_warning && !writePermissionWarningShown) {
+        writePermissionWarningShown = true;
+        window.notice(
+          "Программа установлена в защищённую системную папку (например, Program Files) " +
+          "и не может сама обновлять содержимое моделей — инструкции и список машин " +
+          "останутся устаревшими. Переустановите программу: в установщике НЕ выбирайте " +
+          "«для всех пользователей» и не запускайте его через «Запуск от имени администратора».",
+          { title: "Не удаётся обновить содержимое", danger: true },
+        );
+      }
     }
 
     currentIndex = hasIntro ? -1 : 0;

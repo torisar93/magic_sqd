@@ -168,6 +168,15 @@ class InstallApi:
         # "usb"/"adb"/"exe" — свои файлы качаются по клику на соответствующем
         # этапе, не здесь.
         manifest = self._get_manifest()
+        # PermissionError отдельно от прочих сбоев (сеть/сервер недоступен —
+        # обычное дело, тихо логируем и работаем со старым содержимым) —
+        # это значит, что программа стоит в папке, куда у неё самой нет
+        # прав на запись (реальный случай — установка в Program Files:
+        # "[WinError 5] Отказано в доступе"), и содержимое моделей у этого
+        # техника не обновится НИКОГДА, пока он не переустановит программу
+        # правильно — тихого лога недостаточно, нужен явный callout (см.
+        # stage_wizard.js: write_permission_warning).
+        write_permission_error = False
         try:
             for stage in stages:
                 if stage["type"] == "instruction" and stage.get("instruction"):
@@ -175,6 +184,9 @@ class InstallApi:
                     try:
                         sync_model_subfolder(self.base_dir, instr_dir, log=self._on_log_passive,
                                               manifest=manifest, on_progress=self._on_sync_progress)
+                    except PermissionError as exc:
+                        self._on_log(f"Не удалось проверить обновления инструкции: {exc}")
+                        write_permission_error = True
                     except Exception as exc:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
                         self._on_log(f"Не удалось проверить обновления инструкции: {exc}")
         finally:
@@ -187,6 +199,7 @@ class InstallApi:
             # (см. stage_wizard.js: buildTransportBar) — читается один раз
             # здесь, а не на каждый рендер этапа.
             "wifi_port": load_wifi_port(model),
+            **({"write_permission_warning": True} if write_permission_error else {}),
         }
 
     def _stage_to_dict(self, model, index: int, stage: dict, manifest: dict | None = None,
