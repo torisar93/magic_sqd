@@ -129,6 +129,7 @@ def _model_to_dict(model) -> dict:
         "status": model.status,
         "status_color": model_status_color(model),
         "logo": _logo_rel_path(model.logo_path),
+        "hero": _logo_rel_path(model.hero_path),
     }
 
 
@@ -139,6 +140,7 @@ def _group_to_dict(group) -> dict:
     return {
         "name": group.name,
         "logo": _logo_rel_path(group.logo_path),
+        "hero": _logo_rel_path(group.hero_path),
         "has_modifications": bool(group.modifications),
         "leaf": leaf_dict,
         "modifications": mod_dicts,
@@ -147,7 +149,9 @@ def _group_to_dict(group) -> dict:
 
 
 def _logo_rel_path(path):
-    """Путь к логотипу относительно filesDir для WebViewAssetLoader."""
+    """Путь к логотипу/большой фотографии модели относительно filesDir для
+    WebViewAssetLoader (используется и для logo_path, и для hero_path —
+    оба одинаково лежат прямо в cars/<Марка>/<Модель>/)."""
     if not path:
         return None
     for ancestor in path.parents:

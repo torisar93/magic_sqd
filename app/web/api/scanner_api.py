@@ -14,6 +14,7 @@ from ...scanner import scan_cars, scan_apks, model_status_color, rollup_status_c
 BRAND_LOGO_FILENAMES = ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg")
 _LOGO_MIME = {
     ".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
 }
 
 
@@ -119,6 +120,7 @@ class ScannerApi:
         return {
             "name": group.name,
             "logo": self._logo_data_uri(group.logo_path),
+            "hero": self._logo_data_uri(group.hero_path),
             "has_modifications": group.has_modifications,
             "leaf": leaf_dict,
             "modifications": mod_dicts,
@@ -141,6 +143,7 @@ class ScannerApi:
             "is_pending": model.is_pending,
             "submission_name": model.submission_name,
             "logo": self._logo_data_uri(model.logo_path),
+            "hero": self._logo_data_uri(model.hero_path),
         }
 
     def _brand_logo_data_uri(self, brand: str) -> str | None:

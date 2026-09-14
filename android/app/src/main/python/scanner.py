@@ -12,6 +12,11 @@ _RECENTLY_UPDATED_HOURS = 24
 NO_INSTRUCTION_MARKER = "no_instruction.txt"
 VERSION_FILENAME = "version.json"
 LOGO_FILENAMES = ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg")
+# Большая фотография модели для .model-hero (см. app/scanner.py на
+# desktop-стороне — то же самое, синхронизируется вместе с остальными
+# файлами модели, без пересборки APK).
+HERO_FILENAMES = ("hero.webp", "hero.png", "hero.jpg", "hero.jpeg")
+HERO_PLACEHOLDER_FILENAMES = ("hero-placeholder.webp", "hero-placeholder.png")
 
 
 @dataclass
@@ -27,6 +32,7 @@ class ModelInfo:
     status: str = "ok"
     updated_at: str = ""
     logo_path: Path = None
+    hero_path: Path = None
 
     @property
     def display_label(self) -> str:
@@ -40,6 +46,7 @@ class ModelGroup:
     leaf: ModelInfo
     modifications: list
     logo_path: Path = None
+    hero_path: Path = None
 
 
 _MODEL_PAYLOAD_DIR_NAMES = {"files", "usb_files"}
@@ -63,6 +70,7 @@ def scan_cars(cars_dir: Path):
                 leaf = _build_model_info(brand_dir.name, model_dir.name, None, model_dir)
                 groups.append(ModelGroup(
                     name=model_dir.name, leaf=leaf, modifications=[], logo_path=_find_logo(model_dir),
+                    hero_path=_find_hero(model_dir) or _hero_placeholder(cars_dir),
                 ))
             else:
                 modifications = [
@@ -71,6 +79,7 @@ def scan_cars(cars_dir: Path):
                 ]
                 groups.append(ModelGroup(
                     name=model_dir.name, leaf=None, modifications=modifications, logo_path=_find_logo(model_dir),
+                    hero_path=_find_hero(model_dir) or _hero_placeholder(cars_dir),
                 ))
         if groups:
             brands[brand_dir.name] = groups
@@ -103,12 +112,30 @@ def _build_model_info(brand: str, name: str, modification, leaf_dir: Path) -> Mo
         status=status,
         updated_at=updated_at,
         logo_path=_find_logo(leaf_dir),
+        hero_path=_find_hero(leaf_dir),
     )
 
 
 def _find_logo(directory: Path):
     for filename in LOGO_FILENAMES:
         path = directory / filename
+        if path.is_file():
+            return path
+    return None
+
+
+def _find_hero(directory: Path):
+    for filename in HERO_FILENAMES:
+        path = directory / filename
+        if path.is_file():
+            return path
+    return None
+
+
+def _hero_placeholder(cars_dir: Path):
+    shared_dir = cars_dir / "_shared"
+    for filename in HERO_PLACEHOLDER_FILENAMES:
+        path = shared_dir / filename
         if path.is_file():
             return path
     return None

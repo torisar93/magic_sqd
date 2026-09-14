@@ -317,11 +317,11 @@
     for(const group of groups){
       const card=CatalogUI.card({kind:'model',name:group.name,image:group.logo||group.leaf?.logo,
         meta:group.has_modifications?`${group.modifications.length} версии`:'',
-        onClick:()=>{selectedGroup=group;list.querySelectorAll('.cat-card').forEach(c=>{c.classList.toggle('selected',c===card);c.setAttribute('aria-pressed',String(c===card));});const g=group;const detail=CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel});layout.querySelector('.model-detail')?.replaceWith(detail);}});
+        onClick:()=>{selectedGroup=group;list.querySelectorAll('.cat-card').forEach(c=>{c.classList.toggle('selected',c===card);c.setAttribute('aria-pressed',String(c===card));});const g=group;const detail=CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,heroSrc:g.hero||g.leaf?.hero,versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel});layout.querySelector('.model-detail')?.replaceWith(detail);}});
       card.classList.toggle('selected',group===selectedGroup);card.setAttribute('aria-pressed',String(group===selectedGroup));list.append(card);
     }
     layout.append(list);
-    if(selectedGroup){const g=selectedGroup;layout.append(CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,
+    if(selectedGroup){const g=selectedGroup;layout.append(CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,heroSrc:g.hero||g.leaf?.hero,
       versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel}));}
     gridEl.append(layout);
   }

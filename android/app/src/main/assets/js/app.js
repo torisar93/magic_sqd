@@ -640,7 +640,8 @@
     document.body.classList.add('model-detail-mode');
     listEl.dataset.level='modification';clear(listEl);
     const img=group.logo||group.leaf?.logo;
-    listEl.append(CatalogUI.detail({brand:selectedBrand?.name||'',group:group.name,src:img?dataUrl(img):null,
+    const heroImg=group.hero||group.leaf?.hero;
+    listEl.append(CatalogUI.detail({brand:selectedBrand?.name||'',group:group.name,src:img?dataUrl(img):null,heroSrc:heroImg?dataUrl(heroImg):'',
       versions:group.has_modifications?group.modifications:[group.leaf],onOpen:selectModel}));
   }
 

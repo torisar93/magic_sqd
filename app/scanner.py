@@ -30,6 +30,18 @@ NO_INSTRUCTION_MARKER = "no_instruction.txt"
 
 VERSION_FILENAME = "version.json"
 LOGO_FILENAMES = ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg")
+# Большая "фирменная" фотография модели для карточки в разделе модели
+# (см. app/web/frontend/js/catalog-ui.js: detail()/.model-hero, app/web/
+# frontend/js/catalog09.js) — синхронизируется вместе с остальными
+# файлами модели через content_sync.sync_scripts (та же логика, что и у
+# logo.png выше: файл прямо в cars/<Марка>/<Модель>/, не внутри files/,
+# поэтому докачивается всегда, без отдельной кнопки и без пересборки
+# программы). alphaBounds/bodyBounds для неё считаются на лету в браузере
+# по alpha-каналу картинки, а не берутся из заранее посчитанного манифеста.
+HERO_FILENAMES = ("hero.webp", "hero.png", "hero.jpg", "hero.jpeg")
+# Общая заглушка (см. _hero_placeholder ниже) для моделей, у которых своей
+# hero.webp ещё нет вообще.
+HERO_PLACEHOLDER_FILENAMES = ("hero-placeholder.webp", "hero-placeholder.png")
 
 
 @dataclass
@@ -65,6 +77,9 @@ class ModelInfo:
     # Необязательный логотип из папки модели/модификации. Сам файл остаётся
     # рядом с инструкцией; API превращает его в data URI для карточки.
     logo_path: Path | None = None
+    # Необязательная большая фотография модели (см. HERO_FILENAMES выше) —
+    # тот же принцип, что и logo_path.
+    hero_path: Path | None = None
 
     @property
     def display_label(self) -> str:
@@ -89,6 +104,9 @@ class ModelGroup:
     # У «зонтика» с модификациями логотип лежит в папке самой модели, а не
     # внутри одной из версий: cars/Марка/Модель/logo.png.
     logo_path: Path | None = None
+    # То же самое для большой фотографии модели (см. HERO_FILENAMES) — одна
+    # на модель, а не на каждую модификацию.
+    hero_path: Path | None = None
 
     @property
     def has_modifications(self) -> bool:
@@ -136,6 +154,7 @@ def scan_cars(cars_dir: Path) -> dict[str, list[ModelGroup]]:
                     leaf=leaf,
                     modifications=[],
                     logo_path=_find_logo(model_dir),
+                    hero_path=_find_hero(model_dir) or _hero_placeholder(cars_dir),
                 ))
             else:
                 modifications = [
@@ -147,6 +166,7 @@ def scan_cars(cars_dir: Path) -> dict[str, list[ModelGroup]]:
                     leaf=None,
                     modifications=modifications,
                     logo_path=_find_logo(model_dir),
+                    hero_path=_find_hero(model_dir) or _hero_placeholder(cars_dir),
                 ))
         if groups:
             brands[brand_dir.name] = groups
@@ -189,7 +209,34 @@ def _build_model_info(brand: str, name: str, modification: str | None, leaf_dir:
         status=status,
         updated_at=updated_at,
         logo_path=_find_logo(leaf_dir),
+        hero_path=_find_hero(leaf_dir),
     )
+
+
+def _find_hero(directory: Path) -> Path | None:
+    """Возвращает первую поддерживаемую большую фотографию модели (см.
+    HERO_FILENAMES) из папки модели."""
+    for filename in HERO_FILENAMES:
+        path = directory / filename
+        if path.is_file():
+            return path
+    return None
+
+
+def _hero_placeholder(cars_dir: Path) -> Path | None:
+    """Общая "пока нет фото" картинка (см. HERO_PLACEHOLDER_FILENAMES) —
+    подставляется группе, у которой своей hero_path нет вообще. Лежит в
+    cars/_shared/ РЯДОМ с *.py-хелперами (не в подпапке) — синхронизируется
+    вместе с ними при каждом старте программы (см. content_sync.sync_scripts:
+    no_recurse_dirs НЕ трогает файлы прямо в cars/_shared/, только его
+    подпапки), то есть саму картинку-заглушку тоже можно поменять файлом на
+    сервере, без пересборки."""
+    shared_dir = cars_dir / "_shared"
+    for filename in HERO_PLACEHOLDER_FILENAMES:
+        path = shared_dir / filename
+        if path.is_file():
+            return path
+    return None
 
 
 def _find_logo(directory: Path) -> Path | None:

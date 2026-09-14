@@ -38,6 +38,63 @@
     return new URL(src, assetRoot).href;
   }
 
+  // Живая фотография конкретной модели (cars/<Марка>/<Модель>/hero.webp,
+  // синхронизируется вместе со скриптами модели — см. app/scanner.py:
+  // HERO_FILENAMES, app/web/api/scanner_api.py/android mobile_bridge.py).
+  // В отличие от упакованных в сборку картинок catalog09-manifest.json (там
+  // alphaBounds/bodyBounds посчитаны заранее один раз, при подготовке
+  // ассетов), у живой фотографии этих границ нет и не будет — новую машину
+  // должно быть можно просто добавить файлом на сервер, без правки JSON и
+  // без пересборки программы/APK. Поэтому здесь эти границы считаются на
+  // лету по alpha-каналу уже загруженной картинки (один раз на URL,
+  // результат кешируется).
+  const HERO_ALPHA_MIN = 8;   // виден хоть немного — общая рамка картинки
+  const HERO_BODY_ALPHA_MIN = 235; // почти непрозрачно — кузов без мягкой тени
+  const heroBoundsCache = new Map();
+
+  async function computeHeroBounds(img, url) {
+    if (heroBoundsCache.has(url)) return heroBoundsCache.get(url);
+    let result = null;
+    try {
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (w > 0 && h > 0) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        const { data } = ctx.getImageData(0, 0, w, h);
+        let aMinX = w, aMinY = h, aMaxX = -1, aMaxY = -1;
+        let bMinX = w, bMinY = h, bMaxX = -1, bMaxY = -1;
+        for (let y = 0; y < h; y++) {
+          const row = y * w * 4;
+          for (let x = 0; x < w; x++) {
+            const a = data[row + x * 4 + 3];
+            if (a >= HERO_ALPHA_MIN) {
+              if (x < aMinX) aMinX = x; if (x > aMaxX) aMaxX = x;
+              if (y < aMinY) aMinY = y; if (y > aMaxY) aMaxY = y;
+            }
+            if (a >= HERO_BODY_ALPHA_MIN) {
+              if (x < bMinX) bMinX = x; if (x > bMaxX) bMaxX = x;
+              if (y < bMinY) bMinY = y; if (y > bMaxY) bMaxY = y;
+            }
+          }
+        }
+        if (aMaxX >= aMinX && aMaxY >= aMinY) {
+          const alphaBounds = [aMinX, aMinY, aMaxX + 1, aMaxY + 1];
+          // Если почти-непрозрачных пикселей не нашлось (совсем мягкая
+          // картинка без чёткого кузова) — используем alphaBounds и для
+          // тела тоже, лучше, чем не показать рамку вовсе.
+          const bodyBounds = (bMaxX >= bMinX && bMaxY >= bMinY)
+            ? [Math.max(bMinX, aMinX), Math.max(bMinY, aMinY), Math.min(bMaxX + 1, aMaxX + 1), Math.min(bMaxY + 1, aMaxY + 1)]
+            : alphaBounds;
+          result = { transparent: true, size: [w, h], alphaBounds, bodyBounds };
+        }
+      }
+    } catch { result = null; } // холст "испорчен" (кросс-ориджин и т.п.) или другая ошибка — просто без рамки.
+    heroBoundsCache.set(url, result);
+    return result;
+  }
+
   function resetFraming(wrapper) {
     wrapper.classList.remove('catalog09-generated', 'catalog09-framed', 'catalog09-layered', 'catalog09-car-framed', 'catalog09-ready', 'catalog10-vector');
     for (const prop of ['--catalog09-width','--catalog09-height','--catalog09-left','--catalog09-top','--catalog09-environment','--catalog10-mark']) wrapper.style.removeProperty(prop);
@@ -121,8 +178,17 @@
       return;
     }
     wrapper.classList.remove('catalog11-brand-pending');
-    const entry = entryFor(spec), generated = entryUrl(entry), original = originalUrl(spec.original);
-    const environment = spec.kind === 'model' && entry?.transparent === true ? entryUrl(manifest.environment,true) : '';
+    const entry = entryFor(spec);
+    // Настоящая фотография этой конкретной модели (см. computeHeroBounds
+    // выше) идёт ПЕРЕД упакованной в сборку картинкой — новая машина,
+    // добавленная на сервер файлом, должна сразу использовать свою
+    // фотографию, а не ждать правки catalog09-manifest.json/пересборки.
+    const heroUrl = spec.kind === 'model' ? originalUrl(spec.heroSrc) : '';
+    const isLiveHero = !!heroUrl;
+    const generated = heroUrl || entryUrl(entry);
+    const original = originalUrl(spec.original);
+    const isTransparentSource = isLiveHero || entry?.transparent === true;
+    const environment = spec.kind === 'model' && isTransparentSource ? entryUrl(manifest.environment,true) : '';
     const signature = generated+'\n'+original+'\n'+environment;
     if (!animate && record.signature === signature) return;
     record.signature = signature;
@@ -140,23 +206,25 @@
     }
     const img = document.createElement('img');
     img.alt = spec.alt || ''; img.draggable = false; img.decoding = 'async';
-    if (generated && entry?.transparent === true && spec.kind === 'model') img.classList.add('catalog09-car');
+    if (generated && isTransparentSource && spec.kind === 'model') img.classList.add('catalog09-car');
     if (!preserve) wrapper.replaceChildren(img);
     const current = () => bindings.get(wrapper) === record && record.revision === revision;
+    let liveEntry = null; // см. computeHeroBounds — заполняется в img.onload перед вызовом present()
 
     function present() {
       resetFraming(wrapper);
       if (sources[index] === generated) {
+        const activeEntry = isLiveHero ? (liveEntry || {}) : entry;
         wrapper.classList.add('catalog09-generated');
         img.dataset.catalog09Source = 'generated';
-        frameBrand(record,entry);
-        if (spec.kind === 'brand' && (entry.src.endsWith('.svg') || entry.officialContour)) {
+        frameBrand(record,activeEntry);
+        if (spec.kind === 'brand' && (activeEntry.src.endsWith('.svg') || activeEntry.officialContour)) {
           wrapper.classList.add('catalog10-vector');
           wrapper.style.setProperty('--catalog10-mark', `url("${generated}")`);
         }
-        frameCar(record,entry);
-        record.entry = entry;
-        applyEnvironment(record,environment,() => current() && record.entry === entry);
+        frameCar(record,activeEntry);
+        record.entry = activeEntry;
+        applyEnvironment(record,environment,() => current() && record.entry === activeEntry);
       } else {
         img.dataset.catalog09Source = 'original'; img.classList.remove('catalog09-car'); record.entry = null;
       }
@@ -167,6 +235,10 @@
       if (!current()) return;
       try { await img.decode(); } catch {} // A loaded fallback still remains usable.
       if (!current()) return;
+      if (isLiveHero && sources[index] === generated) {
+        liveEntry = await computeHeroBounds(img, heroUrl);
+        if (!current()) return;
+      }
       const sliding = preserve && wrapper.isConnected && !reducedMotion.matches && typeof img.animate === 'function';
       if (!sliding) {
         wrapper.replaceChildren(img);
