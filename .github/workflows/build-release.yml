@@ -158,7 +158,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # packages явно ограничен platform-tools — по умолчанию экшен пытается
+      # поставить ещё и легаси-пакет "tools", которого Google больше не
+      # раздаёт в репозитории SDK (снят примерно 14.09.2026, sdkmanager падает
+      # с "Failed to find package 'tools'", exit code 1 — реальный случай,
+      # уронил релиз v0.10.0). platform-tools (adb/fastboot) — всё, что
+      # реально нужно самой сборке; конкретные platforms/build-tools для
+      # compileSdk Gradle докачивает сам через уже принятые этим экшеном
+      # лицензии SDK.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
 
       # keystore/keystore.properties не в git (см. .gitignore) — без него
       # build.gradle.kts просто соберёт неподписанный релиз (см. комментарий
