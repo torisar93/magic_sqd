@@ -34,6 +34,7 @@
     selectEl = dialog.querySelector("#app-modal-select");
     okBtn = dialog.querySelector("#app-modal-ok");
     cancelBtn = dialog.querySelector("#app-modal-cancel");
+    dialog.addEventListener("cancel",()=>{if(resolveFn)resolveFn(null);});
     selectEl.addEventListener("change", () => {
       const manual = selectEl.value === MANUAL_CHOICE_VALUE;
       inputEl.style.display = manual ? "" : "none";
@@ -55,6 +56,7 @@
 
   function notice(message, { title = "Magic SQD", danger = false } = {}) {
     ensureBuilt();
+    okBtn.className="accent";
     titleEl.textContent = title;
     messageEl.textContent = message;
     messageEl.style.color = danger ? "var(--danger)" : "";
@@ -68,6 +70,7 @@
 
   function confirmDialog(message, { title = "Magic SQD" } = {}) {
     ensureBuilt();
+    okBtn.className="accent";
     titleEl.textContent = title;
     messageEl.textContent = message;
     messageEl.style.color = "";
@@ -75,13 +78,16 @@
     inputEl.style.display = "none";
     cancelBtn.style.display = "";
     cancelBtn.textContent = "Отмена";
-    okBtn.textContent = "Да";
+    const destructive=/форматир|безвозвратно/i.test(message);
+    okBtn.className=destructive?"danger":"accent";
+    okBtn.textContent = destructive?"Форматировать":"Продолжить";
     dialog.showModal();
     return new Promise((resolve) => { resolveFn = resolve; });
   }
 
   function promptDialog(message, { title = "Magic SQD", initialValue = "", password = false } = {}) {
     ensureBuilt();
+    okBtn.className="accent";
     titleEl.textContent = title;
     messageEl.textContent = message;
     messageEl.style.color = "";
@@ -104,6 +110,7 @@
   // stage_wizard.js, для диалогов вне этапа установки).
   function selectDialog(message, choices, { title = "Magic SQD", allowManual = true } = {}) {
     ensureBuilt();
+    okBtn.className="accent";
     titleEl.textContent = title;
     messageEl.textContent = message;
     messageEl.style.color = "";

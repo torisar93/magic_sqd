@@ -12,9 +12,12 @@
   // ==================================================================
   const usb = (() => {
     let dialog, driveSelect, showAllCheckbox, driveHintEl, formatCheckbox, fsRadios, warningEl, progressEl, logEl, startBtn, stopBtn, closeBtn;
+    let refreshBtn, statusEl, statusDetailEl, logDetails, advancedDetails;
     let drives = [];
-    let opts = null; // {modelKey, stageIndex, variant, selectedApkPaths, titleSuffix, onFinished}
-    let running = false;
+    let opts = null;
+    let running = false, preparing = false, refreshing = false;
+    let cancelRequested = false, finishDelivered = false;
+    let openRevision = 0, refreshRevision = 0, runRevision = 0;
 
     function init() {
       dialog = document.getElementById("usb-dialog");
@@ -29,118 +32,262 @@
       startBtn = document.getElementById("usb-start");
       stopBtn = document.getElementById("usb-stop");
       closeBtn = document.getElementById("usb-close");
-
-      document.getElementById("usb-refresh").addEventListener("click", refreshDrives);
+      refreshBtn = document.getElementById("usb-refresh");
+      statusEl = document.getElementById("usb06-status");
+      statusDetailEl = document.getElementById("usb06-status-detail");
+      logDetails = document.getElementById("usb06-log-details");
+      advancedDetails = document.getElementById("usb06-advanced");
+      refreshBtn.addEventListener("click", refreshDrives);
       showAllCheckbox.addEventListener("change", refreshDrives);
       formatCheckbox.addEventListener("change", updateWarning);
+      driveSelect.addEventListener("change", () => {
+        updateControls();
+        setStatus("ready", driveSelect.value ? "Всё готово к записи" : "Выберите USB-накопитель",
+          driveSelect.value ? "Файлы будут записаны на выбранную флешку." : "Подключите флешку и выберите её в списке выше.");
+      });
       startBtn.addEventListener("click", onStart);
-      stopBtn.addEventListener("click", () => {
-        window.pywebview.api.usb_cancel();
-        log("Останавливаю... (завершится на ближайшей проверке)");
-      });
+      stopBtn.addEventListener("click", onStop);
       closeBtn.addEventListener("click", onClose);
-      // Esc на нативном <dialog> закрывает его в обход кнопки "Закрыть"
-      // (событие "cancel" срабатывает до закрытия) — без этого блокировка
-      // кнопки ниже (см. setRunning) можно было бы обойти одной клавишей.
       dialog.addEventListener("cancel", (event) => {
-        if (running) event.preventDefault();
+        if (running || preparing) event.preventDefault();
       });
-
-      window.events.on("usb_log", (event) => log(event.text));
+      dialog.addEventListener("close", () => {
+        openRevision += 1;
+        refreshRevision += 1;
+        refreshing = false;
+      });
+      window.events.on("usb_log", (event) => {
+        if (!dialog.open || !running) return;
+        log(event.text);
+        if (!cancelRequested && event.text) statusDetailEl.textContent = event.text;
+      });
       window.events.on("usb_finished", onFinished);
     }
 
     function log(text) {
+      if (!text) return;
       const line = document.createElement("div");
-      line.className = `log-line log-line-${window.classifyLogLevel(text)}`;
+      line.className = `usb06-log-line log-line-${window.classifyLogLevel(text)}`;
       line.textContent = text;
       logEl.appendChild(line);
       logEl.scrollTop = logEl.scrollHeight;
     }
 
     function updateWarning() {
+      warningEl.classList.toggle("danger", formatCheckbox.checked);
       warningEl.textContent = formatCheckbox.checked
-        ? "ВНИМАНИЕ: при форматировании все данные на выбранной флешке будут удалены безвозвратно!"
-        : "Форматирование выключено — файлы будут просто скопированы поверх того, что уже есть на флешке.";
+        ? "Все данные на выбранном накопителе будут удалены. Перед началом попросим подтвердить форматирование."
+        : "Без форматирования. Существующие папки сохранятся; файлы с совпадающими именами могут быть заменены.";
+      updateControls();
+    }
+
+    function setStatus(state, title, detail) {
+      dialog.dataset.usbState = state;
+      statusEl.textContent = title;
+      statusDetailEl.textContent = detail || "";
+    }
+
+    function updateControls() {
+      const locked = running || preparing || refreshing;
+      startBtn.disabled = locked || !drives.some((drive) => drive.letter === driveSelect.value);
+      stopBtn.disabled = !running || cancelRequested;
+      stopBtn.hidden = !running;
+      driveSelect.disabled = locked;
+      refreshBtn.disabled = locked;
+      refreshBtn.setAttribute("aria-busy", String(refreshing));
+      showAllCheckbox.disabled = locked;
+      formatCheckbox.disabled = locked;
+      fsRadios.forEach((radio) => { radio.disabled = locked || !formatCheckbox.checked; });
+      closeBtn.disabled = running || preparing;
+      progressEl.hidden = !running;
+      progressEl.style.display = running ? "" : "none";
+      progressEl.classList.toggle("indeterminate", running);
+      progressEl.setAttribute("aria-busy", String(running));
+      dialog.setAttribute("aria-busy", String(running || refreshing));
+      startBtn.querySelector("span").textContent = preparing ? "Подтверждение…" : running ? "Идёт запись…" : "Записать на флешку";
+      stopBtn.textContent = cancelRequested ? "Останавливаем…" : "Остановить";
+    }
+
+    function populateDrives(selectedLetter) {
+      clear(driveSelect);
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = drives.length ? "Выберите накопитель" : "Накопители не найдены";
+      driveSelect.appendChild(placeholder);
+      for (const drive of drives) {
+        const option = document.createElement("option");
+        option.value = drive.letter;
+        option.textContent = drive.display || drive.letter;
+        driveSelect.appendChild(option);
+      }
+      driveSelect.value = drives.some((drive) => drive.letter === selectedLetter) ? selectedLetter : "";
     }
 
     async function refreshDrives() {
+      if (running || preparing) return;
+      const revision = ++refreshRevision;
+      const session = openRevision;
+      const selectedLetter = driveSelect.value;
       const showAll = showAllCheckbox.checked;
-      drives = await window.pywebview.api.usb_list_drives(showAll);
-      clear(driveSelect);
-      for (const d of drives) {
-        const option = document.createElement("option");
-        option.value = d.letter;
-        option.textContent = d.display;
-        driveSelect.appendChild(option);
+      refreshing = true;
+      updateControls();
+      driveHintEl.textContent = "Ищем подключённые накопители…";
+      try {
+        const result = await window.pywebview.api.usb_list_drives(showAll);
+        if (revision !== refreshRevision || session !== openRevision) return;
+        if (!Array.isArray(result)) throw new Error(result?.error || "Не удалось получить список накопителей.");
+        drives = result;
+        populateDrives(selectedLetter);
+        driveHintEl.textContent = showAll
+          ? "Показаны также внутренние диски, кроме системного. Проверьте накопитель перед записью."
+          : "Только съёмные USB-накопители. Внутренние и системный диски скрыты.";
+        if (selectedLetter && !driveSelect.value) {
+          setStatus("ready", "Накопитель отключён", "Выберите флешку повторно. Другой диск не будет выбран автоматически.");
+        } else {
+          setStatus("ready", driveSelect.value ? "Всё готово к записи" : "Выберите USB-накопитель",
+            drives.length ? "Проверьте выбранную флешку перед началом записи." : "Подключите флешку и обновите список.");
+        }
+        log(`Найдено накопителей: ${drives.length}`);
+      } catch (error) {
+        if (revision !== refreshRevision || session !== openRevision) return;
+        drives = [];
+        populateDrives("");
+        driveHintEl.textContent = "Список не обновлён. Проверьте подключение и попробуйте ещё раз.";
+        setStatus("error", "Не удалось найти накопители", error?.message || String(error));
+        log(error?.message || String(error));
+        logDetails.open = true;
+      } finally {
+        if (revision === refreshRevision && session === openRevision) {
+          refreshing = false;
+          updateControls();
+        }
       }
-      driveHintEl.textContent = showAll
-        ? "Показаны все локальные диски, кроме системного — будьте внимательны при выборе, чтобы не отформатировать не тот диск."
-        : "Показаны только съёмные USB-накопители — системный и внутренние диски в списке не появятся.";
-      log(`Найдено дисков: ${drives.length}`);
-    }
-
-    function setRunning(value) {
-      running = value;
-      startBtn.disabled = value;
-      stopBtn.disabled = !value;
-      driveSelect.disabled = value;
-      showAllCheckbox.disabled = value;
-      closeBtn.disabled = value;
-      progressEl.style.display = value ? "" : "none";
-      progressEl.classList.toggle("indeterminate", value);
     }
 
     async function onStart() {
+      if (running || preparing || refreshing || !dialog.open || !opts) return;
       const drive = drives.find((d) => d.letter === driveSelect.value);
       if (!drive) {
-        await window.notice("Выберите флешку из списка.");
+        setStatus("ready", "Выберите USB-накопитель", "Перед записью нужно выбрать флешку из списка.");
         return;
       }
-      const fs = fsRadios.find((r) => r.checked).value;
-      if (formatCheckbox.checked) {
-        const sizeGb = (drive.total_bytes / 1024 ** 3).toFixed(1);
-        const confirmed = await window.confirmDialog(
-          `Все данные на флешке ${drive.letter}\\ (${drive.label || "без метки"}, ${sizeGb} ГБ) будут удалены безвозвратно.\n\nПродолжить форматирование в ${fs}?`
+      const fs = fsRadios.find((r) => r.checked)?.value || "FAT32";
+      const shouldFormat = formatCheckbox.checked;
+      const launchOpts = opts;
+      const revision = ++runRevision;
+      preparing = true;
+      cancelRequested = false;
+      finishDelivered = false;
+      updateControls();
+      try {
+        if (shouldFormat) {
+          const sizeGb = Number.isFinite(Number(drive.total_bytes)) && Number(drive.total_bytes) > 0
+            ? `${(Number(drive.total_bytes) / 1024 ** 3).toFixed(1)} ГБ` : "объём не указан";
+          const confirmed = await window.confirmDialog(
+            `Накопитель: ${drive.display || drive.letter}\nДиск: ${drive.letter} · ${drive.label || "без метки"} · ${sizeGb}\nФайловая система: ${fs}\n\nВсе данные на этом диске будут удалены безвозвратно, после чего на него будут записаны файлы установки.\n\nФорматировать именно этот накопитель?`,
+            { title: "Форматирование накопителя" }
+          );
+          if (!confirmed || revision !== runRevision || !dialog.open) return;
+        }
+        running = true;
+        preparing = false;
+        updateControls();
+        setStatus("writing", "Записываем файлы на флешку", "Не отключайте накопитель. Время зависит от скорости флешки и размера файлов.");
+        const result = await window.pywebview.api.usb_start(
+          launchOpts.modelKey, launchOpts.stageIndex, launchOpts.variant, launchOpts.selectedApkPaths,
+          drive.letter, shouldFormat, fs
         );
-        if (!confirmed) return;
+        if (revision !== runRevision || finishDelivered) return;
+        if (!result?.ok) throw new Error(result?.error || "Не удалось начать запись на флешку.");
+      } catch (error) {
+        if (revision !== runRevision || finishDelivered) return;
+        running = false;
+        const message = error?.message || String(error);
+        setStatus("error", "Запись не началась", message);
+        log(message);
+        logDetails.open = true;
+      } finally {
+        if (revision === runRevision) {
+          preparing = false;
+          updateControls();
+        }
       }
-      setRunning(true);
-      const result = await window.pywebview.api.usb_start(
-        opts.modelKey, opts.stageIndex, opts.variant, opts.selectedApkPaths,
-        drive.letter, formatCheckbox.checked, fs
-      );
-      if (!result.ok) {
-        setRunning(false);
-        log(result.error);
+    }
+
+    async function onStop() {
+      if (!running || cancelRequested) return;
+      const revision = runRevision;
+      cancelRequested = true;
+      updateControls();
+      setStatus("stopping", "Останавливаем запись", "Дождитесь завершения текущей операции. Не отключайте флешку.");
+      log("Запрошена остановка. Дожидаемся завершения текущей операции.");
+      try {
+        const result = await window.pywebview.api.usb_cancel();
+        if (result?.ok === false) throw new Error(result.error || "Не удалось отправить команду остановки.");
+      } catch (error) {
+        if (revision !== runRevision || !running) return;
+        cancelRequested = false;
+        log(error?.message || String(error));
+        logDetails.open = true;
+        setStatus("writing", "Запись продолжается", "Команда остановки не отправлена. Попробуйте остановить ещё раз.");
+        updateControls();
       }
     }
 
     async function onFinished(event) {
-      if (!running) return; // диалог уже закрыт/не для этого запуска
-      setRunning(false);
+      if (!running || finishDelivered) return;
+      finishDelivered = true;
+      running = false;
+      preparing = false;
+      const wasCancelled = cancelRequested;
+      const success = !!event.success && !wasCancelled;
+      const onComplete = opts?.onFinished;
+      updateControls();
       log(event.message);
-      if (opts && opts.onFinished) opts.onFinished(event.success);
-      if (event.success) await window.notice(event.message);
-      else await window.notice(event.message, { title: "Ошибка", danger: true });
+      if (wasCancelled) {
+        setStatus("cancelled", "Запись остановлена", "Этап не завершён. Проверьте содержимое флешки перед повторной записью.");
+      } else if (success) {
+        setStatus("success", "Флешка готова", event.message || "Файлы записаны. Можно перейти к следующему шагу.");
+      } else {
+        setStatus("error", "Не удалось завершить запись", event.message || "Подробности доступны в журнале записи.");
+        logDetails.open = true;
+      }
+      if (typeof onComplete === "function") {
+        try { await onComplete(success); }
+        catch (error) { log(error?.message || String(error)); logDetails.open = true; }
+      }
     }
 
     function onClose() {
-      // Пока идёт запись (running), кнопка отключена (см. setRunning) и
-      // Esc перехвачен (см. init) — сюда попадаем, только когда процесс уже
-      // не выполняется, спрашивать подтверждение не о чем.
+      if (running || preparing) return;
       dialog.close();
     }
 
     function open(newOpts) {
+      if (running || preparing) return false;
+      openRevision += 1;
+      refreshRevision += 1;
       opts = newOpts;
-      document.getElementById("usb-dialog-title").textContent = `USB-флешка — ${opts.titleSuffix}`;
+      document.getElementById("usb-dialog-title").textContent = "Запись на флешку";
+      document.getElementById("usb06-model").textContent = opts.titleSuffix || "Подготовьте USB-накопитель для установки";
       clear(logEl);
-      setRunning(false);
-      showAllCheckbox.checked = false; // безопасный дефолт при каждом открытии — не наследуем выбор с прошлого раза
+      running = false;
+      preparing = false;
+      refreshing = false;
+      cancelRequested = false;
+      finishDelivered = false;
+      drives = [];
+      populateDrives("");
+      showAllCheckbox.checked = false;
+      formatCheckbox.checked = false;
+      fsRadios.forEach((radio) => { radio.checked = radio.value === "FAT32"; });
+      advancedDetails.open = false;
+      logDetails.open = false;
+      setStatus("ready", "Выберите USB-накопитель", "Подключите флешку и выберите её в списке выше.");
       updateWarning();
+      if (!dialog.open) dialog.showModal();
       refreshDrives();
-      dialog.showModal();
+      return true;
     }
 
     return { init, open };

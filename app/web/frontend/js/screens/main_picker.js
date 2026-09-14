@@ -22,15 +22,11 @@
   async function init(container, callbacks) {
     onModelSelected = callbacks.onModelSelected;
     container.innerHTML = `
-      <section class="catalog" aria-label="Выбор автомобиля">
-        <header class="catalog-topbar">
-          <button class="catalog-global-back" id="catalog-back" type="button" hidden>Назад</button>
-          <img class="catalog-full-logo" src="img/logo-full-dark.svg" alt="Magic SQD" />
-          <nav class="catalog-topbar-actions" aria-label="Ссылки проекта">
-            <label class="catalog-search" aria-label="Поиск в каталоге">
-              <span class="catalog-search-icon" aria-hidden="true"></span>
-              <input id="catalog-search" type="search" autocomplete="off" placeholder="Поиск" />
-            </label>
+      <section class="catalog cat-screen" aria-label="Выбор автомобиля">
+        <header class="cat-topbar">
+
+          <img class="cat-logo" src="img/logo-full-dark.svg" alt="Magic SQD" />
+          <nav class="cat-top-actions" aria-label="Ссылки проекта">
             <a class="catalog-topbar-link catalog-topbar-boosty" id="catalog-boosty" href="https://boosty.to/magic_sqd" target="_blank" rel="noopener">Boosty</a>
             <a class="catalog-topbar-link" id="catalog-github" href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener">GitHub</a>
             <button class="catalog-settings" id="catalog-settings" type="button" aria-label="Настройки приложения" title="Настройки">
@@ -39,50 +35,53 @@
             <button class="catalog-topbar-link catalog-admin-trigger" id="catalog-admin-toggle" type="button" aria-expanded="false">Вход</button>
           </nav>
         </header>
-        <aside class="catalog-admin-popover" id="catalog-admin-popover" hidden aria-label="Аккаунт">
-          <header><strong id="catalog-account-title">Вход</strong><span id="catalog-account-subtitle">Аккаунт техника — email и пароль</span></header>
+        <aside class="catalog-admin-popover menus13-account" id="catalog-admin-popover" hidden role="dialog" aria-labelledby="catalog-account-title">
+          <header class="menus13-account-header"><span class="menus13-symbol" data-menu-icon="user"></span><div><strong id="catalog-account-title">Вход</strong><span id="catalog-account-subtitle">Аккаунт техника</span></div><button id="catalog-account-close" class="menus13-close" type="button" aria-label="Закрыть аккаунт" data-menu-icon="close"></button></header>
           <div id="catalog-account-guest">
             <div class="field">
-              <span class="field-label">Email</span>
-              <input type="text" inputmode="email" id="catalog-account-email-input" autocomplete="email" />
+              <label class="field-label" for="catalog-account-email-input">Email</label>
+              <input type="email" inputmode="email" id="catalog-account-email-input" autocomplete="email" placeholder="name@example.com" />
             </div>
             <div class="field">
-              <span class="field-label">Пароль</span>
+              <label class="field-label" for="catalog-account-password-input">Пароль</label>
               <input type="password" id="catalog-account-password-input" autocomplete="current-password" />
             </div>
             <button id="catalog-account-forgot" class="link-btn" hidden>Забыли пароль?</button>
-            <p id="catalog-account-status" style="color: var(--text-dim); font-size: 12px"></p>
+            <p id="catalog-account-status" class="menus13-status" role="status" aria-live="polite"></p>
             <div class="dialog-actions spread">
               <button id="catalog-account-submit" class="accent">Войти</button>
               <button id="catalog-account-switch">Нет аккаунта? Зарегистрироваться</button>
             </div>
           </div>
           <div id="catalog-account-loggedin" hidden>
-            <p id="catalog-account-loggedin-email" style="color: var(--text-dim); font-size: 12px"></p>
-            <button id="catalog-account-change-password-toggle" class="link-btn">Сменить пароль</button>
+            <div class="menus13-identity"><span class="menus13-identity-label">Вы вошли как</span><strong id="catalog-account-loggedin-email"></strong><span id="catalog-account-role">Аккаунт техника</span></div>
+            <button id="catalog-account-change-password-toggle" class="menus13-action" aria-expanded="false" aria-controls="catalog-account-change-password"><span data-menu-icon="key"></span><span>Сменить пароль</span><span class="menus13-tail" data-menu-icon="chevron"></span></button>
             <div id="catalog-account-change-password" hidden>
               <div class="field">
-                <span class="field-label">Текущий пароль</span>
+                <label class="field-label" for="catalog-account-current-password">Текущий пароль</label>
                 <input type="password" id="catalog-account-current-password" autocomplete="current-password" />
               </div>
               <div class="field">
-                <span class="field-label">Новый пароль</span>
+                <label class="field-label" for="catalog-account-new-password">Новый пароль</label>
                 <input type="password" id="catalog-account-new-password" autocomplete="new-password" />
               </div>
               <div class="field">
-                <span class="field-label">Повторите новый пароль</span>
+                <label class="field-label" for="catalog-account-new-password-repeat">Повторите новый пароль</label>
                 <input type="password" id="catalog-account-new-password-repeat" autocomplete="new-password" />
               </div>
-              <p id="catalog-account-change-password-status" style="color: var(--text-dim); font-size: 12px"></p>
+              <p id="catalog-account-change-password-status" class="menus13-status" role="status" aria-live="polite"></p>
               <button id="catalog-account-change-password-submit" class="accent">Сохранить пароль</button>
             </div>
-            <button id="catalog-account-logout" class="danger">Выйти</button>
+            <button id="catalog-account-logout" class="danger menus13-action"><span data-menu-icon="back"></span><span>Выйти из аккаунта</span></button>
           </div>
-          <div id="catalog-admin-actions"></div>
-          <div id="catalog-admin-pending"></div>
+          <div id="catalog-admin-actions" hidden><h3 class="menus13-group-title">Управление каталогом</h3></div>
+          <div id="catalog-admin-pending" hidden></div>
+          <p id="catalog-account-global-status" class="menus13-status" role="status" aria-live="polite"></p>
         </aside>
-        <nav class="breadcrumb catalog-breadcrumb" id="picker-breadcrumb" aria-label="Путь в каталоге"></nav>
-        <div class="catalog-grid" id="picker-grid"></div>
+        <div class="cat-path"><button id="catalog-back" type="button" class="cat-back" hidden aria-label="Назад">←</button><nav id="picker-breadcrumb" aria-label="Путь в каталоге"></nav></div>
+        <div class="cat-heading"><h1 id="cat-heading">Автомобили</h1><span id="cat-count"></span></div>
+        <div class="cat-tools"><label class="cat-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 4 4"/></svg><input id="catalog-search" type="search" autocomplete="off" placeholder="Марка или модель" aria-label="Поиск марки или модели"></label><button id="cat-reset" type="button" hidden>Сбросить</button></div>
+        <div class="cat-grid" id="picker-grid"></div>
         <p class="catalog-empty" id="catalog-empty" hidden>Ничего не найдено. Попробуйте другой запрос.</p>
         <div class="catalog-startup-overlay" id="catalog-startup-overlay" hidden aria-live="polite">
           <div class="catalog-startup-progress">
@@ -106,6 +105,7 @@
     adminPopoverEl = container.querySelector("#catalog-admin-popover");
     adminActionsEl = container.querySelector("#catalog-admin-actions");
     adminPendingEl = container.querySelector("#catalog-admin-pending");
+    adminPopoverEl.querySelectorAll("[data-menu-icon]").forEach(node => node.append(window.AppIcons.icon(node.dataset.menuIcon)));
     // Одна и та же кнопка/попап — и для входа в аккаунт (email+пароль,
     // регистрация), и (если у аккаунта есть права) для админ-функций (см.
     // auth_dialog.js: attach — владеет содержимым попапа, здесь только
@@ -122,11 +122,13 @@
       adminPopoverEl.hidden = true;
       adminToggleEl.setAttribute("aria-expanded", "false");
     };
+    container.querySelector("#catalog-account-close").addEventListener("click", () => { closeAccountPopover(); adminToggleEl.focus({ preventScroll: true }); });
     adminToggleEl.addEventListener("click", (event) => {
       event.stopPropagation();
       const willOpen = adminPopoverEl.hidden;
       adminPopoverEl.hidden = !willOpen;
       adminToggleEl.setAttribute("aria-expanded", String(willOpen));
+      if (willOpen) adminPopoverEl.querySelector("#catalog-account-close").focus({ preventScroll: true });
     });
     document.addEventListener("click", (event) => {
       if (!adminPopoverEl.hidden && !adminPopoverEl.contains(event.target) && event.target !== adminToggleEl) {
@@ -142,12 +144,19 @@
     // renderCatalog) быстрый набор текста ощутимо подвисает, ждём паузу
     // в наборе вместо перерисовки на каждый символ.
     let searchDebounceTimer = null;
+    container.querySelector("#cat-reset").addEventListener("click",()=>{searchEl.value="";renderCurrentStep();searchEl.focus();});
     searchEl.addEventListener("input", () => {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(renderCurrentStep, 150);
     });
     backEl.addEventListener("click", goBackOneStep);
     settingsEl.addEventListener("click", () => window.settingsDialog.open());
+    const header=container.querySelector('.cat-topbar');
+    header.insertBefore(container.querySelector('.cat-tools'),container.querySelector('.cat-top-actions'));
+    const logBtn=LabUI.n('button','header-log');logBtn.type='button';logBtn.append(LabUI.icon('log'),LabUI.n('span','','Лог'));
+    logBtn.addEventListener('click',()=>setLogExpanded(true));
+    container.querySelector('.cat-top-actions').prepend(logBtn);
+    container.querySelector('#catalog-admin-toggle').title='Аккаунт';
     await reload();
   }
 
@@ -162,15 +171,27 @@
     // выходе незачем, достаточно спрятать сам блок (см. ниже).
     if (enabled && !adminModeReady) {
       adminModeReady = true;
-      adminToggleEl.closest(".catalog").classList.add("is-admin-mode");
       const actions = document.querySelector("#left-panel > .left-actions");
       const pending = document.querySelector("#left-panel > #pending-section");
-      if (actions) adminActionsEl.appendChild(actions);
+      if (actions) {
+        const labels = { "admin-upload-btn": ["upload", "Выгрузить на сервер"], "admin-add-apk-btn": ["apps", "Добавить APK"], "admin-browse-btn": ["folder", "Файлы на сервере"], "admin-logout-btn": ["back", "Выйти из аккаунта"] };
+        Object.entries(labels).forEach(([id, [symbol, text]]) => {
+          const button = actions.querySelector(`#${id}`);
+          if (!button) return;
+          button.classList.add("menus13-action");
+          button.classList.remove("accent");
+          const label = document.createElement("span"); label.textContent = text;
+          button.replaceChildren(window.AppIcons.icon(symbol), label);
+          if (id !== "admin-logout-btn") { const tail = window.AppIcons.icon("chevron"); tail.classList.add("menus13-tail"); button.append(tail); }
+        });
+        adminActionsEl.appendChild(actions);
+      }
       if (pending) adminPendingEl.appendChild(pending);
     }
     adminActionsEl.hidden = !enabled;
     adminPendingEl.hidden = !enabled;
-    if (!enabled) adminToggleEl.closest(".catalog").classList.remove("is-admin-mode");
+    adminPopoverEl.classList.toggle("is-admin-mode", !!enabled);
+    document.querySelector(".catalog")?.classList.toggle("is-admin-mode", !!enabled);
   }
 
   async function reload() {
@@ -214,11 +235,12 @@
     selectedBrand = brand;
     selectedGroup = null;
     searchEl.value = "";
+    selectedGroup = brand.groups[0] || null;
     renderCurrentStep();
   }
 
   function showModificationStep(brand, group) {
-    step = "modification";
+    step = "model";
     selectedBrand = brand;
     selectedGroup = group;
     searchEl.value = "";
@@ -232,7 +254,7 @@
 
   function showModelListFor(model) {
     const brand = data && data.brands.find((item) => item.name === model?.brand);
-    if (brand) showModelStep(brand);
+    if (brand) { showModelStep(brand); const group=brand.groups.find(g=>g.name===model?.name); if(group)showModificationStep(brand,group); }
     else showBrandStep();
   }
 
@@ -278,28 +300,30 @@
       return;
     }
 
-    if (step === "model") {
-      renderCatalog({
-        items: selectedBrand.groups.map((group) => ({
-          kind: "model", title: group.name, logo: group.logo || group.leaf?.logo, ...groupCardStatus(group),
-          meta: group.has_modifications
-            ? `${group.modifications.length} ${plural(group.modifications.length, "версия", "версии", "версий")}`
-            : group.leaf.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
-          action: group.has_modifications ? "Выбрать версию" : "Открыть",
-          hasVariants: group.has_modifications,
-          onClick: () => (group.has_modifications ? showModificationStep(selectedBrand, group) : selectModel(group.leaf)),
-        })),
-      });
-      return;
-    }
+    renderModelWorkspace();
+  }
 
-    renderCatalog({
-      items: selectedGroup.modifications.map((modification) => ({
-        kind: "variant", title: modification.modification, logo: modification.logo || selectedGroup.logo, status: modification.status_color,
-        meta: modification.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
-        action: "Открыть", onClick: () => selectModel(modification),
-      })),
-    });
+  function renderModelWorkspace() {
+    renderBreadcrumb();
+    searchEl.placeholder='Найти модель';
+    document.getElementById('cat-reset').hidden=!searchEl.value;
+    gridEl.dataset.level='model';gridEl.replaceChildren();emptyEl.hidden=true;
+    const layout=LabUI.n('div','model-workspace');
+    const list=LabUI.n('div','model-list');
+    list.append(LabUI.n('h2','',`Модели ${selectedBrand.name}`));
+    const query=searchEl.value.trim().toLocaleLowerCase();
+    const groups=selectedBrand.groups.filter(g=>g.name.toLocaleLowerCase().includes(query));
+    if(!groups.length)list.append(LabUI.n('p','', 'Ничего не найдено'));
+    for(const group of groups){
+      const card=CatalogUI.card({kind:'model',name:group.name,image:group.logo||group.leaf?.logo,
+        meta:group.has_modifications?`${group.modifications.length} версии`:'',
+        onClick:()=>{selectedGroup=group;list.querySelectorAll('.cat-card').forEach(c=>{c.classList.toggle('selected',c===card);c.setAttribute('aria-pressed',String(c===card));});const g=group;const detail=CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel});layout.querySelector('.model-detail')?.replaceWith(detail);}});
+      card.classList.toggle('selected',group===selectedGroup);card.setAttribute('aria-pressed',String(group===selectedGroup));list.append(card);
+    }
+    layout.append(list);
+    if(selectedGroup){const g=selectedGroup;layout.append(CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,
+      versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel}));}
+    gridEl.append(layout);
   }
 
   function buildBrandSearchResults(query) {
@@ -319,9 +343,7 @@
             meta: brand.name,
             action: group.has_modifications ? "Выбрать версию" : "Открыть",
             hasVariants: group.has_modifications,
-            onClick: () => (group.has_modifications
-              ? showModificationStep(brand, group)
-              : selectModel(group.leaf)),
+            onClick: () => showModificationStep(brand, group),
           });
         }
         if (!group.has_modifications) continue;
@@ -339,12 +361,16 @@
   }
 
   function renderCatalog(view) {
-    searchEl.placeholder = "Поиск";
+    searchEl.placeholder = step === "brand" ? "Марка или модель" : step === "model" ? "Найти модель" : "Найти версию";
+    document.getElementById("cat-heading").textContent = step === "brand" ? "Автомобили" : step === "model" ? selectedBrand.name : selectedGroup.name;
+    gridEl.dataset.level = step;
+    document.getElementById("cat-reset").hidden = !searchEl.value;
     renderBreadcrumb();
     const query = searchEl.value.trim().toLocaleLowerCase();
     const visibleItems = query
       ? view.items.filter((item) => `${item.title} ${item.meta}`.toLocaleLowerCase().includes(query))
       : view.items;
+    document.getElementById("cat-count").textContent = `Показано: ${visibleItems.length}`;
     gridEl.innerHTML = "";
     // Показываем "Ничего не найдено" только когда пусто именно из-за
     // введённого поискового запроса — иначе тот же текст ошибочно всплывал
@@ -362,67 +388,8 @@
     gridEl.appendChild(fragment);
   }
 
-  function createCard(item, index) {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = `catalog-card catalog-card-${item.kind}`;
-    card.style.setProperty("--card-order", Math.min(index, 10));
-    card.setAttribute("aria-label", `${item.title}. ${item.meta}`);
-
-    const visual = document.createElement("span");
-    visual.className = "catalog-card-visual";
-    if (item.logo) {
-      const logo = document.createElement("img");
-      logo.className = item.kind === "brand" ? "catalog-brand-logo" : "catalog-model-logo";
-      logo.src = item.logo;
-      logo.alt = `Логотип ${item.title}`;
-      if (item.kind === "model") {
-        logo.addEventListener("error", () => {
-          logo.replaceWith(defaultModelLogo(item.title));
-        }, { once: true });
-      }
-      visual.appendChild(logo);
-    } else if (item.kind === "brand") {
-        const monogram = document.createElement("span");
-        monogram.className = "catalog-monogram";
-        monogram.textContent = item.title.slice(0, 2).toLocaleUpperCase();
-        visual.appendChild(monogram);
-    } else {
-      visual.appendChild(defaultModelLogo(item.title));
-    }
-    card.appendChild(visual);
-
-    const content = document.createElement("span");
-    content.className = "catalog-card-content";
-    const title = document.createElement("span");
-    title.className = "catalog-card-title";
-    title.textContent = item.title;
-    const meta = document.createElement("span");
-    meta.className = "catalog-card-meta";
-    meta.textContent = item.meta;
-    content.append(title, meta);
-    card.appendChild(content);
-
-    const footer = document.createElement("span");
-    footer.className = "catalog-card-footer";
-    if (item.statuses && item.statuses.length) {
-      const group = document.createElement("span");
-      group.className = "catalog-status-group";
-      for (const color of item.statuses) group.appendChild(statusBadge(color));
-      footer.appendChild(group);
-    } else if (item.status) {
-      footer.appendChild(statusBadge(item.status));
-    }
-    const action = document.createElement("span");
-    action.className = "catalog-card-action";
-    action.textContent = item.action || "Открыть";
-    footer.appendChild(action);
-    card.appendChild(footer);
-    card.addEventListener("click", () => {
-      card.classList.add("is-selected");
-      item.onClick();
-    });
-    return card;
+  function createCard(item) {
+    return window.CatalogUI.card({kind:item.kind,name:item.title,meta:item.meta,image:item.logo,colors:item.statuses || (item.status ? [item.status] : []),action:item.action,onClick:item.onClick});
   }
 
   function defaultModelLogo(title) {
@@ -454,8 +421,8 @@
   }
 
   function renderBreadcrumb() {
-    crumbEl.innerHTML = "";
-    crumbEl.hidden = true;
+    crumbEl.textContent = selectedBrand ? `Все марки / ${selectedBrand.name}` : "";
+    crumbEl.hidden = false;
     backEl.hidden = step === "brand";
   }
 
@@ -475,7 +442,7 @@
   }
 
   window.mainPicker = {
-    init, reload, getBrands, showHome: showBrandStep, showModelListFor,
+    init, reload, getBrands, showHome: showBrandStep, showModelListFor, goBack:goBackOneStep, canGoBack:()=>step!=="brand",
     showStartupLoading, setStartupProgress, hideStartupLoading, setAdminMode,
   };
 })();

@@ -31,6 +31,8 @@
   function setBusy(busy) {
     progressEl.style.display = busy ? "" : "none";
     progressEl.classList.toggle("indeterminate", busy);
+    listEl.setAttribute("aria-busy", String(busy));
+    document.getElementById("pending-refresh-btn").disabled = busy;
   }
 
   function renderEmpty(text, showLoginLink) {
@@ -48,15 +50,17 @@
 
   async function reload() {
     setBusy(true);
-    const result = await window.pywebview.api.submissions_list();
-    setBusy(false);
+    let result;
+    try { result = await window.pywebview.api.submissions_list(); }
+    catch (_) { renderEmpty("Не удалось загрузить заявки. Повторите обновление."); return; }
+    finally { setBusy(false); }
     if (!result.ok) {
       renderEmpty(result.error, /войдите/i.test(result.error || ""));
       return;
     }
     countEl.textContent = result.items.length ? `(${result.items.length})` : "";
     if (result.items.length === 0) {
-      renderEmpty("Пусто.");
+      renderEmpty("Новых заявок нет.");
       return;
     }
     renderList(result.items);

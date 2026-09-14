@@ -281,7 +281,8 @@ def list_apks(apk_dir: str, base_url: str) -> str:
     return _list_apks(Path(apk_dir), base_url)
 
 
-def ensure_apks_downloaded(apk_dir: str, cars_dir: str, base_url: str, paths_json: str) -> str:
+def ensure_apks_downloaded(apk_dir: str, cars_dir: str, base_url: str, paths_json: str,
+                           progress=None) -> str:
     """Докачивает то, чего ещё нет на диске, из paths_json — общую
     библиотеку (apk/) И "свои" файлы конкретной модели (files/pack*/...,
     files/adb_N/..., files/actions_i_j/...) теперь одинаково — см.
@@ -292,5 +293,9 @@ def ensure_apks_downloaded(apk_dir: str, cars_dir: str, base_url: str, paths_jso
     lines = []
     paths = json.loads(paths_json)
     downloaded = _ensure_apks_downloaded(Path(apk_dir), Path(cars_dir), base_url, paths,
-                                          log=lambda m: lines.append(m))
+                                          log=lambda m: lines.append(m),
+                                          on_file_progress=(lambda path, done, total: progress.update(path, done, total))
+                                          if progress is not None else None,
+                                          check_cancelled=(lambda: progress.checkCancelled())
+                                          if progress is not None else lambda: None)
     return json.dumps({"downloaded": downloaded, "log": lines})

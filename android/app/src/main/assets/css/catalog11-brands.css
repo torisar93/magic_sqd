@@ -1,0 +1,79 @@
+/* LAB12: preserve official masks and never reveal a coloured loading image. */
+.cat-brand .cat-visual > img { opacity:0; }
+.cat-brand .cat-visual.catalog09-ready:not(.catalog10-vector) > img {
+  opacity:1;
+  filter:grayscale(1);
+}
+@property --catalog11-light-x { syntax:'<percentage>'; inherits:true; initial-value:50%; }
+@property --catalog11-light-y { syntax:'<percentage>'; inherits:true; initial-value:24%; }
+@property --catalog11-light-strength { syntax:'<number>'; inherits:true; initial-value:0; }
+
+/* Replace the old lab-enter/nth-child animation only for brand tiles. */
+.cat-grid > .cat-card.cat-brand { animation:none!important; animation-delay:0s!important; }
+.cat-grid > .cat-card.cat-brand.catalog12-brand {
+  opacity:1; translate:0 0;
+  transform:perspective(850px) translateY(var(--catalog12-lift,0px))
+    rotateX(var(--catalog12-tilt-x,0deg)) rotateY(var(--catalog12-tilt-y,0deg))!important;
+  transform-origin:50% 55%;
+  transition:opacity 440ms cubic-bezier(.2,.75,.25,1) var(--catalog12-entry-delay,0ms),
+    translate 560ms cubic-bezier(.16,.8,.2,1) var(--catalog12-entry-delay,0ms),
+    transform 340ms cubic-bezier(.2,.8,.2,1),
+    background 240ms,border-color 240ms,box-shadow 340ms!important;
+}
+.cat-grid > .cat-card.cat-brand.catalog12-wait { opacity:0; translate:0 16px; }
+.cat-grid > .cat-card.cat-brand.catalog12-entering { will-change:opacity,translate; }
+.cat-grid > .cat-card.cat-brand.catalog12-immediate {
+  opacity:1; translate:0 0;
+  transition:transform 340ms cubic-bezier(.2,.8,.2,1),background 240ms,border-color 240ms,box-shadow 340ms!important;
+}
+.cat-card.cat-brand.catalog12-brand > .cat-visual {
+  transform:translate(var(--catalog12-mark-x,0px),var(--catalog12-mark-y,0px));
+  transition:transform 340ms cubic-bezier(.2,.8,.2,1);
+}
+.cat-card.cat-brand.catalog12-brand:focus-visible {
+  border-color:#b8eee099!important;
+  box-shadow:inset 0 1px 0 #edfff32b,0 8px 24px #06101750!important;
+}
+.cat-card.cat-brand.catalog12-brand:active:not(:disabled) { transform:translateY(-1px) scale(.985)!important; }
+.cat-grid > .cat-card.cat-brand.catalog12-brand:disabled { transform:none!important; }
+
+@media (hover:hover) and (pointer:fine) {
+  .cat-card.cat-brand.catalog12-pointer {
+    background:radial-gradient(ellipse at var(--catalog12-card-x,50%) var(--catalog12-card-y,35%),#b4dbe128,transparent 78%),linear-gradient(150deg,#2d3b44,#1d2a31)!important;
+    border-color:#bbd7df65!important;
+    box-shadow:inset 0 1px 0 #ebfbff33,0 12px 28px #050d1660!important;
+    transition:opacity 440ms,translate 560ms,transform 160ms cubic-bezier(.2,.7,.3,1),background 240ms,border-color 240ms,box-shadow 240ms!important;
+  }
+  .cat-card.cat-brand.catalog12-pointer > .cat-visual { transition-duration:160ms; }
+  .cat-brand .catalog10-vector::after {
+    background:
+      linear-gradient(112deg,
+        transparent calc(var(--catalog11-light-x) - 32%),
+        rgb(234 252 255 / calc(var(--catalog11-light-strength) * .68)) calc(var(--catalog11-light-x) - 13%),
+        rgb(255 255 255 / var(--catalog11-light-strength)) calc(var(--catalog11-light-x) - 3%),
+        rgb(255 255 255 / var(--catalog11-light-strength)) calc(var(--catalog11-light-x) + 5%),
+        rgb(31 54 69 / calc(var(--catalog11-light-strength) * .52)) calc(var(--catalog11-light-x) + 17%),
+        transparent calc(var(--catalog11-light-x) + 34%)),
+      radial-gradient(ellipse 65% 140% at var(--catalog11-light-x) var(--catalog11-light-y),
+        rgb(243 253 255 / calc(var(--catalog11-light-strength) * .3)),transparent 76%),
+      linear-gradient(168deg,#f5f7f7 3%,#e4eaec 20%,#bcc9ce 38%,#f3f7f7 48%,#a2b0b8 72%,#dce5e8 92%);
+    transition:--catalog11-light-x 320ms ease-out,--catalog11-light-y 320ms ease-out,--catalog11-light-strength 320ms ease-out;
+  }
+  .cat-brand .catalog10-vector.catalog11-lit::after {
+    transition:--catalog11-light-x 140ms ease-out,--catalog11-light-y 140ms ease-out,--catalog11-light-strength 140ms ease-out;
+  }
+}
+@media (prefers-reduced-motion:reduce) {
+  .cat-grid > .cat-card.cat-brand.catalog12-brand,
+  .cat-card.cat-brand.catalog12-brand > .cat-visual {
+    opacity:1!important;translate:none!important;transform:none!important;
+    animation:none!important;transition:none!important;will-change:auto!important;
+  }
+  .cat-brand .catalog10-vector::after { transition:none!important; }
+}
+html.reduce-motion .cat-grid > .cat-card.cat-brand.catalog12-brand,
+html.reduce-motion .cat-card.cat-brand.catalog12-brand > .cat-visual {
+  opacity:1!important;translate:none!important;transform:none!important;
+  animation:none!important;transition:none!important;will-change:auto!important;
+}
+html.reduce-motion .cat-brand .catalog10-vector::after { transition:none!important; }

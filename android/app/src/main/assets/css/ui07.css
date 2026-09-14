@@ -1,0 +1,64 @@
+/* One outer gutter. Cards do not add a second narrow page inside the stage. */
+:root{--mobile-gutter:16px}
+#screen-wizard{padding:0!important;overflow:hidden}
+#wizard-content{padding:0 var(--mobile-gutter);box-sizing:border-box;min-width:0;scrollbar-gutter:auto}
+#wizard-content>.stage-page{width:100%;max-width:850px;box-sizing:border-box;padding-left:0!important;padding-right:0!important;margin-left:auto;margin-right:auto;min-width:0}
+#wizard-content>.stage-page>*{min-width:0;box-sizing:border-box}
+#screen-wizard>.adb-bar{margin-left:var(--mobile-gutter)!important;margin-right:var(--mobile-gutter)!important}
+.stage-page #adb-bar{margin-left:0!important;margin-right:0!important}
+.topbar,.wizard-nav{padding-left:var(--mobile-gutter)!important;padding-right:var(--mobile-gutter)!important}
+#adb-bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;box-sizing:border-box;min-width:0}
+#adb-bar #adb-status,.flow-stage #adb-bar #adb-status{flex:1 1 120px;min-width:0!important;max-width:100%;white-space:normal;overflow-wrap:anywhere;word-break:normal;line-height:1.45;font-size:13px}
+#adb-bar #adb-status.connected{color:#b7e4d2}
+#adb-bar #adb-connect-btn,.flow-stage #adb-bar #adb-connect-btn{flex:0 0 auto;max-width:100%;min-height:44px;height:auto;margin:0;white-space:normal;overflow-wrap:anywhere;line-height:1.35;padding:10px 12px}
+#adb-bar .adb-mode-toggle{flex-basis:100%;min-width:0;margin:0;gap:8px}
+#adb-bar .adb-mode-toggle>button{min-width:0;flex:1;min-height:44px}
+.app-selection-card{display:flex;flex-direction:column;gap:16px;border:1px solid #cce6e52c;border-radius:15px;padding:18px;margin:0;background:radial-gradient(ellipse at 0 0,#a4d4d41a,transparent 90%),linear-gradient(130deg,#30454e8a,#1a2c3573);box-shadow:inset 0 1px 0 #dffff31c,0 7px 20px #08101920;min-width:0}
+.app-selection-copy h3{font-size:20px;line-height:1.3;font-weight:500;margin:0;color:#eaf3f4}
+.app-selection-total{margin:7px 0 0;font-size:15px;line-height:1.45;color:#bfdbd8}
+.stage-page[data-stage-type=apps] .app-selection-total{margin:0;font-size:20px;line-height:1.35;color:#e9f2f2;font-weight:500}
+.app-selection-required{display:block;margin-top:5px;font-size:12px;line-height:1.45;color:#9bb4bf}
+.app-selection-preview{display:flex;align-items:center;gap:11px;min-width:0}
+.app-selection-preview-item{display:block;flex:0 0 40px;width:40px;height:40px}
+.app-selection-preview .apk-icon{width:40px!important;height:40px!important;min-width:40px!important;border-radius:10px}
+.app-selection-more{display:grid;place-items:center;min-width:36px;height:38px;flex:0 0 36px;font-size:14px;color:#bed7d5;border-radius:10px;background:#8cb8ad15}
+.app-selection-card .app-select-open{width:100%;min-height:48px;font-size:14px;gap:10px;margin:0;padding:11px 14px;line-height:1.4}
+.usb-step-card>.app-selection-card{border:0;border-top:1px solid #c8ede422;border-bottom:1px solid #c8ede422;border-radius:0;box-shadow:none;background:none;padding:13px 0;gap:12px}
+.usb-step-card .app-selection-copy h3{font-size:15px}.usb-step-card .app-selection-total{font-size:13px;margin-top:5px}
+.is-running>.app-selection-card{display:none!important}
+dialog.apps-picker-dialog{width:min(680px,calc(100vw - 32px));height:min(840px,calc(100dvh - 32px));max-width:none;max-height:none;padding:0!important;overflow:hidden;border-radius:20px;box-sizing:border-box}
+dialog.apps-picker-dialog[open]{display:flex;flex-direction:column;gap:0}
+.apps-picker-heading{display:flex;align-items:center;gap:12px;padding:19px 20px 16px;border-bottom:1px solid #d1eee420;flex-shrink:0}
+.apps-picker-heading>div{flex:1;min-width:0}
+.apps-picker-heading h2{font-size:23px;line-height:1.3;margin:0;letter-spacing:-.3px}
+.apps-picker-count{font-size:12px;line-height:1.45;margin:6px 0 0;color:#accac5}
+.apps-picker-heading .apps-picker-close{flex:0 0 44px;width:44px;height:44px;min-width:44px;min-height:44px;margin:0;padding:10px}
+.apps-picker-close>span:not(.ui-icon){display:none}
+.apps-picker-search-wrap{padding:16px 20px 12px;flex-shrink:0}
+.apps-picker-search-wrap .apps-picker-search{width:100%;height:46px;min-height:46px;max-height:46px;margin:0;padding:10px 13px;font-size:15px;box-sizing:border-box;min-width:0;border-radius:11px}
+.apps-picker-body{min-height:0;flex:1;overflow-y:auto;overflow-x:hidden;padding:0 20px 20px;overscroll-behavior:contain;scrollbar-gutter:auto}
+.apps-picker-body>details,.apps-picker-body>section{margin:14px 0 0}
+.apps-picker-body .apps-section,.apps-picker-body .apps-library{background:none!important;border:0!important;box-shadow:none!important;padding:0!important;border-radius:0}
+.apps-picker-body .apps-library{margin-top:16px}
+.apps-picker-body .apps-library>.apps-section{margin:0!important}
+.apps-picker-body .apps-section-title,.apps-picker-body .apps-library>summary,.apps-picker-body .apk-category>summary{min-height:44px;height:auto;margin:0;padding:10px 0;font-size:14px;line-height:1.4;font-weight:500;color:#c7dedf}
+.apps-picker-body .apps-section-required>summary:before{content:none}
+.apps-picker-body .apps-section-required>summary:after{margin-left:auto}
+.apps-picker-body .apps-section-title{border:0;background:none}
+.apps-picker-body .apps-library>summary{font-size:16px}
+.apps-picker-body .stage-apps-list{display:flex;flex-direction:column;gap:8px;list-style:none;padding:0;margin:0 0 6px}
+.apps-picker-body .app-choice{display:flex;align-items:center;flex-wrap:wrap;width:100%;min-width:0;min-height:66px;padding:12px!important;gap:10px;border:1px solid #bddde320;border-radius:12px;background:#10222966;box-sizing:border-box;margin:0}
+.apps-picker-body .app-choice .apk-icon{order:0;flex:0 0 38px!important;width:38px!important;height:38px!important;min-width:38px!important;max-width:38px!important}
+.apps-picker-body .app-choice .apk-icon img{width:38px;height:38px;object-fit:contain}
+.apps-picker-body .app-choice-name{order:1;flex:1;min-width:0;font-size:15px;line-height:1.4;white-space:normal;overflow-wrap:anywhere;text-align:left}
+.apps-picker-body .app-choice input{order:4;width:22px;height:22px;flex:0 0 22px;margin:0;align-self:center}
+.apps-picker-body .apk-info-btn{order:3;flex:0 0 44px;width:44px;height:44px;min-width:44px;min-height:44px;padding:10px!important;margin:0;border:0!important;background:none!important;box-shadow:none!important;font-size:15px}
+.apps-picker-body .app-personal-apk-remove{order:5;min-height:44px;font-size:12px;padding:8px 11px;margin-left:auto}
+.apps-picker-body .apk-desc{order:6;flex-basis:100%;font-size:13px;line-height:1.5;margin:0;padding-top:4px}
+.apps-picker-body .app-download-mark{order:5;flex-basis:100%;font-size:11px;line-height:1.4;color:#8eaab6;margin:0 0 0 48px}
+.apps-picker-body .app-personal-apk-add{width:100%;height:auto;min-height:48px;margin:0;font-size:14px;padding:12px;box-sizing:border-box}
+.apps-picker-body [hidden]{display:none!important}
+.apps-picker-empty{padding:24px 0;margin:0;font-size:14px;line-height:1.6;color:#b5cbd5}
+.apps-picker-actions{display:flex;align-items:center;gap:12px;flex-shrink:0;margin:0;padding:16px 20px calc(16px + env(safe-area-inset-bottom,0px));border-top:1px solid #c4e6e124;background:linear-gradient(120deg,#293d45,#20323c)}
+.apps-picker-actions>button{flex:1;min-width:0;width:auto;min-height:48px;height:48px;padding:11px 16px;margin:0;font-size:15px}
+@media(max-width:600px){dialog.apps-picker-dialog{width:100vw;height:100dvh;max-width:100vw;max-height:100dvh;margin:0;border-radius:0;border-left:0!important;border-right:0!important;border-top:0!important}.apps-picker-heading{padding:16px var(--mobile-gutter) 14px}.apps-picker-search-wrap{padding:14px var(--mobile-gutter) 12px}.apps-picker-body{padding:0 var(--mobile-gutter) 16px}.apps-picker-actions{padding-left:var(--mobile-gutter);padding-right:var(--mobile-gutter)}.apps-picker-heading h2{font-size:22px}}

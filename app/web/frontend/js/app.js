@@ -22,17 +22,12 @@ function getSavedLogHeight() {
 // "Развернуть"/"Свернуть", так и кликом по карточкам (см. ниже), так и
 // автоматически при фокусе в поле консоли/чата.
 function setLogExpanded(expanded) {
-  const card = document.getElementById("log-card");
-  const panel = document.getElementById("log-panel");
-  card.classList.toggle("is-expanded", expanded);
-  // Пустая строка — не инлайновая высота, а откат к базовому CSS-правилу
-  // #log-panel{height:54px} (свёрнутое состояние); инлайн выставляем только
-  // на развёрнутом, он и перекрывает #log-card.is-expanded #log-panel{...}
-  // из CSS (тот теперь просто дефолт на случай ошибки JS).
-  panel.style.height = expanded ? `${getSavedLogHeight()}px` : "";
-  const button = document.getElementById("log-toggle");
-  button.textContent = expanded ? "Свернуть" : "Развернуть";
-  button.setAttribute("aria-expanded", String(expanded));
+  const dialog=document.getElementById('lab-log-dialog');
+  if(!dialog)return;
+  document.getElementById('log-card').classList.toggle('is-expanded',expanded);
+  document.getElementById('log-toggle').setAttribute('aria-expanded',String(expanded));
+  if(expanded&&!dialog.open){dialog.showModal();document.getElementById('log-panel').scrollTop=1e9;}
+  if(!expanded&&dialog.open)dialog.close();
 }
 
 // Перетаскиваемая граница между карточкой инструкции и карточкой лога (см.
@@ -430,6 +425,10 @@ function onModelSelected(model) {
 }
 
 function returnToCatalog() {
+  if (window.stageWizard.isBusy && window.stageWizard.isBusy()) {
+    window.notice("Дождитесь завершения этапа или остановите его кнопкой «Стоп».", { title: "Идёт установка" });
+    return;
+  }
   const previousModel = currentModel;
   window.stageWizard.flushAbandoned();
   currentModel = null;
@@ -682,7 +681,7 @@ window.addEventListener("pywebviewready", async () => {
   // запомненной перетаскиванием высоты, см. getSavedLogHeight) — тот же
   // приём, что и сворачивание/разворачивание боковых панелей в некоторых
   // IDE, просто по клику, а не отдельной кнопкой каждый раз.
-  document.getElementById("adb-console-input").addEventListener("focus", () => setLogExpanded(true));
+
   document.getElementById("install-content").closest(".card").addEventListener("click", () => setLogExpanded(false));
   // Сам текст инструкции рендерится в sandboxed <iframe> (см. stage_wizard.js:
   // buildInstructionBlock) — клики внутри него вообще не всплывают в

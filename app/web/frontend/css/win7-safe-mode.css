@@ -1,0 +1,44 @@
+/* Аварийный режим для Win7 (старый Chromium в Qt5/PyQt5, см.
+   installer_win7_x86.iss). Класс html.win7-safe-mode ставится в dom.js
+   через feature-detection (тот же CSS.supports('selector(:has(*))'),
+   что уже используется для .has-model-grid — единственные два движка,
+   в которых вообще запускается это приложение, это WebView2 (x64) и этот
+   QtWebEngine (Win7), так что ложных срабатываний не бывает).
+
+   Задача не "красиво", а "работает": без анимаций/переходов, с
+   принудительным центрированием диалогов (нативное центрирование
+   <dialog> на этом движке не пересчитывается при изменении высоты
+   контента и укатывает диалог за нижний край окна) и с гарантированно
+   видимыми иконками марок (пропускаем reveal-по-готовности и
+   metallic-эффект с бликом — показываем сразу серую иконку). */
+
+html.win7-safe-mode,
+html.win7-safe-mode * {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+
+html.win7-safe-mode dialog[open] {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%) !important;
+  max-height: 90vh !important;
+  max-width: 92vw !important;
+}
+
+html.win7-safe-mode .cat-visual img,
+html.win7-safe-mode .cat-brand .cat-visual img,
+html.win7-safe-mode .model-hero img {
+  opacity: 1 !important;
+  filter: grayscale(1) !important;
+}
+
+html.win7-safe-mode .cat-grid > .cat-card.cat-brand {
+  opacity: 1 !important;
+  transform: none !important;
+}

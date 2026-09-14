@@ -115,7 +115,8 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
     return json.dumps(result)
 
 
-def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, log=lambda m: None) -> int:
+def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, log=lambda m: None,
+                          on_file_progress=None, check_cancelled=lambda: None) -> int:
     """Докачивает из paths (абсолютные локальные пути) только то, чего ещё
     нет на диске — вызывается прямо перед исполнением apps/usb/adb/actions-
     этапа, использующего отмеченные техником или прикреплённые файлы (см.
@@ -142,6 +143,7 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
     manifest = fetch_manifest(base_url)
     downloaded = 0
     for p in paths:
+        check_cancelled()
         local_path = Path(p).resolve()
         try:
             rel = local_path.relative_to(apk_dir).as_posix()
@@ -160,7 +162,9 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
                 f"на сервере {expected_size} — докачиваю заново (обрыв в прошлый раз)")
         log(f"Скачиваю {local_path.name}...")
         try:
-            download_file(base_url, remote_path, local_path)
+            download_file(base_url, remote_path, local_path, check_cancelled=check_cancelled,
+                          on_progress=(lambda done, total: on_file_progress(str(local_path), done, total))
+                          if on_file_progress else None)
             downloaded += 1
         except ContentSyncError as exc:
             log(f"Не удалось скачать {local_path.name}: {exc}")

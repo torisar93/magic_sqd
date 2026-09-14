@@ -1,0 +1,137 @@
+/* LAB08 — the catalogue uses the available viewport, controls share one centre. */
+/* Задел совместимости: движок без поддержки forgiving selector list (старый
+   Chromium в Qt5/PyQt5, Win7) роняет ВЕСЬ список селекторов через запятую,
+   если хоть один хочет :has() — держим фолбэк на .has-model-grid отдельным
+   правилом, а не через запятую с :has(), иначе оба варианта отвалятся разом. */
+.app-shell.catalog-home #left-panel:has(.cat-grid[data-level="model"]) {
+  display:flex; flex-direction:column; overflow:hidden; min-height:0;
+  padding-bottom:20px;
+}
+.app-shell.catalog-home #left-panel.has-model-grid {
+  display:flex; flex-direction:column; overflow:hidden; min-height:0;
+  padding-bottom:20px;
+}
+.app-shell.catalog-home #picker:has(.cat-grid[data-level="model"]),
+.app-shell.catalog-home .cat-screen:has(.cat-grid[data-level="model"]) {
+  flex:1 1 0; display:flex; flex-direction:column; min-height:0; height:100%;
+}
+.app-shell.catalog-home #picker.has-model-grid,
+.app-shell.catalog-home .cat-screen.has-model-grid {
+  flex:1 1 0; display:flex; flex-direction:column; min-height:0; height:100%;
+}
+.app-shell.catalog-home .cat-grid[data-level="model"] {
+  flex:1 1 0; min-height:0; height:100%; overflow:hidden;
+}
+.app-shell.catalog-home .model-workspace {
+  height:100%; min-height:0; align-items:stretch;
+}
+.app-shell.catalog-home .model-list {
+  height:100%; min-height:0; max-height:none; overflow:auto;
+  scrollbar-gutter:stable; overscroll-behavior:contain;
+}
+.app-shell.catalog-home .model-detail {
+  height:100%; min-height:0; max-height:none; overflow:auto;
+  scrollbar-gutter:stable; overscroll-behavior:contain;
+}
+.app-shell.catalog-home .model-detail > :not(.model-hero) { flex-shrink:0; }
+.app-shell.catalog-home .model-hero { min-height:160px; }
+.app-shell.catalog-home .model-hero img { max-height:min(330px,38vh); }
+
+/* A 24px icon needs a real 44px centre, not 24 + 20 padding + 2 border. */
+button:has(> .ui-icon:only-child),
+#global-header .global-back,
+.icon-button,.settings-close,.apps07-header>button,.apps07-body .app-personal-apk-remove,
+#global-header .lab-model-tools button,#adb-console-refresh,#adb-console-send {
+  padding:0!important; display:inline-flex; align-items:center; justify-content:center;
+  gap:0; text-align:center;
+}
+button>.ui-icon { margin-block:0; align-self:center; }
+button>span:not(.ui-icon) { align-self:center; }
+.apps07-header>button,.apps07-body .app-personal-apk-remove {
+  width:44px; height:44px; min-width:44px; min-height:44px; flex:0 0 44px;
+}
+
+/* Account actions are two comfortable rows, including the long switch label. */
+#catalog-account-guest>.dialog-actions {
+  display:grid; grid-template-columns:minmax(0,1fr); gap:10px; align-items:stretch;
+}
+#catalog-account-submit,#catalog-account-switch {
+  width:100%; height:48px; min-height:48px; margin:0; padding:10px 12px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:14px; line-height:20px; white-space:nowrap;
+}
+
+/* The installation picker belongs to its page and can use the whole page width. */
+.wizard-content>.apps-panel.apps08-inline {
+  display:flex; flex-direction:column; gap:16px; align-self:stretch;
+  width:100%; max-width:none; min-width:0; padding:24px;
+  border:1px solid var(--glass-edge); border-radius:18px;
+  background:var(--glass); box-shadow:var(--lift);
+}
+.apps08-toolbar { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.apps08-total { margin:0; min-width:0; font-size:15px; line-height:1.5; color:#b8d0d5; }
+.apps08-toolbar>.stage-primary-actions { flex:0 0 auto; margin:0!important; padding:0; }
+.apps08-toolbar .stage-primary-actions>button { margin:0; min-width:180px; height:48px; }
+.apps08-inline>.apps08-search { width:100%; max-width:none; flex:none; }
+.apps08-inline>.apps07-body.apps08-body {
+  width:100%; max-width:none; overflow:visible; padding:0; flex:0 0 auto;
+  scrollbar-gutter:auto;
+}
+.apps08-inline .apps-tree { width:100%; max-width:none; }
+.apps08-inline .apps-section:last-child { margin-bottom:0; }
+@media(max-width:1050px) {
+  .app-shell.catalog-home #left-panel { padding-inline:22px; }
+  .app-shell.catalog-home .model-workspace { grid-template-columns:280px minmax(0,1fr); gap:20px; }
+  .app-shell.catalog-home .model-detail { padding:22px; }
+  .wizard-content>.apps-panel.apps08-inline { padding:20px; }
+}
+@media(max-height:740px) {
+  .app-shell.catalog-home #left-panel { padding-top:18px; padding-bottom:18px; }
+  .app-shell.catalog-home .model-detail { gap:12px; padding:20px; }
+  .app-shell.catalog-home .model-hero { min-height:120px; }
+}
+
+/* Native customizable selects preserve the existing DOM, APIs and accessibility.
+   The browser owns the top-layer picker, keyboard, focus and live option state. */
+select { color-scheme:dark; }
+select:disabled { opacity:.45; cursor:default; }
+select[multiple],select[size]:not([size="1"]):not([size="0"]) {
+  color-scheme:dark; background-color:#17232b; color:var(--text);
+}
+@supports (appearance:base-select) and selector(::picker(select)) {
+  select:not([multiple]):not([size]),
+  select:not([multiple])[size="0"],select:not([multiple])[size="1"] {
+    appearance:base-select; cursor:pointer; align-items:center; justify-content:space-between;
+    background-color:#17232b; color:var(--text); border-color:#aacbb32f;
+    border-radius:11px; font-family:inherit; font-size:14px; line-height:1.4;
+    text-overflow:ellipsis;
+  }
+  select:not([multiple]):not([size])::picker(select),
+  select:not([multiple])[size="0"]::picker(select),
+  select:not([multiple])[size="1"]::picker(select) {
+    appearance:base-select; color-scheme:dark;
+    color:#ecf4f4; background:linear-gradient(145deg,#293940,#1d2b32);
+    border:1px solid #bad6ce45; border-radius:14px;
+    padding:6px; margin-block:7px;
+    box-shadow:inset 0 1px 0 #ffffff10,0 14px 44px #02080c88;
+    font:14px/1.4 'Segoe UI',Roboto,Arial,sans-serif;
+    max-height:min(360px,55vh); overflow:auto;
+    scrollbar-color:#617d8090 transparent; scrollbar-width:thin;
+  }
+  select::picker-icon { color:#b6cec9; margin-inline-start:12px; transition:rotate .18s; }
+  select:open::picker-icon { rotate:180deg; }
+  select:open { border-color:#b0ecd28c; box-shadow:0 0 0 2px #b0ecd215; }
+  select:not([multiple]):not([size]) option,
+  select:not([multiple])[size="0"] option,select:not([multiple])[size="1"] option {
+    display:flex; align-items:center; gap:10px; min-height:44px;
+    padding:10px 12px; margin:2px 0; border:1px solid transparent; border-radius:8px;
+    white-space:normal; overflow-wrap:anywhere; cursor:pointer;
+    background:transparent; color:inherit;
+  }
+  select:not([multiple]) option:checked { background:#b6efdc18; border-color:#b6efdc27; color:#d4f9e8; }
+  select:not([multiple]) option:hover,select:not([multiple]) option:focus { background:#c6eee726; outline:none; }
+  select option:disabled { opacity:.42; cursor:default; }
+  select option::checkmark { color:#b1efd5; }
+  select optgroup { font-weight:600; color:#a5bdc4; padding:5px 0; }
+  select optgroup option { font-weight:400; color:#ecf4f4; }
+}

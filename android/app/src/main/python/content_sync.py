@@ -78,21 +78,27 @@ def _is_stale(local_path: Path, item: dict) -> bool:
 
 
 def download_file(base_url: str, remote_path: str, dest: Path, chunk_size: int = 1024 * 1024,
-                   mtime: float | None = None) -> None:
+                   mtime: float | None = None, on_progress=None, check_cancelled=lambda: None) -> None:
     url = f"{base_url}/{_encode_path(remote_path)}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp_dest = dest.with_name(dest.name + ".part")
     try:
+        check_cancelled()
         with urllib.request.urlopen(url, timeout=60) as resp, open(tmp_dest, "wb") as f:
             expected = resp.headers.get("Content-Length")
             expected = int(expected) if expected is not None and expected.isdigit() else None
             received = 0
+            if on_progress:
+                on_progress(received, expected or 0)
             while True:
+                check_cancelled()
                 chunk = resp.read(chunk_size)
                 if not chunk:
                     break
                 f.write(chunk)
                 received += len(chunk)
+                if on_progress:
+                    on_progress(received, expected or 0)
             # Реальный случай (пуш большого .apk на магнитолу с обрубленным
             # на телефоне файлом): resp.read() у urllib на некоторых обрывах
             # соединения молча возвращает "конец потока" вместо исключения —

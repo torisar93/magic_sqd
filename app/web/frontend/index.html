@@ -8,6 +8,24 @@
        CSS из кэша после обновления приложения. -->
   <link rel="stylesheet" href="css/components.css?v=20260827.2" />
   <link rel="stylesheet" href="css/graph.css" />
+  <link rel="stylesheet" href="css/catalog-03.css" />
+  <link rel="stylesheet" href="css/ui-lab.css" />
+  <link rel="stylesheet" href="css/refinement05.css" />
+  <link rel="stylesheet" href="css/usb06.css" />
+  <link rel="stylesheet" href="css/stages06.css" />
+  <link rel="stylesheet" href="css/ui07.css" />
+  <link rel="stylesheet" href="css/usb06-dialog.css" />
+  <link rel="stylesheet" href="css/icons07.css" />
+  <link rel="stylesheet" href="css/ui08.css" />
+  <link rel="stylesheet" href="css/progress08.css" />
+  <link rel="stylesheet" href="css/catalog09.css" />
+  <link rel="stylesheet" href="css/catalog10.css" />
+  <link rel="stylesheet" href="css/catalog11.css" />
+  <link rel="stylesheet" href="css/catalog11-brands.css" />
+  <link rel="stylesheet" href="css/instructions12.css" />
+  <link rel="stylesheet" href="css/menus13.css" />
+  <link rel="stylesheet" href="css/buttons13.css" />
+  <link rel="stylesheet" href="css/win7-safe-mode.css" />
 </head>
 <body>
   <div id="debug-id-badge" style="display: none"></div>
@@ -99,38 +117,46 @@
     </div>
   </dialog>
 
-  <dialog id="usb-dialog">
-    <h2 id="usb-dialog-title">USB-флешка</h2>
-    <div class="field row">
-      <select id="usb-drive" style="flex: 1"></select>
-      <button id="usb-refresh">Обновить</button>
-    </div>
-    <p id="usb-drive-hint" style="color: var(--text-dim); font-size: 12px">
-      Показаны только съёмные USB-накопители — системный и внутренние диски в списке не появятся.
-    </p>
-    <div class="field">
-      <label class="row"><input type="checkbox" id="usb-show-all" /> Показать все диски (если нужной флешки нет в списке)</label>
-    </div>
-    <div class="field">
-      <label class="row"><input type="checkbox" id="usb-format" checked /> Отформатировать флешку перед копированием</label>
-    </div>
-    <div class="field row">
-      <span>Файловая система:</span>
-      <label class="row"><input type="radio" name="usb-fs" value="FAT32" checked /> FAT32 (обычно нужна магнитолам, до ~32 ГБ)</label>
-      <label class="row"><input type="radio" name="usb-fs" value="exFAT" /> exFAT (для флешек больше 32 ГБ)</label>
-    </div>
-    <div class="callout danger" id="usb-warning"></div>
-    <div class="progress-bar" id="usb-progress" style="display: none"></div>
-    <div class="dialog-log" id="usb-log"></div>
-    <div class="dialog-actions spread">
-      <div>
-        <button id="usb-start" class="accent">Начать</button>
-        <button id="usb-stop" class="danger" disabled>Стоп</button>
+  <dialog id="usb-dialog" class="usb06-dialog" aria-labelledby="usb-dialog-title">
+    <header class="usb06-dialog-heading">
+      <div class="usb06-dialog-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8v11a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1Z"/><path d="M9 3h6v6H9zM11 5v2m2-2v2"/></svg></div>
+      <div><h2 id="usb-dialog-title">Запись на флешку</h2><p id="usb06-model"></p></div>
+    </header>
+    <div class="usb06-drive-strip">
+      <label for="usb-drive">USB-накопитель</label>
+      <div class="usb06-drive-field">
+        <select id="usb-drive" aria-describedby="usb-drive-hint"></select>
+        <button id="usb-refresh" type="button" aria-label="Обновить накопители" title="Обновить накопители"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 19.5 10M4.5 14a8 8 0 0 0 13.4 3.9"/></svg></button>
       </div>
-      <button id="usb-close">Закрыть</button>
+      <p id="usb-drive-hint"></p>
     </div>
+    <section class="usb06-transfer" aria-labelledby="usb06-status">
+      <div class="usb06-transfer-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m-4-4 4 4 4-4M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"/></svg></div>
+      <div class="usb06-transfer-copy"><h3 id="usb06-status">Выберите USB-накопитель</h3><p id="usb06-status-detail" role="status" aria-live="polite"></p></div>
+      <div class="usb06-progress" id="usb-progress" role="progressbar" aria-label="Запись файлов на флешку" hidden><span></span></div>
+    </section>
+    <details id="usb06-advanced" class="usb06-advanced">
+      <summary>Параметры накопителя<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary>
+      <div class="usb06-advanced-body">
+        <label class="usb06-option"><input type="checkbox" id="usb-show-all" /><span>Показать все диски<small>Если нужной флешки нет среди съёмных накопителей</small></span></label>
+        <label class="usb06-option"><input type="checkbox" id="usb-format" /><span>Отформатировать перед записью<small>Удалить содержимое выбранного накопителя</small></span></label>
+        <fieldset class="usb06-filesystems"><legend>Файловая система</legend>
+          <label><input type="radio" name="usb-fs" value="FAT32" checked /><span>FAT32<small>Обычно нужна магнитолам</small></span></label>
+          <label><input type="radio" name="usb-fs" value="exFAT" /><span>exFAT<small>Для накопителей больше 32 ГБ</small></span></label>
+        </fieldset>
+      </div>
+    </details>
+    <p id="usb-warning" class="usb06-warning"></p>
+    <details id="usb06-log-details" class="usb06-log-details">
+      <summary>Журнал записи<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary>
+      <div class="dialog-log" id="usb-log" role="log" aria-label="Журнал записи на флешку"></div>
+    </details>
+    <footer class="usb06-dialog-actions">
+      <button id="usb-close" type="button">Закрыть</button>
+      <button id="usb-stop" class="danger" type="button" disabled hidden>Остановить</button>
+      <button id="usb-start" class="accent" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11m-4-4 4 4 4-4M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"/></svg><span>Записать на флешку</span></button>
+    </footer>
   </dialog>
-
   <dialog id="report-dialog">
     <h2 id="report-dialog-title">Сообщить о проблеме</h2>
     <div class="field">
@@ -148,7 +174,7 @@
     </div>
   </dialog>
 
-  <dialog id="admin-login-dialog">
+  <dialog id="admin-login-dialog" class="menus13-admin-dialog">
     <h2 id="admin-login-title">Войти в админку</h2>
     <div id="admin-login-server-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></div>
     <div class="field">
@@ -175,7 +201,7 @@
     </div>
   </dialog>
 
-  <dialog id="admin-dialog">
+  <dialog id="admin-dialog" class="menus13-admin-dialog">
     <h2>Выгрузить на сервер</h2>
     <div id="admin-server-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></div>
     <div class="field">
@@ -213,7 +239,7 @@
     </div>
   </dialog>
 
-  <dialog id="admin-apk-dialog">
+  <dialog id="admin-apk-dialog" class="menus13-admin-dialog">
     <h2>Добавить APK в общую библиотеку</h2>
     <div class="field">
       <span class="field-label">Папка в каталоге apk/</span>
@@ -245,8 +271,9 @@
     </div>
   </dialog>
 
-  <dialog id="admin-manager-dialog" class="dialog-large">
+  <dialog id="admin-manager-dialog" class="dialog-large menus13-admin-dialog">
     <h2>Файловый менеджер</h2>
+    <details class="menus13-manager-guide"><summary>Как управлять файлами на сервере</summary>
     <p style="color: var(--text-dim); font-size: 12px">
       Машины (cars/) и общая библиотека APK (apk/) на сервере одним деревом.
       Перетащите карточку на папку (или на путь выше в хлебных крошках), чтобы
@@ -260,6 +287,7 @@
       единственный способ убрать/переместить уже опубликованное — этот
       менеджер.
     </p>
+    </details>
     <div class="manager-toolbar">
       <div class="manager-tabs">
         <button id="admin-manager-root-cars" class="active">Машины (cars/)</button>
@@ -314,7 +342,7 @@
        document.getElementById всегда попадал в ПЕРВЫЙ (dialogs.js), а кнопки
        этого диалога оставались недостижимы — этот сценарий входа молча
        зависал. -->
-  <dialog id="graph-admin-login-dialog">
+  <dialog id="graph-admin-login-dialog" class="menus13-admin-dialog">
     <h2>Вход в админку</h2>
     <div class="field">
       <span class="field-label">Логин</span>
@@ -331,7 +359,7 @@
     </div>
   </dialog>
 
-  <dialog id="submission-files-dialog" class="dialog-large">
+  <dialog id="submission-files-dialog" class="dialog-large menus13-admin-dialog">
     <h2>Заявка без мастера</h2>
     <p style="color: var(--text-dim); font-size: 12px">
       Эта заявка прислана не через мастер «Добавить машину» (нет
@@ -387,6 +415,15 @@
   <script src="js/components/boosty.js"></script>
   <script src="js/components/settings.js"></script>
   <script src="js/components/resizer.js"></script>
+  <script src="js/icons07.js"></script>
+  <script src="js/select08.js"></script>
+  <script src="js/catalog09.js"></script>
+  <script src="js/catalog-ui.js"></script>
+  <script src="js/catalog11-brands.js"></script>
+  <script src="js/instructions12.js"></script>
+  <script src="js/refinement05.js"></script>
+  <script src="js/progress08.js"></script>
+  <script src="js/usb06.js"></script>
   <script src="js/screens/main_picker.js"></script>
   <script src="js/screens/stage_wizard.js"></script>
   <script src="js/screens/dialogs.js"></script>
@@ -398,5 +435,7 @@
   <script src="js/screens/pending_list.js"></script>
   <script src="js/screens/chat_panel.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/ui-lab.js"></script>
+  <script src="js/buttons13.js"></script>
 </body>
 </html>

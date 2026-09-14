@@ -1,0 +1,57 @@
+/* Native USB writer: no fabricated percentages; the worker supplies its log. */
+#usb-dialog.usb06-dialog{width:min(660px,calc(100vw - 40px));max-width:calc(100vw - 40px);max-height:calc(100vh - 40px);padding:26px;box-sizing:border-box;overflow:auto;background:radial-gradient(ellipse at 8% 0,#739d8930,transparent 70%),linear-gradient(145deg,#26353d,#19262e)!important;scrollbar-gutter:stable}
+#usb-dialog .usb06-dialog-heading{display:flex;align-items:center;gap:16px;margin:0 0 24px}
+#usb-dialog .usb06-dialog-heading h2{margin:0 0 6px;font-size:25px;line-height:1.25;letter-spacing:-.5px}
+#usb-dialog .usb06-dialog-heading p{color:#abc0c7;font-size:14px;line-height:1.45;margin:0;overflow-wrap:anywhere}
+#usb-dialog .usb06-dialog-symbol{width:54px;height:54px;flex:0 0 54px;display:grid;place-items:center;border-radius:16px;border:1px solid #c9ffee3d;background:linear-gradient(135deg,#a6ebd627,#8bb4b90b);box-shadow:inset 0 1px 0 #eefff828,0 8px 24px #0c1b233d;color:#b2efdc}
+#usb-dialog .usb06-dialog-symbol svg{width:32px;height:32px}
+#usb-dialog .usb06-drive-strip{display:block;padding:17px 18px;border:1px solid #bfded32c;border-radius:14px;background:linear-gradient(130deg,#c3e4e00a,#b8dcd403);box-shadow:inset 0 1px 0 #edfff30c}
+#usb-dialog .usb06-drive-strip>label{display:block;font-weight:600;font-size:14px;margin:0 0 10px;color:#dce9e9}
+#usb-dialog .usb06-drive-field{display:flex;gap:10px;align-items:center}
+#usb-dialog #usb-drive{width:0;min-width:0;flex:1;height:46px;min-height:46px;margin:0;padding:10px 12px;font-size:14px}
+#usb-dialog #usb-drive:focus,#usb-dialog #usb-drive:focus-visible{outline:none!important;border-color:#b5f1db!important;box-shadow:0 0 0 3px #a0efda22!important}
+#usb-dialog #usb-refresh{width:46px;min-width:46px;height:46px;min-height:46px;margin:0;padding:10px;flex:0 0 46px}
+#usb-dialog #usb-refresh svg{width:22px;height:22px}
+#usb-dialog #usb-refresh[aria-busy=true] svg{animation:usb06-spin 1.2s linear infinite!important}
+#usb-dialog #usb-drive-hint{font-size:12px;line-height:1.5;color:#97adb9;margin:10px 0 0;min-height:18px}
+#usb-dialog .usb06-transfer{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:center;gap:13px;padding:20px 18px;margin:16px 0;border:1px solid #acdccc2b;border-radius:14px;background:linear-gradient(130deg,#bad5d30c,#a6d5c803);box-shadow:inset 0 1px 0 #eafff70b;transition:background .25s,border-color .25s}
+#usb-dialog .usb06-transfer-symbol{display:grid;place-items:center;width:42px;height:42px;border:1px solid #b4d9d224;border-radius:13px;color:#b9d4d5;background:#aecbc90a}
+#usb-dialog .usb06-transfer-symbol svg{width:24px;height:24px}
+#usb-dialog .usb06-transfer h3{font-size:17px;font-weight:600;line-height:1.35;margin:0 0 5px;color:#e6f0ee}
+#usb-dialog .usb06-transfer p{font-size:13px;line-height:1.5;color:#a7bdc5;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+#usb-dialog[data-usb-state=writing] .usb06-transfer,#usb-dialog[data-usb-state=stopping] .usb06-transfer,#usb-dialog[data-usb-state=success] .usb06-transfer{border-color:#a8ebcf67;background:linear-gradient(130deg,#b9f2dc19,#9ad0cb09)}
+#usb-dialog[data-usb-state=success] .usb06-transfer-symbol{color:#a7efcf;background:#b4f5d915}
+#usb-dialog[data-usb-state=error] .usb06-transfer{border-color:#e29a865c;background:linear-gradient(130deg,#dc9b7810,#d5989005)}
+#usb-dialog .usb06-progress{grid-column:1/-1;height:6px;width:100%;margin:6px 0 0;overflow:hidden;border-radius:6px;background:#b6e7d918;position:relative}
+#usb-dialog .usb06-progress>span{position:absolute;inset:0 auto 0 0;width:38%;border-radius:inherit;background:linear-gradient(90deg,#85c8b7,#b8f4df);animation:usb06-write 1.65s ease-in-out infinite!important}
+#usb-dialog .usb06-progress[hidden]{display:none!important}
+#usb-dialog .usb06-advanced,#usb-dialog .usb06-log-details{border:1px solid #bfdfd21f;border-radius:12px;background:linear-gradient(125deg,#bbdacf07,#a1c5cd03);overflow:hidden}
+#usb-dialog .usb06-advanced>summary,#usb-dialog .usb06-log-details>summary{min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-sizing:border-box;padding:11px 15px;font-size:13px;font-weight:500;color:#b6cbd0;cursor:pointer;list-style:none}
+#usb-dialog summary::-webkit-details-marker{display:none}
+#usb-dialog summary>svg{width:20px;height:20px;flex:0 0 20px;transition:transform .2s}
+#usb-dialog details[open]>summary>svg{transform:rotate(180deg)}
+#usb-dialog .usb06-advanced-body{border-top:1px solid #bedbd217;padding:17px;display:grid;gap:17px}
+#usb-dialog .usb06-option{display:flex;align-items:center;gap:12px;margin:0;min-height:38px;font-size:14px;color:#d0dfe2}
+#usb-dialog .usb06-option>span{display:block;flex:1;min-width:0}
+#usb-dialog .usb06-option small,#usb-dialog .usb06-filesystems small{display:block;color:#8fa7b3;font-size:12px;line-height:1.4;margin-top:4px}
+#usb-dialog input[type=checkbox],#usb-dialog input[type=radio]{width:21px;height:21px;margin:0;flex:0 0 21px;align-self:center}
+#usb-dialog .usb06-filesystems{border:0;padding:0;margin:0;display:grid;grid-template-columns:1fr 1fr;gap:10px;min-width:0}
+#usb-dialog .usb06-filesystems legend{font-size:12px;color:#9ab1bb;margin:0 0 10px;padding:0}
+#usb-dialog .usb06-filesystems label{display:flex;align-items:center;gap:10px;border:1px solid #bad7d522;border-radius:10px;padding:11px;font-size:13px;min-width:0}
+#usb-dialog .usb06-filesystems label:has(input:checked:not(:disabled)){border-color:#a3e5cc53;background:linear-gradient(140deg,#bae7d71a,#9fc8cf05)}
+#usb-dialog .usb06-filesystems label:has(input:disabled){opacity:.48}
+#usb-dialog .usb06-warning{font-size:12px;line-height:1.55;color:#93aab4;padding:0 3px;margin:12px 0 16px;border:0;background:none}
+#usb-dialog .usb06-warning.danger{color:#edba9f;background:#cd97640c;border:1px solid #ddae7a28;border-radius:10px;padding:11px 13px}
+#usb-dialog #usb-log{font:12px/1.65 Consolas,'Cascadia Mono',monospace;min-height:70px;max-height:170px;overflow:auto;padding:13px 15px;margin:0;border:0;border-top:1px solid #a4cbb71a;border-radius:0;background:#0e1a208f!important;color:#abc0c5;white-space:pre-wrap;overflow-wrap:anywhere}
+#usb-dialog .usb06-log-line{padding:0;margin:0 0 3px;position:static;white-space:pre-wrap}
+#usb-dialog .usb06-dialog-actions{display:flex;align-items:center;gap:10px;padding-top:20px;margin-top:20px;border-top:1px solid #c5e4d51b}
+#usb-dialog .usb06-dialog-actions button{box-sizing:border-box;height:48px;min-height:48px;max-height:48px;margin:0;padding:10px 18px;display:inline-flex;align-items:center;justify-content:center;gap:9px;white-space:nowrap;flex:0 0 auto;font-size:14px}
+#usb-dialog .usb06-dialog-actions button[hidden]{display:none!important}
+#usb-dialog .usb06-dialog-actions #usb-start{margin-left:auto;min-width:200px}
+#usb-dialog .usb06-dialog-actions #usb-start svg{width:21px;height:21px;flex:0 0 21px}
+#usb-dialog .usb06-dialog-actions #usb-close{color:#afc3cb}
+@keyframes usb06-write{0%{transform:translateX(-105%)}100%{transform:translateX(365%)}}
+@keyframes usb06-spin{to{transform:rotate(360deg)}}
+@media(max-width:620px){#usb-dialog.usb06-dialog{padding:20px;width:calc(100vw - 24px);max-width:calc(100vw - 24px)}#usb-dialog .usb06-dialog-actions{flex-wrap:wrap}#usb-dialog .usb06-dialog-actions #usb-start{flex:1;min-width:170px}#usb-dialog .usb06-filesystems{grid-template-columns:1fr}#usb-dialog .usb06-dialog-heading h2{font-size:22px}}
+@media(prefers-reduced-motion:reduce){#usb-dialog *{animation:none!important;transition:none!important}#usb-dialog .usb06-progress>span{left:31%}}
+html.reduce-motion #usb-dialog *{animation:none!important;transition:none!important}

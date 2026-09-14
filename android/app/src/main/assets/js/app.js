@@ -146,6 +146,7 @@
 
   function setLogOpen(open) {
     logOverlayEl.classList.toggle("open", open);
+    logOverlayEl.setAttribute('aria-hidden',String(!open));
     if (open) logPanelEl.scrollTop = logPanelEl.scrollHeight;
   }
 
@@ -420,7 +421,7 @@
       if (!rest) return;
       text = rest;
     }
-    const line = el("div", { class: "log-line log-line-command", text: `💬 ${text}` });
+    const line = el("div", { class: "log-line chat-bubble chat-user", text });
     logPanelEl.appendChild(line);
     logPanelEl.scrollTop = logPanelEl.scrollHeight;
     chatHistory.push({ role: "user", content: text });
@@ -443,7 +444,7 @@
       return;
     }
     const text = reply.content || "";
-    log(`ИИ${providerTag}: ${text}`);
+    const line=el("div",{class:"log-line chat-bubble chat-assistant",text:`ИИ${providerTag}: ${text}`});logPanelEl.append(line);logPanelEl.scrollTop=logPanelEl.scrollHeight;
     chatHistory.push({ role: "assistant", content: text });
   }
 
@@ -465,43 +466,11 @@
   }
 
   function showScreen(name) {
-    screenPicker.classList.toggle("active", name === "picker");
-    screenWizard.classList.toggle("active", name === "wizard");
-    updateTopBack();
-    // Кнопки настроек и аккаунта показываются только в каталоге, как и на desktop.
-    topHelpBtn.style.visibility = name === "picker" ? "visible" : "hidden";
-    topAccountBtn.style.visibility = name === "picker" ? "visible" : "hidden";
-    clear(topTitleEl);
-    topTitleEl.classList.remove("marquee");
-    topTitleEl.style.left = "";
-    topTitleEl.style.right = "";
-    if (name === "wizard" && model) {
-      const span = el("span", { text: model.display_label });
-      topTitleEl.appendChild(span);
-      // Длинные названия моделей не влезают в отведённую под заголовок
-      // ширину — вместо обрезки многоточием (конец названия вообще не
-      // видно) едет бегущей строкой, но только когда реально не влезло.
-      requestAnimationFrame(() => {
-        if (span.scrollWidth <= topTitleEl.clientWidth) return;
-        topTitleEl.classList.add("marquee");
-        // В режиме бегущей строки отдаём под неё всю ширину справа от
-        // кнопки "Назад" (а не узкие 62% по центру, как для лого/короткого
-        // текста) — иначе почти вся полоса сверху простаивала без дела.
-        const barRect = topbarEl.getBoundingClientRect();
-        const leftEdge = topBackBtn.style.visibility === "hidden"
-          ? 12
-          : Math.round(topBackBtn.getBoundingClientRect().right - barRect.left) + 14;
-        topTitleEl.style.left = `${leftEdge}px`;
-        topTitleEl.style.right = "12px";
-        // Скорость (px/с), а не фиксированная длительность — иначе длинные
-        // названия пролетают слишком быстро, а короткие тащатся зря долго.
-        const distancePx = span.scrollWidth * 2;
-        const speedPxPerSec = 45;
-        span.style.animationDuration = `${Math.max(8, distancePx / speedPxPerSec)}s`;
-      });
-    } else {
-      topTitleEl.appendChild(el("img", { class: "topbar-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }));
-    }
+    document.body.classList.toggle('catalog-mode',name==='picker');
+    screenPicker.classList.toggle('active',name==='picker');screenWizard.classList.toggle('active',name==='wizard');
+    updateTopBack();topHelpBtn.style.visibility='visible';topAccountBtn.style.visibility='visible';
+    clear(topTitleEl);topTitleEl.classList.remove('marquee');
+    topTitleEl.appendChild(name==='wizard'&&model?el('span',{text:model.name||model.display_label,title:model.display_label}):el('img',{class:'topbar-logo',src:'img/logo-full-dark.svg',alt:'Magic SQD'}));
   }
 
   // -- пикер марка -> модель[->модификация] --------------------------------
@@ -537,15 +506,18 @@
   function updateTopBack() {
     if (screenWizard.classList.contains("active")) {
       topBackBtn.style.visibility = "visible";
-      topBackBtn.textContent = "Назад";
-      topBackBtn.onclick = () => showScreen("picker");
+      topBackBtn.replaceChildren(LabUI.icon("back"));
+      topBackBtn.setAttribute("aria-label","Назад");
+      topBackBtn.onclick = () => {if(labInstallBusy){showLabBusyNotice();return;}showScreen("picker");};
     } else if (selectedGroup) {
       topBackBtn.style.visibility = "visible";
-      topBackBtn.textContent = "Назад";
+      topBackBtn.replaceChildren(LabUI.icon("back"));
+      topBackBtn.setAttribute("aria-label","Назад");
       topBackBtn.onclick = () => showGroupStep(selectedBrand);
     } else if (selectedBrand) {
       topBackBtn.style.visibility = "visible";
-      topBackBtn.textContent = "Назад";
+      topBackBtn.replaceChildren(LabUI.icon("back"));
+      topBackBtn.setAttribute("aria-label","Назад");
       topBackBtn.onclick = () => showBrandStep();
     } else {
       topBackBtn.style.visibility = "hidden";
@@ -570,6 +542,14 @@
   }
 
   function renderList(items) {
+    document.body.classList.remove("model-detail-mode");
+    document.getElementById("cat-heading").textContent=selectedGroup ? selectedGroup.name : selectedBrand ? selectedBrand.name : "Автомобили";
+    listEl.dataset.level=selectedGroup ? "modification" : selectedBrand ? "model" : "brand";
+    pickerSearchEl.placeholder=selectedGroup ? "Найти версию" : selectedBrand ? "Найти модель" : "Марка или модель";
+    const reset=document.getElementById("cat-reset");
+    reset.hidden=!pickerSearchEl.value;
+    reset.onclick=()=>{pickerSearchEl.value="";pickerSearchEl.dispatchEvent(new Event("input",{bubbles:true}));pickerSearchEl.focus();};
+    document.getElementById("cat-count").textContent="";
     clear(listEl);
     if (!items.length) {
       listEl.appendChild(el("p", { class: "empty-hint", text: "Ничего не найдено. Попробуйте другой запрос." }));
@@ -581,45 +561,8 @@
       listEl.appendChild(el("p", { class: "empty-hint", text: "Ничего не найдено. Попробуйте другой запрос." }));
       return;
     }
-    visible.forEach((item, index) => {
-      const card = el("button", {
-        class: `catalog-card catalog-card-${item.kind || "model"}`,
-        type: "button", onclick: item.onClick,
-        "aria-label": `${item.label}. ${item.meta || "Открыть"}`,
-      });
-      card.style.setProperty("--card-order", Math.min(index, 10));
-      const visual = el("span", { class: "catalog-card-visual" });
-      if (item.icon) {
-        const img = el("img", {
-          class: item.kind === "brand" ? "catalog-brand-logo" : "catalog-model-logo",
-          src: dataUrl(item.icon), alt: `Логотип ${item.label}`,
-          loading: "lazy",
-        });
-        img.addEventListener("error", () => { img.replaceWith(item.kind === "brand" ? el("span", { class: "catalog-monogram", text: item.label.slice(0, 2).toLocaleUpperCase() }) : defaultModelLogo(item.label)); }, { once: true });
-        visual.appendChild(img);
-      } else if (item.kind === "brand") {
-        visual.appendChild(el("span", { class: "catalog-monogram", text: item.label.slice(0, 2).toLocaleUpperCase() }));
-      } else {
-        visual.appendChild(defaultModelLogo(item.label));
-      }
-      const content = el("span", { class: "catalog-card-content" }, [
-        el("span", { class: "catalog-card-title", text: item.label }),
-        el("span", { class: "catalog-card-meta", text: item.meta || "Открыть инструкцию" }),
-      ]);
-      const footer = el("span", { class: "catalog-card-footer" });
-      if (item.colors && item.colors.length) {
-        const group = el("span", { class: "catalog-status-group" });
-        for (const color of item.colors) {
-          group.appendChild(el("span", { class: `status-dot status-dot-${color}`, title: STATUS_TITLES[color] || "", "aria-label": STATUS_TITLES[color] || "Статус" }));
-        }
-        footer.appendChild(group);
-      } else if (item.color) {
-        footer.appendChild(el("span", { class: `status-dot status-dot-${item.color}`, title: STATUS_TITLES[item.color] || "", "aria-label": STATUS_TITLES[item.color] || "Статус" }));
-      }
-      footer.appendChild(el("span", { class: "catalog-card-action", text: item.action || "Открыть" }));
-      card.append(visual, content, footer);
-      listEl.appendChild(card);
-    });
+    document.getElementById("cat-count").textContent=String(visible.length);
+    visible.forEach(item => listEl.appendChild(window.CatalogUI.card({kind:item.kind,name:item.label,meta:item.meta,image:item.icon ? dataUrl(item.icon) : null,colors:item.colors || (item.color ? [item.color] : []),action:item.action,onClick:item.onClick})));
   }
 
   // Та же логика, что и в desktop-версии (см. app/web/frontend/js/screens/
@@ -648,7 +591,7 @@
     for (const brand of carsData.brands || []) {
       if (brand.name.toLocaleLowerCase().includes(query)) results.push({ kind: "brand", label: brand.name, meta: `${brand.groups.length} ${plural(brand.groups.length, "модель", "модели", "моделей")}`, color: brandCardColor(brand), icon: brand.logo, action: "Открыть марку", onClick: () => showGroupStep(brand) });
       for (const group of brand.groups) {
-        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, ...groupCardColors(group), icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", onClick: () => group.has_modifications ? showModificationStep(group) : selectModel(group.leaf) });
+        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, ...groupCardColors(group), icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", onClick: () => showModificationStep(group) });
         for (const modification of group.modifications || []) {
           if ((modification.modification || "").toLocaleLowerCase().includes(query)) results.push({ kind: "variant", label: `${group.name} — ${modification.modification}`, meta: brand.name, color: modification.status_color, icon: modification.logo || group.logo, onClick: () => selectModel(modification) });
         }
@@ -658,6 +601,7 @@
   }
 
   function showBrandStep() {
+    if(selectedBrand||selectedGroup)pickerSearchEl.value="";
     selectedBrand = null;
     selectedGroup = null;
     renderBreadcrumb();
@@ -673,6 +617,8 @@
   }
 
   function showGroupStep(brand) {
+    if(!brand){pickerSearchEl.value="";showBrandStep();return;}
+    if(selectedBrand!==brand||selectedGroup)pickerSearchEl.value="";
     selectedBrand = brand;
     selectedGroup = null;
     renderBreadcrumb();
@@ -683,16 +629,19 @@
       meta: g.has_modifications ? `${g.modifications.length} ${plural(g.modifications.length, "версия", "версии", "версий")}` : g.leaf.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
       action: g.has_modifications ? "Выбрать версию" : "Открыть",
       ...groupCardColors(g),
-      onClick: () => (g.has_modifications ? showModificationStep(g) : selectModel(g.leaf)),
+      onClick: () => showModificationStep(g),
     })));
   }
 
   function showModificationStep(group) {
-    selectedGroup = group;
-    renderBreadcrumb();
-    updateTopBack();
-    resetPickerScroll();
-    renderList(group.modifications.map((m) => ({ kind: "variant", label: m.modification, meta: m.no_instruction ? "Способ уточняется" : "Открыть инструкцию", icon: m.logo || group.logo, color: m.status_color, onClick: () => selectModel(m) })));
+    selectedBrand=carsData.brands.find(b=>b.groups.some(g=>g===group))||selectedBrand;
+    selectedGroup=group;pickerSearchEl.value='';
+    renderBreadcrumb();updateTopBack();resetPickerScroll();
+    document.body.classList.add('model-detail-mode');
+    listEl.dataset.level='modification';clear(listEl);
+    const img=group.logo||group.leaf?.logo;
+    listEl.append(CatalogUI.detail({brand:selectedBrand?.name||'',group:group.name,src:img?dataUrl(img):null,
+      versions:group.has_modifications?group.modifications:[group.leaf],onOpen:selectModel}));
   }
 
   function openModel(modelSummary) {
@@ -839,7 +788,7 @@
     }
     if (settingsSyncButton) {
       settingsSyncButton.disabled = false;
-      settingsSyncButton.textContent = result.error ? "Не удалось проверить" : "Обновления проверены";
+      setMenuActionLabel(settingsSyncButton, result.error ? "Не удалось проверить" : "Каталог обновлён");
       settingsSyncButton = null;
     }
     if (result.error) {
@@ -870,18 +819,28 @@
   // только тут ещё и сам код нужно показать техника ПОСЛЕ переотрисовки.
   let qrAdbWriteStatus = null;
   let qrAdbResult = null;
+  let usbOperation = null;
+  let usbStageResults = {};
+  let stageOperation = null;
+  let stageExecutionResults = {};
   let appsSelection = {}; // stage.index -> {variant, optionalChecked: Set<path>}
   // Список необязательных APK, отмеченных техником на ЛЮБОМ "apps"-этапе —
   // общий на всю установку (аналог desktop ctx.selected_apks), т.к.
   // "usb"-этап с usb_copy_selected_apks просто копирует то, что отметили
   // раньше, независимо от того, на каком именно apps-этапе это было.
   let globalSelectedApks = new Set();
+  let appPickerSession = null;
+  let inlineAppsSession = null;
+  let pendingPersonalPicker = null;
+  let appInstallOperation = null;
+  let appInstallResults = {};
   // Общая библиотека приложений (apk/, см. python/apk_library.py) —
   // {name, description, category, remote_only, size, path}[], одна на весь
   // мастер, качается в фоне при открытии (см. Bridge.call scanner_list_apks
   // ниже) — список приходит сразу, сами .apk докачиваются точечно перед
   // adb_install_apks/usb_run_stage (см. WebBridge.kt: ensureApksDownloaded).
   let apkLibrary = [];
+  let apkLibraryLoaded = false;
   // Свои APK, добавленные техником прямо на этапе через "Добавить свой
   // APK..." (см. renderApkTree) — портовый эквивалент desktop stage_wizard.js:
   // personalApks, только файлы копируются в приватное хранилище приложения
@@ -913,11 +872,20 @@
     appsSelection = {};
     appsConnectionChoice = {};
     globalSelectedApks = new Set();
+    inlineAppsSession = null;
+    pendingPersonalPicker = null;
+    appInstallOperation = null;
+    appInstallResults = {};
     apkLibrary = [];
+    apkLibraryLoaded = false;
     personalApks = [];
     installCompletedShown = false;
     qrAdbWriteStatus = null;
     qrAdbResult = null;
+    usbOperation = null;
+    usbStageResults = {};
+    stageOperation = null;
+    stageExecutionResults = {};
     modelWifi = false;
     modelWifiPort = 5555;
     // Новая модель — потенциально другая физическая магнитола/флешка,
@@ -948,11 +916,14 @@
 
   function onApkLibraryResult(event) {
     apkLibrary = event.apks || [];
+    apkLibraryLoaded = true;
+    if (appPickerSession) { appPickerSession.render(); return; }
+    if (!labInstallBusy && inlineAppsSession?.page.isConnected) { inlineAppsSession.render(); return; }
     // Если текущий этап как раз показывает общую библиотеку — перерисуем,
     // теперь она подъехала (список обычно приходит уже к моменту, когда
     // техник долистает до нужного этапа, но не гарантированно).
     const current = stages[currentIndex];
-    if (current && (current.type === "apps" || (current.type === "usb" && current.usb_copy_selected_apks))) {
+    if (!labInstallBusy && current && (current.type === "apps" || (current.type === "usb" && current.usb_copy_selected_apks))) {
       render();
     }
   }
@@ -988,6 +959,7 @@
   function setAdbStatus(connected, text) {
     adbConnected = connected;
     adbStatusEl.textContent = text;
+    adbStatusEl.title = text;
     adbStatusEl.classList.toggle("connected", connected);
     adbConnectBtn.textContent = connected ? "Переподключить" : "Подключить ADB";
   }
@@ -1040,8 +1012,12 @@
   function onAdbConnectResult(event) {
     const r = event.result || {};
     if (r.connected) {
-      setAdbStatus(true, `ADB: подключено (${r.banner || "ok"})`);
-      log("ADB подключён.");
+      const banner = String(r.banner || "");
+      const product = banner.match(/(?:^|[;:])r[od]\.product\.model=([^;]+)/i)?.[1];
+      const label = product || (banner && !banner.includes("=") ? banner : "");
+      setAdbStatus(true, label ? `Подключено · ${label}` : "ADB подключено");
+      adbStatusEl.title = banner || "ADB подключено";
+      log(banner ? `ADB подключён: ${banner}` : "ADB подключён.");
     } else {
       setAdbStatus(false, "ADB: не подключено");
       log(`ADB: не удалось подключиться — ${r.reason || "?"}`);
@@ -1064,25 +1040,38 @@
   function onAdbLog(event) {
     sessionHasActivity = true;
     log(event.line);
+    const status=document.querySelector('.run-event');if(status&&!status.closest('.progress08'))status.textContent=event.line;
+    const usbStatus=document.querySelector('.usb-operation-detail');if(usbStatus)usbStatus.textContent=event.line;
+    const operationStatus=document.querySelector('.flow-operation-detail');if(operationStatus&&!operationStatus.closest('.flow-action-card'))operationStatus.textContent=event.line;
   }
 
   function setUsbStatus(connected, text) {
     usbConnected = connected;
-    usbStatusEl.textContent = text;
+    usbStatusEl.textContent = text.replace(/^Флешка:\s*/, "");
     usbStatusEl.classList.toggle("connected", connected);
-    usbConnectBtn.textContent = connected ? "Переподключить" : "Подключить флешку";
+    usbConnectBtn.replaceChildren(usbStageIcon(connected ? "refresh" : "usb"), el("span", { text: connected ? "Переподключить" : "Подключить" }));
+    usbConnectBtn.setAttribute("aria-label", connected ? "Переподключить флешку" : "Подключить флешку");
+    usbConnectBtn.title = connected ? "Переподключить флешку" : "Подключить флешку";
+    usbConnectBtn.disabled = !!usbOperation;
+    usbFormatBtn.disabled = !connected || !!usbOperation;
+    const page = document.querySelector(".usb-stage");
+    if (page) page.dataset.connected = String(connected);
   }
 
   function onUsbConnect() {
+    if (labInstallBusy) return;
     setUsbStatus(false, "Флешка: подключаюсь...");
-    Bridge.call("usb_connect", {});
+    usbConnectBtn.disabled = true;
+    try { Bridge.call("usb_connect", {}); }
+    catch (error) { setUsbStatus(false, `Не удалось подключиться: ${error.message || error}`); }
   }
 
   function onUsbConnectResult(event) {
     const r = event.result || {};
     if (r.mounted) {
-      const mb = Math.round((r.capacity || 0) / 1024 / 1024);
-      setUsbStatus(true, `Флешка: подключена (${r.label || "без метки"}, ${mb}МБ)`);
+      const bytes = Number(r.capacity || 0);
+      const capacity = bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} ГБ` : `${Math.round(bytes / 1024 ** 2)} МБ`;
+      setUsbStatus(true, `${r.label || "Без метки"} · ${capacity}`);
       log("Флешка смонтирована.");
     } else {
       setUsbStatus(false, "Флешка: не подключена");
@@ -1125,14 +1114,58 @@
     document.body.appendChild(overlay);
   }
 
+  let labInstallBusy=false;
   function onAdbStageResult(event) {
+    if (usbOperation && (usbOperation.kind !== "files" || usbOperation.index !== event.index)) return;
+    if (stageOperation && stageOperation.index !== event.index) return;
+    if (appInstallOperation && appInstallOperation.index !== event.index) return;
+    labInstallBusy=false;
     const r = event.result || {};
+    if (appInstallOperation) {
+      appInstallResults[event.index] = { ...r, cancelled: !r.success && Boolean(r.cancelled || r.canceled || appInstallOperation.cancelRequested) };
+      appInstallOperation = null;
+    }
+    screenWizard.classList.remove('is-installing-apps');
+    if (stageOperation) {
+      stageExecutionResults[event.index] = { ...r, actionIndex: stageOperation.actionIndex };
+      stageOperation = null;
+    }
     log(r.success ? "Этап выполнен успешно." : `Этап завершился с ошибкой: ${r.reason || "?"}`);
     // Перерисовываем текущий этап заново, если результат относится к нему —
     // сбрасывает задизейбленные во время выполнения кнопки.
     if (stages[currentIndex] && stages[currentIndex].index === event.index) {
-      render();
+      const stage=stages[currentIndex];
+      if (stage.type === "usb") {
+        usbStageResults[stage.index] = r;
+        usbOperation = null;
+      }
+      if(r.success&&stage.type==='apps'){
+        advanceAfter(currentIndex);
+        if(stage.next==null){
+          document.querySelector('.stage-primary-actions')?.remove();clear(wizardContentEl);
+          wizardContentEl.append(el('div',{class:'stage-page'},[el('h2',{text:'Установка завершена'}),el('p',{class:'stage-text',text:'Все выбранные приложения установлены.'})]));
+          wizardNextBtn.style.display='';wizardNextBtn.textContent='К моделям';nextAction=()=>showScreen('picker');
+        }
+      }else render();
+      if(!r.success && !["apps", "usb", "adb", "actions", "telnet"].includes(stage.type))showLabNotice('Не удалось завершить этап',r.reason||'Откройте лог для подробностей.',true);
     }
+  }
+
+  function showLabNotice(title,message,withLog=false){
+    let overlay;const close=()=>overlay.remove();
+    const content=[el('h2',{text:title})];
+    if(withLog){content.push(el('p',{text:'Проверьте подключение устройства.'}));content.push(el('details',{},[el('summary',{text:'Подробности'}),el('p',{text:message})]));}
+    else content.push(el('p',{text:message}));
+    const actions=el('div',{class:'modal-actions'});
+    actions.append(el('button',{text:withLog?'Открыть лог':'Понятно',onclick:()=>{close();if(withLog)setLogOpen(true);}}));
+    if(withLog)actions.append(el('button',{class:'accent',text:'Повторить',onclick:()=>{close();document.querySelector('.apps-install-start,.stage-primary-actions>.accent')?.click();}}));
+    content.push(actions);overlay=showModal(content);
+  }
+
+  function showLabBusyNotice() {
+    if (usbOperation) showLabNotice("Флешка занята", "Дождитесь завершения текущей операции и не отключайте накопитель.");
+    else if (stageOperation) showLabNotice("Операция выполняется", "Дождитесь ответа магнитолы. Подробности выполнения доступны в логе.");
+    else showLabNotice("Идёт установка", "Дождитесь завершения текущего приложения или остановите очередь.");
   }
 
   // Android WebView без кастомного WebChromeClient не поддерживает
@@ -1195,12 +1228,22 @@
   // этого ответа, просто добавляем в общий список и выбираем сразу.
   function onPersonalApksPicked(event) {
     const apks = event.apks || [];
+    const draft = pendingPersonalPicker;
+    pendingPersonalPicker = null;
+    if (!draft) return;
     if (!apks.length) { log("Не выбрано ни одного файла."); return; }
     for (const apk of apks) {
       if (!personalApks.some((a) => a.path === apk.path)) personalApks.push(apk);
-      globalSelectedApks.add(apk.path);
+      const activeEditor = appPickerSession || inlineAppsSession;
+      if (activeEditor && !activeEditor.personal.some(a => a.path === apk.path)) activeEditor.personal.push(apk);
+      if (draft && !labInstallBusy && (appPickerSession === draft || inlineAppsSession === draft && draft.page.isConnected)) {
+        if (!draft.personal.some(a => a.path === apk.path)) draft.personal.push(apk);
+        draft.selected.add(apk.path);
+      }
     }
-    render();
+    if (appPickerSession) appPickerSession.render();
+    else if (!labInstallBusy && inlineAppsSession?.page.isConnected) inlineAppsSession.render();
+    else if (!labInstallBusy) render();
   }
 
   // Модалка выбора установленного приложения — для actions-этапов kind
@@ -1263,116 +1306,20 @@
   // port) — port тот, что был актуален на момент выбора адреса (свой у
   // найденной через mDNS службы, иначе — изменённый техником или дефолтный).
   function promptHostPicker(title, port, onSubmit, opts) {
-    opts = opts || {};
-    // port может быть null (заранее не известен — см. connectionPortFor) —
-    // для реального скана/подключения всё равно нужно с чего-то начать,
-    // но само поле ниже покажется пустым с подсказкой, а не "5555" молча
-    // выданным за реальный порт магнитолы.
-    let currentPort = port || 5555;
-    const overlay = el("div", { class: "modal-overlay dismissible" });
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeDismissibleModal(); });
-    const serviceListWrap = el("div", { class: "host-scan-list" });
-    const listWrap = el("div", { class: "host-scan-list" });
-    const input = el("input", { type: "text" });
-    input.value = lastWifiHost || "";
-    const submitHost = (host, overridePort) => {
-      pendingScanCallback = null;
-      pendingAdbServiceScanCallback = null;
-      overlay.remove();
-      onSubmit(host, overridePort != null ? overridePort : currentPort);
-    };
-    const manualSubmit = () => {
-      if (!input.value.trim()) return;
-      submitHost(input.value.trim());
-    };
-
-    // Отдельно от runScan() ниже — порт "Беспроводной отладки" динамический
-    // и не связан с currentPort/полем "Порт", поэтому не пересканируем это
-    // при каждой правке поля порта, только один раз при открытии модалки.
-    function runAdbServiceScan() {
-      if (!opts.discoverAdbService) return;
-      pendingAdbServiceScanCallback = (endpoints) => {
-        clear(serviceListWrap);
-        if (!endpoints.length) return;
-        serviceListWrap.appendChild(el("p", {
-          class: "stage-text", style: "color: var(--text-dim)",
-          text: "Беспроводная отладка (порт определён автоматически):",
-        }));
-        endpoints.forEach((ep) => {
-          const btn = el("button", { class: "accent", text: `${ep.host}:${ep.port}` });
-          btn.addEventListener("click", () => submitHost(ep.host, ep.port));
-          serviceListWrap.appendChild(btn);
-        });
-      };
-      Bridge.call("scan_adb_service", {});
-    }
-
-    function runScan() {
-      clear(listWrap);
-      listWrap.appendChild(el("p", { class: "stage-text", style: "color: var(--text-dim)", text: "Сканирую сеть..." }));
-      // recommended — mDNS-резолв "android.local" (см. MdnsResolve.kt):
-      // именно так техники реально находят магнитолу вручную через Termux
-      // ("telnet android.local" / "ping6 android.local"), поэтому это не
-      // просто ещё один пункт списка, а явно выделенный рекомендованный
-      // вариант НАД результатами скана порта.
-      pendingScanCallback = (hosts, recommended) => {
-        clear(listWrap);
-        if (recommended) {
-          const recBtn = el("button", { class: "accent", text: `${recommended}  (android.local, рекомендуется)` });
-          recBtn.addEventListener("click", () => submitHost(recommended));
-          listWrap.appendChild(recBtn);
-        }
-        const rest = hosts.filter((h) => h !== recommended);
-        if (!rest.length) {
-          if (!recommended) {
-            listWrap.appendChild(el("p", {
-              class: "stage-text", style: "color: var(--text-dim)",
-              text: "Не нашёл устройств в сети. Введите адрес вручную ниже.",
-            }));
-          }
-          return;
-        }
-        listWrap.appendChild(el("p", { class: "stage-text", style: "color: var(--text-dim)", text: "Другие устройства в сети:" }));
-        rest.forEach((host) => {
-          const btn = el("button", { text: host });
-          btn.addEventListener("click", () => submitHost(host));
-          listWrap.appendChild(btn);
-        });
-      };
-      Bridge.call("scan_hosts", { port: currentPort });
-    }
-
-    const boxChildren = [el("p", { class: "stage-text", text: title })];
-    if (opts.editablePort) {
-      const portInput = el("input", {
-        type: "number", class: "host-port-input",
-        placeholder: port == null ? String(currentPort) : undefined,
-      });
-      portInput.value = port != null ? String(port) : "";
-      const rescan = () => {
-        const p = parseInt(portInput.value, 10);
-        if (!p || p === currentPort) return;
-        currentPort = p;
-        runScan();
-      };
-      portInput.addEventListener("blur", rescan);
-      portInput.addEventListener("keydown", (e) => { if (e.key === "Enter") rescan(); });
-      boxChildren.push(el("div", { class: "host-port-row" }, [
-        el("span", { class: "stage-text", text: "Порт:" }),
-        portInput,
-      ]));
-    }
-    boxChildren.push(
-      serviceListWrap,
-      listWrap,
-      input,
-      el("button", { class: "accent", text: "Подключиться по этому адресу", onclick: manualSubmit }),
-    );
-    const box = el("div", { class: "modal-box" }, boxChildren);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    runScan();
-    runAdbServiceScan();
+    opts=opts||{};
+    let cancelScan=null;
+    LabUI.connection({title:port===23?'Подключение к магнитоле':'Подключение по Wi-Fi',port:port||5555,host:lastWifiHost||'',
+      scan:p=>new Promise(resolve=>{
+        let hosts=[],services=[],waiting=opts.discoverAdbService?2:1;
+        const finish=()=>{if(--waiting===0){cancelScan=null;resolve([...services,...hosts.filter(h=>!services.some(s=>s.host===h))]);}};
+        cancelScan=()=>resolve([]);
+        pendingScanCallback=(found,recommended)=>{pendingScanCallback=null;hosts=[...new Set([recommended,...found].filter(Boolean))];finish();};
+        if(opts.discoverAdbService){pendingAdbServiceScanCallback=endpoints=>{pendingAdbServiceScanCallback=null;services=endpoints;finish();};Bridge.call('scan_adb_service',{});}
+        Bridge.call('scan_hosts',{port:p});
+      }),
+      connect:(host,p)=>{onSubmit(host,p);return {ok:true};},
+      onClose:()=>{pendingScanCallback=null;pendingAdbServiceScanCallback=null;cancelScan?.();}
+    });
   }
 
   // Системный жест/кнопка "назад" (см. MainActivity.kt: onBackPressedDispatcher
@@ -1389,10 +1336,12 @@
   };
 
   window.__handleBackPress = function () {
+    if (document.querySelector("dialog[open]")) { document.querySelector("dialog[open]").dispatchEvent(new Event("cancel", {cancelable:true})); const d=document.querySelector("dialog[open]"); if(d && !d.querySelector(".accent:disabled")) d.close(); return "handled"; }
     if (closePhotoLightbox()) return "handled";
     if (closeDismissibleModal()) return "handled";
     if (logOverlayEl.classList.contains("open")) { setLogOpen(false); return "handled"; }
     if (screenWizard.classList.contains("active")) {
+      if(labInstallBusy){showLabBusyNotice();return "handled";}
       if (historyStack.length) { goBack(); return "handled"; }
       flushSessionLog(false);
       showScreen("picker");
@@ -1432,6 +1381,7 @@
   }
 
   function goBack() {
+    if(labInstallBusy)return;
     if (!historyStack.length) return;
     show(historyStack.pop());
   }
@@ -1461,6 +1411,7 @@
   }
 
   function show(index) {
+    if(labInstallBusy)return;
     currentIndex = index;
     nextAction = () => advanceAfter(currentIndex);
     render();
@@ -1493,7 +1444,11 @@
 
   function render() {
     closePhotoLightbox();
+    inlineAppsSession = null;
+    if (!labInstallBusy) screenWizard.classList.remove('is-installing-apps');
+    if (adbBarEl.parentElement !== screenWizard) screenWizard.insertBefore(adbBarEl, wizardContentEl);
     clear(wizardContentEl);
+    document.querySelector('.stage-primary-actions')?.remove();
     if (!stages.length) {
       wizardContentEl.appendChild(el("p", { class: "stage-text", text: "Для этой модели нет заданных этапов установки." }));
       renderNav();
@@ -1504,7 +1459,8 @@
   }
 
   function renderNav() {
-    wizardBackBtn.disabled = !historyStack.length;
+    wizardBackBtn.disabled = labInstallBusy || !historyStack.length;
+    wizardNextBtn.disabled = labInstallBusy;
     if (!stages.length) {
       wizardNextBtn.style.display = "none";
     } else {
@@ -1522,7 +1478,7 @@
     const hasVideo = Boolean(videoStage && videoStage.video_url);
     if (hasVideo) {
       wizardVideoBtn.hidden = false;
-      wizardVideoBtn.textContent = `▶ ${videoStage.video_label || "Смотреть видео"}`;
+      wizardVideoBtn.replaceChildren(usbStageIcon('play'), el('span', {text:videoStage.video_label || "Смотреть видео"}));
     } else {
       wizardVideoBtn.hidden = true;
     }
@@ -1553,6 +1509,7 @@
   }
 
   function describeCommand(cmd) {
+    if (typeof cmd === "string") return cmd;
     switch (cmd.kind) {
       case "sleep": return `#sleep ${cmd.seconds}`;
       case "reboot": return "#reboot";
@@ -1570,27 +1527,77 @@
     }
   }
 
+  function flowCard(title, description, symbol, state = "idle") {
+    const card = el("section", { class: "flow-card", "data-state": state });
+    const badge = el("span", { class: "flow-card-symbol", "aria-hidden": "true" }, [usbStageIcon(symbol)]);
+    const text = el("div", { class: "flow-card-copy" }, [el("h3", { text: title })]);
+    if (description) text.append(el("p", { text: description }));
+    card.append(el("header", { class: "flow-card-heading" }, [badge, text]));
+    return card;
+  }
+
+  function flowTechnicalDetails(card, text, label = "Команды этапа") {
+    if (!text) return;
+    card.append(el("details", { class: "flow-technical" }, [
+      el("summary", { text: label }), el("pre", { text }),
+    ]));
+  }
+
+  function flowResult(card, result) {
+    if (!result) return;
+    card.dataset.state = result.success ? "done" : "error";
+    const row = el("div", { class: "flow-result", role: "status" }, [
+      usbStageIcon(result.success ? "check" : "alert"),
+      el("span", { text: result.success ? "Операция выполнена." : result.reason || "Не удалось выполнить операцию." }),
+    ]);
+    card.append(row);
+    if (!result.success) card.append(usbStageButton("Открыть лог", "log", () => setLogOpen(true)));
+  }
+
+  function runStageOperation(method, args, page, card, actionIndex = null) {
+    if (labInstallBusy) return;
+    stageOperation = { index: args.index, actionIndex };
+    labInstallBusy = true;
+    renderNav();
+    page.querySelectorAll("button, input, select").forEach(node => { node.disabled = true; });
+    card.dataset.state = "running";
+    const status = el("div", { class: "flow-operation-status", role: "status" }, [
+      el("span", { class: "flow-operation-spinner", "aria-hidden": "true" }),
+      el("span", { class: "flow-operation-detail", text: card.classList.contains('flow-action-card') ? "Выполняется…" : "Выполняем команды. Дождитесь ответа магнитолы…" }),
+    ]);
+    card.append(status);
+    try { Bridge.call(method, args); }
+    catch (error) { onAdbStageResult({ index: args.index, result: { success: false, reason: error.message || String(error) } }); }
+  }
+
   function renderAdbStage(page, stage) {
+    page.classList.add("flow-stage");
+    const card = flowCard("Команды ADB", "Выполнение на подключённой магнитоле.", "terminal");
     const commandsText = (stage.commands || []).map(describeCommand).filter(Boolean).join("\n");
-    if (commandsText) page.appendChild(el("div", { class: "stage-commands", text: commandsText }));
-    const btn = el("button", { class: "accent", text: "Выполнить" });
-    btn.addEventListener("click", () => {
-      if (!adbConnected) { log("Сначала подключись к ADB (кнопка вверху)."); return; }
-      btn.disabled = true;
-      btn.textContent = "Выполняю...";
-      Bridge.call("adb_run_stage", {
+    flowTechnicalDetails(card, commandsText, `Команды этапа · ${(stage.commands || []).length}`);
+    const btn = usbStageButton("Выполнить", "play", () => {
+      if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
+      runStageOperation("adb_run_stage", {
         index: stage.index,
         commands: stage.commands || [],
         filesByName: filesByNameFrom(stage.adb_files),
-      });
-    });
-    page.appendChild(btn);
+      }, page, card);
+    }, true);
+    card.append(btn);
+    flowResult(card, stageExecutionResults[stage.index]);
+    page.append(card);
   }
 
   function renderActionsStage(page, stage) {
-    (stage.actions || []).forEach((action) => {
-      const btn = el("button", { text: action.label || action.kind });
+    page.classList.add("flow-stage");
+    (stage.actions || []).forEach((action, actionIndex) => {
+      const supported = !action.kind || ["command", "grant_permissions", "mock_location"].includes(action.kind);
+      const card = flowCard(action.label || action.kind || "Действие", supported ? "" : "Доступно только в версии для Windows.", action.kind === "grant_permissions" ? "shield" : action.kind === "mock_location" ? "location" : "terminal");
+      card.classList.add('flow-action-card');
+      const btn = usbStageButton("Выполнить", "play", () => {}, supported);
+      btn.disabled = !supported;
       btn.addEventListener("click", () => {
+        if (labInstallBusy) return;
         // grant_permissions/mock_location — техник выбирает установленное
         // приложение (ask_choice на desktop), дальше AdbPermissions.kt (см.
         // WebBridge.kt: actionsGrantPermissions/actionsMockLocation, портовая
@@ -1598,36 +1605,51 @@
         // не портированы — остаются с явным "не поддерживается" ниже, вместо
         // того чтобы молча выполнить 0 команд как "успех".
         if (action.kind === "grant_permissions" || action.kind === "mock_location") {
-          if (!adbConnected) { log("Сначала подключись к ADB (кнопка вверху)."); return; }
+          if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
           log("Получаю список приложений...");
+          card.querySelector('.flow-action-note')?.remove();
+          const note=el('p',{class:'flow-action-note',role:'status',text:'Получаем список приложений…'});
+          card.append(note);btn.disabled=true;
           pendingPackagesCallback = (packages) => {
-            if (!packages.length) { log("Не удалось получить список приложений."); return; }
+            btn.disabled=false;
+            if (!page.isConnected || labInstallBusy) return;
+            if (!packages.length) { note.textContent='Не удалось получить список приложений.';log(note.textContent);return; }
+            note.textContent='Выберите приложение.';
             promptPackagePicker("Выберите приложение", packages, (pkg) => {
-              if (action.kind === "grant_permissions") {
-                log(`Выдаю разрешения: ${pkg}`);
-                Bridge.call("actions_grant_permissions", { pkg });
-              } else {
-                log(`Приложение для фиктивных местоположений: ${pkg}`);
-                Bridge.call("actions_mock_location", { pkg });
-              }
+              if (!page.isConnected || labInstallBusy) return;
+              try {
+                if (action.kind === "grant_permissions") {
+                  log(`Выдаю разрешения: ${pkg}`);
+                  Bridge.call("actions_grant_permissions", { pkg });
+                } else {
+                  log(`Приложение для фиктивных местоположений: ${pkg}`);
+                  Bridge.call("actions_mock_location", { pkg });
+                }
+                note.textContent='Запрос отправлен. Результат появится в логе.';
+              } catch(error) {note.textContent=error.message||'Не удалось выполнить действие.';log(note.textContent);}
             });
           };
-          Bridge.call("actions_list_packages", { thirdPartyOnly: true });
+          try { Bridge.call("actions_list_packages", { thirdPartyOnly: true }); }
+          catch(error){pendingPackagesCallback=null;btn.disabled=false;note.textContent=error.message||'Не удалось получить список приложений.';log(note.textContent);}
           return;
         }
         if (action.kind && action.kind !== "command") {
           log(`Действие "${action.label}" (${action.kind}) пока не поддерживается в мобильной версии.`);
           return;
         }
-        if (!adbConnected) { log("Сначала подключись к ADB (кнопка вверху)."); return; }
+        if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
         log(`Выполняю действие: ${action.label}`);
-        Bridge.call("adb_run_stage", {
+        runStageOperation("adb_run_stage", {
           index: stage.index, commands: action.commands || [],
           filesByName: filesByNameFrom(action.files),
-        });
+        }, page, card, actionIndex);
       });
-      page.appendChild(btn);
+      card.append(btn);
+      const result = stageExecutionResults[stage.index];
+      if (result?.actionIndex === actionIndex) flowResult(card, result);
+      page.append(card);
     });
+    if (!(stage.actions || []).length) page.append(flowCard("Действия не заданы", "Для этого этапа пока нет доступных действий.", "settings"));
   }
 
   // Общая структура для "apps" и "usb"-этапов (см. renderApkTree ниже) —
@@ -1662,15 +1684,16 @@
    * список (аналог desktop ctx.selected_apks), из него usb-этап потом берёт
    * usb_copy_selected_apks, а apps-этап — то, что реально ставить.
    */
-  function renderApkTree(page, stage, sel) {
-    function currentLists() {
-      if (stage.variants && stage.variants.length) {
-        const v = stage.variants.find((x) => x.name === sel.variant) || stage.variants[0];
-        return { required: v.standard_apks || [], optional: v.standard_apks_optional || [] };
-      }
-      return { required: stage.standard_apks || [], optional: stage.standard_apks_optional || [] };
-    }
-    const rawLists = currentLists();
+  function stageApkLists(stage, sel = selectionFor(stage)) {
+    const source = stage.variants?.length ? stage.variants.find(v => v.name === sel.variant) || stage.variants[0] : stage;
+    const entries = values => (values || []).map(value => typeof value === "string" ? { path: value, name: basename(value) } : value).filter(value => value?.path);
+    return { required: entries(source.standard_apks), optional: entries(source.standard_apks_optional) };
+  }
+
+  function renderApkTree(page, stage, sel, draft) {
+    const rawLists = stageApkLists(stage, sel);
+    const selectedApks = draft.selected;
+    const requiredPaths = new Set(rawLists.required.map(apk => apk.path));
     // standard_apks/standard_apks_optional теперь {path,name,description}
     // (см. wizard_spec.py: _apk_entry — раньше "красивое" имя из редактора
     // терялось и техник видел голое имя файла) — остальной код (установка,
@@ -1681,12 +1704,18 @@
                      optional: rawLists.optional.map((a) => a.path) };
 
     function buildAppRow(apk, required, checked, onChange) {
-      const row = el("li", { class: "app-choice" });
+      required = required || requiredPaths.has(apk.path);
+      const row = el("li", { class: "app-choice", "data-apk-path":apk.path });
       const checkbox = el("input", { type: "checkbox" });
-      checkbox.checked = checked;
+      checkbox.checked = required || checked;
       if (required) checkbox.disabled = true;
-      if (onChange) checkbox.addEventListener("change", () => onChange(checkbox.checked));
-      row.append(checkbox, el("span", { class: "app-choice-name", text: apk.name || basename(apk.path) }));
+      if (onChange && !required) checkbox.addEventListener("change", () => { onChange(checkbox.checked); draft.updateCount(); });
+      row.append(LabUI.appIcon(apk.path,apk.icon), checkbox, el("span", { class: "app-choice-name", text: apk.name || basename(apk.path) }));
+      row.addEventListener("click", (event) => {
+        if (checkbox.disabled || event.target.closest("input, button, a") || window.getSelection().toString()) return;
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+      });
       if (apk.remote_only) row.appendChild(el("span", { class: "app-download-mark", text: "Будет скачано" }));
       if (apk.description) {
         const description = el("div", { class: "apk-desc", text: apk.description, id: `apk-desc-${Math.random().toString(36).slice(2)}` });
@@ -1702,8 +1731,8 @@
 
     function appendSection(title, kind, apks, required, selected) {
       if (!apks.length) return;
-      const section = el("section", { class: `apps-section apps-section-${kind}` });
-      section.appendChild(el("h3", { class: "apps-section-title", text: title }));
+      const section = el(required ? "details" : "section", { class: `apps-section apps-section-${kind}` });
+      section.appendChild(el(required ? "summary" : "h3", { class: "apps-section-title", text: required ? `${title} · ${apks.length}` : title }));
       const list = el("ul", { class: "stage-apps-list stage-apps-grid" });
       apks.forEach((apk) => {
         list.appendChild(buildAppRow(
@@ -1711,8 +1740,8 @@
           required,
           required || selected.has(apk.path),
           (checked) => {
-            if (checked) { selected.add(apk.path); globalSelectedApks.add(apk.path); }
-            else { selected.delete(apk.path); globalSelectedApks.delete(apk.path); }
+            if (checked) { selected.add(apk.path); selectedApks.add(apk.path); }
+            else { selected.delete(apk.path); selectedApks.delete(apk.path); }
           },
         ));
       });
@@ -1727,24 +1756,27 @@
     page.appendChild(el("button", {
       class: "app-personal-apk-add", type: "button", text: "Добавить свой APK...",
       onclick: () => {
+        if (labInstallBusy || pendingPersonalPicker) return;
         log("Выберите файл...");
-        Bridge.call("pick_personal_apks", {});
+        pendingPersonalPicker = draft;
+        try { Bridge.call("pick_personal_apks", {}); }
+        catch(error){pendingPersonalPicker=null;showLabNotice('Не удалось выбрать файл',error.message||String(error));}
       },
     }));
-    if (personalApks.length) {
+    if (draft.personal.length) {
       const section = el("section", { class: "apps-section apps-section-personal" });
       section.appendChild(el("h3", { class: "apps-section-title", text: "Свои APK" }));
       const list = el("ul", { class: "stage-apps-list stage-apps-grid" });
-      personalApks.forEach((apk) => {
-        const row = buildAppRow(apk, false, globalSelectedApks.has(apk.path), (checked) => {
-          if (checked) globalSelectedApks.add(apk.path);
-          else globalSelectedApks.delete(apk.path);
+      draft.personal.forEach((apk) => {
+        const row = buildAppRow(apk, false, selectedApks.has(apk.path), (checked) => {
+          if (checked) selectedApks.add(apk.path);
+          else selectedApks.delete(apk.path);
         });
         const removeBtn = el("button", { type: "button", class: "app-personal-apk-remove", text: "Убрать" });
         removeBtn.addEventListener("click", () => {
-          personalApks = personalApks.filter((a) => a.path !== apk.path);
-          globalSelectedApks.delete(apk.path);
-          render();
+          draft.personal = draft.personal.filter((a) => a.path !== apk.path);
+          selectedApks.delete(apk.path);
+          draft.render();
         });
         row.appendChild(removeBtn);
         list.appendChild(row);
@@ -1753,14 +1785,17 @@
       page.appendChild(section);
     }
 
+    const represented = new Set([...rawLists.required, ...rawLists.optional, ...apkLibrary, ...draft.personal].map(apk => apk.path));
+    const previous = selectedAppsForStage(stage, draft.previousPaths).entries.filter(apk => !represented.has(apk.path));
+    appendSection("Из других этапов", "previous", previous, false, selectedApks);
     appendSection("Обязательные приложения", "required", rawLists.required, true, new Set());
-    appendSection("Необязательные приложения", "optional", rawLists.optional, false, sel.optional);
+    appendSection("Дополнительно", "optional", rawLists.optional, false, selectedApks);
 
     const showGeneralLibrary = stage.type === "apps" || (stage.type === "usb" && stage.usb_copy_selected_apks);
     if (showGeneralLibrary) {
-      page.appendChild(el("h3", { class: "apps-library-title", text: "Дополнительные приложения" }));
+      const library=el('details',{class:'apps-library'});library.append(el('summary',{text:'Библиотека приложений'}));page.append(library);
       if (!apkLibrary.length) {
-        page.appendChild(el("p", { class: "stage-text", style: "color: var(--text-dim)", text: "Загружаю список..." }));
+        library.appendChild(el("p", { class: "stage-text", style: "color: var(--text-dim)", text: apkLibraryLoaded ? "Библиотека пока пуста." : "Загружаем список приложений…" }));
       } else {
         const byCategory = {};
         apkLibrary.forEach((a) => { (byCategory[a.category || ""] = byCategory[a.category || ""] || []).push(a); });
@@ -1769,13 +1804,13 @@
           details.appendChild(el("summary", { text: cat || "Без категории" }));
           const ul = el("ul", { class: "stage-apps-list stage-apps-grid" });
           byCategory[cat].forEach((apk) => {
-            ul.appendChild(buildAppRow(apk, false, globalSelectedApks.has(apk.path), (checked) => {
-              if (checked) globalSelectedApks.add(apk.path);
-              else globalSelectedApks.delete(apk.path);
+            ul.appendChild(buildAppRow(apk, false, selectedApks.has(apk.path), (checked) => {
+              if (checked) selectedApks.add(apk.path);
+              else selectedApks.delete(apk.path);
             }));
           });
           details.appendChild(ul);
-          page.appendChild(details);
+          library.appendChild(details);
         });
       }
     }
@@ -1783,27 +1818,353 @@
     return lists;
   }
 
+  function selectedAppsForStage(stage, selected = globalSelectedApks) {
+    const lists = stageApkLists(stage);
+    const required = stage.type === "apps" ? lists.required : [];
+    const byPath = new Map();
+    for (const candidate of stages) {
+      for (const source of [candidate, ...(candidate.variants || [])]) {
+        for (const entry of [...(source.standard_apks || []), ...(source.standard_apks_optional || [])]) {
+          const item = typeof entry === "string" ? { path: entry, name: basename(entry) } : entry;
+          if (item?.path) byPath.set(item.path, item);
+        }
+      }
+    }
+    for (const item of [...apkLibrary, ...personalApks, ...lists.optional, ...required]) byPath.set(item.path, item);
+    const paths = [...new Set([...required.map(item => item.path), ...selected])];
+    return { required, entries: paths.map(path => byPath.get(path) || { path, name: basename(path) }) };
+  }
+
+  function applyAppSelection(stage, draft) {
+    globalSelectedApks = new Set(draft.selected);
+    personalApks = draft.personal.slice();
+    for (const stored of Object.values(appsSelection)) stored.optional = new Set([...stored.optional].filter(path => globalSelectedApks.has(path)));
+    const sel = selectionFor(stage);
+    sel.optional = new Set(stageApkLists(stage, sel).optional.filter(apk => globalSelectedApks.has(apk.path)).map(apk => apk.path));
+  }
+
+  function filterAppRows(body, search, empty) {
+    const query = search.value.trim().toLocaleLowerCase('ru-RU');
+    body.querySelectorAll('.app-choice').forEach(row => { row.hidden = query !== '' && !row.textContent.toLocaleLowerCase('ru-RU').includes(query); });
+    [...body.querySelectorAll('.apps-section,.apps-library')].reverse().forEach(section => {
+      const rows = [...section.querySelectorAll('.app-choice')];
+      section.hidden = rows.length > 0 && rows.every(row => row.hidden);
+      if (query && section.tagName === 'DETAILS') section.open = true;
+    });
+    empty.hidden = query === '' || [...body.querySelectorAll('.app-choice')].some(row => !row.hidden);
+  }
+
+  function appendInlineAppSelection(parent, stage, page) {
+    const sel = selectionFor(stage);
+    const draft = { stage, page, selected: new Set(globalSelectedApks), previousPaths: new Set(globalSelectedApks), personal: personalApks.slice(), variant: sel.variant, expanded: new Map() };
+    const required = new Set(stageApkLists(stage, sel).required.map(apk => apk.path));
+    const count = el('p', { class:'apps-inline-count', role:'status' });
+    const search = el('input', {type:'search', class:'apps-picker-search', placeholder:'Поиск приложений', 'aria-label':'Поиск приложений', autocomplete:'off'});
+    const body = el('div', {class:'apps-picker-body apps-inline-body'});
+    const empty = el('p', {class:'apps-picker-empty', text:'Ничего не найдено. Попробуйте другое название.', hidden:''});
+    draft.updateCount = () => {
+      if (labInstallBusy) return;
+      applyAppSelection(stage, draft);
+      count.textContent = `Выбрано: ${new Set([...required,...draft.selected]).size}`;
+      body.querySelectorAll('.app-choice').forEach(row => {
+        const input = row.querySelector('input');
+        input.checked = required.has(row.dataset.apkPath) || draft.selected.has(row.dataset.apkPath);
+      });
+    };
+    draft.render = () => {
+      if (labInstallBusy) return;
+      const scroll = wizardContentEl.scrollTop;
+      body.querySelectorAll('details').forEach(node => draft.expanded.set(node.querySelector('summary')?.textContent,node.open));
+      clear(body);
+      renderApkTree(body, stage, sel, draft);
+      body.querySelectorAll('details').forEach(node => { node.open = draft.expanded.get(node.querySelector('summary')?.textContent) ?? !node.classList.contains('apps-section-required'); });
+      body.append(empty);
+      draft.updateCount();filterAppRows(body,search,empty);
+      wizardContentEl.scrollTop = scroll;
+    };
+    search.addEventListener('input',()=>filterAppRows(body,search,empty));
+    parent.append(el('div',{class:'apps-inline-heading'},[count]),el('div',{class:'apps-picker-search-wrap apps-inline-search'},[search]),body);
+    inlineAppsSession = draft;
+    draft.render();
+  }
+
+  function openAppSelection(stage) {
+    if (labInstallBusy || appPickerSession) return;
+    const sel = selectionFor(stage);
+    const draft = { stage, selected: new Set(globalSelectedApks), previousPaths: new Set(globalSelectedApks), personal: personalApks.slice(), variant: sel.variant, expanded: new Map() };
+    const required = new Set(stageApkLists(stage, sel).required.map(apk => apk.path));
+    const dialog = el("dialog", { class: "apps-picker-dialog", "aria-labelledby": "apps-picker-title" });
+    const count = el("p", { class: "apps-picker-count", role: "status" });
+    const closeButton = usbStageButton("Закрыть", "close", () => dialog.close());
+    closeButton.classList.add("apps-picker-close");
+    closeButton.setAttribute("aria-label", "Закрыть выбор приложений");
+    const heading = el("header", { class: "apps-picker-heading" }, [
+      el("div", {}, [el("h2", { id: "apps-picker-title", text: "Выбор приложений" }), count]), closeButton,
+    ]);
+    const search = el("input", { type: "search", class: "apps-picker-search", placeholder: "Поиск приложений", "aria-label": "Поиск приложений", autocomplete: "off" });
+    const body = el("div", { class: "apps-picker-body" });
+    const empty = el("p", { class: "apps-picker-empty", text: "Ничего не найдено. Попробуйте другое название.", hidden: "" });
+    const cancel = el("button", { type: "button", text: "Отмена", onclick: () => dialog.close() });
+    const apply = el("button", { type: "button", class: "accent", text: "Готово" });
+    const scrollTop = wizardContentEl.scrollTop;
+
+    draft.updateCount = () => {
+      const total = new Set([...required, ...draft.selected]).size;
+      count.textContent = required.size ? `Выбрано: ${total} · обязательных: ${required.size}` : `Выбрано: ${total}`;
+      body.querySelectorAll(".app-choice").forEach(row => {
+        const input = row.querySelector("input");
+        input.checked = required.has(row.dataset.apkPath) || draft.selected.has(row.dataset.apkPath);
+      });
+    };
+    function filterRows() {
+      filterAppRows(body, search, empty);
+    }
+    draft.render = () => {
+      const scroll = body.scrollTop;
+      body.querySelectorAll("details").forEach(node => draft.expanded.set(node.querySelector("summary")?.textContent, node.open));
+      clear(body);
+      renderApkTree(body, stage, { variant: draft.variant, optional: new Set() }, draft);
+      body.querySelectorAll("details").forEach(node => { node.open = draft.expanded.get(node.querySelector("summary")?.textContent) ?? true; });
+      body.append(empty);
+      draft.updateCount();
+      filterRows();
+      body.scrollTop = scroll;
+    };
+    apply.addEventListener("click", () => {
+      if (labInstallBusy) return;
+      applyAppSelection(stage, draft);
+      dialog.close();
+    });
+    search.addEventListener("input", filterRows);
+    dialog.append(heading, el("div", { class: "apps-picker-search-wrap" }, [search]), body, el("footer", { class: "apps-picker-actions" }, [cancel, apply]));
+    dialog.addEventListener("click", event => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
+    });
+    dialog.addEventListener("close", () => {
+      if (appPickerSession === draft) appPickerSession = null;
+      dialog.remove();
+      if (!labInstallBusy) {
+        render();
+        queueMicrotask(() => { wizardContentEl.scrollTop = scrollTop; document.querySelector(".app-select-open")?.focus({ preventScroll: true }); });
+      }
+    }, { once: true });
+    appPickerSession = draft;
+    draft.render();
+    document.body.append(dialog);
+    dialog.showModal();
+    closeButton.focus({ preventScroll: true });
+  }
+
+  function appendAppSelection(parent, stage) {
+    const selection = selectedAppsForStage(stage);
+    const card = el("section", { class: "app-selection-card" });
+    const copy = el("div", { class: "app-selection-copy" });
+    if (stage.type === "usb") copy.append(el("h3", { text: "Приложения" }));
+    copy.append(el("p", { class: "app-selection-total", text: selection.entries.length ? `Выбрано: ${selection.entries.length}` : "Выберите приложения для " + (stage.type === "usb" ? "записи" : "установки") }));
+    if (selection.required.length) copy.append(el("span", { class: "app-selection-required", text: `Обязательных: ${selection.required.length}` }));
+    card.append(copy);
+    if (selection.entries.length) {
+      const preview = el("div", { class: "app-selection-preview", "aria-label": "Выбранные приложения" });
+      selection.entries.slice(0, 4).forEach(apk => {
+        const item = el("span", { class: "app-selection-preview-item", title: apk.name || basename(apk.path) }, [LabUI.appIcon(apk.path, apk.icon)]);
+        preview.append(item);
+      });
+      if (selection.entries.length > 4) preview.append(el("span", { class: "app-selection-more", text: `+${selection.entries.length - 4}` }));
+      card.append(preview);
+    }
+    const open = usbStageButton("Выбрать приложения", "apps", () => openAppSelection(stage));
+    open.classList.add("app-select-open");
+    card.append(open);
+    parent.append(card);
+  }
+
   function renderAppsStage(page, stage) {
     const sel = selectionFor(stage);
     renderVariantPicker(page, stage, sel);
-    const lists = renderApkTree(page, stage, sel);
-
-    const btn = el("button", { class: "accent", text: "Установить" });
+    const card = el('section',{class:'apps-inline-card'});
+    appendInlineAppSelection(card, stage, page);
+    const btn = usbStageButton('Начать установку', 'play', () => {}, true);
+    btn.classList.add('apps-install-start');
     btn.addEventListener("click", () => {
-      if (!adbConnected) { log("Сначала подключись к ADB (кнопка вверху)."); return; }
-      const apkPaths = Array.from(new Set(lists.required.concat(Array.from(globalSelectedApks))));
-      if (!apkPaths.length) { log("Не выбрано ни одного приложения."); return; }
+      if (labInstallBusy) return;
+      if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
+      const selection = selectedAppsForStage(stage);
+      const apkPaths = selection.entries.map(apk => apk.path);
+      if (!apkPaths.length) { showLabNotice("Выберите приложения","Отметьте приложения, которые нужно установить."); return; }
       btn.disabled = true;
-      btn.textContent = "Устанавливаю...";
-      Bridge.call("adb_install_apks", {
-        index: stage.index, apkPaths, appsInstallMethod: stage.apps_install_method || "",
-        modelKey: model.key,
+      labInstallBusy=true;
+      appInstallOperation={index:stage.index,cancelRequested:false};
+      screenWizard.classList.add('is-installing-apps');
+      renderNav();
+      const status=LabUI.busy(page,'Установка приложений',selection.entries.map(apk=>({name:apk.name||basename(apk.path),path:apk.path})));
+      const stop=usbStageButton('Остановить','stop',()=>{
+        if (!appInstallOperation || appInstallOperation.cancelRequested) return;
+        appInstallOperation.cancelRequested=true;stop.disabled=true;
+        stop.replaceChildren(usbStageIcon('stop'),el('span',{text:'Останавливаю…'}));
+        try { Bridge.call('adb_cancel_install',{}); }
+        catch(error){appInstallOperation.cancelRequested=false;stop.disabled=false;stop.replaceChildren(usbStageIcon('stop'),el('span',{text:'Остановить'}));log(`Не удалось остановить установку: ${error.message||error}`);}
       });
+      stop.classList.add('apps-install-stop','danger');
+      status.append(el('div',{class:'install-actions apps-run-actions'},[stop]));
+      wizardContentEl.scrollTop=0;
+      try {
+        Bridge.call("adb_install_apks", {
+          index: stage.index, apkPaths, appsInstallMethod: stage.apps_install_method || "",
+          modelKey: model.key,
+        });
+      } catch(error) { onAdbStageResult({index:stage.index,result:{success:false,reason:error.message||String(error)}}); }
     });
-    page.appendChild(btn);
+    card.insertBefore(btn, card.querySelector('.apps-inline-search'));
+    const result=appInstallResults[stage.index];
+    if(result&&!result.success){
+      const message=el('div',{class:'apps-install-result',role:'status','data-state':result.cancelled?'cancelled':'error'},[usbStageIcon(result.cancelled?'stop':'report'),el('span',{text:result.cancelled?'Установка остановлена.':result.reason||'Не удалось установить приложения.'})]);
+      card.append(message);
+      if(!result.cancelled)card.append(usbStageButton('Открыть лог','log',()=>setLogOpen(true)));
+    }
+    page.append(card);
+  }
+
+  function usbStageIcon(name) {
+    if (window.AppIcons) return window.AppIcons.icon(name);
+    const paths = {
+      file: "M7 3h7l5 5v13H7V3Zm7 0v6h5M10 13h6m-6 4h6",
+      car: "m5 8 2-5h10l2 5M3 9h18v9H3V9Zm3 9v3m12-3v3M6 12h2m8 0h2M8 15h8",
+      key: "M14 3a6 6 0 0 0-5 9L2 19v3h4v-3h3v-3l3-3A6 6 0 1 0 14 3Zm2 4h.01",
+      download: "M12 3v12m-5-5 5 5 5-5M4 15v6h16v-6",
+      format: "M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7",
+      terminal: "M3 4h18v16H3V4Zm4 5 3 3-3 3m6 1h4",
+      shield: "m12 2 8 4v6c0 5-8 10-8 10S4 17 4 12V6l8-4Zm-4 10 3 3 5-6",
+      location: "M12 22S4 14 4 9a8 8 0 1 1 16 0c0 5-8 13-8 13Zm0-16a3 3 0 1 0 0 6 3 3 0 0 0 0-6",
+      alert: "m12 3 10 18H2L12 3Zm0 6v5m0 3h.01",
+    };
+    if (!paths[name]) return LabUI.symbol(name);
+    const icon = LabUI.icon("apps");
+    icon.querySelector("svg").innerHTML = `<path d="${paths[name]}"/>`;
+    return icon;
+  }
+
+  function usbStageButton(text, symbol, handler, accent = false) {
+    const button = el("button", { class: "usb-step-action" + (accent ? " accent" : ""), type: "button" });
+    button.append(usbStageIcon(symbol), el("span", { text }));
+    button.addEventListener("click", handler);
+    return button;
+  }
+
+  function usbStepCard(number, title, description, symbol, state = "idle") {
+    const card = el("section", { class: "usb-step-card", "data-state": state });
+    const heading = el("div", { class: "usb-step-heading" }, [
+      el("span", { class: "usb-step-number", text: state === "done" ? "✓" : String(number), "aria-hidden": "true" }),
+      usbStageIcon(symbol),
+      el("div", { class: "usb-step-copy" }, [el("h3", { text: title }), el("p", { text: description })]),
+    ]);
+    card.append(heading);
+    return card;
+  }
+
+  function prepareUsbStage(page, stage) {
+    page.classList.add("usb-stage");
+    page.dataset.connected = String(usbConnected);
+    page.querySelector(".stage-chip").textContent = "Подготовка флешки";
+    page.querySelectorAll(":scope > .stage-text").forEach(node => node.remove());
+    const intro = el("p", { class: "usb-stage-intro" });
+    if (stage.type === "qr_adb") intro.append(
+      el("span", { class: "usb-intro-full", text: "Запишите файл на USB-накопитель и выполните дальнейшие шаги на магнитоле." }),
+      el("span", { class: "usb-intro-compact", text: "Запишите файл и следуйте шагам ниже." }),
+    );
+    else intro.textContent = "Подключите USB-накопитель и запишите файлы для вашей магнитолы.";
+    page.append(intro);
+    if (!usbBarEl.classList.contains("usb-device-card")) {
+      usbBarEl.classList.add("usb-device-card");
+      const details = el("div", { class: "usb-device-details" }, [el("strong", { text: "USB-накопитель" }), usbStatusEl]);
+      const controls = el("div", { class: "usb-device-controls" }, [usbConnectBtn]);
+      usbFormatBtn.replaceChildren(usbStageIcon("format"), el("span", { text: "Форматировать флешку" }));
+      usbFormatBtn.setAttribute("aria-label", "Форматировать флешку");
+      usbFormatBtn.title = "Форматировать флешку";
+      usbBarEl.replaceChildren(usbStageIcon("usb"), details, controls);
+    }
+    usbFormatBtn.disabled = !usbConnected || !!usbOperation;
+    usbConnectBtn.disabled = !!usbOperation;
+    page.append(usbBarEl);
+  }
+
+  function appendUsbOptions(page) {
+    page.append(el("details", { class: "usb-device-options" }, [
+      el("summary", { text: "Параметры флешки" }),
+      el("div", { class: "usb-device-options-body" }, [
+        el("p", { text: "Форматирование удалит все данные с накопителя." }), usbFormatBtn,
+      ]),
+    ]));
+  }
+
+  function openUsbInstructions(stage) {
+    const overlay = el("div", { class: "modal-overlay dismissible usb-instruction-overlay" });
+    const close = () => { closePhotoLightbox(); overlay.remove(); };
+    const closeButton = usbStageButton("Закрыть", "close", close);
+    const box = el("section", { class: "modal-box usb-instruction-dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": "usb-instruction-title" });
+    const title = el("h2", { id: "usb-instruction-title", text: "Шаги на магнитоле" });
+    box.append(el("header", { class: "usb-instruction-heading" }, [usbStageIcon("book"), title, closeButton]));
+    const content = el("div", { class: "usb-instruction-content" });
+    if (stage.description) content.append(el("p", { class: "stage-text", text: stage.description }));
+    if (stage.instruction_html) {
+      const iframe = el("iframe", {
+        class: "usb-instruction-frame", title: "Инструкция для магнитолы",
+        sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox",
+      });
+      iframe.srcdoc = LabUI.reader(stage.instruction_html);
+      content.append(iframe);
+    }
+    if (stage.type === "qr_adb") {
+      const list = el("ol", { class: "usb-instruction-list" });
+      ["Откройте инженерное меню с QR-кодом на магнитоле. Не закрывайте этот экран.",
+        "Вставьте в магнитолу ту же флешку, на которую записали файл.",
+        "Дождитесь надписи «QNX OK» на экране магнитолы, затем извлеките флешку.",
+        "Верните флешку в телефон, нажмите «Переподключить», затем «Получить пароль»."
+      ].forEach(text => list.append(el("li", { text })));
+      content.append(list);
+    }
+    if (stage.video_url) content.append(usbStageButton(stage.video_label || "Смотреть видео", "play", () => { close(); playStageVideo(); }));
+    box.append(content, el("footer", { class: "dialog-actions" }, [usbStageButton("Понятно", "check", close, true)]));
+    overlay.append(box);
+    overlay.addEventListener("click", event => { if (event.target === overlay) close(); });
+    document.body.append(overlay);
+    closeButton.focus({ preventScroll: true });
+  }
+
+  function beginUsbOperation(kind, stage, card) {
+    if (labInstallBusy) return false;
+    if (!usbConnected) {
+      usbStatusEl.textContent = "Сначала подключите флешку к телефону";
+      usbConnectBtn.focus({ preventScroll: true });
+      usbBarEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      return false;
+    }
+    usbOperation = { kind, index: stage.index };
+    labInstallBusy = true;
+    renderNav();
+    document.querySelectorAll(".usb-stage button, .usb-stage select, .usb-stage input").forEach(button => { button.disabled = true; });
+    card.dataset.state = "running";
+    const button = card.querySelector(":scope > .usb-step-action");
+    button.querySelector("span:not(.ui-icon)").textContent = kind === "password" ? "Получаем пароль…" : "Записываем…";
+    const status = el("div", { class: "usb-operation-status", role: "status" }, [el("span", { class: "usb-operation-detail", text: kind === "password" ? "Читаем данные с флешки…" : "Не отключайте флешку до завершения записи." })]);
+    status.append(el("progress", { class: "usb-operation-progress", "aria-label": kind === "password" ? "Чтение данных" : "Запись файлов" }));
+    card.append(status);
+    return true;
+  }
+
+  function sendUsbOperation(method, args, stage) {
+    try { Bridge.call(method, args); }
+    catch (error) {
+      const message = error.message || String(error);
+      if (method === "qr_adb_write_flag") onQrAdbWriteResult({ result: { ok: false, error: message } });
+      else if (method === "qr_adb_get_password") onQrAdbPasswordResult({ result: { ok: false, error: message } });
+      else onAdbStageResult({ index: stage.index, result: { success: false, reason: message } });
+    }
   }
 
   function renderUsbStage(page, stage) {
+    prepareUsbStage(page, stage);
     const sel = selectionFor(stage);
 
     function currentFiles() {
@@ -1814,30 +2175,43 @@
       return stage.usb_files || [];
     }
 
-    renderVariantPicker(page, stage, sel);
-
+    const result = usbStageResults[stage.index];
+    const writeCard = usbStepCard(1, "Запишите файлы на флешку", "Файлы этапа будут скопированы на подключённый накопитель.", "file", result?.success ? "done" : result ? "error" : "active");
+    renderVariantPicker(writeCard, stage, sel);
     const files = currentFiles();
     if (files.length) {
-      page.appendChild(el("div", { class: "stage-commands", text: files.map(basename).join("\n") }));
+      const list = el("details", { class: "usb-file-list" }, [el("summary", { text: `Файлы для записи · ${files.length}` })]);
+      const names = el("ul");
+      files.forEach(file => names.append(el("li", { text: basename(file) })));
+      list.append(names);
+      writeCard.append(list);
     }
     if (stage.usb_copy_selected_apks) {
-      renderApkTree(page, stage, sel); // у usb-этапа своих standard_apks нет — фактически только общая библиотека
+      appendAppSelection(writeCard, stage);
     }
+    if (stage.usb_shared_folder) writeCard.append(el("p", { class: "usb-bundle-note" }, [usbStageIcon("file"), el("span", { text: "Комплект файлов для магнитолы" })]));
 
-    const btn = el("button", { class: "accent", text: "Записать на флешку" });
-    btn.addEventListener("click", () => {
-      if (!usbConnected) { log("Сначала подключи флешку (кнопка вверху)."); return; }
-      btn.disabled = true;
-      btn.textContent = "Записываю...";
-      Bridge.call("usb_run_stage", {
+    const btn = usbStageButton(result?.success ? "Записать ещё раз" : "Записать файлы", "download", () => {
+      if (!beginUsbOperation("files", stage, writeCard)) return;
+      sendUsbOperation("usb_run_stage", {
         index: stage.index,
         files,
         sharedFolder: stage.usb_shared_folder || "",
         selectedApks: stage.usb_copy_selected_apks ? Array.from(globalSelectedApks) : [],
         apksDest: stage.usb_apks_dest || "",
-      });
-    });
-    page.appendChild(btn);
+      }, stage);
+    }, !result?.success);
+    writeCard.append(btn);
+    if (result) writeCard.append(el("p", { class: "usb-step-feedback", role: "status", text: result.success ? "Файлы записаны. Можно извлечь флешку." : result.reason || "Не удалось записать файлы. Проверьте подключение и повторите запись." }));
+    page.append(writeCard);
+    const nextInstruction = stages.find(candidate => candidate.id === stage.next && candidate.type === "instruction");
+    const instructionStage = stage.description || stage.instruction_html || stage.video_url ? stage : nextInstruction;
+    if (instructionStage && (instructionStage.description || instructionStage.instruction_html || instructionStage.video_url)) {
+      const instructions = usbStepCard(2, "Выполните шаги на магнитоле", "Следуйте инструкции для выбранной модели автомобиля.", "car");
+      instructions.append(usbStageButton("Открыть инструкцию", "book", () => openUsbInstructions(instructionStage)));
+      page.append(instructions);
+    }
+    appendUsbOptions(page);
   }
 
   // Порт desktop-версии (app/web/frontend/js/screens/stage_wizard.js:
@@ -1847,69 +2221,57 @@
   // карточка (номер + текст + действие сразу под ним, если есть) — тот же
   // приём, что и на desktop, чтобы взгляд не метался между описанием и
   // кнопкой в разных концах экрана.
-  function qrAdbStepCard(number, text, extraNodes) {
-    const body = el("div", { class: "qr-adb-step-body" }, [el("p", { class: "stage-text", text })]);
-    for (const node of extraNodes || []) body.appendChild(node);
-    return el("div", { class: "qr-adb-step" }, [
-      el("div", { class: "qr-adb-step-num", text: String(number) }),
-      body,
-    ]);
-  }
-
-  function renderQrAdbStage(page) {
-    const writeBtn = el("button", { class: "accent", text: "Записать файл-триггер на флешку" });
-    writeBtn.addEventListener("click", () => {
-      if (!usbConnected) { log("Сначала подключи флешку (кнопка вверху)."); return; }
-      writeBtn.disabled = true;
-      writeBtn.textContent = "Записываю...";
-      Bridge.call("qr_adb_write_flag", {});
-    });
-    const writeStatusNodes = [];
+  function renderQrAdbStage(page, stage) {
+    prepareUsbStage(page, stage);
+    const writeCard = usbStepCard(1, "Запишите файл на флешку", "Будет создан файл svlog.flag для получения кода ADB.", "file", qrAdbWriteStatus?.ok ? "done" : qrAdbWriteStatus ? "error" : "active");
+    const writeBtn = usbStageButton(qrAdbWriteStatus?.ok ? "Записать ещё раз" : "Записать файл", "download", () => {
+      if (!beginUsbOperation("flag", stage, writeCard)) return;
+      qrAdbResult = null;
+      sendUsbOperation("qr_adb_write_flag", {}, stage);
+    }, !qrAdbWriteStatus?.ok);
+    writeCard.append(writeBtn);
     if (qrAdbWriteStatus) {
-      writeStatusNodes.push(el("p", {
-        class: "stage-text",
-        style: qrAdbWriteStatus.ok ? "color: var(--accent)" : "color: var(--danger)",
+      writeCard.append(el("p", {
+        class: "usb-step-feedback", role: "status",
         text: qrAdbWriteStatus.ok
           ? "Готово — теперь вставьте эту флешку в магнитолу (шаг 2)."
           : (qrAdbWriteStatus.error || "Не удалось записать файл."),
       }));
     }
-
-    const getBtn = el("button", { class: "accent", text: "Получить пароль" });
-    getBtn.addEventListener("click", () => {
-      if (!usbConnected) { log("Сначала подключи флешку (кнопка вверху)."); return; }
-      getBtn.disabled = true;
-      getBtn.textContent = "Ищу...";
-      Bridge.call("qr_adb_get_password", {});
+    const instructionCard = usbStepCard(2, "Выполните шаги на магнитоле", "Следуйте инструкции на экране автомобиля.", "car", qrAdbWriteStatus?.ok && !qrAdbResult?.ok ? "active" : "idle");
+    instructionCard.append(usbStageButton("Открыть инструкцию", "book", () => openUsbInstructions(stage)));
+    const passwordCard = usbStepCard(3, "Подключите флешку снова", "После надписи «QNX OK» верните флешку в телефон и получите пароль.", "key", qrAdbResult?.ok ? "done" : qrAdbResult ? "error" : "idle");
+    const getBtn = usbStageButton("Получить пароль", "key", () => {
+      if (!beginUsbOperation("password", stage, passwordCard)) return;
+      sendUsbOperation("qr_adb_get_password", {}, stage);
     });
-    const resultNodes = [getBtn];
+    passwordCard.append(getBtn);
     if (qrAdbResult) {
       if (qrAdbResult.ok) {
-        resultNodes.push(el("div", { class: "qr-adb-code", text: qrAdbResult.code }));
-        resultNodes.push(el("p", { class: "stage-text", style: "color: var(--text-dim); font-size: 12px", text: `SN: ${qrAdbResult.sn || "?"}` }));
+        passwordCard.append(el("div", { class: "usb-password-result", role: "status" }, [
+          el("span", { text: "Пароль ADB" }), el("output", { class: "qr-adb-code", text: qrAdbResult.code }),
+          el("small", { text: `SN: ${qrAdbResult.sn || "?"}` }),
+        ]));
       } else {
-        resultNodes.push(el("p", { class: "stage-text", style: "color: var(--danger)", text: qrAdbResult.error || "Не удалось получить пароль." }));
+        passwordCard.append(el("p", { class: "usb-step-feedback", role: "status", text: qrAdbResult.error || "Не удалось получить пароль." }));
       }
     }
-
-    page.appendChild(qrAdbStepCard(1,
-      "Убедитесь, что флешка подключена (бар вверху), и запишите на неё файл-триггер.",
-      [writeBtn, ...writeStatusNodes]));
-    page.appendChild(qrAdbStepCard(2,
-      "Не закрывая экран с QR-кодом в инженерном меню, вставьте эту же флешку в магнитолу."));
-    page.appendChild(qrAdbStepCard(3,
-      "Дождитесь на экране магнитолы надписи «QNX OK», затем извлеките флешку."));
-    page.appendChild(qrAdbStepCard(4,
-      "Вставьте флешку обратно в этот телефон (переподключите её баром вверху) и нажмите «Получить пароль».",
-      resultNodes));
+    page.append(writeCard, instructionCard, passwordCard);
+    appendUsbOptions(page);
   }
 
   function onQrAdbWriteResult(event) {
+    if (!usbOperation || usbOperation.kind !== "flag") return;
+    usbOperation = null;
+    labInstallBusy = false;
     qrAdbWriteStatus = event.result || { ok: false, error: "неизвестная ошибка" };
     if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render();
   }
 
   function onQrAdbPasswordResult(event) {
+    if (!usbOperation || usbOperation.kind !== "password") return;
+    usbOperation = null;
+    labInstallBusy = false;
     qrAdbResult = event.result || { ok: false, error: "неизвестная ошибка" };
     if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render();
   }
@@ -1921,22 +2283,24 @@
   // — сырые строки (не DSL, см. wizard_spec.py), каждая шлётся отдельным
   // telnet-подключением.
   function renderTelnetStage(page, stage) {
-    if ((stage.commands || []).length) {
-      page.appendChild(el("div", { class: "stage-commands", text: stage.commands.join("\n") }));
-    }
-    const btn = el("button", { class: "accent", text: "Выполнить (telnet)" });
-    btn.addEventListener("click", () => {
+    page.classList.add("flow-stage");
+    const card = flowCard("Подключение по сети", "Укажите адрес магнитолы для выполнения команд через Telnet, порт 23.", "wifi");
+    flowTechnicalDetails(card, (stage.commands || []).join("\n"), `Команды этапа · ${(stage.commands || []).length}`);
+    const btn = usbStageButton("Указать адрес и выполнить", "wifi", () => {
       promptHostPicker("Адрес магнитолы для telnet (порт 23):", 23, (host) => {
         lastWifiHost = host;
-        btn.disabled = true;
-        btn.textContent = "Выполняю...";
-        Bridge.call("telnet_run_stage", { index: stage.index, host, commands: stage.commands || [] });
+        runStageOperation("telnet_run_stage", { index: stage.index, host, commands: stage.commands || [] }, page, card);
       });
-    });
-    page.appendChild(btn);
+    }, true);
+    card.append(btn);
+    flowResult(card, stageExecutionResults[stage.index]);
+    page.append(card);
   }
 
   function updateTransportBars(stage) {
+    adbConnectBtn.disabled = labInstallBusy;
+    adbModeWiredBtn.disabled = labInstallBusy;
+    adbModeWifiBtn.disabled = labInstallBusy;
     adbBarEl.style.display = ADB_STAGE_TYPES.has(stage.type) ? "flex" : "none";
     usbBarEl.style.display = USB_STAGE_TYPES.has(stage.type) ? "flex" : "none";
     // Переключатель "Провод/Wi-Fi" — только для apps-этапа с
@@ -1955,30 +2319,46 @@
 
   function renderStage(stage) {
     updateTransportBars(stage);
-    const page = el("div", { class: "stage-page" });
-    page.appendChild(el("div", { class: "stage-chip", text: (stage.title || stage.type || "").toUpperCase() }));
-    if (stage.description) {
-      page.appendChild(el("div", { class: "stage-text", text: stage.description }));
+    const page = el("div", { class: "stage-page", "data-stage-type": stage.type, "data-stage-index":stage.index });
+    page.appendChild(el("div", { class: "stage-chip", text: stage.type === "apps" ? "Приложения" : stage.title || stage.type || "" }));
+    if (stage.description && !['actions', 'instruction'].includes(stage.type)) {
+      const description = el("div", { class: "stage-text", text: stage.description });
+      if (stage.type === "apps") {
+        page.appendChild(el("details", { class: "lab-stage-help" }, [
+          el("summary", { text: "Инструкция к этапу" }), description,
+        ]));
+      } else page.appendChild(description);
     }
+    if (["adb", "actions"].includes(stage.type)) page.append(adbBarEl);
 
     nextAction = () => advanceAfter(stage.index);
 
     if (stage.type === "check") {
+      page.classList.add("flow-stage");
       const options = stage.check_options || [];
       const list = el("div", { class: "check-options-list" });
       options.forEach((opt, i) => {
-        const btn = el("button", { class: "accent", text: opt });
+        const btn = el("button", { class: "flow-check-option", type: "button" }, [
+          el("span", { class: "flow-option-number", text: String(i + 1), "aria-hidden": "true" }),
+          el("span", { class: "flow-option-label", text: opt }), usbStageIcon("chevron"),
+        ]);
         // Клик сразу продвигает по выбранной ветке (см. app/car_generator.py:
         // StepSpec.next_options).
         btn.addEventListener("click", () => advanceAfter(stage.index, i));
         list.appendChild(btn);
       });
       page.appendChild(list);
+      if (!options.length) page.append(flowCard("Нет вариантов выбора", "Для этого этапа пока не заданы варианты.", "alert"));
       // "Далее" — для техника, который и так знает нужную ветку и просто
       // пролистывает мастер: по умолчанию первый вариант.
       nextAction = () => advanceAfter(stage.index, 0);
     } else if (stage.type === "manual") {
-      page.appendChild(el("p", { class: "stage-text", text: "Выполните шаги из инструкции на самой магнитоле, затем нажмите «Далее»." }));
+      page.classList.add("flow-stage");
+      page.querySelectorAll(":scope > .stage-text").forEach(node => node.remove());
+      const card = flowCard("На магнитоле", stage.description || "Выполните действия из инструкции на экране автомобиля.", "car");
+      card.append(el("p", { class: "flow-action-note", text: "После выполнения нажмите «Далее»." }));
+      if (stage.instruction_html) card.append(usbStageButton("Открыть инструкцию", "book", () => openUsbInstructions(stage)));
+      page.append(card);
     } else if (stage.type === "instruction") {
       // instruction_html — ПОЛНЫЙ HTML-документ (<!DOCTYPE>/<html>/<head>
       // со своим <style>, см. instr_N/instruction.html), не фрагмент.
@@ -1993,8 +2373,8 @@
       // wizard_spec._rewrite_instruction_images/MainActivity.kt:
       // WebViewAssetLoader) — картинки отображаются и внутри iframe тоже,
       // тот же origin.
-      if (stage.instruction_html) {
-        const iframe = el("iframe", { class: "stage-instruction-frame", scrolling: "no" });
+      {
+        const iframe = el("iframe", { class: "stage-instruction-frame", title: stage.title || "Инструкция", scrolling: "no" });
         iframe.addEventListener("load", () => {
           try {
             const doc = iframe.contentDocument;
@@ -2010,19 +2390,19 @@
             doc.documentElement.style.overflow = "hidden";
             if (doc.body) doc.body.style.overflow = "hidden";
             const syncHeight = () => {
-              const height = Math.max(doc.documentElement.scrollHeight, doc.body ? doc.body.scrollHeight : 0);
-              iframe.style.height = `${height}px`;
+              const height = Math.max(200, Math.ceil(doc.body?.getBoundingClientRect().height || 0), doc.body?.scrollHeight || 0);
+              if (iframe.style.height !== `${height}px`) iframe.style.height = `${height}px`;
             };
             syncHeight();
             // ResizeObserver подхватывает досрочно занятую высоту (позднюю
             // подгрузку картинок/веб-шрифтов) без повторного load-события.
             if (window.ResizeObserver) {
-              new ResizeObserver(syncHeight).observe(doc.documentElement);
+              new ResizeObserver(syncHeight).observe(doc.body);
             }
           } catch (e) { /* останется дефолтная высота — не критично */ }
         });
         page.appendChild(iframe);
-        iframe.srcdoc = stage.instruction_html;
+        iframe.srcdoc = LabUI.reader(stage.instruction_html || Instructions12.textDocument(stage.description || "Для этого этапа нет отдельной инструкции."), { title: stage.title || "Инструкция", description: stage.instruction_html ? stage.description : "" });
       }
     } else if (stage.type === "adb") {
       renderAdbStage(page, stage);
@@ -2033,14 +2413,20 @@
     } else if (stage.type === "usb") {
       renderUsbStage(page, stage);
     } else if (stage.type === "qr_adb") {
-      renderQrAdbStage(page);
+      renderQrAdbStage(page, stage);
     } else if (stage.type === "telnet") {
       renderTelnetStage(page, stage);
-    } else if (!stage.supported) {
-      page.appendChild(el("div", {
-        class: "stage-text", style: "color: var(--danger)",
-        text: `Тип этапа "${stage.type}" пока не поддерживается в мобильной версии — можно только пропустить.`,
-      }));
+    } else if (!stage.supported || stage.type === "exe" || stage.type === "uart") {
+      page.classList.add("flow-stage");
+      const message = stage.type === "uart"
+        ? "Подключение по UART пока не поддерживается в Android-версии. Выполните этот этап на компьютере."
+        : stage.type === "exe"
+        ? "Запуск программ Windows недоступен на Android. Выполните этот этап на компьютере."
+        : `Этап «${stage.type}» пока не поддерживается в Android-версии.`;
+      const card = flowCard("Нужен компьютер", message, "alert", "notice");
+      if (stage.exe_file) flowTechnicalDetails(card, basename(stage.exe_file), "Программа этапа");
+      if (stage.type === "uart") flowTechnicalDetails(card, (stage.commands || []).join("\n"), "Команды этапа");
+      page.append(card);
     }
 
     wizardContentEl.appendChild(page);
@@ -2172,19 +2558,83 @@
   // desktop), либо "Вы вошли как ..." + "Выйти", если сессия уже есть.
   // Только вход/просмотр своих машин на модерации — редактирования на
   // Android нет вовсе (см. план: сначала нужен сам редактор).
+  function menuAction(text, symbol, className = "") {
+    return el("button", { class: `menu13-action ${className}`, type: "button" }, [
+      AppIcons.icon(symbol), el("span", { class: "menu13-action-label", text }),
+    ]);
+  }
+
+  function setMenuActionLabel(button, text) {
+    const label = button.querySelector(".menu13-action-label");
+    if (label) label.textContent = text;
+    else button.textContent = text;
+  }
+
+  function menuHeading(title, symbol) {
+    return el("div", { class: "menu13-section-heading" }, [AppIcons.icon(symbol), el("h3", { text: title })]);
+  }
+
+  // A single sheet frame keeps the close button fixed while only its content scrolls.
+  function showMenuModal(title, symbol, content, options = {}) {
+    const previousFocus = document.activeElement;
+    const overlay = el("div", { class: `modal-overlay dismissible menu13-overlay ${options.className || ""}` });
+    const box = el("section", { class: "modal-box menu13-sheet", role: "dialog", "aria-modal": "true", "aria-label": title, tabindex: "-1" });
+    const close = menuAction("", "close", "menu13-close");
+    close.setAttribute("aria-label", "Закрыть");
+    const heading = el("header", { class: "menu13-heading" }, [
+      el("span", { class: "menu13-symbol" }, [AppIcons.icon(symbol)]),
+      el("h2", { text: title }), close,
+    ]);
+    box.append(heading, el("div", { class: "menu13-body" }, content));
+    if (options.footer) box.append(el("footer", { class: "menu13-footer" }, options.footer));
+    overlay.append(box);
+    const remove = overlay.remove.bind(overlay);
+    let removed = false;
+    overlay.remove = () => {
+      if (removed) return;
+      removed = true;
+      document.removeEventListener("keydown", onKey);
+      options.onClose?.();
+      remove();
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+    function onKey(event) {
+      if (event.key === "Escape") { event.preventDefault(); overlay.remove(); return; }
+      if (event.key !== "Tab") return;
+      const targets = [...box.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),[tabindex="0"]')]
+        .filter(node => !node.hidden && node.getClientRects().length);
+      if (!targets.length) { event.preventDefault(); box.focus(); return; }
+      const first = targets[0], last = targets[targets.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !box.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !box.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+      }
+    }
+    close.addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", event => { if (event.target === overlay) overlay.remove(); });
+    document.addEventListener("keydown", onKey);
+    document.body.append(overlay);
+    close.focus({ preventScroll: true });
+    return overlay;
+  }
+
   function buildAccountSection() {
-    const container = el("section", { class: "settings-section" });
+    const container = el("section", { class: "settings-section menu13-account" });
     let mode = "login"; // "login" | "register"
+    let savedEmail = "";
 
     function render(email) {
       clear(container);
-      container.appendChild(el("strong", { text: "Аккаунт" }));
       if (email) {
-        container.appendChild(el("p", {
-          class: "settings-muted",
-          text: `Вы вошли как ${email} — свои машины на модерации подтягиваются автоматически.`,
-        }));
-        const logoutBtn = el("button", { class: "danger", text: "Выйти" });
+        container.append(
+          el("div", { class: "menu13-profile" }, [
+            el("span", { class: "menu13-avatar" }, [AppIcons.icon("user")]),
+            el("div", { class: "menu13-profile-copy" }, [el("strong", { text: email }), el("span", { text: "Аккаунт техника" })]),
+          ]),
+          el("div", { class: "menu13-account-note" }, [AppIcons.icon("car"), el("p", { text: "Ваши модели на модерации появляются в каталоге автоматически." })]),
+        );
+        const logoutBtn = menuAction("Выйти из аккаунта", "back", "menu13-logout");
         logoutBtn.addEventListener("click", () => {
           logoutBtn.disabled = true;
           Bridge.call("auth_logout", {});
@@ -2192,30 +2642,45 @@
         container.appendChild(logoutBtn);
         return;
       }
-      const emailInput = el("input", { type: "text", placeholder: "Email" });
-      const passwordInput = el("input", { type: "password", placeholder: "Пароль" });
+      container.append(el("div", { class: "menu13-account-intro" }, [
+        el("h3", { text: mode === "login" ? "Вход в аккаунт" : "Создать аккаунт" }),
+        el("p", { text: mode === "login" ? "Ваши модели и заявки на модерации." : "Подтверждение придёт на вашу почту." }),
+      ]));
+      const form = el("form", { class: "menu13-account-form", novalidate: "" });
+      const emailInput = el("input", { type: "email", inputmode: "email", autocomplete: "email", autocapitalize: "none", spellcheck: "false", placeholder: "name@example.com", required: "" });
+      emailInput.value = savedEmail;
+      const passwordInput = el("input", { type: "password", autocomplete: mode === "login" ? "current-password" : "new-password", placeholder: "Введите пароль", required: "" });
       // Появляется только после неудачного входа (не при регистрации) — до
       // этого её показ намекал бы, что с паролем уже что-то не так.
-      const forgotBtn = el("button", { class: "link-btn account-forgot-btn", text: "Забыли пароль?", hidden: true });
-      const statusEl = el("p", { class: "settings-muted", text: "" });
-      const submitBtn = el("button", {
-        class: "accent",
-        text: mode === "login" ? "Войти" : "Зарегистрироваться",
-      });
+      const forgotBtn = el("button", { class: "link-btn account-forgot-btn", type: "button", text: "Забыли пароль?", hidden: true });
+      const statusEl = el("p", { class: "settings-muted menu13-status", role: "status", "aria-live": "polite", text: "" });
+      const submitBtn = menuAction(mode === "login" ? "Войти" : "Зарегистрироваться", "user", "accent");
+      submitBtn.type = "submit";
       const switchBtn = el("button", {
-        class: "link-btn",
+        class: "link-btn menu13-mode-switch", type: "button",
         text: mode === "login" ? "Нет аккаунта? Зарегистрироваться" : "Уже есть аккаунт? Войти",
       });
       switchBtn.addEventListener("click", () => {
+        savedEmail = emailInput.value.trim();
         mode = mode === "login" ? "register" : "login";
         render(null);
       });
-      submitBtn.addEventListener("click", () => {
+      form.addEventListener("submit", event => {
+        event.preventDefault();
+        if (submitBtn.disabled) return;
         const email = emailInput.value.trim();
         const password = passwordInput.value;
-        if (!email || !password) { statusEl.textContent = "Введите email и пароль."; return; }
+        if (!email || !password) {
+          statusEl.textContent = "Введите email и пароль.";
+          statusEl.dataset.state = "error";
+          (!email ? emailInput : passwordInput).focus();
+          return;
+        }
+        savedEmail = email;
         submitBtn.disabled = true;
+        switchBtn.disabled = true;
         forgotBtn.hidden = true;
+        statusEl.dataset.state = "pending";
         statusEl.textContent = mode === "login" ? "Вхожу..." : "Регистрирую...";
         Bridge.call(mode === "login" ? "auth_login" : "auth_register", { email, password });
         // Результат придёт событием auth_login_result/auth_register_result
@@ -2230,10 +2695,16 @@
         Bridge.call("auth_forgot_password", { email });
         // Результат — событием auth_forgot_password_result (см. ниже).
       });
-      container.append(emailInput, passwordInput, forgotBtn, statusEl, submitBtn, switchBtn);
+      form.append(
+        el("label", { class: "menu13-field" }, [el("span", { text: "Email" }), emailInput]),
+        el("label", { class: "menu13-field" }, [el("span", { text: "Пароль" }), passwordInput]),
+        forgotBtn, statusEl, submitBtn, switchBtn,
+      );
+      container.append(form);
     }
 
     accountRenderCallback = (kind, result) => {
+      if (!container.isConnected) return;
       if (kind === "logout") {
         render(null);
         return;
@@ -2246,6 +2717,7 @@
         // такой email в базе (см. server/backend.py:_handle_auth_forgot_
         // password) — не подтверждаем/опровергаем существование аккаунта.
         if (statusEl) {
+          statusEl.dataset.state = result.ok ? "success" : "error";
           statusEl.textContent = result.ok
             ? "Если такой аккаунт есть, письмо со ссылкой для сброса пароля отправлено."
             : result.error;
@@ -2254,9 +2726,11 @@
       }
       if (!result.ok) {
         const statusEl = container.querySelector("p.settings-muted");
-        if (statusEl) statusEl.textContent = result.error;
+        if (statusEl) { statusEl.textContent = result.error; statusEl.dataset.state = "error"; }
         const submitBtn = container.querySelector("button.accent");
         if (submitBtn) submitBtn.disabled = false;
+        const switchBtn = container.querySelector(".menu13-mode-switch");
+        if (switchBtn) switchBtn.disabled = false;
         if (kind === "login") {
           const forgotBtn = container.querySelector("button.account-forgot-btn");
           if (forgotBtn) forgotBtn.hidden = false;
@@ -2268,6 +2742,7 @@
         render(null);
         const statusEl = container.querySelector("p.settings-muted");
         if (statusEl) {
+          statusEl.dataset.state = "success";
           statusEl.textContent = "Письмо с подтверждением отправлено — перейдите по ссылке, потом войдите здесь.";
         }
         return;
@@ -2281,15 +2756,9 @@
   }
 
   function showAccountModal() {
-    let overlay;
-    const closeX = el("button", { class: "modal-close-x", type: "button", "aria-label": "Закрыть", text: "×" });
-    closeX.addEventListener("click", () => overlay.remove());
-    overlay = showModal([
-      closeX,
-      el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
-      buildAccountSection(),
-      el("button", { class: "accent", text: "Готово", onclick: () => overlay.remove() }),
-    ]);
+    showMenuModal("Аккаунт", "user", [buildAccountSection()], {
+      className: "menu13-account-overlay", onClose: () => { accountRenderCallback = null; },
+    });
   }
 
   function showSettingsModal() {
@@ -2299,18 +2768,22 @@
       return `${size >= 100 || index === 0 ? Math.round(size) : size.toFixed(1)} ${units[index]}`;
     };
     const info = Bridge.call("settings_info", {});
+    const auth = Bridge.call("auth_status", {});
+    const version = Bridge.call("app_version", {}).version || "";
     let overlay;
-    const cacheLabel = el("span", { text: formatBytes(info.cache_bytes) });
+    const cacheLabel = el("strong", { text: formatBytes(info.cache_bytes) });
     const makeToggle = (text, key) => {
-      const input = el("input", { type: "checkbox" }); input.checked = !!info.preferences[key];
+      const input = el("input", { type: "checkbox", class: "menu13-switch", role: "switch", "data-preference": key });
+      input.checked = !!info.preferences[key];
       input.addEventListener("change", () => {
         const preferences = Bridge.call("settings_set_preferences", { [key]: input.checked });
         document.documentElement.classList.toggle("reduce-motion", preferences.reduced_motion);
         document.getElementById("app").classList.toggle("compact-log", preferences.compact_log);
       });
-      return el("label", { class: "settings-toggle" }, [input, el("span", { text })]);
+      return el("label", { class: "settings-toggle menu13-toggle" }, [el("span", { text }), input]);
     };
-    const clear = el("button", { class: "danger", text: "Очистить кэш" });
+    const clear = menuAction("Очистить кэш", "trash");
+    clear.dataset.action = "clear-cache";
     clear.addEventListener("click", () => {
       // Android WebView не показывает нативный confirm() без отдельного
       // WebChromeClient; кнопка уже однозначно подписана и очищает только
@@ -2318,18 +2791,19 @@
       // намеренно не нужен.
       const result = Bridge.call("settings_clear_cache", {});
       cacheLabel.textContent = formatBytes(result.remaining_bytes);
-      clear.textContent = `Освобождено: ${formatBytes(result.freed_bytes)}`;
+      setMenuActionLabel(clear, `Освобождено: ${formatBytes(result.freed_bytes)}`);
     });
-    const sync = el("button", { text: "Проверить обновления сейчас" });
+    const sync = menuAction("Обновить каталог", "refresh");
+    sync.dataset.action = "sync";
     sync.addEventListener("click", () => {
       sync.disabled = true;
-      sync.textContent = "Проверяем…";
+      setMenuActionLabel(sync, "Проверяем…");
       settingsSyncButton = sync;
       if (settingsSyncTimeout) clearTimeout(settingsSyncTimeout);
       settingsSyncTimeout = setTimeout(() => {
         if (settingsSyncButton !== sync) return;
         sync.disabled = false;
-        sync.textContent = "Не удалось проверить";
+        setMenuActionLabel(sync, "Не удалось проверить");
         settingsSyncButton = null;
         settingsSyncTimeout = null;
       }, 45000);
@@ -2340,23 +2814,49 @@
         settingsSyncTimeout = null;
         settingsSyncButton = null;
         sync.disabled = false;
-        sync.textContent = "Не удалось проверить";
+        setMenuActionLabel(sync, "Не удалось проверить");
         console.error("Не удалось запустить проверку обновлений:", error);
       }
     });
-    const copyLog = el("button", { text: "Скопировать лог" });
-    copyLog.addEventListener("click", async () => { try { await navigator.clipboard.writeText(logPanelEl.innerText); copyLog.textContent = "Лог скопирован"; } catch (_) { log("Не удалось скопировать лог автоматически."); } });
-    const close = el("button", { class: "settings-close-mobile", type: "button", text: "Закрыть" });
-    close.addEventListener("click", () => overlay.remove());
-    overlay = showModal([
-      el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
-      el("div", { class: "settings-modal-header" }, [el("p", { class: "stage-text", style: "font-weight: 650; font-size: 17px", text: "Настройки" }), close]),
-      el("section", { class: "settings-section" }, [el("strong", { text: "Хранилище" }), el("span", { class: "settings-muted", text: `Приложение: ${formatBytes(info.app_bytes)} · кэш: ` }), cacheLabel, clear, el("small", { text: "Сценарии и настройки останутся на месте." })]),
-      el("section", { class: "settings-section" }, [el("strong", { text: "Синхронизация" }), el("span", { class: "settings-muted", text: "Сервер подключён" }), sync, makeToggle("Обновлять каталог при запуске", "auto_sync")]),
-      el("section", { class: "settings-section" }, [el("strong", { text: "Интерфейс" }), makeToggle("Уменьшить анимации", "reduced_motion"), makeToggle("Не выключать экран во время работы", "keep_screen_on"), makeToggle("Компактный лог", "compact_log"), makeToggle("ИИ-чат (вопрос по-русски в том же поле команды)", "chat_enabled")]),
-      el("section", { class: "settings-section" }, [el("strong", { text: "Диагностика" }), copyLog, el("a", { href: "https://github.com/torisar93/magic_sqd", target: "_blank", text: "GitHub проекта" })]),
-      el("button", { class: "accent", text: "Готово", onclick: () => overlay.remove() }),
+    const copyLog = menuAction("Скопировать лог", "copy");
+    copyLog.dataset.action = "copy-log";
+    copyLog.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(logPanelEl.innerText); setMenuActionLabel(copyLog, "Лог скопирован"); }
+      catch (_) { setMenuActionLabel(copyLog, "Не удалось скопировать"); log("Не удалось скопировать лог автоматически."); }
+    });
+    const account = el("button", { class: "menu13-account-link", type: "button", "data-action": "account" }, [
+      el("span", { class: "menu13-avatar" }, [AppIcons.icon("user")]),
+      el("span", { class: "menu13-link-copy" }, [el("strong", { text: "Аккаунт" }), el("small", { text: auth.email || "Вход и регистрация" })]),
+      AppIcons.icon("chevron"),
     ]);
+    account.addEventListener("click", () => { overlay.remove(); showAccountModal(); });
+    const github = el("a", { class: "menu13-action menu13-link", href: "https://github.com/torisar93/magic_sqd", target: "_blank", rel: "noopener" }, [
+      AppIcons.icon("link"), el("span", { class: "menu13-action-label", text: "GitHub проекта" }), AppIcons.icon("chevron"),
+    ]);
+    overlay = showMenuModal("Настройки", "settings", [
+      account,
+      el("section", { class: "settings-section menu13-card" }, [
+        menuHeading("Интерфейс", "settings"),
+        makeToggle("Уменьшить анимации", "reduced_motion"),
+        makeToggle("Не выключать экран", "keep_screen_on"),
+        makeToggle("Компактный лог", "compact_log"),
+        makeToggle("ИИ-чат в логе", "chat_enabled"),
+      ]),
+      el("section", { class: "settings-section menu13-card" }, [
+        menuHeading("Каталог", "refresh"),
+        makeToggle("Обновлять при запуске", "auto_sync"), sync,
+      ]),
+      el("section", { class: "settings-section menu13-card" }, [
+        menuHeading("Хранилище", "folder"),
+        el("div", { class: "menu13-storage" }, [
+          el("div", {}, [el("span", { text: "Приложение" }), el("strong", { text: formatBytes(info.app_bytes) })]),
+          el("div", {}, [el("span", { text: "Кэш" }), cacheLabel]),
+        ]), clear,
+        el("small", { class: "menu13-hint", text: "Сценарии и настройки сохранятся." }),
+      ]),
+      el("section", { class: "settings-section menu13-card" }, [menuHeading("Диагностика", "log"), copyLog, github]),
+      el("p", { class: "menu13-version", text: `Magic SQD${version ? " · " + version : ""}` }),
+    ], { className: "menu13-settings-overlay" });
     document.documentElement.classList.toggle("reduce-motion", info.preferences.reduced_motion);
   }
 
@@ -2390,7 +2890,7 @@
   function showCompletionModal() {
     let overlay;
     overlay = showModal([
-      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: "Готово!" }),
+      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: "Всё готово" }),
       el("p", {
         class: "stage-text", style: "color: var(--text-dim)",
         text: "Установка завершена. Если Magic SQD экономит тебе время — поддержи проект на Boosty, это реально помогает развитию.",
@@ -2442,6 +2942,8 @@
     logLastLineEl = document.getElementById("log-last-line");
     logExpandBtn = document.getElementById("log-expand-btn");
     logOverlayEl = document.getElementById("log-overlay");
+    document.getElementById('app').append(logOverlayEl);
+    document.getElementById('top-log').addEventListener('click',()=>setLogOpen(true));
     logCollapseBtn = document.getElementById("log-collapse-btn");
     logCopyBtn = document.getElementById("log-copy-btn");
     logCmdInput = document.getElementById("log-cmd-input");
@@ -2466,9 +2968,9 @@
     logCopyBtn.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(logPanelEl.innerText);
-        const original = logCopyBtn.textContent;
-        logCopyBtn.textContent = "Скопировано";
-        setTimeout(() => { logCopyBtn.textContent = original; }, 1500);
+        const original = logCopyBtn.innerHTML;
+        logCopyBtn.replaceChildren(usbStageIcon('check'));
+        setTimeout(() => { logCopyBtn.innerHTML = original; }, 1500);
       } catch (_) {
         log("Не удалось скопировать лог автоматически.");
       }

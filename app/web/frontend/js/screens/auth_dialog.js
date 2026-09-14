@@ -39,18 +39,41 @@ window.authDialog = (() => {
     changePasswordStatusEl = loggedinEl.querySelector("#catalog-account-change-password-status");
     changePasswordSubmitBtn = loggedinEl.querySelector("#catalog-account-change-password-submit");
 
-    submitBtn.addEventListener("click", onSubmit);
+    // safely() — тонкая обёртка вокруг обработчиков клика: не даёт нажать
+    // повторно, пока предыдущий запрос ещё не завершился (кнопка всё равно
+    // задизейблена самим обработчиком, но Enter в поле вызывает функцию
+    // напрямую, минуя disabled-кнопку), и подстраховывает от необработанного
+    // отказа промиса (обрыв соединения и т.п.) — иначе кнопка осталась бы
+    // задизейбленной навсегда, а пользователь без объяснения в статусе.
+    const safely = (fn, button, status) => async () => {
+      if (button.disabled) return;
+      try { await fn(); }
+      catch (_) {
+        if (status) { status.textContent = "Нет ответа от сервера. Проверьте подключение и повторите попытку."; status.dataset.state = "error"; }
+      }
+      finally { button.disabled = false; if (button === submitBtn) switchBtn.disabled = false; }
+    };
+    const submit = safely(onSubmit, submitBtn, statusEl);
+    const forgot = safely(onForgotPassword, forgotBtn, statusEl);
+    const changePassword = safely(onChangePassword, changePasswordSubmitBtn, changePasswordStatusEl);
+    submitBtn.addEventListener("click", submit);
     switchBtn.addEventListener("click", () => setMode(mode === "login" ? "register" : "login"));
-    forgotBtn.addEventListener("click", onForgotPassword);
-    logoutBtn.addEventListener("click", onLogout);
+    forgotBtn.addEventListener("click", forgot);
+    // #catalog-account-global-status пока не всегда есть в разметке (см.
+    // main_picker.js — ждёт своей миграции отдельно от этого файла), поэтому
+    // querySelector тут может вернуть null — safely() и onLogout() ниже это
+    // учитывают и просто не показывают статус, если элемента ещё нет.
+    logoutBtn.addEventListener("click", safely(onLogout, logoutBtn, popoverEl.querySelector("#catalog-account-global-status")));
     changePasswordToggleBtn.addEventListener("click", () => {
       changePasswordSection.hidden = !changePasswordSection.hidden;
+      changePasswordToggleBtn.setAttribute("aria-expanded", String(!changePasswordSection.hidden));
+      if (!changePasswordSection.hidden) currentPasswordInput.focus({ preventScroll: true });
     });
-    changePasswordSubmitBtn.addEventListener("click", onChangePassword);
-    const onEnter = (event) => { if (event.key === "Enter") onSubmit(); };
+    changePasswordSubmitBtn.addEventListener("click", changePassword);
+    const onEnter = (event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } };
     emailInput.addEventListener("keydown", onEnter);
     passwordInput.addEventListener("keydown", onEnter);
-    const onChangePasswordEnter = (event) => { if (event.key === "Enter") onChangePassword(); };
+    const onChangePasswordEnter = (event) => { if (event.key === "Enter") { event.preventDefault(); changePassword(); } };
     currentPasswordInput.addEventListener("keydown", onChangePasswordEnter);
     newPasswordInput.addEventListener("keydown", onChangePasswordEnter);
     newPasswordRepeatInput.addEventListener("keydown", onChangePasswordEnter);
@@ -68,6 +91,8 @@ window.authDialog = (() => {
       submitBtn.textContent = "Зарегистрироваться";
       switchBtn.textContent = "Уже есть аккаунт? Войти";
     }
+    passwordInput.autocomplete = mode === "login" ? "current-password" : "new-password";
+    subtitleEl.textContent = mode === "login" ? "Аккаунт техника" : "Подтвердите email после регистрации";
     statusEl.textContent = "";
     // Появляется только после неудачной попытки входа (см. onSubmit) — не
     // нужно предлагать восстановление, пока человек ещё даже не пробовал
@@ -80,13 +105,16 @@ window.authDialog = (() => {
   // и "Вы вошли как ...", и подпись самой кнопки в шапке каталога.
   function setLoggedIn(email) {
     currentEmail = email;
+    const globalStatus = popoverEl.querySelector("#catalog-account-global-status");
+    if (globalStatus) globalStatus.textContent = "";
     guestEl.hidden = Boolean(email);
     loggedinEl.hidden = !email;
     toggleEl.textContent = email || "Вход";
+    toggleEl.title = email ? `Аккаунт: ${email}` : "Вход в аккаунт";
     if (email) {
       titleEl.textContent = "Аккаунт";
       subtitleEl.hidden = true;
-      loggedinEmailEl.textContent = `Вы вошли как ${email}`;
+      loggedinEmailEl.textContent = email;
     } else {
       subtitleEl.hidden = false;
       setMode("login");
@@ -97,6 +125,7 @@ window.authDialog = (() => {
     // переключении состояния (вход/выход), чтобы не оставлять введённые
     // пароли висеть в скрытых полях между сессиями.
     changePasswordSection.hidden = true;
+    changePasswordToggleBtn.setAttribute("aria-expanded", "false");
     currentPasswordInput.value = "";
     newPasswordInput.value = "";
     newPasswordRepeatInput.value = "";
@@ -104,6 +133,7 @@ window.authDialog = (() => {
   }
 
   async function onSubmit() {
+    statusEl.dataset.state = "error";
     const email = emailInput.value.trim();
     const password = passwordInput.value;
     if (!email || !password) {
@@ -111,21 +141,25 @@ window.authDialog = (() => {
       return;
     }
     submitBtn.disabled = true;
+    switchBtn.disabled = true;
     statusEl.textContent = mode === "login" ? "Вхожу..." : "Регистрирую...";
     if (mode === "register") {
       const result = await window.pywebview.api.auth_register(email, password);
       submitBtn.disabled = false;
+      switchBtn.disabled = false;
       if (!result.ok) {
         statusEl.textContent = result.error;
         return;
       }
-      statusEl.textContent = "Письмо с подтверждением отправлено — перейдите по ссылке из него, потом войдите здесь.";
       setMode("login");
+      statusEl.dataset.state = "success";
+      statusEl.textContent = "Письмо с подтверждением отправлено — перейдите по ссылке из него, потом войдите здесь.";
       emailInput.value = email;
       return;
     }
     const result = await window.pywebview.api.auth_login(email, password);
     submitBtn.disabled = false;
+    switchBtn.disabled = false;
     if (!result.ok) {
       statusEl.textContent = result.error;
       forgotBtn.hidden = false;
@@ -141,6 +175,7 @@ window.authDialog = (() => {
   }
 
   async function onForgotPassword() {
+    statusEl.dataset.state = "error";
     const email = emailInput.value.trim();
     if (!email) {
       statusEl.textContent = "Введите email, на который зарегистрирован аккаунт.";
@@ -150,6 +185,7 @@ window.authDialog = (() => {
     statusEl.textContent = "Отправляю письмо...";
     const result = await window.pywebview.api.auth_forgot_password(email);
     forgotBtn.disabled = false;
+    statusEl.dataset.state = result.ok ? "success" : "error";
     // Сервер намеренно отвечает одинаково независимо от того, есть такой
     // email в базе или нет (см. server/backend.py:_handle_auth_forgot_
     // password) — не подтверждаем/опровергаем существование аккаунта.
@@ -159,6 +195,7 @@ window.authDialog = (() => {
   }
 
   async function onChangePassword() {
+    changePasswordStatusEl.dataset.state = "error";
     const current = currentPasswordInput.value;
     const next = newPasswordInput.value;
     const repeat = newPasswordRepeatInput.value;
@@ -185,13 +222,23 @@ window.authDialog = (() => {
     currentPasswordInput.value = "";
     newPasswordInput.value = "";
     newPasswordRepeatInput.value = "";
+    changePasswordStatusEl.dataset.state = "success";
     changePasswordStatusEl.textContent = "Пароль изменён.";
   }
 
   async function onLogout() {
     if (!(await window.confirmDialog(`Выйти из аккаунта ${currentEmail}?`))) return;
     const result = await window.pywebview.api.auth_logout();
-    if (!result.ok) return;
+    if (!result.ok) {
+      // См. комментарий в attach() — этот элемент появится в разметке
+      // отдельной миграцией main_picker.js, пока может отсутствовать.
+      const status = popoverEl.querySelector("#catalog-account-global-status");
+      if (status) {
+        status.textContent = result.error || "Не удалось выйти из аккаунта. Повторите попытку.";
+        status.dataset.state = "error";
+      }
+      return;
+    }
     setLoggedIn(null);
     window.applyAdminMode(false);
     popoverEl.hidden = true;
@@ -205,6 +252,8 @@ window.authDialog = (() => {
   // admin-кнопку.
   function setAdminVisible(enabled) {
     if (logoutBtn) logoutBtn.hidden = enabled;
+    const role = popoverEl?.querySelector("#catalog-account-role");
+    if (role) role.textContent = enabled ? "Администратор" : "Аккаунт техника";
   }
 
   return { attach, setLoggedIn, setAdminVisible };

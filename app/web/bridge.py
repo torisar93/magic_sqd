@@ -127,6 +127,15 @@ class WebApi:
     def scanner_list_apks(self) -> list:
         return self._scanner.list_apks()
 
+    def scanner_apk_icon(self, path: str):
+        # Локальный импорт (не в шапке файла) — apk_icons.py тянет свои
+        # собственные кэши/зависимости (urllib, zipfile) только когда
+        # интерфейс реально запросил иконку, а не при каждом старте
+        # программы вместе с остальным WebApi. См. app/apk_icons.py и
+        # docs "Получение иконки APK" в UI-transfer пакете.
+        from ..apk_icons import apk_icon
+        return apk_icon(path)
+
     # -- install_api ------------------------------------------------------
     def install_load_stages(self, model_key: str) -> dict:
         return self._install.load_stages(model_key)

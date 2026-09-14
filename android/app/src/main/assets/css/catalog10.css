@@ -1,0 +1,117 @@
+/* Official vector contours. The metallic finish never changes the mark geometry. */
+.cat-brand .cat-visual { width:100%; max-width:168px; height:94px; flex:0 0 auto; }
+.cat-brand .cat-visual.catalog10-vector { overflow:visible; }
+.cat-brand .catalog10-vector>img { opacity:0; }
+.cat-brand .catalog10-vector::after {
+  content:""; position:absolute; pointer-events:none;
+  left:var(--catalog09-left); top:var(--catalog09-top);
+  width:var(--catalog09-width); height:var(--catalog09-height);
+  -webkit-mask:var(--catalog10-mark) center / 100% 100% no-repeat;
+  mask:var(--catalog10-mark) center / 100% 100% no-repeat;
+  background:linear-gradient(168deg,#f5f7f7 3%,#e4eaec 20%,#bcc9ce 38%,#f3f7f7 48%,#a2b0b8 72%,#dce5e8 92%);
+  filter:drop-shadow(0 1px 0 #73828b) drop-shadow(0 3px 3px #03090c60);
+}
+.catalog09-mobile .cat-brand .cat-visual { max-width:142px; height:82px; }
+
+/* One studio covers the complete detail panel, including the translucent controls. */
+.model-detail.catalog10-scene,
+.app-shell.catalog-home .model-detail.catalog10-scene {
+  position:relative; isolation:isolate; min-width:0;
+  display:flex; flex-direction:column; gap:16px;
+  background:#242b2f!important; border:0!important; border-radius:0!important;
+  box-shadow:none!important; backdrop-filter:none!important;
+  padding:26px 28px 24px; overflow:auto; scrollbar-gutter:auto;
+}
+.model-detail.catalog10-scene::before {
+  content:""; position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background-image:linear-gradient(180deg,#11191e18 0%,#11191e00 42%,#11191e55 75%,#11191eab 100%),var(--catalog09-environment);
+  background-size:100% 100%,cover; background-position:center; filter:grayscale(1);
+}
+.model-detail.catalog10-scene .model-detail-title { margin:0; font-size:clamp(24px,2.15vw,34px); line-height:1.2; font-weight:600; letter-spacing:-.025em; }
+.model-detail.catalog10-scene .model-hero.catalog09-model {
+  align-self:stretch; width:100%; max-width:none; min-height:200px!important;
+  aspect-ratio:auto; flex:1 0 220px; max-height:none!important;
+  border-radius:0; overflow:hidden; margin:0; isolation:auto;
+}
+.model-detail.catalog10-scene .model-hero.catalog09-layered::before { content:none; }
+.model-detail.catalog10-scene .model-versions {
+  flex:0 0 auto; width:100%; margin:0; display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px;
+}
+.model-detail.catalog10-scene .model-version {
+  min-height:72px; padding:12px 16px; gap:12px; display:flex; align-items:center;
+  border:1px solid #c6d9df29!important; border-radius:8px;
+  background:linear-gradient(135deg,#27383f9c,#172329a8)!important;
+  box-shadow:inset 0 1px 0 #ffffff0b!important; backdrop-filter:blur(12px);
+}
+.model-detail.catalog10-scene .model-version:has(input:checked) {
+  border-color:#93e0ce9c!important;
+  background:linear-gradient(135deg,#99d4c42e,#71998e22)!important;
+  box-shadow:inset 0 1px 0 #d1f6e612,0 0 0 1px #91dcc918!important;
+}
+.model-detail.catalog10-scene .model-version input { flex:0 0 18px; width:18px; height:18px; margin:0; }
+.model-detail.catalog10-scene .model-version>span { min-width:0; }
+.model-detail.catalog10-scene .model-version strong { font-size:15px; line-height:1.3; overflow-wrap:anywhere; }
+.model-detail.catalog10-scene .version-state { margin-top:4px; line-height:1.2; font-size:11px; }
+.version-visual { position:relative; flex:0 0 52px; width:52px; height:34px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+.version-visual>img { width:100%; height:100%; object-fit:contain; opacity:.72; }
+.model-detail.catalog10-scene .model-open {
+  flex:0 0 auto; width:100%; height:54px; min-height:54px; margin:0;
+  display:flex; align-items:center; justify-content:center; gap:12px; position:relative;
+  border-radius:8px; padding:0 48px; font-size:15px;
+}
+.model-detail.catalog10-scene .model-open>.ui-icon:first-child { margin:0; }
+.model-detail.catalog10-scene .model-open>.ui-icon:last-child { position:absolute; right:18px; margin:0; }
+
+/* Windows: compact continuous list, matching the approved layout. */
+.app-shell.catalog-home .model-workspace {
+  grid-template-columns:clamp(240px,24%,310px) minmax(0,1fr); gap:0;
+  background:#192328; border:1px solid #b0c7d014; border-radius:12px; overflow:hidden;
+}
+.app-shell.catalog-home .model-workspace>.model-list {
+  padding:12px 8px; margin:0; border-right:1px solid #cadde213;
+  background:linear-gradient(110deg,#202b30,#192227); scrollbar-gutter:auto;
+}
+.app-shell.catalog-home .model-list>h2 { font-size:13px; font-weight:500; color:#aabcc3; margin:4px 12px 12px; line-height:24px; }
+.app-shell.catalog-home .model-list>.cat-card {
+  position:relative; min-height:72px; height:72px; padding:8px 12px; margin:0;
+  display:grid; grid-template-columns:86px minmax(0,1fr) 14px; gap:12px; align-items:center;
+  border:0!important; border-bottom:1px solid #cfdee710!important; border-radius:5px;
+  background:transparent!important; box-shadow:none!important; backdrop-filter:none!important;
+  transform:none!important; animation:none!important;
+}
+.app-shell.catalog-home .model-list>.cat-card.selected {
+  background:linear-gradient(110deg,#52656d70,#70818a26)!important;
+  border-bottom-color:transparent!important; box-shadow:inset 0 1px 0 #d4e6ec0d!important;
+}
+.app-shell.catalog-home .model-list>.cat-card:hover { background:#c0dde00d!important; }
+.app-shell.catalog-home .model-list>.cat-card.selected:hover { background:#63798160!important; }
+.app-shell.catalog-home .model-list .cat-visual { width:86px; height:54px; margin:0; align-self:center; }
+.app-shell.catalog-home .model-list .cat-visual>img { width:100%; height:100%; max-height:100%; object-fit:contain; }
+.app-shell.catalog-home .model-list .cat-copy { gap:0; min-width:0; text-align:left; }
+.app-shell.catalog-home .model-list .cat-name { font-size:14px; line-height:1.25; font-weight:500; white-space:normal; overflow-wrap:anywhere; }
+.app-shell.catalog-home .model-list .cat-meta { display:none; }
+.app-shell.catalog-home .model-list .cat-foot { position:static; margin:0; padding:0; justify-content:center; }
+.app-shell.catalog-home .model-list .cat-foot>.ui-icon { width:14px; height:14px; opacity:.6; }
+.app-shell.catalog-home .model-workspace>.model-detail { min-height:0; height:100%; }
+@media(max-height:740px) {
+  .app-shell.catalog-home .model-detail.catalog10-scene { padding:20px 24px; gap:12px; }
+  .app-shell.catalog-home .model-detail.catalog10-scene .model-hero.catalog09-model { min-height:145px!important; flex-basis:150px; }
+  .app-shell.catalog-home .model-detail.catalog10-scene .model-version { min-height:64px; }
+}
+
+/* Android: the same backdrop reaches the edges and continues beneath the buttons. */
+.catalog09-mobile .model-detail-mode #screen-picker { padding:0!important; }
+.catalog09-mobile .model-detail-mode .cat-grid { padding:0; gap:0; }
+.catalog09-mobile .model-detail.catalog10-scene {
+  width:100%; padding:20px 18px 24px!important; gap:16px;
+  min-height:calc(100dvh - 76px); height:auto;
+}
+.catalog09-mobile .model-detail.catalog10-scene .model-detail-title { font-size:24px; }
+.catalog09-mobile .model-detail.catalog10-scene .model-hero.catalog09-model {
+  width:100%; height:clamp(220px,34dvh,310px); min-height:220px!important; flex:0 0 auto; max-height:none!important;
+}
+.catalog09-mobile .model-detail.catalog10-scene .model-versions { grid-template-columns:1fr; gap:10px; }
+.catalog09-mobile .model-detail.catalog10-scene .model-version { min-height:64px; padding:12px 14px; }
+.catalog09-mobile .model-detail.catalog10-scene .model-open { margin:0; min-height:54px; }
+@media(prefers-reduced-motion:reduce) { .model-detail.catalog10-scene { scroll-behavior:auto; } }

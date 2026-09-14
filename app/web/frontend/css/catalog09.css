@@ -1,0 +1,42 @@
+/* LAB09 imagery: larger marks in existing square tiles; unchanged click targets. */
+.cat-brand { gap:12px; }
+.cat-brand .cat-visual { width:100%; max-width:128px; height:80px; position:relative; }
+.cat-brand .cat-visual img { max-width:100%; max-height:100%; object-fit:contain; }
+.cat-brand .cat-visual.catalog09-framed { overflow:hidden; }
+.cat-brand .cat-visual.catalog09-framed>img {
+  position:absolute; width:var(--catalog09-width); height:var(--catalog09-height);
+  left:var(--catalog09-left); top:var(--catalog09-top);
+  max-width:none; max-height:none; object-fit:fill;
+}
+
+/* Keep one stable stage: the studio stays still while only the transparent car appears. */
+.model-hero.catalog09-model {
+  position:relative; isolation:isolate; overflow:hidden; align-self:center;
+  width:min(100%,780px,69vh); aspect-ratio:3/2; height:auto;
+  min-height:0!important; max-height:none; flex:0 0 auto;
+  background:transparent; border:0; box-shadow:none; border-radius:12px;
+}
+.model-hero.catalog09-model>img {
+  position:absolute; inset:0; width:100%!important; height:100%!important;
+  max-width:none!important; max-height:none!important; object-fit:contain;
+  border:0; box-shadow:none; border-radius:0; margin:0;
+}
+.model-hero.catalog09-layered::before {
+  content:""; position:absolute; inset:0; z-index:-1;
+  background-image:var(--catalog09-environment); background-size:cover; background-position:center;
+}
+.model-hero.catalog09-car-framed>img {
+  inset:auto; width:var(--catalog09-width)!important; height:var(--catalog09-height)!important;
+  left:var(--catalog09-left); top:var(--catalog09-top); object-fit:fill;
+}
+.model-hero.catalog09-model>img.catalog09-car { opacity:0; }
+.model-hero.catalog09-ready>img.catalog09-car {
+  opacity:1; animation:catalog09-car-appear 450ms cubic-bezier(.2,.7,.25,1) both;
+}
+@keyframes catalog09-car-appear { from {opacity:0;transform:translateY(8px) scale(.985)} to {opacity:1;transform:translateY(0) scale(1)} }
+.catalog09-mobile .cat-brand { gap:11px; }
+.catalog09-mobile .cat-brand .cat-visual { max-width:118px; height:70px; }
+.catalog09-mobile .model-hero.catalog09-model { width:100%; border-radius:10px; }
+@media(prefers-reduced-motion:reduce) {
+  .model-hero.catalog09-ready>img.catalog09-car { animation:none; transform:none; }
+}

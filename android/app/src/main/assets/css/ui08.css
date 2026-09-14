@@ -1,0 +1,38 @@
+/* APK-only stages are edited in place; multi-step USB stages keep their dialog. */
+.stage-page[data-stage-type=apps]{gap:12px}
+.stage-page[data-stage-type=apps]>.stage-chip{margin-bottom:4px}
+.apps-inline-card{display:flex;flex-direction:column;width:100%;min-width:0;gap:0;box-sizing:border-box}
+.apps-inline-heading{display:flex;align-items:center;min-height:26px;margin-bottom:12px}
+.apps-inline-count{margin:0;color:#b9d9d3;font-size:14px;line-height:1.45}
+.apps-inline-search{padding:0 0 12px}
+.apps-inline-body{display:flex;flex-direction:column;flex:none;overflow:visible;padding:0;min-width:0}
+.apps-inline-body>.apps-section,.apps-inline-body>.apps-library{margin-top:4px}
+.apps-inline-body>.app-personal-apk-add{margin-top:12px}
+.apps-inline-body>.apps-library{margin-top:8px}
+.apps-inline-body .apps-library>.apps-section{margin:0!important}
+.apps-inline-body>.apps-section-required[open]{margin-bottom:8px}
+.apps-inline-card>.apps-install-start{width:100%;height:auto;min-height:48px;margin:0 0 14px;padding:12px 16px;justify-content:center;font-size:15px;line-height:1.45;box-sizing:border-box}
+.apps-install-result{display:flex;align-items:flex-start;gap:10px;margin-top:14px;padding:13px 14px;border:1px solid #d9eae427;border-radius:12px;color:#c9ddd9;background:#172a3266;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.apps-install-result[data-state=error]{color:#f4b6b6;border-color:#e792922e;background:#442b333d}
+.apps-install-result>.ui-icon{flex-shrink:0;margin-top:1px}
+.apps-install-result+button{margin-top:10px;min-height:48px}
+
+/* The native operation keeps its own page while all setup controls are hidden. */
+#screen-wizard.is-installing-apps>#adb-bar,#screen-wizard.is-installing-apps>#usb-bar,#screen-wizard.is-installing-apps>.wizard-nav{display:none!important}
+#screen-wizard.is-installing-apps #wizard-content{display:flex;flex-direction:column;min-height:0}
+#screen-wizard.is-installing-apps .stage-page.is-running{flex:1;justify-content:center;min-height:100%;padding-top:20px;padding-bottom:20px;background:transparent!important;border:0!important;box-shadow:none!important}
+#screen-wizard.is-installing-apps .stage-page.is-running>:not(.run-status){display:none!important}
+#screen-wizard.is-installing-apps .run-status{width:100%;max-width:680px;box-sizing:border-box;margin:0 auto;flex-shrink:0}
+.apps-run-actions{display:flex;align-items:center;justify-content:center;margin-top:18px}
+.apps-run-actions>.apps-install-stop{min-width:168px;min-height:48px;height:auto;max-width:100%;margin:0;padding:12px 18px;justify-content:center;line-height:1.4}
+
+/* Actions show their label, one action, then the real result. */
+.flow-action-card{gap:14px}
+.flow-action-card>.usb-step-action{min-height:48px;margin:0;justify-content:center}
+.flow-action-card>.flow-operation-status,.flow-action-card>.flow-result,.flow-action-card>.flow-action-note{margin:0;min-width:0;line-height:1.5}
+.flow-action-card .flow-card-copy h3{line-height:1.4}
+
+/* Square close controls keep the same centered icon box at every phone width. */
+dialog.apps-picker-dialog .apps-picker-close{display:flex;align-items:center;justify-content:center;line-height:1;gap:0}
+.apps-inline-body .apk-info-btn{display:flex;align-items:center;justify-content:center;line-height:1;gap:0}
+@media(min-width:600px){.apps-inline-card>.apps-install-start{align-self:flex-end;width:min(100%,340px)}.apps-inline-body .stage-apps-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}

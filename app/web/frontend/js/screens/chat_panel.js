@@ -39,7 +39,7 @@ window.chatPanel = (() => {
   }
 
   function recentLogLines() {
-    const lines = Array.from(panelEl.querySelectorAll(".log-line")).map((el) => el.textContent);
+    const lines = Array.from(panelEl.querySelectorAll(".log-line")).map((el) => el.dataset.logText || el.textContent);
     return lines.slice(-RECENT_LOG_LINES);
   }
 
@@ -130,7 +130,7 @@ window.chatPanel = (() => {
       if (!rest) return;
       text = rest;
     }
-    addLine(`💬 ${text}`, "log-line-command");
+    addLine(text, "chat-bubble chat-user");
     history.push({ role: "user", content: text });
     autoTurnsLeft = MAX_AUTO_TURNS;
     sendTurn();
@@ -147,7 +147,7 @@ window.chatPanel = (() => {
       return;
     }
     const text = reply.content || "";
-    addLine(`ИИ${providerTag}: ${text}`);
+    addLine(`ИИ${providerTag}: ${text}`, "chat-bubble chat-assistant");
     history.push({ role: "assistant", content: text });
   }
 

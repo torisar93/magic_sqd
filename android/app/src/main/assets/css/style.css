@@ -126,7 +126,7 @@ html, body {
 }
 
 .topbar-logo {
-  height: 22px;
+  height: 28px;
   width: auto;
   display: block;
 }
@@ -707,7 +707,7 @@ button.danger {
 }
 
 .modal-logo {
-  height: 34px;
+  height: 44px;
   width: auto;
   align-self: center;
   margin-bottom: 4px;
@@ -1060,7 +1060,7 @@ html, body { background: var(--bg); }
 }
 
 .topbar .title { max-width: 54%; }
-.topbar-logo { height: 34px; }
+.topbar-logo { height: 44px; }
 
 .topbar button.back {
   min-height: 40px;

@@ -51,11 +51,14 @@ fun syncPushBytes(
         return AdbPushResult.Failed("sync: не открылся (0x${openResp.command.toUInt().toString(16)})")
     }
     val remoteId = openResp.arg0
+    var streamClosed = false
+    try {
     log("sync-поток открыт (remoteId=$remoteId), пушу $remotePath (${bytes.size} байт)...")
 
     val SYNC_WRITE_TIMEOUT_MS = 20000
 
     fun syncWrite(chunkBytes: ByteArray): Boolean {
+        AdbInstallProgress.checkCancelled()
         if (!sendMessage(transport, AdbProtocol.A_WRTE, localId, remoteId, chunkBytes, SYNC_WRITE_TIMEOUT_MS)) return false
         val (ack, _) = readMessageForStream(transport, localId, log, SYNC_WRITE_TIMEOUT_MS)
         return ack.command == AdbProtocol.A_OKAY
@@ -68,10 +71,13 @@ fun syncPushBytes(
     // заполнится. Похоже, редко используемый classic-путь на этом adbd не готов
     // к тому, что SEND придёт "голым", без сразу следующих за ним данных.
     val pending = ByteArrayOutputStream()
+    var pendingPayloadBytes = 0
     fun flushPending(): Boolean {
         if (pending.size() == 0) return true
         val ok = syncWrite(pending.toByteArray())
+        if (ok) AdbInstallProgress.acknowledge(pendingPayloadBytes)
         pending.reset()
+        pendingPayloadBytes = 0
         return ok
     }
     fun appendSyncPacket(chunkBytes: ByteArray): Boolean {
@@ -89,9 +95,11 @@ fun syncPushBytes(
     var offset = 0
     var lastLoggedMb = -1
     while (offset < bytes.size) {
+        AdbInstallProgress.checkCancelled()
         val chunkLen = minOf(MAX_CHUNK, bytes.size - offset)
         val chunk = ByteBuffer.allocate(8 + chunkLen).order(ByteOrder.LITTLE_ENDIAN)
         chunk.put("DATA".toByteArray(Charsets.US_ASCII)).putInt(chunkLen).put(bytes, offset, chunkLen)
+        pendingPayloadBytes += chunkLen
         if (!appendSyncPacket(chunk.array())) return AdbPushResult.Failed("Обрыв передачи данных на offset=$offset/${bytes.size}")
         offset += chunkLen
         val mb = offset / (1024 * 1024)
@@ -116,11 +124,18 @@ fun syncPushBytes(
     sendMessage(transport, AdbProtocol.A_OKAY, localId, remoteId, ByteArray(0))
     val statusCode = String(statusPayload, 0, 4, Charsets.US_ASCII)
     sendMessage(transport, AdbProtocol.A_CLSE, localId, remoteId, ByteArray(0))
+    streamClosed = true
     return if (statusCode == "OKAY") {
         AdbPushResult.Success
     } else {
         val errMsg = if (statusPayload.size > 8) String(statusPayload, 8, statusPayload.size - 8, Charsets.US_ASCII) else statusCode
         AdbPushResult.Failed("Устройство отклонило push: $errMsg")
+    }
+    } finally {
+        if (!streamClosed) {
+            try { sendMessage(transport, AdbProtocol.A_CLSE, localId, remoteId, ByteArray(0)) }
+            catch (_: Exception) { /* Preserve the transfer/cancellation error. */ }
+        }
     }
 }
 
@@ -135,11 +150,13 @@ fun installApkOverAdb(
     remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
     log: (String) -> Unit,
 ): AdbInstallResult {
+    AdbInstallProgress.beginTransfer(apkBytes.size.toLong())
     when (val pushResult = syncPushBytes(transport, apkBytes, remotePath, log)) {
         is AdbPushResult.Failed -> return AdbInstallResult.Failed(pushResult.reason)
         AdbPushResult.Success -> {}
     }
     log("Файл записан на устройство. Запускаю pm install -r $remotePath ...")
+    AdbInstallProgress.installing()
 
     // pm install для крупного APK (dexopt/верификация) может занимать заметно
     // больше 5с по умолчанию — на Redmi Note 7 не уложился, вис ровно на ~5с.
@@ -179,11 +196,13 @@ fun installApkSpoofedOverAdb(
     remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
     log: (String) -> Unit,
 ): AdbInstallResult {
+    AdbInstallProgress.beginTransfer(apkBytes.size.toLong())
     when (val pushResult = syncPushBytes(transport, apkBytes, remotePath, log)) {
         is AdbPushResult.Failed -> return AdbInstallResult.Failed(pushResult.reason)
         AdbPushResult.Success -> {}
     }
     log("Файл записан на устройство. Запускаю pm install -i (подмена установщика) $remotePath ...")
+    AdbInstallProgress.installing()
 
     var installResult = runAdbShellCommand(
         transport, "pm install -i com.android.packageinstaller -t -g -r $remotePath", log, timeoutMs = 120000
@@ -225,11 +244,13 @@ fun installApkStreamOverAdb(
     remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
     log: (String) -> Unit,
 ): AdbInstallResult {
+    AdbInstallProgress.beginTransfer(apkBytes.size.toLong())
     when (val pushResult = syncPushBytes(transport, apkBytes, remotePath, log)) {
         is AdbPushResult.Failed -> return AdbInstallResult.Failed(pushResult.reason)
         AdbPushResult.Success -> {}
     }
     log("Файл записан на устройство. Запускаю pm install -S ${apkBytes.size} (поток) ...")
+    AdbInstallProgress.installing()
 
     val installResult = runAdbShellCommand(
         transport, "cat $remotePath | pm install -S ${apkBytes.size}", log, timeoutMs = 120000
@@ -282,6 +303,7 @@ fun installApkViaLocalinstall(
     helperBytes: ByteArray,
     log: (String) -> Unit,
 ): AdbInstallResult {
+    AdbInstallProgress.beginTransfer(apkBytes.size.toLong() + helperBytes.size)
     val remoteApk = "/data/local/tmp/desaysv-install-target.apk"
     val remoteHelper = "/data/local/tmp/desaysv-localinstall.apk"
 
@@ -299,6 +321,7 @@ fun installApkViaLocalinstall(
     runAdbShellCommand(transport, "chmod 644 $remoteHelper", log)
 
     log("Устанавливаю через localinstall.apk (app_process, Chery DesaySV)...")
+    AdbInstallProgress.installing()
     val installResult = runAdbShellCommand(
         transport,
         "CLASSPATH=$remoteHelper app_process /system/bin LocalInstall $remoteApk",
@@ -354,6 +377,7 @@ fun installApkViaDexShell(
     helperBytes: ByteArray,
     log: (String) -> Unit,
 ): AdbInstallResult {
+    AdbInstallProgress.beginTransfer(apkBytes.size.toLong() + helperBytes.size)
     val remoteApk = "/data/local/tmp/$apkName"
     val remoteHelper = "/data/local/tmp/dex_shell_helper.dex"
 
@@ -371,6 +395,7 @@ fun installApkViaDexShell(
     runAdbShellCommand(transport, "chmod 644 $remoteHelper", log)
 
     log("Устанавливаю через dex-хелпер (app_process, Geely OneOS)...")
+    AdbInstallProgress.installing()
     val installResult = runAdbShellCommand(
         transport,
         "CLASSPATH=$remoteHelper app_process /data/local/tmp $DEX_SHELL_ENTRY_CLASS $remoteApk --flags 0x116",

@@ -1,3 +1,13 @@
+// Полифилл Element.prototype.replaceChildren — см. тот же полифилл в
+// desktop-версии dom.js. На современном Android WebView метод уже есть,
+// но держим оба файла консистентными на случай очень старых прошивок.
+if (typeof Element !== "undefined" && !Element.prototype.replaceChildren) {
+  Element.prototype.replaceChildren = function (...nodes) {
+    while (this.firstChild) this.removeChild(this.firstChild);
+    if (nodes.length) this.append(...nodes);
+  };
+}
+
 // Минимальный DOM-хелпер — та же идея, что у desktop-версии (без фреймворков,
 // без сборки), но код написан заново для этого проекта, не скопирован.
 function el(tag, attrs = {}, children = []) {

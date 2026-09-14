@@ -1,0 +1,171 @@
+/* LAB13 — settings, account and administrator menus share the application's matte surfaces. */
+.settings13-dialog,
+.catalog-admin-popover.menus13-account {
+  --menus13-line:rgba(190,221,218,.13);
+  --menus13-muted:#a6babf;
+  color:var(--text); isolation:isolate;
+}
+dialog.settings13-dialog {
+  width:min(680px,calc(100vw - 64px)); max-width:680px;
+  max-height:calc(100vh - 64px); padding:0!important; overflow:hidden;
+  border-radius:24px;
+}
+dialog.settings13-dialog[open] { display:flex; flex-direction:column; }
+.settings13-dialog .settings13-heading,
+.catalog-admin-popover>.menus13-account-header {
+  display:flex; align-items:center; gap:14px; margin:0;
+  padding:24px 28px; border-bottom:1px solid var(--menus13-line); flex:none;
+  background:linear-gradient(120deg,#e0fff507,transparent);
+}
+.menus13-symbol {
+  display:grid; place-items:center; width:48px; height:48px; flex:0 0 48px;
+  border-radius:15px; color:#b0eddd; border:1px solid #cbf9ec2b;
+  background:linear-gradient(140deg,#bce8df19,#bce8df05); box-shadow:inset 0 1px #ffffff15;
+}
+.menus13-symbol>.ui-icon {width:25px; height:25px; min-width:25px; flex-basis:25px;}
+.settings13-heading>div,.menus13-account-header>div { flex:1; min-width:0; }
+.settings13-dialog .settings13-heading h2 { margin:0; font-size:25px; line-height:1.2; letter-spacing:-.6px; }
+.settings13-heading p { margin:5px 0 0; color:var(--menus13-muted); font-size:13px; line-height:1.3; }
+.settings13-heading .settings-close,.menus13-account-header .menus13-close {
+  width:42px; height:42px; min-width:42px; min-height:42px; flex:0 0 42px;
+  padding:0!important; display:grid; place-items:center; margin:0;
+}
+.settings13-heading .settings-close>.ui-icon,.menus13-close>.ui-icon {width:20px;height:20px;min-width:20px;flex-basis:20px;}
+.settings13-dialog .settings13-body {
+  padding:20px 24px; overflow:auto; overscroll-behavior:contain; min-height:0;
+  display:flex; flex-direction:column; gap:14px;
+}
+.settings13-dialog .settings-section {
+  display:block; padding:19px 20px; border:1px solid var(--menus13-line); border-radius:17px;
+  background:linear-gradient(130deg,#e9fff708,#d4fbff01 80%);
+  box-shadow:inset 0 1px #ffffff08; flex:none;
+}
+.settings13-section-title { display:flex; align-items:center; gap:10px; min-height:24px; margin-bottom:12px; }
+.settings13-section-title>[data-icon] { display:grid;place-items:center;color:#acd4ce; }
+.settings13-section-title .ui-icon { width:19px;height:19px;min-width:19px;flex-basis:19px; }
+.settings13-dialog .settings-section h3 { font-size:15px;font-weight:600;line-height:1.4;color:#e1ebed;letter-spacing:0; }
+.settings13-connection { margin-left:auto;color:var(--menus13-muted);font-size:12px;display:flex;align-items:center;gap:6px; }
+.settings13-connection::before {content:'';width:5px;height:5px;border-radius:50%;background:#84999f;}
+.settings13-connection.is-connected::before {background:#aae9d7;box-shadow:0 0 10px #aae9d72a;}
+.settings13-metrics { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:15px 0 16px; }
+.settings13-metrics>div {display:flex;flex-direction:column;gap:5px;padding:12px 16px;border-radius:11px;background:#111d234d;}
+.settings13-metrics span {font-size:12px;color:var(--menus13-muted);}
+.settings13-metrics strong {font-size:25px;line-height:1.2;font-weight:600;letter-spacing:-.4px;font-variant-numeric:tabular-nums;}
+.settings13-storage-action {display:flex;gap:20px;align-items:center;}
+.settings13-dialog .settings13-storage-action p {flex:1;font-size:12px;line-height:1.55;color:var(--menus13-muted);}
+.settings13-storage-action>button {flex:none;min-height:42px;margin:0;font-size:13px;padding:9px 13px;}
+.settings13-storage-action [data-icon] {display:grid;place-items:center;}
+.settings13-storage-action .ui-icon {width:18px;height:18px;min-width:18px;flex-basis:18px;}
+.settings13-dialog .settings13-toggle {display:flex;align-items:center;gap:24px;min-height:65px;padding:11px 0;margin:0;border-top:1px solid #d4f5f00a;}
+.settings13-toggle-copy {display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;}
+.settings13-toggle-copy strong {font-weight:500;font-size:14px;line-height:1.4;color:#e2ebed;}
+.settings13-dialog .settings13-toggle-copy small {font-size:12px;line-height:1.4;color:var(--menus13-muted);}
+.settings13-toggle input[type=checkbox] {
+  appearance:none;-webkit-appearance:none;position:relative;width:40px;height:24px;min-width:40px;flex:0 0 40px;
+  background:#101b2180;border:1px solid #c4e4e72f;border-radius:30px;margin:0;padding:0;cursor:pointer;
+  box-shadow:inset 0 1px 4px #07131c40;transition:background .2s,border-color .2s;
+}
+.settings13-toggle input[type=checkbox]::before {content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;border-radius:50%;background:#b2c4c7;box-shadow:0 1px 3px #091a2450;transform:translateX(0);transition:transform .2s var(--ease),background .2s;}
+.settings13-toggle input[type=checkbox]:checked {background:#98d9c7;border-color:#bfefdf;}
+.settings13-toggle input[type=checkbox]:checked::before {transform:translateX(16px);background:#173c37;}
+.settings13-toggle input[type=checkbox]:disabled {opacity:.55;cursor:wait;}
+.settings13-toggle input[type=checkbox]:focus-visible {outline:2px solid #b0f1df;outline-offset:4px;}
+.settings13-dialog .settings13-wide-action {width:100%;min-height:44px;margin:10px 0 0;justify-content:flex-start;padding:10px 12px;font-size:13px;gap:10px;}
+.settings13-wide-action>[data-icon] {display:grid;place-items:center;}
+.settings13-wide-action .ui-icon {width:18px;height:18px;min-width:18px;flex-basis:18px;}
+.settings13-action-tail {margin-left:auto;color:#90a5aa;}
+.settings13-footer {display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 28px;border-top:1px solid var(--menus13-line);flex:none;background:#101b2338;}
+.settings13-footer>div {display:flex;flex-direction:column;gap:4px;}
+.settings13-footer strong {font-size:13px;font-weight:600;}
+.settings13-footer span {color:var(--menus13-muted);font-size:12px;}
+.settings13-footer a {display:flex;align-items:center;gap:7px;font-size:13px;color:#c9d9dc;text-decoration:none;min-height:36px;}
+.settings13-footer a:hover {color:#b5f2df;}
+.settings13-footer a .ui-icon {width:16px;height:16px;min-width:16px;flex-basis:16px;}
+.settings13-status,.menus13-status {padding:10px 13px;border:1px solid #c1eadd26;border-radius:10px;background:#16282672;color:#bce8d8;font-size:13px;line-height:1.5;overflow-wrap:anywhere;}
+.settings13-status[data-state=error],.menus13-status[data-state=error] {color:#ffb6ae;background:#632e2b24;border-color:#e4a0982e;}
+.settings13-status[hidden],.menus13-status:empty {display:none!important;}
+/* Account identity and single-column actions stay legible even with long email addresses. */
+.catalog-admin-popover.menus13-account {width:440px;max-width:calc(100vw - 40px);padding:0!important;right:28px;top:96px;max-height:calc(100vh - 116px);overflow:auto;border-radius:22px;}
+.catalog-admin-popover>.menus13-account-header {padding:22px 24px;position:sticky;top:0;z-index:2;background:linear-gradient(120deg,#2d3e43,#233139);backdrop-filter:blur(18px);}
+.catalog-admin-popover>.menus13-account-header strong {display:block;font:600 22px/1.2 var(--font-heading);letter-spacing:-.4px;}
+.catalog-admin-popover>.menus13-account-header #catalog-account-subtitle {display:block;font-size:12px;margin-top:5px;color:var(--menus13-muted);}
+.catalog-admin-popover>.menus13-account-header #catalog-account-subtitle[hidden] {display:none;}
+.menus13-account #catalog-account-guest,.menus13-account #catalog-account-loggedin {padding:22px 24px;}
+.menus13-account .field {display:flex;flex-direction:column;gap:8px;margin-bottom:16px;}
+.menus13-account .field-label {font-size:12px;color:#b5c6ca;}
+.menus13-account input:not([type=checkbox]) {width:100%;min-height:46px;font-size:14px;}
+.menus13-account #catalog-account-guest>.dialog-actions {margin-top:18px;gap:9px;}
+.menus13-account #catalog-account-submit,.menus13-account #catalog-account-switch {min-height:46px;height:46px;font-size:13px;}
+.menus13-account #catalog-account-switch {color:#c4d6d8;}
+.menus13-identity {padding:16px 17px;border:1px solid var(--menus13-line);border-radius:15px;background:linear-gradient(140deg,#bfeade12,#c1e8e603);margin-bottom:15px;display:flex;flex-direction:column;gap:5px;}
+.menus13-identity-label {font-size:12px;color:var(--menus13-muted);}
+.menus13-account #catalog-account-loggedin-email {font-size:16px;font-weight:600;line-height:1.45;margin:0;color:#e3eef0;overflow-wrap:anywhere;}
+#catalog-account-role {font-size:12px;color:#b2c4c8;margin-top:2px;}
+.is-admin-mode #catalog-account-role {color:#b3e8d9;}
+.menus13-account .menus13-action,
+.menus13-account .left-actions button.menus13-action {width:100%;min-height:46px;height:auto;display:flex;align-items:center;justify-content:flex-start;gap:12px;padding:12px 14px;text-align:left;font-size:14px;line-height:1.35;border-radius:12px;}
+.menus13-action>[data-menu-icon] {display:grid;place-items:center;flex:none;}
+.menus13-action .ui-icon,.menus13-action>.ui-icon {width:20px;height:20px;min-width:20px;flex-basis:20px;}
+.menus13-action>span:not([data-menu-icon]):not(.ui-icon) {flex:1;}
+.menus13-account .menus13-tail {margin-left:auto;color:#8ca8ad;}
+.menus13-account .menus13-tail .ui-icon,.menus13-account .ui-icon.menus13-tail {width:15px;height:15px;min-width:15px;flex-basis:15px;}
+.menus13-account #catalog-account-logout {margin-top:10px;}
+.menus13-account .menus13-action[hidden] {display:none!important;}
+.menus13-account #catalog-account-change-password {padding:16px;margin:12px 0 0;border-radius:14px;border-color:var(--menus13-line);background:#12212857;}
+.menus13-account #catalog-account-change-password[hidden] {display:none;}
+.menus13-account #catalog-account-change-password-submit {width:100%;}
+.menus13-account #catalog-admin-actions {padding:0 24px 22px;}
+.menus13-account #catalog-admin-actions[hidden],.menus13-account #catalog-admin-pending[hidden] {display:none;}
+.menus13-group-title {font-size:12px;font-weight:500;color:var(--menus13-muted);margin:0 0 11px;}
+.menus13-account .left-actions {display:grid;grid-template-columns:1fr;gap:8px;}
+.menus13-account .left-actions #add-car-btn,.menus13-account .left-actions #edit-car-btn {display:none!important;}
+.menus13-account #admin-logout-btn {margin-top:7px;}
+.menus13-account #pending-section {margin:0;padding:18px 24px 22px;border:0;border-top:1px solid var(--menus13-line);border-radius:0;background:#101a232e;}
+.menus13-account #pending-section .section-label {font-size:14px;letter-spacing:0;text-transform:none;font-weight:600;}
+.menus13-account #pending-count {font-size:12px;font-weight:400;color:var(--menus13-muted);}
+.menus13-account #pending-refresh-btn {min-height:34px;height:34px;padding:6px 10px;font-size:12px;flex:none;}
+.menus13-account #pending-section .picker-list {margin:4px 0 0;max-height:220px;border:0;background:none;padding:0;}
+.menus13-account #pending-section .picker-list>li {padding:14px 12px;border:1px solid var(--menus13-line);border-radius:11px;background:#e7fff805;margin-bottom:8px;line-height:1.5;}
+.menus13-account #pending-section .picker-list>.empty {font-size:13px;color:var(--menus13-muted);}
+.menus13-account #pending-list button {min-height:36px;padding:7px 10px;font-size:12px;flex:1;}
+.menus13-account #catalog-account-global-status:not(:empty) {margin:0 24px 22px;}
+/* The administrator's working dialogs retain their fields and event IDs. */
+dialog.menus13-admin-dialog {padding:28px!important;width:min(640px,calc(100vw - 64px));border-radius:23px;}
+dialog.menus13-admin-dialog>h2 {display:flex;align-items:center;gap:12px;margin-bottom:20px;font-size:24px;}
+dialog.menus13-admin-dialog>.field {display:flex;flex-direction:column;gap:8px;margin-bottom:17px;}
+dialog.menus13-admin-dialog .field-label {font-size:13px;}
+dialog.menus13-admin-dialog .field input {width:100%;font-size:14px;}
+dialog.menus13-admin-dialog>.dialog-actions {border-top:1px solid #d3ece51a;padding-top:20px;gap:12px;margin-top:24px;}
+dialog.menus13-admin-dialog>.dialog-actions>button {min-height:46px;flex:1;}
+dialog.menus13-admin-dialog .dialog-log {background:#101a2366;border-color:#bdd8da20;border-radius:12px;}
+dialog.menus13-admin-dialog .dialog-log:empty {display:none;}
+dialog#admin-manager-dialog.menus13-admin-dialog {width:min(1100px,calc(100vw - 64px));max-height:calc(100vh - 64px);}
+.menus13-manager-guide {padding:12px 15px;border-radius:12px;background:#0f1e253b;border:1px solid #bdd8da20;margin:0 0 18px;}
+.menus13-manager-guide summary {cursor:pointer;font-size:13px;color:#bed0d4;}
+.menus13-manager-guide p {font-size:13px!important;color:#a6babf!important;line-height:1.6;margin:12px 0 0;max-width:80ch;}
+#admin-manager-dialog.menus13-admin-dialog .manager-toolbar {padding:12px;border-radius:14px;background:#091c2438;border:1px solid #d3f6ec17;gap:8px;}
+#admin-manager-dialog.menus13-admin-dialog .manager-tabs {display:flex;gap:6px;margin-right:auto;}
+#admin-manager-dialog.menus13-admin-dialog .manager-tabs button.active {color:#c2f1e3;background:#9ae1cb20;border-color:#baf5dc52;}
+#admin-manager-dialog.menus13-admin-dialog .manager-breadcrumb {padding:14px 4px;}
+#admin-manager-dialog.menus13-admin-dialog .manager-grid {min-height:240px;padding:6px 0;gap:12px;}
+#admin-manager-dialog.menus13-admin-dialog .manager-card {border-radius:15px;background:linear-gradient(140deg,#d1eee411,#c4e6e404);border:1px solid #c7e7df20;box-shadow:inset 0 1px #fff1;}
+#admin-manager-dialog.menus13-admin-dialog .manager-card.is-dir {border-color:#c2f3e330;}
+@media(max-height:760px) {
+  dialog.settings13-dialog {max-height:calc(100vh - 32px);}
+  .settings13-dialog .settings13-heading {padding-block:18px;}
+  .settings13-footer {padding-block:14px;}
+  .catalog-admin-popover.menus13-account {top:92px;max-height:calc(100vh - 108px);}
+}
+@media(max-width:600px) {
+  dialog.settings13-dialog {width:calc(100vw - 24px);max-height:calc(100vh - 24px);}
+  .settings13-dialog .settings13-heading {padding:18px;}
+  .settings13-dialog .settings13-body {padding:14px;}
+  .settings13-dialog .settings-section {padding:16px;}
+  .settings13-storage-action {align-items:stretch;flex-direction:column;gap:12px;}
+  .settings13-storage-action>button {width:100%;}
+  .settings13-footer {padding:16px 18px;gap:12px;}
+  .settings13-footer>div>span {max-width:190px;}
+  .settings13-connection {font-size:11px;}
+  .catalog-admin-popover.menus13-account {right:14px;max-width:calc(100vw - 28px);}
+}
+@media(prefers-reduced-motion:reduce) {.settings13-toggle input[type=checkbox],.settings13-toggle input[type=checkbox]::before {transition:none;}}

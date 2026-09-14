@@ -24,6 +24,7 @@
 
   let containerEl, contentEl, navBackBtn, navNextBtn, navLabelEl, navVideoBtn;
   let mounted = false;
+  let renderRevision=0;
   let logFn = () => {};
 
   let model = null;
@@ -49,6 +50,9 @@
   let nextAction = () => advanceAfter(currentIndex);
   let sharedApksPromise = null;
   let runnerBusy = false;
+  let activeAppPicker = null;
+  let activeCommand = null;
+  const commandResults = new Map();
   let modelWifiPort = 5555;
   let appDescriptionTooltip = null;
   // Показываем "Готово!"+Boosty один раз за сеанс работы с моделью — сброс
@@ -161,10 +165,10 @@
       <div class="wizard">
         <div class="wizard-content" id="wizard-content"></div>
         <div class="wizard-nav">
-          <button id="wizard-back">← Назад</button>
-          <button id="wizard-video" style="display: none">▶ Смотреть видео</button>
+          <button id="wizard-back">Назад</button>
+          <button id="wizard-video" style="display: none">Смотреть видео</button>
           <span class="page-label" id="wizard-page-label"></span>
-          <button id="wizard-next" class="accent">Далее →</button>
+          <button id="wizard-next" class="accent">Далее</button>
         </div>
       </div>
       <dialog id="ask-input-dialog">
@@ -184,8 +188,9 @@
     navNextBtn = container.querySelector("#wizard-next");
     navLabelEl = container.querySelector("#wizard-page-label");
     navVideoBtn = container.querySelector("#wizard-video");
+    navBackBtn.replaceChildren(UsbUI.icon('back'), el('span', {text:'Назад'}));
     navBackBtn.addEventListener("click", goBack);
-    navNextBtn.addEventListener("click", () => nextAction());
+    navNextBtn.addEventListener("click", () => {if(!runnerBusy)nextAction();});
     navVideoBtn.addEventListener("click", () => {
       const stage = currentIndex >= 0 ? stages[currentIndex] : null;
       if (stage && stage.video_path) window.pywebview.api.install_open_video(stage.video_path);
@@ -261,18 +266,31 @@
 
   function onInstallFinished(event) {
     runnerBusy = false;
+    contentEl.classList.remove('installing-apps');
+    contentEl.parentElement.classList.remove('installing-apps');
     log(event.message);
+    if(!event.success&&event.stage_index===currentIndex)queueMicrotask(()=>window.labStageError(event.message));
     if (event.stage_index !== currentIndex) return; // ушли с этой страницы, пока этап работал в фоне
     // "actions" — кнопки необязательны и нажимаются в любом порядке/сколько
     // угодно раз, поэтому в отличие от остальных типов этапов ни успех, ни
     // ошибка одного действия не переводят на следующий этап сами по себе —
     // технику решает об этом сам, нажав "Далее".
     if (stages[currentIndex] && stages[currentIndex].type === "actions") {
+      if (activeCommand?.stageIndex === currentIndex) {
+        commandResults.set(activeCommand.key, {success:!!event.success, message:event.message});
+        activeCommand = null;
+      }
       render();
       return;
     }
     if (event.success) {
+      const wasLast=stages[currentIndex]?.next==null;
       advanceAfter(currentIndex);
+      if(wasLast){
+        document.querySelector('.stage-primary-actions')?.remove();clear(contentEl);
+        contentEl.append(el('h1',{class:'workflow-title',text:'Установка завершена'}),el('p',{text:'Этап выполнен успешно. Можно вернуться к выбору автомобиля.'}));
+        navNextBtn.style.display='';navNextBtn.textContent='К моделям';nextAction=()=>returnToCatalog();
+      }
     } else {
       render(); // перерисовать текущий этап заново — Start/Stop вернутся в состояние "не выполняется"
     }
@@ -291,6 +309,7 @@
     sessionHasActivity = false;
     sessionSent = false;
     model = selectedModel;
+    activeCommand = null; commandResults.clear();
     done.clear();
     historyStack.length = 0;
     chosenVariants = {};
@@ -376,6 +395,7 @@
   }
 
   function goBack() {
+    if(runnerBusy)return;
     if (!historyStack.length) return;
     show(historyStack.pop());
   }
@@ -419,6 +439,7 @@
   }
 
   function show(index) {
+    if(runnerBusy)return;
     currentIndex = index;
     nextAction = () => advanceAfter(currentIndex);
     render();
@@ -426,7 +447,12 @@
 
   // -- рендеринг ------------------------------------------------------
   function render() {
+    renderRevision++;
+    contentEl.classList.remove('installing-apps');
+    contentEl.parentElement.classList.remove('installing-apps');
     clear(contentEl);
+    document.querySelector('.stage-primary-actions')?.remove();
+    contentEl.dataset.stageType=stages[currentIndex]?.type||'instruction';
     if (loadError) {
       contentEl.appendChild(el("div", { class: "callout danger", text: loadError }));
       if (loadErrorNeedsUpdate) {
@@ -460,7 +486,9 @@
   }
 
   function renderNav() {
-    navBackBtn.disabled = !historyStack.length;
+    navNextBtn.disabled = runnerBusy;
+    navBackBtn.disabled = runnerBusy || !historyStack.length;
+    navBackBtn.hidden = !historyStack.length;
     if (stages.length === 0) {
       navNextBtn.style.display = "none";
     } else {
@@ -474,7 +502,9 @@
       // первый вариант — тот же выбор, что раньше был у select).
       const stage = currentIndex >= 0 ? stages[currentIndex] : null;
       const isLast = stage && stage.type !== "check" && stage.next == null;
-      navNextBtn.textContent = isLast ? "Готово" : "Далее →";
+      navNextBtn.replaceChildren(el('span',{text:isLast ? 'Готово' : 'Далее'}));
+      if (!isLast) navNextBtn.append(window.AppIcons ? AppIcons.icon('chevron') : UsbUI.icon('chevron'));
+      if (stage?.type === 'check' && stage.check_options?.length) navNextBtn.style.display = 'none';
     }
     if (!stages.length) navLabelEl.textContent = "";
     else if (currentIndex === -1) navLabelEl.textContent = "Инструкция";
@@ -483,7 +513,7 @@
     const videoStage = currentIndex >= 0 ? stages[currentIndex] : null;
     if (videoStage && videoStage.video_path) {
       navVideoBtn.style.display = "";
-      navVideoBtn.textContent = `▶ ${videoStage.video_label || "Смотреть видео"}`;
+      navVideoBtn.replaceChildren(window.AppIcons ? AppIcons.icon('play') : UsbUI.icon('play'), el('span',{text:videoStage.video_label || 'Смотреть видео'}));
     } else {
       navVideoBtn.style.display = "none";
     }
@@ -502,6 +532,7 @@
   }
 
   function renderStagePage(stage) {
+    contentEl.appendChild(el('h1',{class:'workflow-title',text:stage.type==='apps'?'Приложения':['usb','qr_adb'].includes(stage.type)?'Подготовка флешки':stage.title||TYPE_LABELS[stage.type]||'Инструкция'}));
     if (stage.type === "instruction") {
       contentEl.appendChild(buildInstructionBlock(stage, true));
       return;
@@ -518,11 +549,14 @@
       getDevice = transport.getDevice;
     }
 
-    if (stage.instruction_html || stage.description) {
-      contentEl.appendChild(buildInstructionBlock(stage, false));
+    if ((stage.instruction_html || stage.description) && !["qr_adb", "usb"].includes(stage.type)) {
+      if(stage.type==='apps'){
+        const help=el('details',{class:'lab-stage-help'},[el('summary',{text:'Инструкция к этапу'}),buildInstructionBlock(stage,false)]);contentEl.appendChild(help);
+      }else contentEl.appendChild(buildInstructionBlock(stage, false));
     }
 
     const panel = buildActionPanel(stage.type);
+    panel.dataset.stageIndex=stage.index;
 
     const builders = {
       check: renderCheckStage, apps: renderAppsStage, manual: renderManualStage,
@@ -546,7 +580,7 @@
     // column для панелей верхнего уровня самого окна (лог, инструкция), тут
     // ломало высоту/обтекание при вложении внутрь обычного потока этапа.
     // action-panel — просто закруглённый фон+паддинг, без flex-эффектов.
-    const bar = el("div", { class: "action-panel", style: "margin-bottom: 12px" });
+    const bar = el("div", { class: "action-panel transport-bar", style: "margin-bottom: 12px" });
     let deviceByLabel = {};
     let wifiSerial = null;
 
@@ -582,42 +616,18 @@
     portInput.value = stagePort != null ? String(stagePort) : "";
     const wifiConnectBtn = el("button", { text: "Подключить Wi-Fi" });
     async function doWifiConnect() {
-      const port = Number(portInput.value) || modelWifiPort;
-      wifiConnectBtn.disabled = true;
-      wifiStatus.textContent = "Wi-Fi: подключаюсь...";
-      try {
-        let result = await window.pywebview.api.install_wifi_connect(port, null);
-        let ip = result.ip;
-        if (!result.ok) {
-          const candidates = await window.pywebview.api.install_scan_wifi(port);
-          ip = (await window.selectDialog(
-            candidates.length
-              ? `Не удалось подключиться автоматически. Выберите IP магнитолы (порт ${port}):`
-              : `Не удалось подключиться автоматически и скан сети ничего не нашёл (порт ${port}). Введите IP магнитолы:`,
-            candidates,
-            { title: "Wi-Fi ADB" }
-          ))?.trim();
-          if (!ip) {
-            wifiStatus.textContent = "Wi-Fi: не подключено";
-            return;
-          }
-          result = await window.pywebview.api.install_wifi_connect(port, ip);
+      LabUI.connection({port:Number(portInput.value)||modelWifiPort,
+        scan:p=>window.pywebview.api.install_scan_wifi(p),
+        connect:async(ip,port)=>{
+          const result=await window.pywebview.api.install_wifi_connect(port,ip);
+          if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;}
+          else {wifiSerial=null;wifiStatus.textContent='Wi-Fi: не подключено';}
+          return result;
         }
-        if (!result.ok) {
-          wifiSerial = null;
-          wifiStatus.textContent = "Wi-Fi: не удалось подключиться";
-          await window.notice(result.message || result.error || "Не удалось подключиться.",
-            { title: "Wi-Fi ADB", danger: true });
-          return;
-        }
-        wifiSerial = `${ip}:${port}`;
-        wifiStatus.textContent = `Wi-Fi: подключено (${wifiSerial})`;
-      } finally {
-        wifiConnectBtn.disabled = false;
-      }
+      });
     }
     wifiConnectBtn.addEventListener("click", doWifiConnect);
-    const wifiRow = el("div", { class: "row" }, [wifiStatus, el("span", { text: "Порт:" }), portInput, wifiConnectBtn]);
+    const wifiRow = el("div", { class: "row" }, [wifiStatus, wifiConnectBtn]);
 
     const connection = stage.type === "apps" ? (stage.apps_connection || "wired")
       : stage.type === "actions" ? (stage.actions_connection || "wired") : "wired";
@@ -653,8 +663,8 @@
   }
 
   function buildInstructionBlock(stage, fullPage) {
-    const html = stage.instruction_html;
-    const block = el("div", { class: "instruction-block", style: fullPage ? "flex: 1; display: flex; flex-direction: column" : "" });
+    const html = stage.instruction_html || (fullPage ? Instructions12.textDocument(stage.description || "Для этого этапа нет отдельной инструкции.") : '');
+    const block = el("div", { class: "instruction-block" + (fullPage ? " instruction12-surface" : ""), style: fullPage ? "flex: 1; display: flex; flex-direction: column" : "" });
     if (html) {
       // allow-popups(-to-escape-sandbox) — чтобы ссылки на источники
       // ("Источники: drive2.ru/...", см. app/instruction_html.py:_linkify)
@@ -666,12 +676,12 @@
       // origin: скрипт может делать что угодно ВНУТРИ себя, но не видит
       // window.parent/pywebview.api, куки или что-либо ещё хоста. Формы и
       // top-navigation по прежнему запрещены.
-      const iframe = el("iframe", { sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox" });
+      const iframe = el("iframe", { title: stage.title || "Инструкция", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox" });
       if (fullPage) iframe.style.height = "100%";
       block.appendChild(iframe);
       // srcdoc не всегда успевает попасть в атрибут при быстрой пересборке — пишем через contentWindow.
       iframe.addEventListener("load", () => {}, { once: true });
-      iframe.srcdoc = html;
+      iframe.srcdoc = LabUI.reader(html, { title: fullPage ? stage.title || "Инструкция" : "" });
     } else if (stage.description) {
       block.appendChild(el("div", { class: "plain-text", text: stage.description }));
     } else {
@@ -712,8 +722,17 @@
   }
 
   // -- manual ----------------------------------------------------------
+  function stageInfo(panel, symbol, title, description) {
+    const card = el('section', {class:'stage06-info'}, [
+      el('span', {class:'stage06-symbol'}, [UsbUI.icon(symbol)]),
+      el('div', {}, [el('h2', {text:title}), el('p', {text:description})])
+    ]);
+    panel.append(card);
+    return card;
+  }
+
   function renderManualStage(panel) {
-    panel.appendChild(el("p", { text: "Выполните шаги из инструкции на самой магнитоле, затем нажмите «Далее»." }));
+    stageInfo(panel, 'car', 'Действия в автомобиле', 'Выполните инструкцию на магнитоле. Когда закончите, нажмите «Далее».');
   }
 
   // -- check -------------------------------------------------------------
@@ -722,7 +741,9 @@
     panel.appendChild(el("span", { class: "field-label", text: "Выберите вариант" }));
     const list = el("div", { class: "check-options-list" });
     options.forEach((opt, i) => {
-      const btn = el("button", { class: "accent", text: opt });
+      const btn = el("button", { class: "stage06-choice" }, [
+        el('span', {class:'stage06-choice-number',text:String(i+1)}),el('span',{text:opt}),UsbUI.icon('chevron')
+      ]);
       // Клик сразу продвигает по выбранной ветке (см. car_generator.py:
       // StepSpec.next_options).
       btn.addEventListener("click", () => advanceAfter(stage.index, i));
@@ -737,8 +758,34 @@
 
   // -- apps ----------------------------------------------------------------
   async function renderAppsStage(panel, stage, getDevice) {
+    panel.classList.add("apps-panel", "apps08-inline");
     buildVariantPicker(panel, stage, stage.index);
-    panel.appendChild(await buildAppsTree(stage));
+    Object.keys(sectionCollapsed).forEach(key => { sectionCollapsed[key] = false; });
+    const choose = UsbUI.button('apps07-choose', 'Выбрать приложения', 'apps');
+    const copy = el('p', {class:'apps08-total',text:'Загружаем список приложений…'});
+    const preview = el('div', {class:'apps07-preview'});
+    const search = el('input', {type:'search',placeholder:'Найти приложение','aria-label':'Поиск приложений'});
+    const toolbar = el('div', {class:'apps08-toolbar'}, [copy]);
+    const searchBox = el('label',{class:'apps07-search apps08-search'},[UsbUI.icon('search'),search]);
+    const body = el('div',{class:'apps07-body apps08-body'});
+    panel.append(toolbar, searchBox, body);
+    const chooser = createAppChooser(panel, stage, choose, copy, preview, panel);
+    if (!await chooser.load() || !panel.isConnected) return;
+    body.replaceChildren(chooser.tree);
+    body.querySelectorAll('.apps-section-body').forEach(section => section.classList.remove('collapsed'));
+    body.querySelectorAll('.apps-section-header').forEach(header => { header.setAttribute('aria-expanded','true');header.firstChild.replaceWith(UsbUI.icon('down')); });
+    body.addEventListener('change', () => chooser.update());
+    search.addEventListener('input', () => {
+      const query = search.value.trim().toLocaleLowerCase('ru');
+      body.querySelectorAll('.app-row').forEach(row => row.hidden = !!query && !row.textContent.toLocaleLowerCase('ru').includes(query));
+      [...body.querySelectorAll('.apps-section')].reverse().forEach(section => {
+        section.hidden = !!query && ![...section.querySelectorAll('.app-row')].some(row => !row.hidden);
+        const content = section.querySelector(':scope>.apps-section-body');
+        if (!content) return;
+        if (query) { if (!content.hasAttribute('data-search-collapsed')) content.dataset.searchCollapsed=String(content.classList.contains('collapsed'));content.classList.remove('collapsed'); }
+        else if (content.hasAttribute('data-search-collapsed')) {content.classList.toggle('collapsed',content.dataset.searchCollapsed==='true');delete content.dataset.searchCollapsed;}
+      });
+    });
     // Раньше этап apps был только выбором галочек, а установку делал
     // отдельный следующий "adb"-этап — теперь ставит сам, тем же блоком
     // "Начать/Стоп", что и adb-этап (см. buildStartStopButtons ниже и
@@ -749,12 +796,146 @@
     buildStartStopButtons(panel, stage, getDevice, { startLabel: "Начать установку" });
   }
 
+  function createAppChooser(panel, stage, choose, copy, preview, host, ready = () => {}) {
+    const revision = renderRevision;
+    const errorBox = el('div', {class:'apps07-load-error',role:'status'});
+    host.append(errorBox);
+    const controller = {
+      tree: null,
+      rows() { return this.tree ? [...this.tree.querySelectorAll('.app-row')] : []; },
+      entries() {
+        const unique = new Map();
+        for (const row of this.rows()) {
+          const input = row.querySelector('input');
+          if (!input?.checked) continue;
+          const item = {path:row.dataset.apkPath,name:row.querySelector('label').textContent.trim(),row};
+          const previous = unique.get(item.path);
+          if (!previous || (input.disabled && !previous.row.querySelector('input').disabled)) unique.set(item.path,item);
+        }
+        return [...unique.values()];
+      },
+      paths() { return [...new Set(this.entries().map(item => item.path))]; },
+      update() {
+        const entries = this.entries();
+        const required = entries.filter(item => item.row.querySelector('input:disabled')).length;
+        copy.textContent = `Выбрано: ${this.paths().length}${required ? ` · Обязательных: ${required}` : ''}`;
+        preview.replaceChildren();
+        const seen = new Set();
+        for (const item of entries) {
+          if (seen.has(item.path)) continue;
+          seen.add(item.path);
+          if (seen.size <= 4) { const icon = item.row.querySelector('.apk-icon'); if (icon) preview.append(icon.cloneNode(true)); }
+        }
+        if (entries.length) preview.append(el('span',{text:'Набор можно изменить перед установкой'}));
+      },
+      async load() {
+        choose.disabled = true; ready(false); errorBox.replaceChildren();
+        try {
+          this.tree = await buildAppsTree(stage);
+          if (revision !== renderRevision) return false;
+          this.update(); choose.disabled = false; ready(true); return true;
+        } catch (error) {
+          if (revision !== renderRevision) return false;
+          sharedApksPromise = null;
+          copy.textContent = 'Не удалось загрузить приложения.';
+          const retry = UsbUI.button('', 'Повторить загрузку', 'refresh');
+          retry.onclick = async () => { if (await this.load() && stage.type === 'apps' && !document.querySelector('.stage-primary-actions')) render(); };
+          errorBox.append(el('span', {text:error.message || String(error)}),retry);
+          return false;
+        }
+      },
+    };
+    panel._appChooser = controller;
+    choose.setAttribute('aria-haspopup','dialog');
+    choose.onclick = () => { if (!runnerBusy && controller.tree) openAppPicker(stage, controller, choose); };
+    return controller;
+  }
+
+  function openAppPicker(stage, controller, trigger) {
+    if (activeAppPicker) return;
+    Object.keys(sectionCollapsed).forEach(key => { sectionCollapsed[key] = false; });
+    const originalSelection = appSelection;
+    const originalPersonal = personalApks.slice();
+    appSelection = {...appSelection};
+    const dialog = el('dialog', {class:'apps07-dialog','aria-labelledby':'apps07-title'});
+    const close = UsbUI.button('apps07-close','','close'); close.setAttribute('aria-label','Закрыть без сохранения');
+    const search = el('input',{type:'search',placeholder:'Найти приложение','aria-label':'Поиск приложений'});
+    const body = el('div',{class:'apps07-body'});
+    const count = el('span',{class:'apps07-count','aria-live':'polite'});
+    const cancel = UsbUI.button('apps07-cancel','Отмена','back');
+    const apply = UsbUI.button('apps07-apply','Готово','check',true);
+    dialog.append(el('header',{class:'apps07-header'},[el('h2',{id:'apps07-title',text:'Выбор приложений'}),close]),
+      el('div',{class:'apps07-tools'},[el('label',{class:'apps07-search'},[UsbUI.icon('search'),search])]),body,
+      el('footer',{class:'apps07-footer'},[count,cancel,apply]));
+    const session = {dialog,closed:false,tree:null,revision:0,loading:false,reload:null,imported:new Map(),picking:false};
+    activeAppPicker = session;
+    function updateCount() {
+      const paths = new Set([...body.querySelectorAll('.app-row')].filter(row => row.querySelector('input:checked')).map(row => row.dataset.apkPath));
+      count.textContent = `Выбрано: ${paths.size}`;
+    }
+    function filter() {
+      const query = search.value.trim().toLocaleLowerCase('ru');
+      body.querySelectorAll('.app-row').forEach(row => row.hidden = !!query && !row.textContent.toLocaleLowerCase('ru').includes(query));
+      [...body.querySelectorAll('.apps-section')].reverse().forEach(section => {
+        section.hidden = !!query && ![...section.querySelectorAll('.app-row')].some(row => !row.hidden);
+        const sectionBody = section.querySelector(':scope > .apps-section-body');
+        if (!sectionBody) return;
+        if (query) { if (!sectionBody.hasAttribute('data-before-search')) sectionBody.dataset.beforeSearch = String(sectionBody.classList.contains('collapsed')); sectionBody.classList.remove('collapsed'); }
+        else if (sectionBody.hasAttribute('data-before-search')) { sectionBody.classList.toggle('collapsed',sectionBody.dataset.beforeSearch==='true'); delete sectionBody.dataset.beforeSearch; }
+      });
+      body.querySelector('.apps07-empty')?.remove();
+      if (query && ![...body.querySelectorAll('.app-row')].some(row => !row.hidden)) body.append(el('p',{class:'apps07-empty',text:'Приложения не найдены'}));
+    }
+    session.reload = async () => {
+      const request = ++session.revision;
+      session.loading = true; apply.disabled = true;
+      const position = body.scrollTop;
+      try {
+        const tree = await buildAppsTree(stage);
+        if (session.closed || request !== session.revision) return;
+        session.tree = tree; body.replaceChildren(tree); body.scrollTop = position;
+        updateCount(); filter(); apply.disabled = false;
+      } catch (error) {
+        if (session.closed || request !== session.revision) return;
+        sharedApksPromise = null;
+        const retry = UsbUI.button('', 'Повторить загрузку','refresh'); retry.onclick = session.reload;
+        body.replaceChildren(el('p',{class:'apps07-status','data-error':'true',text:error.message||String(error)}),retry);
+      } finally { if (request === session.revision) session.loading = false; }
+    };
+    function finish(save) {
+      if (session.closed || (save && (session.loading || !session.tree))) return;
+      session.closed = true;
+      if (save) controller.tree = session.tree;
+      else {
+        appSelection = originalSelection;
+        // Imported APKs remain available in this session, but Cancel never adds them to the queue.
+        const restored = new Map();
+        for (const apk of [...originalPersonal, ...personalApks, ...session.imported.values()]) {
+          if (!restored.has(apk.path)) restored.set(apk.path,apk);
+        }
+        personalApks = [...restored.values()];
+      }
+      hideAppDescription();
+      if (appDescriptionTooltip) document.body.append(appDescriptionTooltip);
+      activeAppPicker = null; controller.update(); dialog.close(); dialog.remove(); trigger.focus();
+    }
+    close.onclick = cancel.onclick = () => finish(false);
+    apply.onclick = () => finish(true);
+    dialog.addEventListener('cancel', event => { event.preventDefault(); finish(false); });
+    dialog.addEventListener('click', event => { if (event.target !== dialog) return; const r=dialog.getBoundingClientRect(); if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)finish(false); });
+    search.oninput = filter; body.addEventListener('change',updateCount);
+    body.append(el('p',{class:'apps07-status',text:'Загружаем приложения…'}));
+    document.body.append(dialog); dialog.showModal(); session.reload();
+  }
+
   // Общее дерево "Стандартные приложения этого этапа" + "Дополнительные
   // приложения" (вся общая библиотека apk/, по категориям) — используется и
   // "apps"-этапом (единственный способ установить что-либо), и "usb"-этапом
   // с usb_copy_selected_apks (технику нужно видеть и отмечать те же самые
   // галочки, чтобы выбрать, что скопировать на флешку вместе со скриптом).
   async function buildAppsTree(stage) {
+    const revision=renderRevision;
+    const selection = appSelection;
     const tree = el("div", { class: "apps-tree" });
 
     // Свои APK — пользователь сам выбирает файл(ы) с компьютера, минуя
@@ -780,18 +961,20 @@
     // задизейбленный чекбокс, чтобы визуально было видно, что это тоже
     // приложение, просто без права его снять).
     const standard = await window.pywebview.api.install_standard_apks(model.key, stage.index, chosenVariants[stage.index]);
-    for (const apk of standard.required) appSelection[apk.path] = true;
+    if(revision!==renderRevision)return tree;
+    for (const apk of standard.required) selection[apk.path] = true;
     for (const apk of standard.optional) {
-      if (!(apk.path in appSelection)) appSelection[apk.path] = false;
+      if (!(apk.path in selection)) selection[apk.path] = false;
     }
     if (standard.required.length) {
       tree.appendChild(buildCollapsibleSection("standard-required", "Обязательные приложения", standard.required, null, true));
     }
     if (standard.optional.length) {
-      tree.appendChild(buildCollapsibleSection("standard-optional", "Необязательные приложения", standard.optional));
+      tree.appendChild(buildCollapsibleSection("standard-optional", "Дополнительно", standard.optional));
     }
 
     const shared = await sharedApks();
+    if(revision!==renderRevision)return tree;
     const byCategory = {};
     for (const apk of shared) {
       // Не ||= — см. events.js за тем же обоснованием (старый Chromium в
@@ -807,7 +990,25 @@
     for (const category of categories) {
       extraBody.appendChild(buildCollapsibleSection(`extra:${category}`, category || "Без категории", byCategory[category]));
     }
-    tree.appendChild(buildCollapsibleSection("extra", "Дополнительные приложения", null, extraBody));
+    tree.appendChild(buildCollapsibleSection("extra", "Библиотека приложений", null, extraBody));
+    tree.append(tree.querySelector(".app-personal-apk-add"));
+    const requiredPaths = new Set(standard.required.map(apk => apk.path));
+    function syncSelection() {
+      for (const row of tree.querySelectorAll('.app-row')) {
+        const input = row.querySelector('input');
+        const mandatory = requiredPaths.has(row.dataset.apkPath);
+        input.disabled = mandatory;
+        input.checked = mandatory || !!selection[row.dataset.apkPath];
+      }
+    }
+    tree.addEventListener('change', event => {
+      const row = event.target.closest('.app-row');
+      if (!row || event.target.type !== 'checkbox') return;
+      const path = row.dataset.apkPath;
+      selection[path] = requiredPaths.has(path) || event.target.checked;
+      syncSelection();
+    });
+    syncSelection();
     return tree;
   }
 
@@ -818,12 +1019,13 @@
     // в длинную простыню чекбоксов ещё до того, как техник вообще решил,
     // какой раздел ему нужен. Ручной выбор пользователя (клик по заголовку)
     // по-прежнему запоминается в sectionCollapsed на время работы с моделью.
-    const collapsed = key in sectionCollapsed ? sectionCollapsed[key] : true;
+    const collapsed = key in sectionCollapsed ? sectionCollapsed[key] : stages[currentIndex]?.type === 'apps' ? false : key !== "standard-optional";
+    sectionCollapsed[key]=collapsed;
     const sectionKind = required ? " apps-section-required"
       : key === "standard-optional" ? " apps-section-optional" : "";
     const wrap = el("section", { class: `apps-section${sectionKind}` });
-    const header = el("div", { class: "apps-section-header" }, [
-      el("span", { text: collapsed ? "▸" : "▾" }),
+    const header = el("button", { class: "apps-section-header", type:"button", "aria-expanded":String(!collapsed) }, [
+      UsbUI.icon(collapsed ? 'chevron' : 'down'),
       el("span", { text: title }),
     ]);
     const body = presetBody || el("div");
@@ -833,7 +1035,8 @@
     header.addEventListener("click", () => {
       sectionCollapsed[key] = !sectionCollapsed[key];
       body.classList.toggle("collapsed");
-      header.firstChild.textContent = sectionCollapsed[key] ? "▸" : "▾";
+      header.setAttribute("aria-expanded",String(!sectionCollapsed[key]));
+      header.firstChild.replaceWith(UsbUI.icon(sectionCollapsed[key] ? 'chevron' : 'down'));
     });
     wrap.appendChild(header);
     wrap.appendChild(body);
@@ -849,7 +1052,7 @@
   // его снять (appSelection для него и так всегда true — выставляется в
   // buildAppsTree/initAppSelectionDefaults, не через этот чекбокс).
   function buildAppRow(apk, required) {
-    const row = el("div", { class: "app-row" });
+    const row = el("div", { class: "app-row", "data-apk-path":apk.path });
     if (apk.description) {
       row.addEventListener("mouseenter", () => showAppDescription(row, apk.description));
       row.addEventListener("mouseleave", hideAppDescription);
@@ -864,10 +1067,10 @@
       checkbox.checked = !!appSelection[apk.path];
       checkbox.addEventListener("change", () => { appSelection[apk.path] = checkbox.checked; });
     }
-    const label = apk.name + (apk.remote_only ? "  ⬇ (будет скачан)" : "");
+    const label = apk.name;
     const wrap = el("div", {}, [
       el("label", { class: "row" }, [
-        checkbox,
+        checkbox, LabUI.appIcon(apk.path,apk.icon),
         el("span", { text: label, style: apk.remote_only ? "color: var(--text-dim)" : "" }),
       ]),
     ]);
@@ -876,15 +1079,36 @@
   }
 
   async function pickPersonalApks() {
-    const picked = await window.pywebview.api.car_pick_files("apk", true);
-    if (!picked.length) return;
-    for (const file of picked) {
-      if (!personalApks.some((apk) => apk.path === file.path)) {
-        personalApks.push({ path: file.path, name: file.name });
-      }
-      appSelection[file.path] = true;
+    const session = activeAppPicker;
+    if (session?.picking) return;
+    const originModel = model;
+    if (session) {
+      session.picking = true;
+      session.dialog.querySelector('.app-personal-apk-add').disabled = true;
     }
-    render();
+    try {
+      const picked = await window.pywebview.api.car_pick_files("apk", true);
+      if (!Array.isArray(picked) || !picked.length || model !== originModel) return;
+      for (const file of picked) {
+        if (!file.path) continue;
+        const apk = { path: file.path, name: file.name };
+        session?.imported.set(file.path,apk);
+        if (!personalApks.some((item) => item.path === file.path)) personalApks.push(apk);
+        if (!session || (!session.closed && activeAppPicker === session)) appSelection[file.path] = true;
+      }
+      if (session && !session.closed) await session.reload();
+      else if (!session) render();
+    } catch (error) {
+      const message = `Не удалось выбрать APK: ${error.message || error}`;
+      log(message);
+      if (session && !session.closed) session.dialog.querySelector('.apps07-body').append(el('p',{class:'apps07-status','data-error':'true',text:message}));
+    } finally {
+      if (session) {
+        session.picking = false;
+        const button = session.dialog.querySelector('.app-personal-apk-add');
+        if (button) button.disabled = false;
+      }
+    }
   }
 
   // Свой APK — тот же чекбокс-ряд, что и обычный buildAppRow, плюс кнопка
@@ -892,7 +1116,7 @@
   // либо его вообще не должно быть видно, раз это случайный локальный выбор,
   // а не запись из управляемой библиотеки apk/).
   function buildPersonalAppRow(apk) {
-    const row = el("div", { class: "app-row" });
+    const row = el("div", { class: "app-row", "data-apk-path":apk.path });
     const checkbox = el("input", { type: "checkbox" });
     checkbox.checked = !!appSelection[apk.path];
     checkbox.addEventListener("change", () => { appSelection[apk.path] = checkbox.checked; });
@@ -903,11 +1127,12 @@
       onclick: () => {
         personalApks = personalApks.filter((a) => a.path !== apk.path);
         delete appSelection[apk.path];
-        render();
+        if (activeAppPicker) activeAppPicker.reload(); else render();
       },
     });
+    removeBtn.replaceChildren(UsbUI.icon('close'));
     const wrap = el("div", { class: "row", style: "justify-content: space-between; align-items: center" }, [
-      el("label", { class: "row" }, [checkbox, el("span", { text: apk.name })]),
+      el("label", { class: "row" }, [checkbox, LabUI.appIcon(apk.path,apk.icon), el("span", { text: apk.name })]),
       removeBtn,
     ]);
     row.appendChild(wrap);
@@ -923,6 +1148,7 @@
       appDescriptionTooltip.setAttribute("role", "tooltip");
       document.body.appendChild(appDescriptionTooltip);
     }
+    (activeAppPicker?.dialog || document.body).append(appDescriptionTooltip);
     appDescriptionTooltip.textContent = description;
     appDescriptionTooltip.hidden = false;
     appDescriptionTooltip.style.visibility = "hidden";
@@ -947,175 +1173,200 @@
     return Object.entries(appSelection).filter(([, checked]) => checked).map(([path]) => path);
   }
 
-  // -- usb ------------------------------------------------------------------
-  async function renderUsbStage(panel, stage) {
-    buildVariantPicker(panel, stage, stage.index);
-    if (stage.usb_copy_selected_apks) {
-      panel.appendChild(await buildAppsTree(stage));
+  // USB preparation uses the approved cards; all operations remain native.
+  function showUsbInstruction(stage, qr = false) {
+    const wrap = el('div');
+    if (qr) {
+      const list = el('ol', {class: 'usb06-procedure'});
+      [
+        'На магнитоле откройте инженерное меню и экран с QR-кодом для ADB. Не закрывайте этот экран.',
+        'Вставьте в магнитолу флешку с записанным файлом svlog.flag.',
+        'Дождитесь надписи «QNX OK» на экране магнитолы, затем извлеките флешку.',
+        'Подключите эту же флешку к компьютеру, обновите список накопителей и нажмите «Получить пароль». Введите полученный код на магнитоле.'
+      ].forEach(text => list.append(el('li', {text})));
+      wrap.append(list);
     }
-    panel.appendChild(el("button", {
-      class: "accent",
-      text: "Подготовить флешку для этого этапа...",
-      onclick: () => window.usbDialog.open({
-        modelKey: model.key,
-        stageIndex: stage.index,
-        variant: chosenVariants[stage.index],
-        selectedApkPaths: selectedApkPaths(),
-        titleSuffix: `${model.display_label} — ${stage.title}`,
-        onFinished: (success) => {
-          if (success) advanceAfter(stage.index);
-        },
-      }),
-    }));
+    if (stage.instruction_html || stage.description) wrap.append(buildInstructionBlock(stage, false));
+    UsbUI.instruction('Действия на магнитоле', wrap);
   }
 
-  // -- qr_adb ---------------------------------------------------------------
-  // Для моделей платформы Geely без Wi-Fi (Cityray, Atlas/Preface без
-  // значка Wi-Fi): техник уже прошёл процедуру на самой магнитоле (флешка
-  // с svlog.flag → инженерное меню → ADB → «QNX OK», см. блок инструкции
-  // "QR-код ADB (флешка)" в app/instruction_html.py) и вставил флешку
-  // обратно в этот компьютер — здесь она читается напрямую (не через ADB,
-  // магнитола на этом этапе даже не обязана быть подключена), поэтому это
-  // отдельный тип этапа, а не ADB-команда (см. app/qr_adb_password.py за
-  // самим расчётом). Инлайново на странице этапа, а не отдельным диалогом —
-  // это полноценный этап мастера, а не второстепенное действие.
-  // Каждый шаг — своя карточка (номер + текст + при необходимости
-  // действие СРАЗУ под своим текстом), а не общий список шагов сверху и
-  // все кнопки отдельно внизу — раньше взгляд метался вверх-вниз-вверх-вниз
-  // между описанием и соответствующей ему кнопкой (см. фидбэк техника).
-  function qrAdbStepCard(number, text, extra) {
-    const body = el("div", { class: "qr-adb-step-body" }, [el("p", { text })]);
-    if (extra) for (const node of [].concat(extra)) body.appendChild(node);
-    return el("div", { class: "qr-adb-step" }, [
-      el("div", { class: "qr-adb-step-num", text: String(number) }),
-      body,
+  async function renderUsbStage(panel, stage) {
+    UsbUI.heading(panel, 'Подготовьте USB-накопитель с файлами для вашей магнитолы.');
+    buildVariantPicker(panel, stage, stage.index);
+    const write = UsbUI.button('usb06-open-writer', 'Подготовить флешку', 'download', true);
+    let chooser;
+    if (stage.usb_copy_selected_apks) {
+      const choose = UsbUI.button('usb06-choose-apps', 'Выбрать приложения', 'apps');
+      const selectionCard = UsbUI.step(1, 'apps', 'Приложения на флешке', 'Загружаем список приложений…', choose);
+      const preview = el('div', {class:'apps07-preview'});
+      selectionCard.append(preview); panel.append(selectionCard);
+      chooser = createAppChooser(panel, stage, choose, selectionCard.querySelector('.usb06-step-copy p'), preview, selectionCard, loaded => write.disabled = !loaded);
+      write.disabled = true;
+    }
+    const card = UsbUI.step(stage.usb_copy_selected_apks ? 2 : 1, 'file', 'Запишите файлы на флешку', stage.usb_copy_selected_apks
+      ? 'На флешку будут скопированы файлы этапа и выбранные приложения.'
+      : 'На флешку будут скопированы файлы этого этапа.', write);
+    card.dataset.state = 'active'; panel.append(card);
+    write.onclick = () => {
+      if (runnerBusy) return;
+      window.usbDialog.open({
+        modelKey: model.key, stageIndex: stage.index, variant: chosenVariants[stage.index],
+        selectedApkPaths: stage.usb_copy_selected_apks
+          ? chooser.paths()
+          : selectedApkPaths(), titleSuffix: `${model.display_label} — ${stage.title}`,
+        onFinished: success => { if (success) advanceAfter(stage.index); },
+      });
+    };
+    const instructionStage = stage.instruction_html || stage.description ? stage
+      : stages.find(next => next.id === stage.next && next.type === 'instruction');
+    if (instructionStage) {
+      const help = UsbUI.button('usb06-instruction', 'Открыть инструкцию', 'book');
+      help.onclick = () => showUsbInstruction(instructionStage);
+      panel.append(UsbUI.step(stage.usb_copy_selected_apks ? 3 : 2, 'car', 'Выполните шаги на магнитоле', 'Следуйте инструкции для выбранной модели автомобиля.', help));
+    }
+    if (chooser) chooser.load();
+  }
+
+  function renderQrAdbStage(panel, stage) {
+    UsbUI.heading(panel, 'Запишите файл на USB-накопитель, выполните шаги на магнитоле и получите пароль для ADB.');
+    const revision = renderRevision;
+    const live = () => renderRevision === revision;
+    const driveSelect = el('select', {id:'usb06-drive', 'aria-label':'USB-накопитель'});
+    const refreshBtn = UsbUI.button('usb06-refresh', '', 'refresh');
+    refreshBtn.className = 'usb06-refresh'; refreshBtn.title = 'Обновить список накопителей';
+    refreshBtn.setAttribute('aria-label', 'Обновить список накопителей');
+    const strip = el('div', {class:'usb06-drive-strip'}, [UsbUI.icon('usb'), el('label', {for:'usb06-drive', text:'USB-накопитель'}), driveSelect, refreshBtn]);
+    const showAllCheckbox = el('input', {type:'checkbox', id:'usb06-show-all'});
+    const options = el('details', {class:'usb06-drive-options'}, [
+      el('summary', {text:'Нужной флешки нет в списке?'}),
+      el('label', {}, [showAllCheckbox, document.createTextNode('Показать все локальные диски')]),
+      el('p', {text:'Системный диск и диск программы исключены. Проверьте выбранный накопитель перед записью.'})
     ]);
-  }
+    const driveStatus = el('p', {class:'usb06-step-status', role:'status', 'aria-live':'polite'});
+    const writeBtn = UsbUI.button('usb06-write', 'Записать файл', 'download', true);
+    const helpBtn = UsbUI.button('usb06-instruction', 'Открыть инструкцию', 'book');
+    const getBtn = UsbUI.button('usb06-password', 'Получить пароль', 'key');
+    const writeStatus = el('p', {class:'usb06-step-status', role:'status', 'aria-live':'polite'});
+    const readStatus = el('p', {class:'usb06-step-status', role:'status', 'aria-live':'polite'});
+    const one = UsbUI.step(1, 'file', 'Запишите файл на флешку', 'Будет создан файл svlog.flag для получения кода ADB.', writeBtn);
+    const two = UsbUI.step(2, 'car', 'Выполните шаги на магнитоле', 'Откройте экран с QR-кодом и дождитесь надписи «QNX OK».', helpBtn);
+    const three = UsbUI.step(3, 'key', 'Подключите флешку снова', 'Верните её в компьютер и получите пароль из сохранённых логов.', getBtn);
+    one.dataset.state = 'active'; one.append(writeStatus); three.append(readStatus);
+    const resultBox = el('div', {class:'usb06-result'}); resultBox.hidden = true;
+    const codeEl = el('div', {class:'usb06-code', 'aria-label':'Пароль ADB'});
+    const copyBtn = UsbUI.button('usb06-copy', 'Скопировать', 'copy');
+    const meta = el('p');
+    resultBox.append(codeEl, copyBtn, meta); three.append(resultBox);
+    panel.append(strip, options, driveStatus, one, two, three);
+    let drives = [], busy = false, loading = false, request = 0, writeDrive = '', resultDrive = '';
 
-  async function renderQrAdbStage(panel) {
-    const driveSelect = el("select", { style: "flex: 1" });
-    const showAllCheckbox = el("input", { type: "checkbox" });
-
-    const writeBtn = el("button", { class: "accent", text: "Записать файл-триггер на флешку" });
-    const writeStatusEl = el("p", { style: "color: var(--text-dim); font-size: 12px" });
-
-    const getBtn = el("button", { class: "accent", text: "Получить пароль" });
-    const resultBox = el("div", { class: "field", style: "display: none" });
-    const codeEl = el("div", { class: "qr-adb-code" });
-    const metaEl = el("p", { style: "color: var(--text-dim); font-size: 12px" });
-    const copyBtn = el("button", { text: "Скопировать" });
-    resultBox.append(codeEl, el("div", { class: "dialog-actions" }, [copyBtn]), metaEl);
-    const errorEl = el("div", { class: "callout danger", style: "display: none" });
-
-    let drives = [];
-    async function refreshDrives() {
-      drives = await window.pywebview.api.usb_list_drives(showAllCheckbox.checked);
-      clear(driveSelect);
-      for (const d of drives) {
-        driveSelect.appendChild(el("option", { value: d.letter, text: d.display }));
+    function syncControls() {
+      const locked = busy || loading;
+      [driveSelect, refreshBtn, showAllCheckbox, writeBtn, getBtn].forEach(c => c.disabled = locked);
+      helpBtn.disabled = busy;
+      if (live()) {
+        navNextBtn.disabled = runnerBusy;
+        navBackBtn.disabled = runnerBusy || !historyStack.length;
       }
     }
-
-    function currentDrive() {
-      return drives.find((d) => d.letter === driveSelect.value);
+    function setBusy(value) { busy = value; runnerBusy = value; syncControls(); }
+    function status(node, text, error = false) { node.textContent = text; node.dataset.error = String(error); }
+    function currentDrive() { return drives.find(d => d.letter === driveSelect.value); }
+    async function refreshDrives() {
+      const id = ++request;
+      const previous = driveSelect.value;
+      loading = true; syncControls();
+      try {
+        const result = await window.pywebview.api.usb_list_drives(showAllCheckbox.checked);
+        if (!live() || id !== request) return false;
+        drives = Array.isArray(result) ? result : [];
+        driveSelect.replaceChildren(el('option', {value:'', text:drives.length ? 'Выберите USB-накопитель' : 'Подключите USB-накопитель'}));
+        for (const d of drives) driveSelect.append(el('option', {value:d.letter, text:d.display}));
+        driveSelect.value = drives.some(d => d.letter === previous) ? previous : '';
+        const lost = previous && !driveSelect.value;
+        status(driveStatus, lost ? 'Выбранная флешка отключена. Подключите её и обновите список.' : '');
+        resetDifferentDrive();
+        return true;
+      } catch (err) {
+        if (live() && id === request) {
+          drives = []; driveSelect.replaceChildren(el('option', {value:'', text:'Не удалось прочитать список'}));
+          status(driveStatus, err.message || String(err), true); resetDifferentDrive();
+        }
+        return false;
+      } finally { if (id === request) { loading = false; syncControls(); } }
     }
-
-    writeBtn.addEventListener("click", async () => {
+    function resetDifferentDrive() {
+      if (writeDrive && driveSelect.value && writeDrive !== driveSelect.value) {
+        writeDrive = ''; one.dataset.state = 'active'; two.dataset.state = ''; status(writeStatus, '');
+      }
+      if (resultDrive && resultDrive !== driveSelect.value) { resultBox.hidden = true; three.dataset.state = ''; resultDrive = ''; }
+    }
+    driveSelect.onchange = () => { resetDifferentDrive(); status(driveStatus, ''); };
+    refreshBtn.onclick = () => { if (!busy && !loading) refreshDrives(); };
+    showAllCheckbox.onchange = () => { if (!busy && !loading) refreshDrives(); };
+    helpBtn.onclick = () => showUsbInstruction(stage, true);
+    writeBtn.onclick = async () => {
+      if (busy || loading || !live()) return;
       const drive = currentDrive();
-      if (!drive) { await window.notice("Выберите флешку из списка."); return; }
-      writeBtn.disabled = true;
-      writeStatusEl.textContent = "";
-      writeStatusEl.className = "";
+      if (!drive) { status(driveStatus, 'Выберите флешку из списка.', true); driveSelect.focus(); return; }
+      setBusy(true); one.dataset.state = 'busy'; status(writeStatus, 'Записываем svlog.flag…');
+      writeBtn.lastChild.textContent = 'Записываем…';
       try {
         const result = await window.pywebview.api.qr_adb_write_flag(drive.letter);
-        if (result.ok) {
-          writeStatusEl.textContent = "Готово — теперь вставьте эту флешку в магнитолу (шаг 2).";
-          writeStatusEl.className = "log-line-success";
-        } else {
-          writeStatusEl.textContent = result.error;
-          writeStatusEl.className = "log-line-error";
-        }
-      } finally {
-        writeBtn.disabled = false;
-      }
-    });
-
-    getBtn.addEventListener("click", async () => {
-      // Обновляем список — после того как флешку вынули и вставили обратно
-      // (шаг 2-4), старый список из шага 1 мог устареть.
-      const previousLetter = driveSelect.value;
-      await refreshDrives();
-      if (drives.some((d) => d.letter === previousLetter)) driveSelect.value = previousLetter;
-      const drive = currentDrive();
-      if (!drive) { await window.notice("Выберите флешку из списка."); return; }
-      getBtn.disabled = true;
-      getBtn.textContent = "Ищу...";
+        if (!live()) return;
+        if (!result.ok) throw new Error(result.error || 'Не удалось записать файл.');
+        writeDrive = drive.letter; one.dataset.state = 'done'; two.dataset.state = 'active';
+        status(writeStatus, 'Файл записан. Теперь подключите эту флешку к магнитоле.');
+      } catch (err) { if (live()) { one.dataset.state = 'active'; status(writeStatus, err.message || String(err), true); } }
+      finally { setBusy(false); writeBtn.lastChild.textContent = 'Записать файл'; }
+    };
+    getBtn.onclick = async () => {
+      if (busy || loading || !live()) return;
+      setBusy(true); resultBox.hidden = true; three.dataset.state = 'busy';
+      status(readStatus, ''); getBtn.lastChild.textContent = 'Читаем флешку…';
       try {
+        if (!await refreshDrives()) return;
+        if (!live()) return;
+        const drive = currentDrive();
+        if (!drive) { status(readStatus, 'Подключите флешку и выберите её в списке.', true); return; }
         const result = await window.pywebview.api.qr_adb_get_password(drive.letter);
-        if (result.ok) {
-          errorEl.style.display = "none";
-          resultBox.style.display = "";
-          codeEl.textContent = result.code;
-          metaEl.textContent = `SN: ${result.sn} · ${result.logs_folder}/${result.zip_name}`;
-        } else {
-          resultBox.style.display = "none";
-          errorEl.style.display = "";
-          errorEl.textContent = result.error;
-        }
-      } finally {
-        getBtn.disabled = false;
-        getBtn.textContent = "Получить пароль";
-      }
-    });
-    copyBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(codeEl.textContent);
-        copyBtn.textContent = "Скопировано";
-        setTimeout(() => { copyBtn.textContent = "Скопировать"; }, 1500);
-      } catch (_) {
-        window.notice(codeEl.textContent, { title: "Код" });
-      }
-    });
-    showAllCheckbox.addEventListener("change", refreshDrives);
-
-    panel.appendChild(qrAdbStepCard(1,
-      "Вставьте флешку в этот компьютер, выберите её ниже и запишите на неё файл-триггер.",
-      [
-        el("div", { class: "field row" }, [driveSelect, el("button", { text: "Обновить", onclick: refreshDrives })]),
-        el("label", { class: "row" }, [
-          showAllCheckbox, document.createTextNode(" Показать все диски (если нужной флешки нет в списке)"),
-        ]),
-        writeBtn,
-        writeStatusEl,
-      ]));
-    panel.appendChild(qrAdbStepCard(2,
-      "Не закрывая экран с QR-кодом в инженерном меню, вставьте эту же флешку в магнитолу."));
-    panel.appendChild(qrAdbStepCard(3,
-      "Дождитесь на экране магнитолы надписи «QNX OK», затем извлеките флешку."));
-    panel.appendChild(qrAdbStepCard(4,
-      "Вставьте флешку обратно в этот компьютер (в тот же разъём — список дисков не обновится сам) и нажмите «Получить пароль».",
-      [getBtn, resultBox, errorEl]));
+        if (!live()) return;
+        if (!result.ok) throw new Error(result.error || 'Не удалось получить пароль.');
+        codeEl.textContent = result.code;
+        meta.textContent = `SN: ${result.sn} · ${result.logs_folder}/${result.zip_name}`;
+        resultDrive = drive.letter; resultBox.hidden = false; three.dataset.state = 'done';
+        two.dataset.state = 'done'; status(readStatus, 'Пароль готов. Введите его на экране магнитолы.');
+      } catch (err) { if (live()) status(readStatus, err.message || String(err), true); }
+      finally { if (three.dataset.state === 'busy') three.dataset.state = ''; setBusy(false); getBtn.lastChild.textContent = 'Получить пароль'; }
+    };
+    copyBtn.onclick = async () => {
+      try { await navigator.clipboard.writeText(codeEl.textContent); copyBtn.lastChild.textContent = 'Скопировано'; setTimeout(() => { copyBtn.lastChild.textContent = 'Скопировать'; }, 1500); }
+      catch (_) { window.notice(codeEl.textContent, {title:'Пароль ADB'}); }
+    };
     refreshDrives();
   }
 
   // -- exe --------------------------------------------------------------
   function renderExeStage(panel, stage) {
-    panel.appendChild(el("p", {
-      text: `Для этой модели готовый установщик — ${stage.exe_name}. Запустите его и завершите установку в нём самостоятельно, затем нажмите «Далее».`,
-    }));
+    const card = stageInfo(panel, 'file', 'Внешний установщик', `${stage.exe_name || 'Установщик'} откроется отдельным окном. Завершите установку в нём, затем вернитесь и нажмите «Далее».`);
     if (!stage.exe_exists) {
       panel.appendChild(el("div", { class: "callout danger", text: `Файл не найден: ${stage.exe_path}` }));
     }
-    panel.appendChild(el("button", {
-      class: "accent",
-      text: `Запустить ${stage.exe_name}`,
-      disabled: stage.exe_exists ? null : "",
-      onclick: async () => {
+    const button = UsbUI.button('stage06-run-exe', 'Запустить установщик', 'play', true);
+    button.disabled = !stage.exe_exists;
+    const feedback = el('p', {class:'stage06-action-status',role:'status'});
+    card.append(button, feedback);
+    button.onclick = async () => {
+      if (runnerBusy) return;
+      button.disabled = true; runnerBusy = true; navBackBtn.disabled = true; navNextBtn.disabled = true;
+      feedback.textContent = 'Открываем установщик…';
+      try {
         const result = await window.pywebview.api.install_run_exe(stage.exe_path);
-        if (result.ok) log(`Запущен ${stage.exe_name} — завершите установку в открывшемся окне.`);
-        else log(result.error);
-      },
-    }));
+        if (!result.ok) throw new Error(result.error || 'Не удалось открыть установщик.');
+        feedback.textContent = 'Установщик открыт. Продолжите в его окне.'; feedback.dataset.error = 'false';
+      } catch (error) { feedback.textContent = error.message || String(error); feedback.dataset.error = 'true'; }
+      finally { runnerBusy = false; button.disabled = false; renderNav(); }
+    };
   }
 
   // -- adb ------------------------------------------------------------------
@@ -1124,39 +1375,64 @@
   // (см. buildTransportBar/renderStagePage), сюда приходит готовым через
   // getDevice() — этот блок больше не строит свой собственный список
   // устройств (раньше дублировался в каждом типе этапа по отдельности).
-  function buildStartStopButtons(panel, stage, getDevice, { startLabel } = {}) {
-    const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
+  function buildStartStopButtons(panel, stage, getDevice, { startLabel, requiresDevice = true } = {}) {
+    const btnRow = el("div", { class: "stage-primary-actions" });
     const startBtn = el("button", { class: "accent", text: startLabel || "Начать этот этап" });
-    const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });
+    const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: !runnerBusy ? "" : null });
     if (runnerBusy) startBtn.disabled = true;
     btnRow.appendChild(startBtn);
     btnRow.appendChild(stopBtn);
     panel.appendChild(btnRow);
+    if (stage.type === 'apps') {
+      stopBtn.hidden = true;
+      panel.querySelector('.apps08-toolbar').append(btnRow);
+    } else queueMicrotask(()=>{if(!panel.isConnected)return;navNextBtn.style.display='none';navNextBtn.parentNode.append(btnRow);});
 
     startBtn.addEventListener("click", async () => {
+      if (runnerBusy) return;
+      const selected = panel._appChooser ? panel._appChooser.paths() : selectedApkPaths();
+      if(stage.type==="apps"&&!selected.length){window.notice("Отметьте приложения, которые нужно установить.",{title:"Выберите приложения"});return;}
       const device = getDevice();
-      if (!device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
+      if (requiresDevice && !device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
+      if (runnerBusy) return;
       startBtn.disabled = true;
       stopBtn.disabled = false;
       runnerBusy = true;
+      navBackBtn.disabled=true; navNextBtn.disabled=true;
+      const items=panel._appChooser ? panel._appChooser.entries() : [];
+      const state = LabUI.busy(panel,stage.type==='apps'?'Установка приложений':'Выполняется этап',items);
+      if (stage.type === 'apps') {
+        contentEl.classList.add('installing-apps');contentEl.parentElement.classList.add('installing-apps');
+        startBtn.hidden = true;stopBtn.hidden = false;
+        btnRow.classList.add('install-actions');state.append(btnRow);
+      }
+      if (stage.type !== 'apps') {
+        state.classList.add('stage06-command-running');
+        state.querySelector('.install-count')?.remove();
+        state.querySelector('.install-graphic>.ui-icon')?.replaceWith(UsbUI.icon(stage.type==='telnet'?'wifi':'settings'));
+        state.querySelector('.run-event').textContent = 'Ожидаем результат выполнения. Подробности появляются в логе.';
+      }
       try {
-        const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selectedApkPaths());
+        const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selected);
         if (result.ok) return;
         runnerBusy = false;
         startBtn.disabled = false;
         stopBtn.disabled = true;
         log(result.error || "Не удалось запустить этап.");
+        render();window.notice(result.error||"Не удалось запустить этап.",{title:"Установка не началась",danger:true});
       } catch (err) {
         runnerBusy = false;
         startBtn.disabled = false;
         stopBtn.disabled = true;
         log(`Не удалось запустить этап: ${err.message || err}`);
+        render();window.notice(String(err.message||err),{title:"Установка не началась",danger:true});
       }
     });
     stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
   }
 
   function renderAdbStage(panel, stage, getDevice) {
+    stageInfo(panel, 'settings', 'Выполнение команд', 'Команды этого этапа выполнятся на выбранном устройстве. Ход выполнения будет показан здесь и в логе.');
     buildStartStopButtons(panel, stage, getDevice);
   }
 
@@ -1166,64 +1442,14 @@
   // cars/_shared/uart_adb.py:open_uart, ctx.ask_choice) находит
   // автоматически или предлагает выбрать во время выполнения.
   function renderUartStage(panel, stage) {
-    panel.appendChild(el("p", {
-      text: "COM-порт для UART определяется автоматически (или предлагается выбрать, если их несколько) во время выполнения этого этапа — устройство ADB для него не требуется.",
-    }));
-    if (stage.uart_wifi_port != null) {
-      panel.appendChild(el("p", { style: "color: var(--text-dim)", text: `Известный порт Wi-Fi ADB: ${stage.uart_wifi_port} (справочно).` }));
-    }
-    const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
-    const startBtn = el("button", { class: "accent", text: "Начать этот этап" });
-    const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });
-    if (runnerBusy) startBtn.disabled = true;
-    btnRow.appendChild(startBtn);
-    btnRow.appendChild(stopBtn);
-    panel.appendChild(btnRow);
-
-    startBtn.addEventListener("click", async () => {
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-      runnerBusy = true;
-      const result = await window.pywebview.api.install_start_stage(model.key, stage.index, null, selectedApkPaths());
-      if (!result.ok) {
-        runnerBusy = false;
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        log(result.error);
-      }
-    });
-    stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
+    stageInfo(panel, 'usb', 'Подключение через UART', 'После запуска программа найдёт COM-порт или предложит выбрать его. Следуйте подсказкам во время выполнения.');
+    if (stage.uart_wifi_port != null) panel.append(el('p', {class:'app-desc',text:`Порт Wi-Fi ADB для этой модели: ${stage.uart_wifi_port}`}));
+    buildStartStopButtons(panel, stage, () => null, {requiresDevice:false, startLabel:'Начать подключение'});
   }
 
-  // -- telnet -------------------------------------------------------------
-  // Как и uart-этап — без выбора ADB-устройства: IPv6-адрес находится сам
-  // (см. cars/_shared/telnet_adb.py:scan_ipv6_neighbors, ctx.ask_choice)
-  // или предлагается выбрать/ввести во время выполнения этапа.
   function renderTelnetStage(panel, stage) {
-    panel.appendChild(el("p", {
-      text: "IPv6-адрес магнитолы определяется автоматически (или предлагается выбрать/ввести) во время выполнения этого этапа — устройство ADB для него не требуется.",
-    }));
-    const btnRow = el("div", { class: "row", style: "margin-top: 12px" });
-    const startBtn = el("button", { class: "accent", text: "Начать этот этап" });
-    const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: runnerBusy ? "" : null });
-    if (runnerBusy) startBtn.disabled = true;
-    btnRow.appendChild(startBtn);
-    btnRow.appendChild(stopBtn);
-    panel.appendChild(btnRow);
-
-    startBtn.addEventListener("click", async () => {
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-      runnerBusy = true;
-      const result = await window.pywebview.api.install_start_stage(model.key, stage.index, null, selectedApkPaths());
-      if (!result.ok) {
-        runnerBusy = false;
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        log(result.error);
-      }
-    });
-    stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
+    stageInfo(panel, 'wifi', 'Подключение по сети', 'Программа найдёт адрес магнитолы или предложит ввести его. Команды выполнятся после запуска этапа.');
+    buildStartStopButtons(panel, stage, () => null, {requiresDevice:false, startLabel:'Начать подключение'});
   }
 
   // -- actions --------------------------------------------------------------
@@ -1235,40 +1461,38 @@
   // разрешений/фиктивные местоположения все идут через ctx.shell.
   function renderActionsStage(panel, stage, getDevice) {
     const actions = stage.actions || [];
-    const list = el("div", { style: "display: flex; flex-direction: column; gap: 6px; margin-top: 12px" });
-    if (!actions.length) {
-      list.appendChild(el("p", { class: "placeholder-text", text: "Для этого этапа не задано ни одного действия." }));
-    }
+    const list = el('div', {class:'stage06-commands'});
+    if (!actions.length) stageInfo(panel, 'settings', 'Нет доступных действий', 'Для этого этапа пока не добавлены команды.');
     const buttons = [];
-    const setButtonsDisabled = (disabled) => { for (const b of buttons) b.disabled = disabled; };
     actions.forEach((action, i) => {
-      const btn = el("button", { class: "accent", text: action.label || `Действие ${i + 1}` });
-      btn.disabled = runnerBusy;
-      buttons.push(btn);
-      btn.addEventListener("click", async () => {
+      const key = `${stage.index}:${i}`;
+      const result = commandResults.get(key);
+      const card = el('section', {class:'stage06-command','data-state':result ? (result.success?'done':'error') : 'idle'});
+      const button = UsbUI.button('', 'Выполнить', 'play');
+      button.disabled = runnerBusy; buttons.push(button);
+      const feedback = el('p', {class:'stage06-action-status',role:'status','data-error':String(result?.success===false),text:result?.message||''});
+      card.append(el('span',{class:'stage06-symbol'},[UsbUI.icon(result?.success?'check':'settings')]),el('h3',{text:action.label||`Действие ${i+1}`}),button,feedback);
+      button.onclick = async () => {
+        if (runnerBusy) return;
         const device = getDevice();
-        if (!device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
-        runnerBusy = true;
-        setButtonsDisabled(true);
+        if (!device && !(await window.confirmDialog('Не выбрано подключённое устройство ADB. Продолжить всё равно?'))) return;
+        if (runnerBusy) return;
+        runnerBusy = true; activeCommand = {key,stageIndex:stage.index};
+        buttons.forEach(b=>b.disabled=true); navBackBtn.disabled=true; navNextBtn.disabled=true;
+        card.dataset.state='busy'; feedback.dataset.error='false'; feedback.textContent='Выполняется… Подробности — в логе.';
+        button.lastChild.textContent='Выполняется…';
         try {
           const result = await window.pywebview.api.install_run_action(model.key, stage.index, i, device, selectedApkPaths());
-          if (result.ok) return;
-          runnerBusy = false;
-          setButtonsDisabled(false);
-          log(result.error || "Не удалось выполнить команду.");
-        } catch (err) {
-          runnerBusy = false;
-          setButtonsDisabled(false);
-          log(`Не удалось выполнить команду: ${err.message || err}`);
+          if (!result.ok) throw new Error(result.error||'Не удалось выполнить действие.');
+        } catch (error) {
+          runnerBusy=false; activeCommand=null;
+          const message=error.message||String(error);
+          commandResults.set(key,{success:false,message}); log(message); render();
         }
-      });
-      list.appendChild(btn);
+      };
+      list.append(card);
     });
-    panel.appendChild(list);
-    panel.appendChild(el("p", {
-      class: "app-desc", style: "margin-top: 10px",
-      text: "Эти кнопки необязательны — можно нажимать в любом порядке и по несколько раз. Когда закончите, нажмите «Далее».",
-    }));
+    panel.append(list,el('p',{class:'app-desc',text:'Действия можно выполнять по отдельности. После завершения нажмите «Далее».'}));
   }
 
   // Явный уход из мастера (см. app.js: returnToCatalog, "Назад к каталогу")
@@ -1277,5 +1501,5 @@
     flushSessionLog(false);
   }
 
-  window.stageWizard = { init, open, flushAbandoned };
+  window.stageWizard = { init, open, flushAbandoned, isBusy:()=>runnerBusy, goBack, canGoBack:()=>historyStack.length>0 };
 })();

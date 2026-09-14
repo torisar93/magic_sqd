@@ -1,0 +1,2308 @@
+{
+  "version": 2,
+  "environment": {
+    "src": "environment/studio-grey.webp",
+    "size": [
+      1024,
+      683
+    ]
+  },
+  "brands": {
+    "belgee": {
+      "src": "brands/belgee.svg",
+      "size": [
+        52.949074,
+        21
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        52.949074,
+        21
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://belgee.by/",
+      "sourceSha256": "de4be2bcf0ed9d95606e9de8a5dd0b9e8ecb7af5532e3d808016bd6667a43853"
+    },
+    "changan": {
+      "src": "brands/changan.svg",
+      "size": [
+        29.8550034,
+        24.9029999
+      ],
+      "alphaBounds": [
+        0.641416,
+        0,
+        29.213587,
+        24.9029999
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://changanryk.com/",
+      "sourceSha256": "f471eb3a8e44911a6bd02adee23049b058d50701a84cd0b31429a8fde2d54937"
+    },
+    "chery": {
+      "src": "brands/chery.svg",
+      "size": [
+        40.91,
+        13.636075
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        40.91,
+        13.636075
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://www.chery.ru/",
+      "sourceSha256": "6697e77d5c3bb678e81d4bedb2b019c252808b016f404756367736efe506526a"
+    },
+    "deepal": {
+      "src": "brands/deepal.svg",
+      "size": [
+        57.5599365,
+        69.1970215
+      ],
+      "alphaBounds": [
+        0.608027,
+        0.033788,
+        56.951909,
+        69.1970215
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://www.deepal.com.bd/",
+      "sourceSha256": "c85d481c62d0cb8c329fee16043cd1bfa011dcbc3b219449905bafdda13f69d6"
+    },
+    "dongfeng": {
+      "src": "brands/dongfeng.svg",
+      "size": [
+        39.371399,
+        39.371399
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        39.371399,
+        39.371399
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://dongfengmotor.ru/",
+      "sourceSha256": "c4d059fd6deb5f290ff2d2509100ac601a9fc3f2cfdacf6c36403567c4aed153"
+    },
+    "exeed": {
+      "src": "brands/exeed.svg",
+      "size": [
+        126,
+        14
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        126,
+        14
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://exeed.ru/",
+      "sourceSha256": "ef7db3fdea5790fe1cc6c9fbea546283bd310758abb692dc7887609b9d4dd393"
+    },
+    "faw": {
+      "src": "brands/faw.webp",
+      "size": [
+        650,
+        434
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        650,
+        434
+      ],
+      "approved": true,
+      "vector": false,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://www.faw.co.za/",
+      "sourceSha256": "d574cc59f37b38b18ce140af47807a311ec3601f087cb7ce765240dc5a7c8cb6"
+    },
+    "gac": {
+      "src": "brands/gac.svg",
+      "size": [
+        56.8710327,
+        35.2719955
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        56.787726,
+        35.2719955
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://en.gacmotorsaudi.com/",
+      "sourceSha256": "9b51a9f96db15e5ac1b23ed159e0d762fab122bf79bebd5bafc56fc47008c1fb"
+    },
+    "geely": {
+      "src": "brands/geely.svg",
+      "size": [
+        98.99845,
+        29.31152
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        98.99845,
+        29.31152
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://www.geely-motors.com/",
+      "sourceSha256": "9872886c0e7856eea5557553852ded7c9313ed93685c65b49f5c8ef27df225d0"
+    },
+    "haval": {
+      "src": "brands/haval.svg",
+      "size": [
+        112,
+        14
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        112,
+        14
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://haval.ru/",
+      "sourceSha256": "3a3a978bf5b3eca608ac97e9993781dd4147ad1e83d98eb11f36bff7b063ef4f"
+    },
+    "jaecoo": {
+      "src": "brands/jaecoo.svg",
+      "size": [
+        158,
+        18
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        158,
+        18
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://jaecoo.ru/",
+      "sourceSha256": "0b5d075a85c7ea44af5389d78c9e014abf8e980e9146f716ae7b9ad8e4c43cef"
+    },
+    "jetour": {
+      "src": "brands/jetour.svg",
+      "size": [
+        78,
+        8
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        77.504883,
+        7.35545
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://jetour-ru.com/",
+      "sourceSha256": "c428c11b8bdbdbf37f824b52905a2f652d0878866465283be12995330396d550"
+    },
+    "knewstar": {
+      "src": "brands/knewstar.svg",
+      "size": [
+        12.6961,
+        5.5
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        12.6961,
+        5.5
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://knewstar.ru/",
+      "sourceSha256": "6247dd1a1869248bbe37c8dfc964f5b92659134cd03db81b313d5154567a50d8"
+    },
+    "livan": {
+      "src": "brands/livan.svg",
+      "size": [
+        15,
+        33
+      ],
+      "alphaBounds": [
+        0.080559,
+        0.080566,
+        14.838883,
+        32.871094
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://livan-motors.ru/",
+      "sourceSha256": "2714cb9a4fd0a26a440e3fbb336618928b59f60b390ac22c34781ce0b851ad32"
+    },
+    "omoda": {
+      "src": "brands/omoda.svg",
+      "size": [
+        91,
+        12
+      ],
+      "alphaBounds": [
+        0,
+        0.309963,
+        90.822266,
+        11.690037
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://omoda.ru/",
+      "sourceSha256": "99865f8f7f808997543d0bb148da87445ebef26710829bcd7301c1d92ebb3d3f"
+    },
+    "soueast": {
+      "src": "brands/soueast.webp",
+      "size": [
+        1024,
+        68
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        1024,
+        68
+      ],
+      "approved": true,
+      "vector": false,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://soueast.ru/",
+      "sourceSha256": "69d4704424966856669f14b3b72169937561432f332d3eaffec3880c237e9070"
+    },
+    "tank": {
+      "src": "brands/tank.svg",
+      "size": [
+        36,
+        46
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        35.708047,
+        45.797852
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://tank.ru/",
+      "sourceSha256": "6e827e5de3d1940e5959d7f6c8819d92f792189a5a3749ee487f838e2a576d03"
+    },
+    "tenet": {
+      "src": "brands/tenet.svg",
+      "size": [
+        162,
+        16
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        161.525391,
+        16
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://tenet.ru/",
+      "sourceSha256": "ecc64cbc65d916fe503a669f35828d6d0936a92c80ddd35f7d7cbac4b5a2c02f"
+    },
+    "volga": {
+      "src": "brands/volga.svg",
+      "size": [
+        143,
+        10
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        142.720703,
+        10
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://volga.auto/",
+      "sourceSha256": "9025304685ebfbd5f6ebabe7e4381200aff504ce08230c3c497a845a12e56b3d"
+    },
+    "voyah": {
+      "src": "brands/voyah.svg",
+      "size": [
+        98.79,
+        139.29
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        98.79,
+        139.29
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://www.voyah.ch/en",
+      "sourceSha256": "4adda780c944e7eab94b546400279045041af08515c4536b212b2fd8309446f4"
+    },
+    "wey": {
+      "src": "brands/wey.svg",
+      "size": [
+        8,
+        28
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        8,
+        28
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://gwm-wey.ru/",
+      "sourceSha256": "cb35d1fe6ea34c2cb86c822f831311d8240d7938b39cb82fa58e5512ade3728f"
+    },
+    "x-cite": {
+      "src": "brands/x-cite.svg",
+      "size": [
+        120,
+        76
+      ],
+      "alphaBounds": [
+        4,
+        3.931952,
+        116.000015,
+        72.068045
+      ],
+      "approved": true,
+      "vector": true,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://xcite-avto.ru/",
+      "sourceSha256": "904e232d8a72669fe7a8c22a123e7c9e5b3cc3d858d8751a524a7f78c66ac42f"
+    }
+  },
+  "models": {
+    "belgee/s50": {
+      "src": "models/belgee-s50.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        53,
+        177,
+        974,
+        562
+      ],
+      "bodyBounds": [
+        54,
+        178,
+        973,
+        554
+      ]
+    },
+    "belgee/x50": {
+      "src": "models/belgee-x50.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        77,
+        158,
+        956,
+        566
+      ],
+      "bodyBounds": [
+        78,
+        159,
+        955,
+        560
+      ]
+    },
+    "belgee/x70": {
+      "src": "models/belgee-x70.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        73,
+        142,
+        941,
+        584
+      ],
+      "bodyBounds": [
+        74,
+        143,
+        940,
+        575
+      ],
+      "variants": {
+        "дорест(atlas pro)": {
+          "src": "models/belgee-x70-prefacelift.webp",
+          "transparent": true,
+          "size": [
+            1024,
+            688
+          ],
+          "alphaBounds": [
+            97,
+            115,
+            935,
+            584
+          ],
+          "bodyBounds": [
+            98,
+            117,
+            934,
+            577
+          ]
+        }
+      }
+    },
+    "changan/alsvin": {
+      "src": "models/changan-alsvin.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        85,
+        170,
+        961,
+        550
+      ],
+      "bodyBounds": [
+        86,
+        172,
+        960,
+        544
+      ]
+    },
+    "changan/cs35 plus new": {
+      "src": "models/changan-cs35-plus-new.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        93,
+        156,
+        959,
+        576
+      ],
+      "bodyBounds": [
+        94,
+        158,
+        958,
+        566
+      ]
+    },
+    "changan/cs75 plus": {
+      "src": "models/changan-cs75-plus.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        65,
+        157,
+        970,
+        567
+      ],
+      "bodyBounds": [
+        67,
+        158,
+        969,
+        560
+      ],
+      "variants": {
+        "4 поколение": {
+          "src": "models/changan-cs75-plus-gen4.webp",
+          "transparent": true,
+          "size": [
+            1024,
+            688
+          ],
+          "alphaBounds": [
+            65,
+            122,
+            981,
+            590
+          ],
+          "bodyBounds": [
+            66,
+            123,
+            980,
+            583
+          ]
+        }
+      }
+    },
+    "changan/cs95 - cs95 new": {
+      "src": "models/changan-cs95-cs95-new.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        63,
+        153,
+        972,
+        577
+      ],
+      "bodyBounds": [
+        64,
+        154,
+        971,
+        570
+      ]
+    },
+    "changan/eado plus": {
+      "src": "models/changan-eado-plus.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        75,
+        175,
+        948,
+        554
+      ],
+      "bodyBounds": [
+        76,
+        176,
+        947,
+        546
+      ]
+    },
+    "changan/hunter plus": {
+      "src": "models/changan-hunter-plus.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        65,
+        157,
+        976,
+        581
+      ],
+      "bodyBounds": [
+        66,
+        158,
+        975,
+        571
+      ]
+    },
+    "changan/lamore": {
+      "src": "models/changan-lamore.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        58,
+        178,
+        969,
+        562
+      ],
+      "bodyBounds": [
+        59,
+        179,
+        968,
+        550
+      ]
+    },
+    "changan/oshan x5": {
+      "src": "models/changan-oshan-x5.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        57,
+        132,
+        969,
+        578
+      ],
+      "bodyBounds": [
+        58,
+        133,
+        967,
+        569
+      ]
+    },
+    "changan/oshan x5 plus": {
+      "src": "models/changan-oshan-x5-plus.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        49,
+        163,
+        967,
+        558
+      ],
+      "bodyBounds": [
+        51,
+        164,
+        966,
+        552
+      ]
+    },
+    "changan/oshan x7": {
+      "src": "models/changan-oshan-x7.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        45,
+        129,
+        985,
+        603
+      ],
+      "bodyBounds": [
+        46,
+        130,
+        984,
+        594
+      ]
+    },
+    "changan/oshan x7 plus": {
+      "src": "models/changan-oshan-x7-plus.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        94,
+        168,
+        954,
+        571
+      ],
+      "bodyBounds": [
+        95,
+        169,
+        953,
+        565
+      ]
+    },
+    "changan/uni-k": {
+      "src": "models/changan-uni-k.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        59,
+        159,
+        974,
+        573
+      ],
+      "bodyBounds": [
+        60,
+        160,
+        973,
+        564
+      ]
+    },
+    "changan/uni-s - cs55 plus": {
+      "src": "models/changan-uni-s-cs55-plus.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        56,
+        143,
+        969,
+        575
+      ],
+      "bodyBounds": [
+        57,
+        144,
+        968,
+        567
+      ]
+    },
+    "changan/uni-t": {
+      "src": "models/changan-uni-t.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        56,
+        158,
+        965,
+        561
+      ],
+      "bodyBounds": [
+        57,
+        159,
+        964,
+        554
+      ]
+    },
+    "changan/uni-v": {
+      "src": "models/changan-uni-v.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        72,
+        194,
+        961,
+        540
+      ],
+      "bodyBounds": [
+        73,
+        195,
+        960,
+        531
+      ]
+    },
+    "chery/arrizo": {
+      "src": "models/chery-arrizo.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        64,
+        190,
+        979,
+        552
+      ],
+      "bodyBounds": [
+        65,
+        191,
+        978,
+        541
+      ]
+    },
+    "chery/tiggo 4 pro 2024": {
+      "src": "models/chery-tiggo-4-pro-2024.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        87,
+        143,
+        957,
+        585
+      ],
+      "bodyBounds": [
+        88,
+        144,
+        956,
+        574
+      ]
+    },
+    "chery/tiggo 7 pro max": {
+      "src": "models/chery-tiggo-7-pro-max.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        63,
+        153,
+        963,
+        580
+      ],
+      "bodyBounds": [
+        64,
+        154,
+        962,
+        574
+      ]
+    },
+    "chery/tiggo 7l": {
+      "src": "models/chery-tiggo-7l.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        53,
+        115,
+        974,
+        581
+      ],
+      "bodyBounds": [
+        55,
+        116,
+        973,
+        574
+      ]
+    },
+    "chery/tiggo 8 pro max рест-дорест": {
+      "src": "models/chery-tiggo-8-pro-max-rest-dorest.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        48,
+        130,
+        990,
+        581
+      ],
+      "bodyBounds": [
+        49,
+        132,
+        989,
+        576
+      ]
+    },
+    "chery/tiggo 9": {
+      "src": "models/chery-tiggo-9.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        71,
+        161,
+        966,
+        571
+      ],
+      "bodyBounds": [
+        72,
+        162,
+        964,
+        562
+      ]
+    },
+    "deepal/s07": {
+      "src": "models/deepal-s07.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        71,
+        155,
+        967,
+        596
+      ],
+      "bodyBounds": [
+        72,
+        156,
+        966,
+        590
+      ]
+    },
+    "deepal/sl03": {
+      "src": "models/deepal-sl03.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        53,
+        170,
+        963,
+        544
+      ],
+      "bodyBounds": [
+        54,
+        171,
+        962,
+        538
+      ]
+    },
+    "dongfeng/dongfeng": {
+      "src": "models/dongfeng-dongfeng.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        48,
+        142,
+        968,
+        573
+      ],
+      "bodyBounds": [
+        49,
+        143,
+        967,
+        562
+      ]
+    },
+    "exeed/lx fl": {
+      "src": "models/exeed-lx-fl.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        74,
+        145,
+        958,
+        572
+      ],
+      "bodyBounds": [
+        75,
+        147,
+        957,
+        562
+      ]
+    },
+    "exeed/rx": {
+      "src": "models/exeed-rx.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        71,
+        155,
+        975,
+        573
+      ],
+      "bodyBounds": [
+        72,
+        156,
+        974,
+        563
+      ]
+    },
+    "exeed/txl": {
+      "src": "models/exeed-txl.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        70,
+        156,
+        958,
+        562
+      ],
+      "bodyBounds": [
+        71,
+        157,
+        957,
+        552
+      ],
+      "variants": {
+        "2020": {
+          "src": "models/exeed-txl-2020.webp",
+          "transparent": true,
+          "size": [
+            1024,
+            688
+          ],
+          "alphaBounds": [
+            44,
+            105,
+            975,
+            582
+          ],
+          "bodyBounds": [
+            45,
+            106,
+            974,
+            576
+          ]
+        }
+      }
+    },
+    "exeed/vx": {
+      "src": "models/exeed-vx.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        65,
+        162,
+        978,
+        577
+      ],
+      "bodyBounds": [
+        66,
+        163,
+        977,
+        569
+      ],
+      "variants": {
+        "дорест": {
+          "src": "models/exeed-vx-dorest.webp",
+          "transparent": true,
+          "size": [
+            1024,
+            688
+          ],
+          "alphaBounds": [
+            64,
+            135,
+            996,
+            581
+          ],
+          "bodyBounds": [
+            65,
+            137,
+            995,
+            575
+          ]
+        }
+      }
+    },
+    "faw/bestune b70 и остальные": {
+      "src": "models/faw-bestune-b70-i-ostalnye.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        50,
+        197,
+        983,
+        593
+      ],
+      "bodyBounds": [
+        51,
+        198,
+        982,
+        584
+      ]
+    },
+    "faw/bestune t77": {
+      "src": "models/faw-bestune-t77.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        76,
+        158,
+        960,
+        569
+      ],
+      "bodyBounds": [
+        77,
+        159,
+        958,
+        560
+      ]
+    },
+    "faw/bestune t90": {
+      "src": "models/faw-bestune-t90.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        67,
+        154,
+        964,
+        563
+      ],
+      "bodyBounds": [
+        69,
+        155,
+        963,
+        555
+      ]
+    },
+    "faw/bestune t99": {
+      "src": "models/faw-bestune-t99.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        77,
+        171,
+        959,
+        554
+      ],
+      "bodyBounds": [
+        78,
+        172,
+        958,
+        545
+      ]
+    },
+    "gac/gs8": {
+      "src": "models/gac-gs8.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        65,
+        151,
+        977,
+        592
+      ],
+      "bodyBounds": [
+        66,
+        152,
+        976,
+        582
+      ]
+    },
+    "gac/s7": {
+      "src": "models/gac-s7.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        72,
+        151,
+        956,
+        549
+      ],
+      "bodyBounds": [
+        73,
+        153,
+        955,
+        545
+      ]
+    },
+    "geely/atlas new": {
+      "src": "models/geely-atlas-new.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        68,
+        155,
+        946,
+        564
+      ],
+      "bodyBounds": [
+        70,
+        156,
+        945,
+        553
+      ]
+    },
+    "geely/cityray": {
+      "src": "models/geely-cityray.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        71,
+        157,
+        966,
+        563
+      ],
+      "bodyBounds": [
+        72,
+        158,
+        965,
+        556
+      ]
+    },
+    "geely/coolray": {
+      "src": "models/geely-coolray.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        75,
+        160,
+        950,
+        563
+      ],
+      "bodyBounds": [
+        76,
+        161,
+        949,
+        554
+      ],
+      "variants": {
+        "дорест": {
+          "src": "models/geely-coolray-dorest.webp",
+          "transparent": true,
+          "size": [
+            1024,
+            688
+          ],
+          "alphaBounds": [
+            16,
+            103,
+            999,
+            612
+          ],
+          "bodyBounds": [
+            17,
+            104,
+            998,
+            605
+          ]
+        }
+      }
+    },
+    "geely/emgrand": {
+      "src": "models/geely-emgrand.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        32,
+        182,
+        993,
+        548
+      ],
+      "bodyBounds": [
+        33,
+        184,
+        992,
+        541
+      ]
+    },
+    "geely/ex5 - ex 5 em-i": {
+      "src": "models/geely-ex5-ex-5-em-i.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        62,
+        152,
+        962,
+        575
+      ],
+      "bodyBounds": [
+        64,
+        153,
+        961,
+        564
+      ]
+    },
+    "geely/monjaro": {
+      "src": "models/geely-monjaro.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        71,
+        159,
+        957,
+        578
+      ],
+      "bodyBounds": [
+        72,
+        160,
+        956,
+        568
+      ]
+    },
+    "geely/okavango": {
+      "src": "models/geely-okavango.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        63,
+        157,
+        969,
+        582
+      ],
+      "bodyBounds": [
+        64,
+        158,
+        968,
+        573
+      ]
+    },
+    "geely/preface": {
+      "src": "models/geely-preface.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        64,
+        184,
+        979,
+        547
+      ],
+      "bodyBounds": [
+        65,
+        185,
+        978,
+        541
+      ]
+    },
+    "geely/tugella": {
+      "src": "models/geely-tugella.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        74,
+        161,
+        951,
+        555
+      ],
+      "bodyBounds": [
+        75,
+        162,
+        950,
+        547
+      ],
+      "variants": {
+        "дорест": {
+          "src": "models/geely-tugella-dorest.webp",
+          "transparent": true,
+          "size": [
+            1024,
+            688
+          ],
+          "alphaBounds": [
+            43,
+            114,
+            967,
+            590
+          ],
+          "bodyBounds": [
+            44,
+            115,
+            966,
+            583
+          ]
+        }
+      }
+    },
+    "haval/dargo": {
+      "src": "models/haval-dargo.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        51,
+        149,
+        976,
+        594
+      ],
+      "bodyBounds": [
+        52,
+        150,
+        975,
+        587
+      ]
+    },
+    "haval/dargo new": {
+      "src": "models/haval-dargo-new.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        56,
+        134,
+        963,
+        581
+      ],
+      "bodyBounds": [
+        57,
+        135,
+        962,
+        574
+      ]
+    },
+    "haval/f7": {
+      "src": "models/haval-f7.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        47,
+        152,
+        985,
+        575
+      ],
+      "bodyBounds": [
+        48,
+        153,
+        984,
+        567
+      ],
+      "variants": {
+        "1 рестайлинг": {
+          "src": "models/haval-f7-first-facelift.webp",
+          "transparent": true,
+          "size": [
+            1024,
+            688
+          ],
+          "alphaBounds": [
+            48,
+            141,
+            968,
+            560
+          ],
+          "bodyBounds": [
+            49,
+            142,
+            967,
+            554
+          ]
+        }
+      }
+    },
+    "haval/h3": {
+      "src": "models/haval-h3.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        72,
+        142,
+        958,
+        595
+      ],
+      "bodyBounds": [
+        73,
+        143,
+        957,
+        589
+      ]
+    },
+    "haval/h5": {
+      "src": "models/haval-h5.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        68,
+        160,
+        969,
+        568
+      ],
+      "bodyBounds": [
+        69,
+        161,
+        968,
+        561
+      ]
+    },
+    "haval/h7": {
+      "src": "models/haval-h7.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        57,
+        140,
+        967,
+        597
+      ],
+      "bodyBounds": [
+        58,
+        141,
+        966,
+        587
+      ]
+    },
+    "haval/h9": {
+      "src": "models/haval-h9.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        62,
+        124,
+        962,
+        590
+      ],
+      "bodyBounds": [
+        63,
+        125,
+        961,
+        586
+      ]
+    },
+    "haval/jolion": {
+      "src": "models/haval-jolion.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        69,
+        154,
+        966,
+        576
+      ],
+      "bodyBounds": [
+        70,
+        155,
+        965,
+        569
+      ]
+    },
+    "haval/m6": {
+      "src": "models/haval-m6.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        63,
+        150,
+        971,
+        574
+      ],
+      "bodyBounds": [
+        64,
+        151,
+        970,
+        566
+      ]
+    },
+    "jaecoo/j6": {
+      "src": "models/jaecoo-j6.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        67,
+        135,
+        979,
+        589
+      ],
+      "bodyBounds": [
+        68,
+        137,
+        977,
+        579
+      ]
+    },
+    "jaecoo/j7": {
+      "src": "models/jaecoo-j7.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        68,
+        137,
+        974,
+        585
+      ],
+      "bodyBounds": [
+        69,
+        139,
+        973,
+        577
+      ]
+    },
+    "jaecoo/j8": {
+      "src": "models/jaecoo-j8.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        65,
+        156,
+        975,
+        564
+      ],
+      "bodyBounds": [
+        66,
+        157,
+        974,
+        554
+      ]
+    },
+    "jetour/dashing": {
+      "src": "models/jetour-dashing.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        52,
+        164,
+        984,
+        570
+      ],
+      "bodyBounds": [
+        53,
+        166,
+        983,
+        564
+      ]
+    },
+    "jetour/t1": {
+      "src": "models/jetour-t1.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        60,
+        111,
+        941,
+        596
+      ],
+      "bodyBounds": [
+        61,
+        113,
+        940,
+        589
+      ]
+    },
+    "jetour/t2": {
+      "src": "models/jetour-t2.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        80,
+        114,
+        939,
+        602
+      ],
+      "bodyBounds": [
+        81,
+        115,
+        930,
+        592
+      ]
+    },
+    "jetour/x70 plus": {
+      "src": "models/jetour-x70-plus.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        45,
+        146,
+        979,
+        609
+      ],
+      "bodyBounds": [
+        45,
+        148,
+        978,
+        599
+      ]
+    },
+    "jetour/x90 plus": {
+      "src": "models/jetour-x90-plus.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        56,
+        143,
+        979,
+        580
+      ],
+      "bodyBounds": [
+        57,
+        144,
+        978,
+        568
+      ]
+    },
+    "knewstar/001": {
+      "src": "models/knewstar-001.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        25,
+        128,
+        984,
+        568
+      ],
+      "bodyBounds": [
+        26,
+        129,
+        983,
+        559
+      ]
+    },
+    "livan/s6 pro": {
+      "src": "models/livan-s6-pro.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        63,
+        160,
+        963,
+        551
+      ],
+      "bodyBounds": [
+        64,
+        161,
+        962,
+        546
+      ]
+    },
+    "livan/x6 pro": {
+      "src": "models/livan-x6-pro.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        73,
+        147,
+        948,
+        598
+      ],
+      "bodyBounds": [
+        74,
+        148,
+        947,
+        591
+      ]
+    },
+    "omoda/c5": {
+      "src": "models/omoda-c5.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        42,
+        107,
+        988,
+        602
+      ],
+      "bodyBounds": [
+        43,
+        108,
+        987,
+        597
+      ],
+      "variants": {
+        "2026": {
+          "src": "models/omoda-c5-2026.webp",
+          "transparent": true,
+          "size": [
+            1024,
+            688
+          ],
+          "alphaBounds": [
+            71,
+            143,
+            965,
+            568
+          ],
+          "bodyBounds": [
+            72,
+            144,
+            964,
+            562
+          ]
+        }
+      }
+    },
+    "omoda/c7": {
+      "src": "models/omoda-c7.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        67,
+        142,
+        953,
+        568
+      ],
+      "bodyBounds": [
+        68,
+        143,
+        952,
+        560
+      ]
+    },
+    "soueast/s09": {
+      "src": "models/soueast-s09.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        53,
+        153,
+        964,
+        572
+      ],
+      "bodyBounds": [
+        54,
+        154,
+        963,
+        565
+      ]
+    },
+    "tank/300": {
+      "src": "models/tank-300.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        66,
+        143,
+        959,
+        594
+      ],
+      "bodyBounds": [
+        67,
+        145,
+        958,
+        585
+      ]
+    },
+    "tank/400": {
+      "src": "models/tank-400.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        68,
+        149,
+        959,
+        587
+      ],
+      "bodyBounds": [
+        69,
+        150,
+        958,
+        579
+      ]
+    },
+    "tank/500": {
+      "src": "models/tank-500.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        71,
+        152,
+        965,
+        577
+      ],
+      "bodyBounds": [
+        72,
+        153,
+        964,
+        571
+      ]
+    },
+    "tank/700": {
+      "src": "models/tank-700.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        64,
+        96,
+        963,
+        603
+      ],
+      "bodyBounds": [
+        65,
+        97,
+        962,
+        595
+      ]
+    },
+    "tenet/t4": {
+      "src": "models/tenet-t4.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        79,
+        131,
+        939,
+        560
+      ],
+      "bodyBounds": [
+        80,
+        132,
+        937,
+        553
+      ]
+    },
+    "tenet/t7": {
+      "src": "models/tenet-t7.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        42,
+        133,
+        973,
+        564
+      ],
+      "bodyBounds": [
+        43,
+        134,
+        972,
+        559
+      ]
+    },
+    "tenet/t8": {
+      "src": "models/tenet-t8.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        64,
+        113,
+        959,
+        579
+      ],
+      "bodyBounds": [
+        65,
+        114,
+        958,
+        571
+      ]
+    },
+    "volga/k40": {
+      "src": "models/volga-k40.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        48,
+        142,
+        966,
+        578
+      ],
+      "bodyBounds": [
+        49,
+        143,
+        965,
+        574
+      ]
+    },
+    "volga/k50": {
+      "src": "models/volga-k50.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        75,
+        154,
+        956,
+        566
+      ],
+      "bodyBounds": [
+        76,
+        155,
+        955,
+        556
+      ]
+    },
+    "voyah/courage": {
+      "src": "models/voyah-courage.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        79,
+        141,
+        948,
+        550
+      ],
+      "bodyBounds": [
+        80,
+        142,
+        947,
+        546
+      ]
+    },
+    "voyah/dreamer 2022-2024": {
+      "src": "models/voyah-dreamer-2022-2024.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        66,
+        163,
+        966,
+        579
+      ],
+      "bodyBounds": [
+        67,
+        165,
+        965,
+        567
+      ]
+    },
+    "voyah/free": {
+      "src": "models/voyah-free.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        64,
+        115,
+        976,
+        588
+      ],
+      "bodyBounds": [
+        65,
+        116,
+        975,
+        579
+      ]
+    },
+    "voyah/passion": {
+      "src": "models/voyah-passion.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        47,
+        179,
+        969,
+        530
+      ],
+      "bodyBounds": [
+        48,
+        180,
+        968,
+        520
+      ]
+    },
+    "wey/07": {
+      "src": "models/wey-07.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        47,
+        161,
+        971,
+        538
+      ],
+      "bodyBounds": [
+        48,
+        162,
+        969,
+        529
+      ]
+    },
+    "x-cite/x-cross 7": {
+      "src": "models/x-cite-x-cross-7.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        49,
+        160,
+        974,
+        554
+      ],
+      "bodyBounds": [
+        50,
+        161,
+        973,
+        549
+      ]
+    },
+    "x-cite/x-cross 8": {
+      "src": "models/x-cite-x-cross-8.webp",
+      "transparent": true,
+      "size": [
+        1024,
+        688
+      ],
+      "alphaBounds": [
+        52,
+        140,
+        949,
+        578
+      ],
+      "bodyBounds": [
+        53,
+        141,
+        948,
+        570
+      ]
+    }
+  }
+}

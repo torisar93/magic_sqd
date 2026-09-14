@@ -225,7 +225,13 @@ class InstallEngine(
      * пробуются остальные по обычному порядку. Способ, сработавший на
      * первом APK, запоминается на весь остаток списка — не имеет смысла
      * заново перебирать на каждом следующем файле. */
-    fun installApks(apkPaths: List<String>, preferredMethod: String = "", modelDir: File? = null): StageRunResult {
+    fun installApks(apkPaths: List<String>, preferredMethod: String = "", modelDir: File? = null,
+        cancelled: () -> Boolean = { false }, onProgress: (String, Int, Int, String) -> Unit = { _, _, _, _ -> }): StageRunResult =
+        installApksWithProgress(apkPaths, preferredMethod, modelDir, cancelled, onProgress)
+
+    fun installApksWithProgress(apkPaths: List<String>, preferredMethod: String = "", modelDir: File? = null,
+        cancelled: () -> Boolean = { false }, onProgress: (String, Int, Int, String) -> Unit = { _, _, _, _ -> },
+        onDetail: (String, Int, Int, ApkOperationProgress) -> Unit = { _, _, _, _ -> }): StageRunResult {
         var confirmedMethod: Int? = null
         val order = INSTALL_METHODS.indices.let { indices ->
             val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
@@ -233,9 +239,25 @@ class InstallEngine(
         }
         val certDir = modelDir?.let { resignCertDirForModel(it) }
 
-        for (path in apkPaths) {
+        for ((index, path) in apkPaths.withIndex()) {
+            if (cancelled()) return StageRunResult.Failed("Очередь остановлена пользователем")
+            onProgress(path, index, apkPaths.size, "running")
+            onDetail(path, index, apkPaths.size, ApkOperationProgress("install"))
+            fun failed(reason: String): StageRunResult.Failed {
+                onProgress(path, index, apkPaths.size, "error")
+                return StageRunResult.Failed(reason)
+            }
+            fun perform(install: (ByteArray, (String) -> Unit) -> AdbInstallResult, bytes: ByteArray): AdbInstallResult =
+                try {
+                    AdbInstallProgress.observe({ onDetail(path, index, apkPaths.size, it) }, cancelled) {
+                        install(bytes, log)
+                    }
+                } catch (e: Exception) {
+                    onProgress(path, index, apkPaths.size, "error")
+                    throw e
+                }
             val file = File(path)
-            if (!file.exists()) return StageRunResult.Failed("Файл не скачан: $path")
+            if (!file.exists()) return failed("Файл не скачан: $path")
             log("Устанавливаю ${file.name}...")
             var signedFile = file
             if (certDir != null) {
@@ -244,18 +266,20 @@ class InstallEngine(
                 try {
                     resignApkFile(file, certDir, signedFile)
                 } catch (e: Exception) {
-                    return StageRunResult.Failed("Не удалось переподписать ${file.name}: ${e.message}")
+                    return failed("Не удалось переподписать ${file.name}: ${e.message}")
                 }
                 log("Подписано: ${file.name}")
             }
-            val bytes = signedFile.readBytes()
+            val bytes = try { signedFile.readBytes() } catch (e: Exception) {
+                return failed("Не удалось прочитать ${file.name}: ${e.message}")
+            }
             currentApkName = file.name
 
             if (confirmedMethod != null) {
                 val (_, install) = INSTALL_METHODS[confirmedMethod]
-                when (val r = install(bytes, log)) {
-                    is AdbInstallResult.Failed -> return StageRunResult.Failed("${file.name}: ${r.reason}")
-                    is AdbInstallResult.Success -> log("Установлено: ${file.name}")
+                when (val r = perform(install, bytes)) {
+                    is AdbInstallResult.Failed -> return failed("${file.name}: ${r.reason}")
+                    is AdbInstallResult.Success -> { log("Установлено: ${file.name}"); onProgress(path, index + 1, apkPaths.size, "done") }
                 }
                 continue
             }
@@ -264,7 +288,7 @@ class InstallEngine(
             var installed = false
             for (methodIndex in order) {
                 val (label, install) = INSTALL_METHODS[methodIndex]
-                when (val r = install(bytes, log)) {
+                when (val r = perform(install, bytes)) {
                     is AdbInstallResult.Failed -> errors.add("$label: ${r.reason}")
                     is AdbInstallResult.Success -> {
                         confirmedMethod = methodIndex
@@ -273,12 +297,13 @@ class InstallEngine(
                         }
                         log("Установлено: ${file.name}")
                         installed = true
+                        onProgress(path, index + 1, apkPaths.size, "done")
                     }
                 }
                 if (installed) break
             }
             if (!installed) {
-                return StageRunResult.Failed(
+                return failed(
                     "Не удалось установить ${file.name} ни одним из способов:\n" + errors.joinToString("\n")
                 )
             }

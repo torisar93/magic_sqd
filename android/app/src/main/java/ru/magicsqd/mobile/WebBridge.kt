@@ -13,6 +13,7 @@ import ru.magicsqd.mobile.usb.AdbConsoleFormat
 import ru.magicsqd.mobile.usb.AdbHandshakeResult
 import ru.magicsqd.mobile.usb.AdbPermissions
 import ru.magicsqd.mobile.usb.AdbSession
+import ru.magicsqd.mobile.usb.ApkOperationProgress
 import ru.magicsqd.mobile.usb.AdbShellResult
 import ru.magicsqd.mobile.usb.AskInputBroker
 import ru.magicsqd.mobile.usb.InstallEngine
@@ -24,6 +25,15 @@ import ru.magicsqd.mobile.usb.readQrAdbBugreportZip
 import ru.magicsqd.mobile.usb.writeQrAdbFlag
 import ru.magicsqd.mobile.usb.writeUsbStage
 import java.io.File
+
+/** Public methods are called synchronously by Chaquopy while reading HTTP chunks. */
+class ApkDownloadProgress(private val emit: (String, Long, Long) -> Unit,
+                          private val cancelled: () -> Boolean) {
+    fun update(path: String, done: Long, total: Long) = emit(path, done, total)
+    fun checkCancelled() {
+        if (cancelled()) error("Очередь остановлена пользователем")
+    }
+}
 
 /**
  * Мост JS<->Kotlin для мобильного интерфейса (assets/index.html). `call()` —
@@ -137,6 +147,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 ).toString()
                 "sync_model_payload" -> { syncModelPayload(args.getString("model_key")); "{}" }
                 "scanner_list_apks" -> { listApks(); "{}" }
+                "lab_apk_icon" -> { loadLabApkIcon(args.optString("path")); "{}" }
                 "install_load_stages" -> pyModule("mobile_bridge").callAttr(
                     "load_install_stages", args.getString("model_key"), context.filesDir.absolutePath
                 ).toString()
@@ -146,6 +157,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "adb_disconnect" -> { AdbSession.disconnect(); "{}" }
                 "adb_run_stage" -> { adbRunStage(args); "{}" }
                 "adb_install_apks" -> { adbInstallApks(args); "{}" }
+                "adb_cancel_install" -> { labCancelInstall = true; pushAdbLog("Остановка очереди после текущего приложения…"); "{}" }
                 "telnet_run_stage" -> { telnetRunStage(args); "{}" }
                 "adb_shell_command" -> { adbShellCommand(args.getString("command")); "{}" }
                 "chat_send" -> {
@@ -393,6 +405,62 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * приходит сразу (локальные + известные с сервера, но ещё не скачанные),
      * сами .apk байты качаются только для отмеченных техником (см.
      * ensureApksDownloaded ниже, перед adb_install_apks/usb_run_stage). */
+    private val labIconExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val labIconCache = android.util.LruCache<String, String>(160)
+    private var labServerIcons = JSONObject()
+    private var labServerIconsUntil = 0L
+
+    private fun serverApkIcon(path: String): String? {
+        return try {
+            val root = context.filesDir.canonicalFile.toPath()
+            val file = File(path).canonicalFile.toPath()
+            if (!file.startsWith(root)) return null
+            val relative = root.relativize(file).toString().replace('\\', '/')
+            if (!relative.startsWith("apk/") && !relative.startsWith("cars/")) return null
+            if (System.currentTimeMillis() > labServerIconsUntil) {
+                val connection = java.net.URL("$BASE_URL/manifest.json").openConnection()
+                connection.connectTimeout = 8000
+                connection.readTimeout = 8000
+                val manifest = connection.getInputStream().bufferedReader().use { JSONObject(it.readText()) }
+                labServerIcons = manifest.optJSONObject("apk_icons") ?: JSONObject()
+                labServerIconsUntil = System.currentTimeMillis() + 300000
+            }
+            val icon = labServerIcons.optString(relative)
+            if (Regex("icons/[0-9a-f]{64}\\.png").matches(icon)) "$BASE_URL/$icon" else null
+        } catch (_: Exception) {
+            labServerIconsUntil = System.currentTimeMillis() + 20000
+            null
+        }
+    }
+
+    private fun loadLabApkIcon(path: String) {
+        labIconExecutor.execute {
+            val file = File(path)
+            val key = "$path:${file.length()}:${file.lastModified()}"
+            val icon = try {
+                serverApkIcon(path) ?: labIconCache.get(key) ?: run {
+                    if (!file.isFile || file.extension.lowercase() != "apk") return@run null
+                    val manager = context.packageManager
+                    val info = manager.getPackageArchiveInfo(path, 0)?.applicationInfo ?: return@run null
+                    info.sourceDir = path
+                    info.publicSourceDir = path
+                    val drawable = info.loadIcon(manager)
+                    val bitmap = android.graphics.Bitmap.createBitmap(96, 96, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(bitmap)
+                    drawable.setBounds(0, 0, 96, 96)
+                    drawable.draw(canvas)
+                    val output = java.io.ByteArrayOutputStream()
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+                    bitmap.recycle()
+                    val value = "data:image/png;base64," + android.util.Base64.encodeToString(output.toByteArray(), android.util.Base64.NO_WRAP)
+                    labIconCache.put(key, value)
+                    value
+                }
+            } catch (_: Exception) { null }
+            pushEvent(JSONObject().put("kind", "apk_icon").put("path", path).put("icon", icon ?: JSONObject.NULL))
+        }
+    }
+
     private fun listApks() {
         Thread {
             val resultJson = try {
@@ -411,14 +479,15 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * использованием отмеченных техником/прикреплённых в этапе путей
      * (модель больше не докачивается целиком при открытии, см.
      * mobile_bridge.sync_payload). */
-    private fun ensureApksDownloaded(paths: List<String>) {
+    private fun ensureApksDownloaded(paths: List<String>, progress: ApkDownloadProgress? = null) {
         if (paths.isEmpty()) return
         val pathsArr = JSONArray(paths)
         val resultJson = try {
             pyModule("mobile_bridge").callAttr(
-                "ensure_apks_downloaded", apkDir, carsDir, BASE_URL, pathsArr.toString()
+                "ensure_apks_downloaded", apkDir, carsDir, BASE_URL, pathsArr.toString(), progress
             ).toString()
         } catch (e: Exception) {
+            if (progress != null) throw e
             return
         }
         val result = JSONObject(resultJson)
@@ -748,25 +817,47 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     /** Устанавливает список APK ("apps"-этап — обязательные + отмеченные
      * техником необязательные, JS сам считает итоговый список путей). */
+    @Volatile private var labCancelInstall = false
     private fun adbInstallApks(args: JSONObject) {
         val stageIndex = args.optInt("index", -1)
         val pathsArr = args.getJSONArray("apkPaths")
         val paths = (0 until pathsArr.length()).map { pathsArr.getString(it) }
         val preferredMethod = args.optString("appsInstallMethod", "")
         val modelDir = File(args.getString("modelKey"))
-        runExclusive(::onBusy) {
+        labCancelInstall = false
+        runExclusive({ pushStageResult(stageIndex, StageRunResult.Failed("Другая операция ещё выполняется")) }) {
             val result = try {
                 if (!AdbSession.isConnected) {
                     StageRunResult.Failed("ADB не подключён — сначала подключись к устройству")
                 } else {
-                    ensureApksDownloaded(paths) // общая библиотека — байты качаются только на этом шаге
-                    installEngine().installApks(paths, preferredMethod, modelDir)
+                    ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
+                        pushApkProgress(stageIndex, path, 0, paths.size, "running", ApkOperationProgress("download", done, total))
+                    }, { labCancelInstall }))
+                    installEngine().installApksWithProgress(paths, preferredMethod, modelDir, { labCancelInstall },
+                        onProgress = { path, completed, total, state ->
+                            pushApkProgress(stageIndex, path, completed, total, state)
+                        },
+                        onDetail = { path, completed, total, detail ->
+                            pushApkProgress(stageIndex, path, completed, total, "running", detail)
+                        })
                 }
             } catch (e: Exception) {
                 StageRunResult.Failed((e.message ?: "неизвестная ошибка"))
             }
             pushStageResult(stageIndex, result)
         }
+    }
+
+    private fun pushApkProgress(stageIndex: Int, path: String, completed: Int, total: Int,
+                                state: String, detail: ApkOperationProgress? = null) {
+        val event = JSONObject().put("kind", "apk_progress").put("stage_index", stageIndex)
+            .put("path", path).put("completed", completed).put("total", total).put("state", state)
+        if (detail != null) {
+            event.put("phase", detail.phase).put("determinate", detail.determinate)
+            detail.bytesDone?.let { event.put("bytes_done", it) }
+            detail.bytesTotal?.let { event.put("bytes_total", it) }
+        }
+        pushEvent(event)
     }
 
     /** Ищет USB mass storage устройство, запрашивает разрешение и монтирует

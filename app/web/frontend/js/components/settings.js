@@ -1,120 +1,120 @@
 (function () {
+  let opening = false;
   function formatBytes(value) {
     if (!value) return "0 Б";
     const units = ["Б", "КБ", "МБ", "ГБ"];
-    let size = value;
-    let index = 0;
-    while (size >= 1024 && index < units.length - 1) { size /= 1024; index += 1; }
+    let size = value, index = 0;
+    while (size >= 1024 && index < units.length - 1) { size /= 1024; index++; }
     return `${size >= 100 || index === 0 ? Math.round(size) : size.toFixed(1)} ${units[index]}`;
   }
-
-  function checkbox(label, key, checked, save) {
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = checked;
-    input.addEventListener("change", () => save(key, input.checked));
+  function checkbox(label, hint, key, checked, save, report) {
     const row = document.createElement("label");
-    row.className = "settings-toggle";
-    row.append(input, document.createTextNode(label));
-    return row;
-  }
-
-  async function open() {
-    const info = await window.pywebview.api.settings_info();
-    const dialog = document.createElement("dialog");
-    dialog.className = "settings-dialog";
-    dialog.innerHTML = `<header><button class="settings-close" type="button" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><h2>Настройки</h2></header>
-      <section class="settings-section"><h3>Хранилище</h3><p>Приложение: <strong>${formatBytes(info.app_bytes)}</strong> · кэш: <strong data-cache-size>${formatBytes(info.cache_bytes)}</strong></p><button class="danger" type="button" data-clear>Очистить кэш</button><small>Удаляются загруженные APK, файлы моделей и временные логи. Сценарии и настройки останутся на месте.</small></section>
-      <section class="settings-section"><h3>Синхронизация</h3><p>${info.server_configured ? "Сервер подключён" : "Сервер не настроен"}</p><button type="button" data-sync>Проверить обновления сейчас</button><div data-toggles></div></section>
-      <section class="settings-section"><h3>Диагностика</h3><p>Лог помогает найти проблему с подключением или установкой.</p><button type="button" data-copy-log>Скопировать лог</button><div data-debug-toggle></div></section>
-      <section class="settings-section"><h3>О приложении</h3><p data-version class="settings-version">Magic SQD v${info.app_version}</p><p data-admin-status class="settings-admin-status"></p><a href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener">GitHub проекта</a></section>`;
-    document.body.appendChild(dialog);
-    const close = () => { dialog.close(); dialog.remove(); };
-    dialog.querySelector(".settings-close").addEventListener("click", close);
-    dialog.addEventListener("click", (event) => { if (event.target === dialog) close(); });
-    dialog.querySelector("[data-toggles]").append(
-      checkbox("Обновлять каталог при запуске", "auto_sync", info.preferences.auto_sync, savePreference),
-      checkbox("Уменьшить анимации", "reduced_motion", info.preferences.reduced_motion, savePreference),
-      checkbox("Компактный лог", "compact_log", info.preferences.compact_log, savePreference),
-      checkbox("Чат с ИИ (вопрос по-русски в консоли под логом)", "chat_enabled", info.preferences.chat_enabled, savePreference),
-    );
-    async function savePreference(key, value) {
-      const preferences = await window.pywebview.api.settings_set_preferences({ [key]: value });
-      document.documentElement.classList.toggle("reduce-motion", preferences.reduced_motion);
-      window.chatPanel.setEnabled(preferences.chat_enabled);
-    }
-    dialog.querySelector("[data-clear]").addEventListener("click", async (event) => {
-      if (!(await window.confirmDialog("Очистить скачанные файлы и кэш? Их можно будет скачать снова."))) return;
-      event.currentTarget.disabled = true;
-      const result = await window.pywebview.api.settings_clear_cache();
-      dialog.querySelector("[data-cache-size]").textContent = formatBytes(result.remaining_bytes);
-      event.currentTarget.textContent = `Освобождено: ${formatBytes(result.freed_bytes)}`;
-      await window.mainPicker.reload();
+    row.className = "settings-toggle settings13-toggle";
+    const copy = document.createElement("span");
+    copy.className = "settings13-toggle-copy";
+    const title = document.createElement("strong"); title.textContent = label; copy.append(title);
+    if (hint) { const detail = document.createElement("small"); detail.textContent = hint; copy.append(detail); }
+    const input = document.createElement("input");
+    input.type = "checkbox"; input.setAttribute("role", "switch"); input.dataset.preference = key; input.checked = !!checked;
+    input.addEventListener("change", async () => {
+      const previous = !input.checked;
+      input.disabled = true;
+      try { await save(key, input.checked); report(""); }
+      catch (error) { input.checked = previous; report(error.message || "Не удалось сохранить настройку.", true); }
+      finally { input.disabled = false; }
     });
-    dialog.querySelector("[data-sync]").addEventListener("click", async (event) => {
+    row.append(copy, input); return row;
+  }
+  async function open() {
+    if (opening || document.querySelector(".settings-dialog[open]")) return;
+    opening = true;
+    let info;
+    try { info = await window.pywebview.api.settings_info(); }
+    catch (_) { window.notice("Не удалось загрузить настройки. Попробуйте открыть их ещё раз.", { title: "Настройки", danger: true }); return; }
+    finally { opening = false; }
+    const preferences = info.preferences || {};
+    const dialog = document.createElement("dialog");
+    dialog.className = "settings-dialog settings13-dialog";
+    dialog.setAttribute("aria-labelledby", "settings13-title");
+    dialog.innerHTML = `<header class="settings13-heading"><span class="menus13-symbol" data-icon="settings"></span><div><h2 id="settings13-title">Настройки</h2><p>Ваш Magic SQD</p></div><button class="settings-close" type="button" aria-label="Закрыть настройки" data-icon="close"></button></header>
+      <div class="settings13-body">
+        <section class="settings-section settings13-storage"><div class="settings13-section-title"><span data-icon="folder"></span><h3>Хранилище</h3></div><div class="settings13-metrics"><div><span>Приложение</span><strong data-app-size></strong></div><div><span>Загруженные файлы</span><strong data-cache-size></strong></div></div><div class="settings13-storage-action"><p>APK, файлы моделей и временные логи. Сценарии и настройки сохранятся.</p><button type="button" data-clear><span data-icon="trash"></span><span data-label>Очистить кэш</span></button></div></section>
+        <section class="settings-section"><div class="settings13-section-title"><span data-icon="refresh"></span><h3>Каталог</h3><span class="settings13-connection" data-connection></span></div><div data-sync-toggle></div><button class="settings13-wide-action" type="button" data-sync><span data-icon="refresh"></span><span data-label>Проверить обновления</span><span class="settings13-action-tail" data-icon="chevron"></span></button></section>
+        <section class="settings-section"><div class="settings13-section-title"><span data-icon="apps"></span><h3>Интерфейс и лог</h3></div><div data-toggles></div></section>
+        <section class="settings-section"><div class="settings13-section-title"><span data-icon="terminal"></span><h3>Диагностика</h3></div><div data-debug-toggle></div><button class="settings13-wide-action" type="button" data-copy-log><span data-icon="copy"></span><span data-label>Скопировать лог</span><span class="settings13-action-tail" data-icon="chevron"></span></button></section>
+        <p class="settings13-status" data-settings-status role="status" aria-live="polite" hidden></p>
+      </div><footer class="settings13-footer"><div><strong data-version></strong><span data-admin-status></span></div><a href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener"><span data-icon="link"></span>GitHub проекта</a></footer>`;
+    dialog.querySelectorAll("[data-icon]").forEach(node => node.append(window.AppIcons.icon(node.dataset.icon)));
+    dialog.querySelector("[data-app-size]").textContent = formatBytes(info.app_bytes);
+    dialog.querySelector("[data-cache-size]").textContent = formatBytes(info.cache_bytes);
+    dialog.querySelector("[data-version]").textContent = `Magic SQD · v${info.app_version}`;
+    dialog.querySelector("[data-admin-status]").textContent = info.admin_mode ? "Режим администратора" : "Приложения для вашей магнитолы";
+    const connection = dialog.querySelector("[data-connection]");
+    connection.textContent = info.server_configured ? "Сервер подключён" : "Сервер не настроен";
+    connection.classList.toggle("is-connected", !!info.server_configured);
+    const report = (message, error = false) => {
+      const status = dialog.querySelector("[data-settings-status]");
+      status.textContent = message; status.hidden = !message; status.dataset.state = error ? "error" : "success";
+      if (message) status.scrollIntoView({ block: "nearest" });
+    };
+    document.body.appendChild(dialog);
+    const previousFocus = document.activeElement;
+    dialog.addEventListener("close", () => { dialog.remove(); previousFocus?.focus({ preventScroll: true }); }, { once: true });
+    dialog.querySelector(".settings-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", event => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
+    });
+    async function savePreference(key, value) {
+      const result = await window.pywebview.api.settings_set_preferences({ [key]: value });
+      document.documentElement.classList.toggle("reduce-motion", result.reduced_motion);
+      window.chatPanel.setEnabled(result.chat_enabled);
+    }
+    const toggle = (label, hint, key, checked, save = savePreference) => checkbox(label, hint, key, checked, save, report);
+    dialog.querySelector("[data-sync-toggle]").append(toggle("Обновлять при запуске", "Свежие модели и инструкции автоматически", "auto_sync", preferences.auto_sync));
+    dialog.querySelector("[data-toggles]").append(
+      toggle("Уменьшить анимации", "Спокойные переходы без лишнего движения", "reduced_motion", preferences.reduced_motion),
+      toggle("Компактный лог", "Больше событий в одном окне", "compact_log", preferences.compact_log),
+      toggle("Чат с ИИ", "Вопросы помощнику прямо в окне лога", "chat_enabled", preferences.chat_enabled));
+    async function action(button, busy, success, perform) {
+      const label = button.querySelector("[data-label]"), original = label.textContent;
+      button.disabled = true; button.setAttribute("aria-busy", "true"); label.textContent = busy; report("");
+      try { await perform(); report(success); }
+      catch (error) { report(error.message || "Не удалось выполнить действие. Попробуйте ещё раз.", true); }
+      finally { button.disabled = false; button.removeAttribute("aria-busy"); label.textContent = original; }
+    }
+    dialog.querySelector("[data-clear]").addEventListener("click", async event => {
       const button = event.currentTarget;
-      button.disabled = true;
-      button.textContent = "Проверяем…";
+      if (!(await window.confirmDialog("Очистить скачанные файлы и кэш? Их можно будет скачать снова."))) return;
+      await action(button, "Очищаем…", "Кэш очищен.", async () => {
+        const result = await window.pywebview.api.settings_clear_cache();
+        dialog.querySelector("[data-cache-size]").textContent = formatBytes(result.remaining_bytes);
+        await window.mainPicker.reload();
+      });
+    });
+    dialog.querySelector("[data-sync]").addEventListener("click", event => action(event.currentTarget, "Проверяем…", "Каталог обновлён. Проверка завершена.", async () => {
       let timeout;
       try {
-        await Promise.race([
-          window.pywebview.api.sync_startup(),
-          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Превышено время ожидания сервера")), 45000); }),
-        ]);
+        await Promise.race([window.pywebview.api.sync_startup(), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Сервер не ответил. Проверьте подключение и повторите проверку.")), 45000); })]);
         await window.mainPicker.reload();
-        button.textContent = "Обновления проверены";
-      } catch (error) {
-        console.error("Не удалось проверить обновления:", error);
-        button.textContent = "Не удалось проверить";
-      } finally {
-        clearTimeout(timeout);
-        button.disabled = false;
+      } finally { clearTimeout(timeout); }
+    }));
+    dialog.querySelector("[data-copy-log]").addEventListener("click", event => action(event.currentTarget, "Копируем…", "Лог скопирован.", async () => {
+      const text = Array.from(document.querySelectorAll("#log-panel .log-line")).map(line => line.textContent).join("\n");
+      if (!text) throw new Error("Лог пока пуст.");
+      try { await navigator.clipboard.writeText(text); }
+      catch (_) { window.notice(text, { title: "Лог" }); throw new Error("Копирование недоступно. Лог открыт в отдельном окне."); }
+    }));
+    dialog.querySelector("[data-debug-toggle]").append(toggle("Подробное логирование", "Для диагностики · со следующего запуска", "debug_mode", info.debug_mode, async (_key, value) => {
+      const result = await window.pywebview.api.settings_set_debug_mode(value);
+      if (result.write_failed) {
+        const hint = info.under_program_files ? " Программа установлена в Program Files. Запустите её один раз от имени администратора или установите в AppData." : " Запустите программу от имени администратора или установите в папку с доступом на запись.";
+        throw new Error("Не удалось сохранить настройку: нет прав на запись в папку программы." + hint);
       }
-    });
-    dialog.querySelector("[data-copy-log]").addEventListener("click", async (event) => {
-      const text = Array.from(document.querySelectorAll("#log-panel .log-line")).map((line) => line.textContent).join("\n");
-      try { await navigator.clipboard.writeText(text); event.currentTarget.textContent = "Лог скопирован"; } catch (_) { window.notice(text || "Лог пока пуст.", { title: "Лог" }); }
-    });
-
-    // Подробное логирование (см. main_web.py:_enable_debug_log_all) —
-    // маркер-файл читается только при старте программы, поэтому изменение
-    // здесь применяется со следующего запуска, не сразу.
-    const debugCheckbox = checkbox("Подробное логирование (для диагностики, со следующего запуска)",
-      "debug_mode", info.debug_mode, async (_key, value) => {
-        const result = await window.pywebview.api.settings_set_debug_mode(value);
-        if (result.write_failed) {
-          debugCheckbox.querySelector("input").checked = false;
-          const permissionHint = info.under_program_files
-            ? "\n\nПохоже, программа установлена в Program Files, куда Windows "
-              + "не даёт писать без прав администратора. Решения:\n"
-              + "1) Запустить magic_sqd.exe один раз через правый клик → "
-              + "\"Запуск от имени администратора\";\n"
-              + "2) Или переустановить программу в папку, куда у вас есть "
-              + "доступ без прав администратора — например, в AppData (при "
-              + "установке выберите \"Установить только для меня\" вместо "
-              + "пути по умолчанию)."
-            : " Попробуйте запустить программу от имени администратора или "
-              + "переустановить её в папку, куда у вас есть доступ на запись.";
-          window.notice(
-            "Не удалось сохранить настройку: нет прав на запись в папку программы."
-              + permissionHint,
-            { title: "Не удалось включить логирование" },
-          );
-        }
-      });
-    dialog.querySelector("[data-debug-toggle]").append(debugCheckbox);
-
-    // Функции администратора теперь включаются через общую кнопку "Войти"
-    // в левой панели (см. auth_dialog.js) — отдельного скрытого жеста
-    // (раньше — 10 тапов по версии) больше нет. Выход — кнопка "Выйти" в
-    // самом попапе админки (main_picker.js), не здесь: там же остальные
-    // admin-кнопки ("Выгрузить на сервер...", "Добавить APK..." и т.п.).
-    const adminStatusEl = dialog.querySelector("[data-admin-status]");
-    adminStatusEl.textContent = info.admin_mode ? "Функции администратора включены." : "";
-
-    document.documentElement.classList.toggle("reduce-motion", info.preferences.reduced_motion);
+    }));
+    document.documentElement.classList.toggle("reduce-motion", !!preferences.reduced_motion);
     dialog.showModal();
   }
-
   window.settingsDialog = { open };
 })();

@@ -1,0 +1,9 @@
+/* One reading canvas, centered on Windows and full width on the phone. */
+.wizard-content[data-stage-type=instruction]{padding:0!important;gap:0;background:#162128}
+.wizard-content[data-stage-type=instruction]>.workflow-title{display:none}
+.wizard-content[data-stage-type=instruction]>.instruction12-surface{width:100%!important;max-width:none;margin:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent!important;animation:none!important;min-height:0!important;flex:1!important}
+.instruction12-surface>iframe{display:block;width:100%;border:0!important;border-radius:0!important;background:#162128!important;flex:1;min-height:240px!important}
+#wizard-content:has(>.stage-page[data-stage-type=instruction]){padding:0!important;background:#162128;scrollbar-gutter:auto}
+#wizard-content>.stage-page[data-stage-type=instruction]{max-width:none!important;padding:0!important;margin:0!important;border:0!important;border-radius:0!important;background:transparent!important;animation:none!important}
+.stage-page[data-stage-type=instruction]>.stage-instruction-frame{width:100%!important;margin:0!important;border:0!important;border-radius:0!important;display:block;background:#162128!important;flex:none}
+.stage-page[data-stage-type=instruction]>.stage-text{margin:0;padding:20px 16px;background:#162128}
