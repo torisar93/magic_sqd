@@ -384,6 +384,7 @@
       }
 
       renderSharedUsbFolderField(step);
+      renderOptionalInstructionButton(step);
     }
 
     // Общий набор файлов из cars/_shared/ (см. app/install_context.py:
@@ -699,6 +700,43 @@
       });
     }
 
+    // -- инструкция по кнопке "Открыть инструкцию" (usb/qr_adb) -----------
+    // В отличие от renderInstructionFields ниже (там instruction_blocks —
+    // единственное содержимое этапа, обязательно, с автошаблоном при
+    // пустоте) — здесь это НЕОБЯЗАТЕЛЬНАЯ добавка к основному этапу: кнопка
+    // "Открыть инструкцию" в мастере техника (см. app/web/frontend/js/
+    // screens/stage_wizard.js: renderUsbStage/renderQrAdbStage) показывает
+    // ИМЕННО instruction_blocks этого же этапа. У usb-этапа она и раньше
+    // могла появиться (через отдельный следующий этап типа "Инструкция" —
+    // тот способ по-прежнему работает), но не через сам usb-этап напрямую —
+    // до этой правки редактор вообще не давал сюда что-либо вписать, хотя
+    // мастер технику кнопку уже показывал.
+    function renderOptionalInstructionButton(step) {
+      container.appendChild(el("span", { class: "field-label", style: "margin-top: 8px", text: "Кнопка «Открыть инструкцию» (необязательно)" }));
+      container.appendChild(el("p", {
+        class: "app-desc",
+        text: "Отдельная инструкция прямо на этом этапе — техник откроет её кнопкой «Открыть инструкцию», не уходя с этапа. Не обязательно: без неё кнопка просто не появится (для usb — если только следующий этап не отдельная «Инструкция», как раньше).",
+      }));
+      container.appendChild(el("button", {
+        text: step.instruction_blocks.length ? "Изменить инструкцию..." : "Написать инструкцию...",
+        onclick: () => window.instructionEditor.open(
+          step.instruction_blocks.length ? step.instruction_blocks : null,
+          (blocks) => { step.instruction_blocks = blocks; rerender(); }
+        ),
+      }));
+      if (step.instruction_blocks.length) {
+        container.appendChild(el("button", {
+          class: "danger", style: "margin-left: 8px",
+          text: "Убрать инструкцию",
+          onclick: () => { step.instruction_blocks = []; rerender(); },
+        }));
+      }
+      container.appendChild(el("p", {
+        class: "app-desc",
+        text: step.instruction_blocks.length ? `Готово (${step.instruction_blocks.length} блок(ов))` : "(не задана)",
+      }));
+    }
+
     // -- instruction ------------------------------------------------------
     function renderInstructionFields(step) {
       container.appendChild(el("p", {
@@ -791,8 +829,9 @@
       } else if (step.type === "qr_adb") {
         container.appendChild(el("p", {
           class: "app-desc",
-          text: "Дополнительных полей нет — этап самостоятельно находит флешку с папкой logs_* и считает пароль (см. app/qr_adb_password.py). Магнитола на этом этапе не обязана быть подключена.",
+          text: "Этап самостоятельно находит флешку с папкой logs_* и считает пароль (см. app/qr_adb_password.py). Магнитола на этом этапе не обязана быть подключена.",
         }));
+        renderOptionalInstructionButton(step);
       }
       // Универсально для ЛЮБОГО типа этапа (в отличие от всего выше) —
       // см. renderVideoField.

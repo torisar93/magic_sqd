@@ -24,6 +24,17 @@ from .scanner import VERSION_FILENAME, read_status
 
 INVALID_NAME_CHARS = set('<>:"/\\|?*')
 SPEC_FILENAME = "_wizard_spec.json"
+# Типы этапов, у которых StepSpec.instruction_blocks реально используется —
+# помимо самого типа "instruction", это ещё "usb" и "qr_adb": у обоих в
+# редизайне (см. app/web/frontend/js/usb06.js, js/screens/stage_wizard.js:
+# renderUsbStage/renderQrAdbStage) появилась кнопка "Открыть инструкцию",
+# показывающая ИМЕННО instruction_blocks этого этапа (а не общий description
+# — он и так виден техник на самом этапе, кнопка нужна для более длинной,
+# пошаговой инструкции с фото). Раньше здесь стояла только "instruction" —
+# редактор не давал вписать инструкцию для usb/qr_adb, а сгенерированный
+# stages.py вообще не нёс для них поле "instruction", так что кнопка была
+# рабочей только визуально.
+INSTRUCTION_BLOCK_STEP_TYPES = ("instruction", "usb", "qr_adb")
 
 
 @dataclass
@@ -587,7 +598,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         if step_type == "adb":
             adb_files = [files_dir / f"adb_{i}" / name for name in step_data.get("adb_files", [])]
         instruction_blocks: list[dict] = []
-        if step_type == "instruction":
+        if step_type in INSTRUCTION_BLOCK_STEP_TYPES:
             instr_step_dir = files_dir / f"instruction_{i}"
             instr_path = instr_step_dir / "instruction.html"
             try:
@@ -826,7 +837,11 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                 action_dir.mkdir(parents=True, exist_ok=True)
                 for f in action.files:
                     _copy_path(f, action_dir / f.name, keep_paths)
-        elif step.type == "instruction":
+        # Не elif — instruction_blocks нужен ещё и "usb"/"qr_adb" (см.
+        # INSTRUCTION_BLOCK_STEP_TYPES), а они уже отработали СВОЮ ветку
+        # выше (usb_files и т.п.) — это отдельная, независимая проверка,
+        # а не продолжение того же elif-выбора.
+        if step.type in INSTRUCTION_BLOCK_STEP_TYPES:
             instr_step_dir = files_dir / f"instruction_{i}"
             existing_html = instr_step_dir / "instruction.html"
             if step.instruction_blocks:
@@ -1409,7 +1424,10 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
                 f'        "exe_path": Path(__file__).resolve().parent / "files" / "exe_{i}" '
                 f'/ {step.exe_file.name!r},'
             )
-        elif step.type == "instruction":
+        # Не elif — см. комментарий у INSTRUCTION_BLOCK_STEP_TYPES и
+        # аналогичное место в _write_model_files: "usb"/"qr_adb" уже
+        # отработали свою ветку выше, эта проверка отдельная и независимая.
+        if step.type in INSTRUCTION_BLOCK_STEP_TYPES:
             # "instruction" — относительный путь-строка (см.
             # app/stage_runner.py: stage_instruction_html_path резолвит его
             # как model.dir / rel), а не Path-выражение, как "exe_path" выше.
