@@ -25,6 +25,7 @@ from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
 from ..adb_utils import find_adb_path
 from ..ping_client import get_or_create_client_id
+from ..version import APP_VERSION
 
 
 class WebApi:
@@ -88,6 +89,7 @@ class WebApi:
             "client_id": self.client_id, "is_win7": self.is_win7,
             "under_program_files": is_under_program_files(self.base_dir),
             "auth_email": self.auth_email,
+            "app_version": APP_VERSION,
         }
 
     # -- sync_api -----------------------------------------------------------

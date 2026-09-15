@@ -368,11 +368,14 @@ class InstallContext:
     def install_apk_dex_shell(self, path) -> None:
         """Установка через helper cars/_shared/dex_shell_helper.dex — см.
         _DEX_SHELL_HELPER_NAME выше за обоснованием и происхождением файла.
-        Ровно та же логика проверки успеха, что и install_apk_localinstall
-        (сравнение списка пакетов до/после) — с тем же обоснованием: разбор
-        самого .dex (см. историю в devtools/fake_adb_device.py) не дал
-        понятного маркера "Success" в stdout, надёжнее не привязываться к
-        точному формату его вывода."""
+        Основная проверка успеха — сравнение списка пакетов до/после, та же
+        логика, что и install_apk_localinstall (разбор самого .dex не дал
+        понятного маркера успеха в общем случае, надёжнее не привязываться к
+        точному формату его вывода как к ЕДИНСТВЕННОМУ признаку). Но для
+        случая "0 новых пакетов" (переустановка уже стоящего APK — см. ветку
+        ниже) diff в принципе не может отличить успех от провала, раз имя
+        пакета заранее неизвестно — там ДОПОЛНИТЕЛЬНО проверяется явная
+        строка "Success" в выводе (см. пояснение у самой проверки)."""
         self.check_cancelled()
         if not self.shared_dir:
             raise AdbError("cars/_shared недоступна — dex_shell_helper.dex не найден")
@@ -395,11 +398,30 @@ class InstallContext:
         after = self._installed_packages()
         self.shell(f"rm -f {remote_apk} {_DEX_SHELL_REMOTE_HELPER}", check=False)
 
+        text = ((result.stdout or "") + (result.stderr or "")).strip()
         new_packages = after - before
-        if len(new_packages) != 1:
-            text = ((result.stdout or "") + (result.stderr or "")).strip()
+        if len(new_packages) == 1:
+            package = next(iter(new_packages))
+        elif not new_packages and any(line.strip() == "Success" for line in text.splitlines()):
+            # Пакет уже стоял ДО этой попытки (повторная установка того же
+            # APK — например после разрыва/переподключения ADB очередь
+            # начинает текущее приложение заново) — diff по pm list packages
+            # тогда честно не находит НИЧЕГО нового, хотя сам monji явно
+            # подтвердил успех отдельной строкой "Success" (реальный случай,
+            # см. память feedback_dex_shell_reinstall_false_failure — техник
+            # был вынужден вручную остановить очередь, потому что она
+            # проваливалась в перебор ВСЕХ способов на уже установленном
+            # приложении, а они на этой платформе все отклоняются). Строка
+            # "Success"/"Failure status=N message=..." — стандартный вывод
+            # Android PackageInstaller session-commit, тот же формат что и у
+            # штатного `pm install-commit`, а не что-то специфичное для
+            # dex_shell_helper.dex — используем её только как ДОПОЛНИТЕЛЬНЫЙ
+            # признак именно для случая "0 новых пакетов", реальная первая
+            # установка по-прежнему проверяется diff'ом выше, без изменений.
+            self.log(f"{path.name} уже был установлен, monji подтвердил успех повторной установки.")
+            return
+        else:
             raise AdbError(text or "dex-хелпер не подтвердил успех (пакет не появился в списке)")
-        package = next(iter(new_packages))
         self._grant_all_permissions_if_available(package)
         self.shell(f"am force-stop {package}", check=False)
         self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1", check=False)

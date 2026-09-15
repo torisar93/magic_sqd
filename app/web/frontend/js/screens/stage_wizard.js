@@ -309,6 +309,19 @@
     sessionHasActivity = false;
     sessionSent = false;
     model = selectedModel;
+    // Диагностическая шапка лога (см. app.js: window.appInfo) — версия и
+    // сборка программы должны быть видны прямо в присланном логе установки,
+    // а не только в самой программе технику: разбор без этого начинается с
+    // вопроса "а какая у него вообще версия" (реальный случай, Volga C50).
+    // log(), не событие "install_log" — не должно само по себе взводить
+    // sessionHasActivity (см. её докстring выше), иначе КАЖДОЕ открытие
+    // модели снова стало бы "реальной активностью", ту же ошибку недавно
+    // уже чинили (v0.9.7).
+    if (window.appInfo) {
+      const build = window.appInfo.is_win7 ? "Win7/x86" : "x64";
+      const warn = window.appInfo.under_program_files ? " · ВНИМАНИЕ: установлено в Program Files" : "";
+      log(`Magic SQD v${window.appInfo.app_version} (${build}) · client=${window.appInfo.client_id}${warn}`);
+    }
     activeCommand = null; commandResults.clear();
     done.clear();
     historyStack.length = 0;

@@ -523,6 +523,13 @@ window.addEventListener("pywebviewready", async () => {
   // — раньше тут ещё был отдельный обязательный экран входа для отдельной
   // admin-сборки (admin_main_web.py), сейчас программа одна и его нет.
   const info = await window.pywebview.api.app_get_info();
+  // Диагностическая шапка в логе установки (см. stage_wizard.js: open()) —
+  // версия/платформа сборки нужны видны прямо в присланном логе, а не
+  // только в самой программе (см. app/web/api/settings_api.py:info — то же
+  // самое, но для окна "О программе"): без этого разбор присланного логом
+  // техником начинается с вопроса "а какая у него вообще версия", реальный
+  // случай при разборе установки Volga C50.
+  window.appInfo = info;
   const settingsPreferences = await window.pywebview.api.settings_preferences();
   document.documentElement.classList.toggle("reduce-motion", settingsPreferences.reduced_motion);
   // Win7-сборка (QtWebEngine, не WebView2, см. bridge.py: WebApi.is_win7) —
