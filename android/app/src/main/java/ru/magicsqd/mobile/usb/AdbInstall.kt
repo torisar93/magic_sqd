@@ -12,6 +12,17 @@ import java.nio.ByteOrder
 // учётом оверхеда заголовков SEND/DATA/DONE, которые могут попасть в один WRTE.
 private const val MAX_CHUNK = 3500
 
+// POSIX-кавычки для пути внутри shell-строки, отправляемой на устройство
+// (см. installApkViaDexShell) — без них APK с пробелом в имени (реальный
+// случай на Geely N161/OneOS: "Back Button - Anywhere_2.0.7_APKPure.apk")
+// ломает вызов app_process: shell устройства режет строку по пробелам ДО
+// того, как MonjiShellInstaller успевает увидеть путь целиком
+// (java.lang.IllegalArgumentException: APK not found: /data/local/tmp/Back).
+// Аналог Python shlex.quote() — тот же класс бага и то же исправление в
+// desktop-версии, см. app/install_context.py.
+private fun posixShellQuote(value: String): String =
+    "'" + value.replace("'", "'\\''") + "'"
+
 sealed class AdbInstallResult {
     data class Success(val pmOutput: String) : AdbInstallResult()
     data class Failed(val reason: String) : AdbInstallResult()
@@ -379,6 +390,7 @@ fun installApkViaDexShell(
 ): AdbInstallResult {
     AdbInstallProgress.beginTransfer(apkBytes.size.toLong() + helperBytes.size)
     val remoteApk = "/data/local/tmp/$apkName"
+    val quotedRemoteApk = posixShellQuote(remoteApk)
     val remoteHelper = "/data/local/tmp/dex_shell_helper.dex"
 
     val before = installedPackages(transport, log)
@@ -387,7 +399,7 @@ fun installApkViaDexShell(
         is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
         AdbPushResult.Success -> {}
     }
-    runAdbShellCommand(transport, "chmod 644 $remoteApk", log)
+    runAdbShellCommand(transport, "chmod 644 $quotedRemoteApk", log)
     when (val r = syncPushBytes(transport, helperBytes, remoteHelper, log)) {
         is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
         AdbPushResult.Success -> {}
@@ -398,14 +410,14 @@ fun installApkViaDexShell(
     AdbInstallProgress.installing()
     val installResult = runAdbShellCommand(
         transport,
-        "CLASSPATH=$remoteHelper app_process /data/local/tmp $DEX_SHELL_ENTRY_CLASS $remoteApk --flags 0x116",
+        "CLASSPATH=$remoteHelper app_process /data/local/tmp $DEX_SHELL_ENTRY_CLASS $quotedRemoteApk --flags 0x116",
         log,
         timeoutMs = 120000,
     )
     Thread.sleep(2000) // helper коммитит сессию установки асинхронно — даём системе время дописать пакет
 
     val after = installedPackages(transport, log)
-    runAdbShellCommand(transport, "rm -f $remoteApk $remoteHelper", log)
+    runAdbShellCommand(transport, "rm -f $quotedRemoteApk $remoteHelper", log)
 
     val newPackages = after - before
     if (newPackages.size != 1) {

@@ -1,5 +1,6 @@
 """Объект ctx, передаваемый в install.py каждой модели."""
 from __future__ import annotations
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -270,7 +271,7 @@ class InstallContext:
         self.log(f"Установка APK (adb push + pm install): {path.name}")
         self.push(path, remote_path)
         extra = (" " + " ".join(extra_args)) if extra_args else ""
-        result = self.shell(f"pm install -r {remote_path}{extra}", check=False)
+        result = self.shell(f"pm install -r {shlex.quote(remote_path)}{extra}", check=False)
         _check_pm_install_result(result)
 
     def install_apk_stream(self, path, remote_dir="/sdcard/Download", extra_args=None):
@@ -290,7 +291,7 @@ class InstallContext:
         self.push(path, remote_path)
         size = path.stat().st_size
         extra = (" " + " ".join(extra_args)) if extra_args else ""
-        result = self.shell(f"cat {remote_path} | pm install -S {size}{extra}", check=False)
+        result = self.shell(f"cat {shlex.quote(remote_path)} | pm install -S {size}{extra}", check=False)
         _check_pm_install_result(result)
 
     def install_apk_pm_spoofed(self, path, remote_dir="/data/local/tmp", extra_args=None):
@@ -313,11 +314,12 @@ class InstallContext:
         self.log(f"Установка APK (adb push + pm install -i, Geely OneOS/NewEra): {path.name}")
         self.push(path, remote_path)
         extra = (" " + " ".join(extra_args)) if extra_args else ""
-        result = self.shell(f"pm install -i com.android.packageinstaller -t -g -r {remote_path}{extra}", check=False)
+        quoted_remote_path = shlex.quote(remote_path)
+        result = self.shell(f"pm install -i com.android.packageinstaller -t -g -r {quoted_remote_path}{extra}", check=False)
         text = ((result.stdout or "") + (result.stderr or "")).strip().lower()
         if "unknown option" in text or "invalid_installer" in text or "invalid installer" in text:
             self.log("Флаг -i отклонён этой прошивкой — пробую pm install без подмены установщика")
-            result = self.shell(f"pm install -t -g -r {remote_path}{extra}", check=False)
+            result = self.shell(f"pm install -t -g -r {quoted_remote_path}{extra}", check=False)
         _check_pm_install_result(result)
 
     def _installed_packages(self) -> set[str]:
@@ -384,19 +386,26 @@ class InstallContext:
             raise AdbError(f"{_DEX_SHELL_HELPER_NAME} не найден в cars/_shared")
         path = Path(path)
         remote_apk = f"/data/local/tmp/{path.name}"
+        # shlex.quote — без него APK с пробелом в имени (реальный случай:
+        # "Back Button - Anywhere_2.0.7_APKPure.apk") ломает вызов
+        # app_process: устройство подставляет путь прямо в свою shell-строку,
+        # которая режет его по пробелам ДО того, как MonjiShellInstaller
+        # успевает его увидеть целиком (java.lang.IllegalArgumentException:
+        # APK not found: /data/local/tmp/Back).
+        quoted_remote_apk = shlex.quote(remote_apk)
         self.log(f"Установка APK (app_process + dex-хелпер, Geely OneOS): {path.name}")
         before = self._installed_packages()
         self.push(path, remote_apk)
-        self.shell(f"chmod 644 {remote_apk}", check=False)
+        self.shell(f"chmod 644 {quoted_remote_apk}", check=False)
         self.push(helper, _DEX_SHELL_REMOTE_HELPER)
         self.shell(f"chmod 644 {_DEX_SHELL_REMOTE_HELPER}", check=False)
         result = self.shell(
             f"CLASSPATH={_DEX_SHELL_REMOTE_HELPER} app_process /data/local/tmp {_DEX_SHELL_ENTRY_CLASS} "
-            f"{remote_apk} --flags {hex(_DEX_SHELL_INSTALL_FLAGS)}",
+            f"{quoted_remote_apk} --flags {hex(_DEX_SHELL_INSTALL_FLAGS)}",
             check=False)
         self.sleep(2)
         after = self._installed_packages()
-        self.shell(f"rm -f {remote_apk} {_DEX_SHELL_REMOTE_HELPER}", check=False)
+        self.shell(f"rm -f {quoted_remote_apk} {_DEX_SHELL_REMOTE_HELPER}", check=False)
 
         text = ((result.stdout or "") + (result.stderr or "")).strip()
         new_packages = after - before
