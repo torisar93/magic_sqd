@@ -24,7 +24,7 @@ from ...admin_config import get_admin_base_url
 from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec,
                                StandardApkSpec, StepSpec, StepVariant, create_car, load_car_spec, update_car)
 from ...content_sync import (clear_local_edit_marker, fetch_manifest, get_base_url, mark_local_edit,
-                              sync_model_subfolder)
+                              sync_model_files, sync_model_subfolder)
 from ...instruction_html import default_blocks, render_document, validate_video_file
 from ...ping_client import get_or_create_client_id
 from ...submit_client import SubmitCancelled, SubmitError, submit_model
@@ -205,10 +205,33 @@ class CarEditorApi:
             except Exception:  # noqa: BLE001 - см. докстринг выше
                 continue
 
+    def _sync_own_files(self, model) -> None:
+        """Докачивает files/+usb_files/ этой модели целиком ПЕРЕД тем, как
+        load_car_spec() прочитает её в редактор — та же причина, что у
+        _sync_instruction_folders выше, только для всего дерева, а не только
+        инструкции. Без этого шага реальный инцидент (2026-09, Geely Atlas
+        Обычная): files/pack*/optional/<apk> докачиваются лениво, только по
+        кнопке "Скачать файлы модели" или прямо перед установкой (см.
+        content_sync.sync_model_files) — если техник открыл редактор на
+        машине, где этот APK ещё не докачан, load_car_spec() всё равно
+        честно вернёт его в standard_apks_optional (путь строится из JSON,
+        без проверки файла на диске), редактор его покажет как обычный, а
+        при сохранении _copy_apk теперь бросает понятную ошибку (см. её
+        докстринг) вместо тихой потери записи о нём — но лучше вообще не
+        доводить до этой ошибки, докачав файлы заранее. sync_model_files сам
+        уважает mark_local_edit (не трогает модель с неопубликованной
+        локальной правкой) и молча ничего не делает без server.json/сети —
+        не должно мешать редактированию в офлайне или уже скачанной модели."""
+        try:
+            sync_model_files(self.base_dir, model)
+        except Exception:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
+            pass
+
     def load_spec(self, model_key: str) -> dict:
         model = self._scanner_api.get_model(model_key)
         if model is None:
             return {"error": "unknown model key"}
+        self._sync_own_files(model)
         self._sync_instruction_folders(model.dir)
         spec = load_car_spec(model.dir, model.brand, model.name, model.modification or "")
         if spec is None:
@@ -510,6 +533,20 @@ class CarEditorApi:
                 if "истекла" in str(exc):
                     clear_cached_session(admin_base_url)
                 self._log(f"Не опубликовано на сервере: {exc}")
+            except Exception as exc:  # noqa: BLE001 - см. докстринг ниже
+                # Раньше здесь ловились только AdminUploadCancelled/
+                # AdminClientError — любая другая ошибка (сетевой обрыв
+                # посреди upload_model, файл, пропавший с диска между
+                # update_car и упаковкой архива, и т.п.) вылетала из _worker()
+                # необработанной: поток демона молча умирал БЕЗ единого
+                # события car_save_finished, при этом mark_local_edit() уже
+                # выше успел выставиться — модель оставалась незаметно
+                # "заморожена" от sync_scripts/sync_model_files навсегда,
+                # пока её саму снова не пересохранят (см. content_sync.py:
+                # mark_local_edit/_local_edit_superseded). Техник ничего не
+                # видел, кроме зависшего "Сохраняем..." — теперь любая
+                # ошибка публикации хотя бы явно долетает до лога.
+                self._log(f"Не опубликовано на сервере (непредвиденная ошибка): {exc}")
         elif submit_config:
             try:
                 client_id = get_or_create_client_id(self.base_dir)
@@ -523,5 +560,7 @@ class CarEditorApi:
                 self._log("Отправка на проверку отменена (локально сохранено).")
             except SubmitError as exc:
                 self._log(f"Не отправлено на проверку: {exc}")
+            except Exception as exc:  # noqa: BLE001 - см. докстринг у одноимённого except выше
+                self._log(f"Не отправлено на проверку (непредвиденная ошибка): {exc}")
 
         event_bridge.push({"kind": "car_save_finished", "success": True, "message": "Готово."})
