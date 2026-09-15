@@ -20,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 
+import mdns_scan  # см. mdns_scan.py — тот же каталог cars/_shared/, обычный import по sys.path
+
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
@@ -35,10 +37,36 @@ def _powershell_path() -> str:
     return str(candidate) if candidate.exists() else "powershell"
 
 
+def _active_interface_name_mac() -> str | None:
+    """Имя интерфейса (en0/...) с активным маршрутом по умолчанию — тот же
+    критерий, что у wifi_adb.get_default_gateway (независимая копия, этот
+    модуль тоже подгружается отдельно, без доступа к app/)."""
+    try:
+        result = subprocess.run(
+            ["route", "-n", "get", "default"], capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("interface:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
 def get_active_interface_index() -> str:
-    """ifIndex сетевого адаптера с активным подключением (тот же критерий,
-    что у wifi_adb.get_default_gateway) — используется как zone id для
-    link-local IPv6-адреса на Windows."""
+    """ifIndex (Windows) или имя интерфейса (macOS, "en0" — на BSD/macOS
+    zone id для link-local адреса это ИМЯ интерфейса, а не число, см.
+    scope_id в ifconfig) сетевого адаптера с активным подключением —
+    используется как zone id для link-local IPv6-адреса."""
+    if sys.platform != "win32":
+        iface = _active_interface_name_mac()
+        if not iface:
+            raise RuntimeError(
+                "Не удалось определить сетевой адаптер (нет активного подключения с "
+                "шлюзом по умолчанию). Подключитесь к Wi-Fi-сети магнитолы и повторите."
+            )
+        return iface
     result = subprocess.run(
         [_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
          "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
@@ -54,6 +82,39 @@ def get_active_interface_index() -> str:
     return index
 
 
+def _scan_ipv6_neighbors_mac() -> list[tuple[str, str]]:
+    """'ndp -an' — BSD/macOS-аналог Get-NetNeighbor для IPv6 (таблица
+    соседей NDP). Формат строки:
+    "fe80::1234:5678:9abc:def0%en0  aa:bb:cc:dd:ee:ff  en0  23s  R" —
+    колонки разделены пробелами, адрес уже включает "%имя_интерфейса"
+    (в отличие от Get-NetNeighbor.IPAddress на Windows, где zone нет —
+    поэтому там его добавляет отдельно get_active_interface_index, см.
+    enable_adb_via_telnet). "(incomplete)" вместо MAC — сосед известен, но
+    линк-адрес ещё не разрешился, такие пропускаем (аналог фильтра по
+    State на Windows)."""
+    iface = _active_interface_name_mac()
+    if not iface:
+        return []
+    try:
+        result = subprocess.run(["ndp", "-an"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    seen = set()
+    pairs = []
+    for line in (result.stdout or "").splitlines()[1:]:  # первая строка — заголовок таблицы
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        addr, mac, netif = parts[0], parts[1], parts[2]
+        if netif != iface or not addr.startswith("fe80:") or mac == "(incomplete)":
+            continue
+        if addr in seen:
+            continue
+        seen.add(addr)
+        pairs.append((addr, mac))
+    return pairs
+
+
 def scan_ipv6_neighbors() -> list[tuple[str, str]]:
     """Link-local IPv6-соседи (fe80::...) активного сетевого адаптера в
     состоянии Reachable/Stale/Permanent (см. Get-NetNeighbor) — кандидаты на
@@ -64,6 +125,8 @@ def scan_ipv6_neighbors() -> list[tuple[str, str]]:
     ("Android", как в PingTools) Windows тут не даёт. Пустой список —
     соседей не нашлось (или адаптер/сеть не определились), вызывающий сам
     решает, что делать дальше."""
+    if sys.platform != "win32":
+        return _scan_ipv6_neighbors_mac()
     result = subprocess.run(
         [_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
          "Get-NetNeighbor -AddressFamily IPv6 -ErrorAction SilentlyContinue "
@@ -102,10 +165,27 @@ def enable_adb_via_telnet(
     телефоне, который прямо показывает "Android"). Ни одного кандидата —
     запасной путь: ручной ввод (ctx.ask_input), как раньше."""
     if not ipv6_address:
+        # AAAA-резолв "android.local" по mDNS — то же самое, чем на Android
+        # подсвечивается "рекомендованный" кандидат (см. MdnsResolve.kt:
+        # resolveAndroidLocal + app.js:promptHostPicker), а не просто
+        # "что-то ответило на NDP-скан" (см. scan_ipv6_neighbors). Только
+        # macOS — на Windows свой отдельный путь резолва zone id (числовой
+        # ifIndex вместо имени интерфейса), сюда пока не портировано.
+        recommended_ip = mdns_scan.resolve_android_local_ipv6(_active_interface_name_mac()) \
+            if sys.platform != "win32" else None
         candidates = scan_ipv6_neighbors()
+        if recommended_ip:
+            candidates = [(ip, mac) for ip, mac in candidates if ip != recommended_ip]
+            candidates.insert(0, (recommended_ip, None))
         if candidates:
-            labels = [f"{ip}  (MAC {mac})" if mac else ip for ip, mac in candidates]
-            label_to_ip = dict(zip(labels, (ip for ip, _ in candidates)))
+            labels = []
+            label_to_ip = {}
+            for ip, mac in candidates:
+                label = f"{ip}  (MAC {mac})" if mac else ip
+                if ip == recommended_ip:
+                    label += "  — рекомендовано (android.local)"
+                labels.append(label)
+                label_to_ip[label] = ip
             choice = ctx.ask_choice(
                 "Выберите IPv6-адрес магнитолы (найдено в сети):", labels, title="Telnet ADB")
             ipv6_address = label_to_ip.get(choice, choice)

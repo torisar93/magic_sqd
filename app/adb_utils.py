@@ -9,12 +9,19 @@ import sys
 import time
 from pathlib import Path
 
+from . import mdns_scan
+
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 def find_adb_path(base_dir: Path) -> str:
-    """Ищет adb.exe сначала в tools/ рядом с приложением, потом в PATH."""
-    bundled = base_dir / "tools" / "adb.exe"
+    """Ищет adb сначала в tools/ (Windows, adb.exe) или tools_mac/ (macOS,
+    Mach-O без расширения — см. tools_mac/README.txt) рядом с приложением,
+    потом в PATH."""
+    if sys.platform == "win32":
+        bundled = base_dir / "tools" / "adb.exe"
+    else:
+        bundled = base_dir / "tools_mac" / "adb"
     if bundled.exists():
         return str(bundled)
     return "adb"
@@ -36,6 +43,28 @@ def find_powershell_path() -> str:
     return str(candidate) if candidate.exists() else "powershell"
 
 
+def _default_gateway_and_iface_mac() -> tuple[str, str] | None:
+    """macOS/BSD-аналог Get-NetIPConfiguration — 'route -n get default'
+    печатает и шлюз, и интерфейс активного маршрута по умолчанию отдельными
+    строками ("gateway: 192.168.1.1", "interface: en0"). Возвращает None,
+    если активного подключения нет (нет строк в выводе)."""
+    try:
+        result = subprocess.run(
+            ["route", "-n", "get", "default"],
+            capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    gateway = iface = None
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("gateway:"):
+            gateway = line.split(":", 1)[1].strip()
+        elif line.startswith("interface:"):
+            iface = line.split(":", 1)[1].strip()
+    return (gateway, iface) if gateway and iface else None
+
+
 def get_default_gateway_ip() -> str | None:
     """IP шлюза по умолчанию активного сетевого адаптера — на магнитолах с
     Wi-Fi ADB ноутбук обычно подключается к собственной Wi-Fi-сети
@@ -47,6 +76,9 @@ def get_default_gateway_ip() -> str | None:
     главного окна, которая должна работать независимо от конкретной
     модели). Возвращает None вместо исключения — вызывающий сам решает, как
     показать ошибку технику."""
+    if sys.platform != "win32":
+        info = _default_gateway_and_iface_mac()
+        return info[0] if info else None
     try:
         result = subprocess.run(
             [find_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
@@ -61,15 +93,52 @@ def get_default_gateway_ip() -> str | None:
     return ip or None
 
 
-def scan_for_adb_hosts(port: int, timeout: float = 0.25) -> list[str]:
-    """Независимая копия cars/_shared/wifi_adb.py:scan_for_adb_hosts — для
-    кнопки "Подключить Wi-Fi" под логом главного окна (см.
-    app/web/api/install_api.py:scan_wifi), которая не привязана к
-    конкретной модели и не может импортировать cars/_shared (тот
-    подгружается отдельно, только при установке конкретной модели). Ищет
-    хосты локальной подсети с открытым port — нужен, когда магнитола сама
-    подключается к сети/точке доступа ноутбука (её IP тогда заранее
-    неизвестен, в отличие от случая, покрытого get_default_gateway_ip)."""
+def _local_ipv4_and_subnet_mac() -> tuple[str, "ipaddress.IPv4Network"] | None:
+    """IP и подсеть (максимум /24 — см. обоснование ниже) активного
+    интерфейса на macOS. 'route -n get default' даёт имя интерфейса
+    (en0/...), 'ifconfig <iface>' — его IPv4-адрес и маску вида
+    "inet 192.168.1.23 netmask 0xffffff00 broadcast ..."."""
+    info = _default_gateway_and_iface_mac()
+    if info is None:
+        return None
+    _, iface = info
+    try:
+        result = subprocess.run(
+            ["ifconfig", iface], capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    ip = netmask_hex = None
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("inet ") and not line.startswith("inet6"):
+            parts = line.split()
+            try:
+                ip = parts[1]
+                netmask_hex = parts[parts.index("netmask") + 1]
+            except (ValueError, IndexError):
+                continue
+            break
+    if not ip or not netmask_hex:
+        return None
+    try:
+        prefix = bin(int(netmask_hex, 16)).count("1")
+        # Не крупнее /24 — см. обоснование в wifi_adb.py:_get_local_ipv4_and_subnet.
+        prefix = max(prefix, 24)
+        network = ipaddress.ip_network(f"{ip}/{prefix}", strict=False)
+    except ValueError:
+        return None
+    return ip, network
+
+
+def _local_ipv4_and_subnet() -> tuple[str, "ipaddress.IPv4Network"] | None:
+    """Платформенный диспетчер — вынесено из scan_for_adb_hosts отдельной
+    функцией, чтобы scan_network_for_wifi_adb (см. ниже) могла получить тот
+    же список хостов подсети для ping-скана, не пересчитывая его дважды по
+    разным путям для Windows/macOS."""
+    if sys.platform != "win32":
+        return _local_ipv4_and_subnet_mac()
     try:
         result = subprocess.run(
             [find_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
@@ -80,18 +149,33 @@ def scan_for_adb_hosts(port: int, timeout: float = 0.25) -> list[str]:
             stdin=subprocess.DEVNULL,
         )
     except (subprocess.TimeoutExpired, OSError):
-        return []
+        return None
     output = (result.stdout or "").strip()
     if not output:
-        return []
+        return None
     try:
         iface = ipaddress.ip_interface(output)
     except ValueError:
-        return []
+        return None
     # Не крупнее /24 — см. обоснование в wifi_adb.py:_get_local_ipv4_and_subnet.
     prefix = max(iface.network.prefixlen, 24)
     network = ipaddress.ip_network(f"{iface.ip}/{prefix}", strict=False)
-    own_ip = str(iface.ip)
+    return str(iface.ip), network
+
+
+def scan_for_adb_hosts(port: int, timeout: float = 0.25) -> list[str]:
+    """Независимая копия cars/_shared/wifi_adb.py:scan_for_adb_hosts — для
+    кнопки "Подключить Wi-Fi" под логом главного окна (см.
+    app/web/api/install_api.py:scan_wifi), которая не привязана к
+    конкретной модели и не может импортировать cars/_shared (тот
+    подгружается отдельно, только при установке конкретной модели). Ищет
+    хосты локальной подсети с открытым port — нужен, когда магнитола сама
+    подключается к сети/точке доступа ноутбука (её IP тогда заранее
+    неизвестен, в отличие от случая, покрытого get_default_gateway_ip)."""
+    info = _local_ipv4_and_subnet()
+    if info is None:
+        return []
+    own_ip, network = info
     hosts = [str(h) for h in network.hosts() if str(h) != own_ip]
 
     def probe(ip: str) -> str | None:
@@ -107,6 +191,68 @@ def scan_for_adb_hosts(port: int, timeout: float = 0.25) -> list[str]:
             if ip:
                 found.append(ip)
     return sorted(found, key=lambda ip: tuple(int(part) for part in ip.split(".")))
+
+
+def _ping_sweep(hosts: list[str], timeout_ms: int = 400) -> list[str]:
+    """Реальный список живых хостов подсети через системный ping — не
+    зависит от того, какой (если вообще какой-то) порт у них открыт, в
+    отличие от scan_for_adb_hosts (см. её докстринг и cars/_shared/
+    wifi_adb.py:_ping_sweep — независимая копия той же idea)."""
+    ping_cmd = ["ping", "-n", "1", "-w", str(timeout_ms)] if sys.platform == "win32" \
+        else ["ping", "-c", "1", "-W", str(timeout_ms)]
+
+    def probe(ip: str) -> str | None:
+        try:
+            result = subprocess.run(
+                ping_cmd + [ip], capture_output=True, timeout=timeout_ms / 1000 + 2,
+                creationflags=CREATE_NO_WINDOW, stdin=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return ip if result.returncode == 0 else None
+
+    found = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
+        for ip in pool.map(probe, hosts):
+            if ip:
+                found.append(ip)
+    return found
+
+
+def scan_network_for_wifi_adb(port: int) -> list:
+    """Независимая копия cars/_shared/wifi_adb.py:scan_network_for_wifi_adb
+    — объединённый список кандидатов для кнопки "Подключить Wi-Fi" (ping-
+    скан + скан заданного порта + mDNS-резолв "android.local"/"_adb-tls-
+    connect._tcp", см. её докстринг и android/.../WebBridge.kt:scanHosts —
+    тот же принцип "объединение источников, а не пересечение"). Кандидаты,
+    подтверждённые через mDNS (это ТОЧНО Android, не просто "что-то ответило
+    на пинг") идут первыми и с "recommended": True — фронтенд (см.
+    app/web/frontend/js/refinement05.js: LabUI.connection) подсвечивает их
+    отдельно, как раньше подсвечивался хост с открытым портом 5555."""
+    ip_candidates: set[str] = set()
+
+    info = _local_ipv4_and_subnet()
+    if info is not None:
+        own_ip, network = info
+        hosts = [str(h) for h in network.hosts() if str(h) != own_ip]
+        ip_candidates.update(_ping_sweep(hosts))
+        ip_candidates.update(scan_for_adb_hosts(port))
+
+    endpoints = mdns_scan.resolve_adb_tls_connect_endpoints()
+    endpoint_hosts = {host for host, _ in endpoints}
+    android_local_ip = mdns_scan.resolve_android_local()
+    if android_local_ip in endpoint_hosts:
+        android_local_ip = None  # уже покажется отдельно, со своим портом — не дублируем
+    ip_candidates -= endpoint_hosts
+    if android_local_ip:
+        ip_candidates.discard(android_local_ip)
+
+    results: list = [{"host": host, "port": found_port, "recommended": True}
+                      for host, found_port in sorted(endpoints)]
+    if android_local_ip:
+        results.append({"host": android_local_ip, "recommended": True})
+    results += sorted(ip_candidates, key=lambda ip: tuple(int(part) for part in ip.split(".")))
+    return results
 
 
 class AdbError(RuntimeError):

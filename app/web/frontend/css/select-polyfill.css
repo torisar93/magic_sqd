@@ -1,0 +1,66 @@
+/* Стили для select-polyfill.js — активны только там, где браузер не умеет
+   CSS Customizable Select (см. @supports-блок в ui08.css и докстринг
+   select-polyfill.js). Раскраска нарочно подогнана под тот же
+   @supports-блок — чтобы Windows (родной customizable select) и macOS
+   (этот полифилл) выглядели одинаково.
+
+   .csel-wrap — единственный flex/grid-элемент вместо исходного select (см.
+   докстринг select-polyfill.js про то, почему не два отдельных соседних
+   узла), сам триггер и список вариантов внутри него уже position:relative/
+   absolute, наружу на раскладку родителя не влияют. */
+/* !important обязателен — у некоторых select есть свой инлайновый
+   style="width: 100%" (например #report-reason в index.html), а инлайновый
+   style побеждает внешний класс без !important независимо от специфичности
+   — без этого select оставался полноразмерным (просто невидимым) и
+   реально сдвигал scrollWidth диалога вбок (найденный горизонтальный скролл
+   в "Сообщить о проблеме"). */
+select.csel-native-hidden { position:absolute!important; left:0!important; top:0!important; opacity:0!important; pointer-events:none!important; width:0!important; height:0!important; min-width:0!important; min-height:0!important; padding:0!important; margin:0!important; border:0!important; }
+.csel-wrap { position:relative; display:inline-flex; min-width:0; vertical-align:top; }
+.csel-trigger {
+  display:inline-flex; align-items:center; justify-content:space-between; gap:10px;
+  width:100%; cursor:pointer; text-align:left; font-family:inherit; font-size:14px; line-height:1.4;
+  min-height:44px; min-width:0; padding:9px 12px; color:var(--text);
+  background:#17232b; border:1px solid #aacbb32f; border-radius:11px;
+}
+.csel-trigger:hover { border-color:#5a717f; }
+.csel-trigger:disabled { opacity:.45; cursor:default; }
+.csel-trigger:focus-visible { outline:2px solid #a0efda; outline-offset:3px; }
+.csel-trigger.csel-open { border-color:#b0ecd28c; box-shadow:0 0 0 2px #b0ecd215; }
+.csel-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.csel-chevron { color:#b6cec9; display:inline-flex; flex:0 0 auto; transition:rotate .18s; }
+.csel-trigger.csel-open .csel-chevron { rotate:180deg; }
+.csel-popup {
+  position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:20;
+  color:#ecf4f4; font:14px/1.4 'Segoe UI',Roboto,Arial,sans-serif;
+  background:linear-gradient(145deg,#293940,#1d2b32); border:1px solid #bad6ce45; border-radius:14px;
+  padding:6px; box-shadow:inset 0 1px 0 #ffffff10,0 14px 44px #02080c88;
+  max-height:min(360px,42vh); overflow:auto; scrollbar-color:#617d8090 transparent; scrollbar-width:thin;
+}
+/* Триггер у самого низа окна (например список ADB-устройств в панели
+   лога) — вниз открывать некуда, попап там обрезался краем окна (найденный
+   баг) — .csel-above переключает привязку на верх триггера (см.
+   select-polyfill.js: решение принимается по реальному свободному месту). */
+.csel-popup.csel-above { top:auto; bottom:calc(100% + 4px); }
+.csel-option {
+  display:flex; align-items:center; gap:10px; width:100%; min-height:44px;
+  padding:10px 12px; margin:2px 0; border:1px solid transparent; border-radius:8px;
+  white-space:normal; overflow-wrap:anywhere; cursor:pointer; text-align:left;
+  background:transparent; color:inherit; font:inherit;
+}
+.csel-option:hover, .csel-option:focus-visible { background:#c6eee726; outline:none; }
+.csel-option.csel-selected { background:#b6efdc18; border-color:#b6efdc27; color:#d4f9e8; }
+.csel-option:disabled { opacity:.42; cursor:default; }
+.csel-empty { padding:12px; color:#8da5b0; font-size:13px; }
+
+/* Точечное копирование размерных правил конкретных select (см. их же
+   правила по id/классу-контейнеру в refinement05.css/usb06.css/
+   usb06-dialog.css) — сам select теперь скрыт (0×0), эти правила без
+   дублирования сюда не дотянулись бы. Применяются к .csel-wrap (не к
+   .csel-trigger — тот всегда просто 100% от wrap). */
+.adb-console-row>.csel-wrap { height:46px!important; min-height:46px!important; max-height:46px!important; margin:0!important; align-self:center; }
+.adb-console-row>.csel-wrap[data-for="adb-console-device"] { width:180px; max-width:180px; flex:0 1 180px; }
+.transport-bar .csel-wrap { margin:0!important; min-height:46px; height:46px; align-self:center; }
+#usb-dialog .csel-wrap[data-for="usb-drive"] { width:0; min-width:0; flex:1; height:46px; min-height:46px; margin:0; }
+#usb-dialog .csel-wrap[data-for="usb-drive"] .csel-trigger { font-size:14px; }
+.usb06-flow .usb06-drive-strip .csel-wrap { width:100%; margin:0!important; height:46px; min-height:46px; min-width:0; }
+.usb06-flow .usb06-drive-strip .csel-wrap .csel-trigger { font-size:15px; }

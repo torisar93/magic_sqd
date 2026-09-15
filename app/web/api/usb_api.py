@@ -4,6 +4,7 @@ stage wizard (этап type="usb"). Портировано из app/usb_dialog.p
 форматирование, затем run_fn(ctx)), только прогресс идёт через
 app/web/events.py вместо queue.Queue+self.after(100, ...)."""
 from __future__ import annotations
+import sys
 import threading
 from pathlib import Path
 
@@ -75,9 +76,10 @@ class UsbApi:
                                     log=self._log, check_cancelled=self._check_cancelled,
                                     on_progress=self._progress)
 
+            new_mount = None
             if do_format:
                 try:
-                    format_drive(drive_letter, filesystem, model.name, self.base_dir, log=self._log)
+                    new_mount = format_drive(drive_letter, filesystem, model.name, self.base_dir, log=self._log)
                 except UsbSafetyError as exc:
                     self._finish(False, str(exc))
                     return
@@ -85,8 +87,21 @@ class UsbApi:
                     self._finish(False, "Остановлено пользователем после форматирования.")
                     return
 
+            # На Windows буква диска не меняется после форматирования
+            # (format_drive там ничего не возвращает — new_mount всегда
+            # None). На macOS diskutil eraseDisk стирает ВЕСЬ физический
+            # диск и монтирует новый том по новому пути — см.
+            # usb_utils_mac.py:format_drive, drive_letter выше уже
+            # недействителен.
+            if new_mount:
+                drive_root = Path(new_mount)
+            elif sys.platform == "win32":
+                drive_root = Path(f"{drive_letter}\\")
+            else:
+                drive_root = Path(drive_letter)
+
             ctx = UsbContext(
-                drive_root=Path(f"{drive_letter}\\"),
+                drive_root=drive_root,
                 model_dir=model.dir,
                 selected_apks=selected_apk_paths,
                 log_fn=self._log,

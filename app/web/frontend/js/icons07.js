@@ -25,7 +25,14 @@
     '#wifi-close':'close','#wifi-refresh':'refresh',
     '#app-picker-close':'close','.apk-info-btn':'info',
     '.completion-check':'check','.error-symbol':'report',
-    '.usb06-dialog-symbol>svg':'usb','.usb06-transfer-symbol>svg':'download','#usb-start>svg':'download',
+    '.usb06-dialog-symbol>svg':'usb','.usb06-transfer-symbol>svg':'download',
+    // #usb-start НЕ конвертируем в спрайт-иконку (raster-icon/mask) — на
+    // реальном macOS/WebKit найден баг: содержимое ::before визуально
+    // наезжало на соседний текст кнопки ("Зап[иконка]п Записать на
+    // флешку"), contain:paint не помог (см. icons07.css). Обычный
+    // статический <svg> из index.html никогда так не ломался — оставляем
+    // его нетронутым вместо попытки понять точную причину бага в чужом
+    // движке рендеринга.
     '#usb06-advanced>summary>svg':'down','#usb06-log-details>summary>svg':'down',
     '.catalog-topbar-boosty>svg':'link','.catalog-boosty>svg':'link','.boosty-link>svg':'link',
     '.modal-close-x':'close','.manager-clipboard-cancel':'close','.danger.icon-btn':'trash',

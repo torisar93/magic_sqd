@@ -1,5 +1,11 @@
 /* One square and optical center on Windows and Android. PNGs stay unmodified. */
-.ui-icon.raster-icon{position:relative;display:inline-block;box-sizing:border-box;width:24px;height:24px;min-width:24px;flex:0 0 24px;vertical-align:middle;line-height:1;overflow:hidden;pointer-events:none;background:none;border:0;border-radius:0;padding:0;margin:0}
+/* contain:paint — подстраховка поверх overflow:hidden: найден реальный
+   случай на macOS/WebKit (Safari), где увеличенный (>100%) ::before ниже
+   визуально вылезал за пределы этого бокса поверх соседнего текста кнопки
+   ("Зап[иконка]п Записать на флешку") несмотря на overflow:hidden —
+   contain:paint жёстко гарантирует, что ничего не красится за border-box,
+   независимо от того, чем вызвана утечка (маска, трансформация и т.п.). */
+.ui-icon.raster-icon{position:relative;display:inline-block;box-sizing:border-box;width:24px;height:24px;min-width:24px;flex:0 0 24px;vertical-align:middle;line-height:1;overflow:hidden;contain:paint;pointer-events:none;background:none;border:0;border-radius:0;padding:0;margin:0}
 .ui-icon.raster-icon::before{content:"";display:block;position:absolute;left:var(--ix);top:var(--iy);width:var(--iw);height:var(--ih);background:currentColor;-webkit-mask-image:var(--icon-src);mask-image:var(--icon-src);-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;opacity:1;transform:none;border:0;border-radius:0;box-shadow:none}
 button>.ui-icon.raster-icon{align-self:center}
 .stage06-symbol>.ui-icon.raster-icon,.usb06-step-symbol>.ui-icon.raster-icon,.usb-step-symbol>.ui-icon.raster-icon,.flow-card-symbol>.ui-icon.raster-icon{width:28px;height:28px;min-width:28px;flex-basis:28px}

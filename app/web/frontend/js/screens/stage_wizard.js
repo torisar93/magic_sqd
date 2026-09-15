@@ -1399,7 +1399,13 @@
     if (stage.type === 'apps') {
       stopBtn.hidden = true;
       panel.querySelector('.apps08-toolbar').append(btnRow);
-    } else queueMicrotask(()=>{if(!panel.isConnected)return;navNextBtn.style.display='none';navNextBtn.parentNode.append(btnRow);});
+    }
+    // Раньше (для uart/telnet/adb/actions) кнопка запуска подменяла собой
+    // "Далее" в навигации (скрывала её и переезжала на её место) — техник
+    // не мог пропустить этап при повторной установке, если этот шаг уже не
+    // нужен (например, telnet/UART уже включили в прошлый раз). Кнопка
+    // запуска остаётся прямо в блоке этапа (см. panel.appendChild(btnRow)
+    // выше), "Далее" в навигации — как обычно, отдельно.
 
     startBtn.addEventListener("click", async () => {
       if (runnerBusy) return;

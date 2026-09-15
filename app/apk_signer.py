@@ -29,15 +29,21 @@ class ApkSignError(RuntimeError):
 
 
 def find_java_path(base_dir: Path) -> Path | None:
-    """Путь к java.exe внутри вшитого минимального JRE (см. tools/
-    jre_minimal/) — None, если почему-то отсутствует (старая установка до
-    появления этой функции, или ручной запуск из исходников без tools/)."""
-    candidate = base_dir / "tools" / "jre_minimal" / "bin" / "java.exe"
+    """Путь к java(.exe) внутри вшитого минимального JRE (см. tools/
+    jre_minimal/ на Windows, tools_mac/jre_minimal/ на macOS — см.
+    tools_mac/README.txt, та же команда jlink) — None, если почему-то
+    отсутствует (старая установка до появления этой функции, или ручной
+    запуск из исходников без tools/)."""
+    if sys.platform == "win32":
+        candidate = base_dir / "tools" / "jre_minimal" / "bin" / "java.exe"
+    else:
+        candidate = base_dir / "tools_mac" / "jre_minimal" / "bin" / "java"
     return candidate if candidate.exists() else None
 
 
 def find_apksigner_jar(base_dir: Path) -> Path | None:
-    candidate = base_dir / "tools" / "apksigner.jar"
+    tools_dir = "tools" if sys.platform == "win32" else "tools_mac"
+    candidate = base_dir / tools_dir / "apksigner.jar"
     return candidate if candidate.exists() else None
 
 

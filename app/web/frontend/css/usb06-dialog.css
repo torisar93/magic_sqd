@@ -1,4 +1,6 @@
 /* Native USB writer: no fabricated percentages; the worker supplies its log. */
+/* Тонкий скроллбар WebKit для этого диалога — общее правило теперь в
+   ui-lab.css (dialog::-webkit-scrollbar), тут только сама рамка/фон. */
 #usb-dialog.usb06-dialog{width:min(660px,calc(100vw - 40px));max-width:calc(100vw - 40px);max-height:calc(100vh - 40px);padding:26px;box-sizing:border-box;overflow:auto;background:radial-gradient(ellipse at 8% 0,#739d8930,transparent 70%),linear-gradient(145deg,#26353d,#19262e)!important;scrollbar-gutter:stable}
 #usb-dialog .usb06-dialog-heading{display:flex;align-items:center;gap:16px;margin:0 0 24px}
 #usb-dialog .usb06-dialog-heading h2{margin:0 0 6px;font-size:25px;line-height:1.25;letter-spacing:-.5px}

@@ -74,8 +74,13 @@ def _find_aapt(base_dir: Path) -> str | None:
     """В отличие от find_adb_path (app/adb_utils.py) НЕ откатываемся на
     голое имя из PATH — на технической машине aapt туда в принципе не
     ставят, лишний PATH-lookup на каждый некэшированный APK только вносит
-    задержку без шанса на успех."""
-    bundled = base_dir / "tools" / "aapt.exe"
+    задержку без шанса на успех. tools/aapt.exe на Windows, tools_mac/aapt
+    (Mach-O без расширения, из тех же build-tools Android SDK) на macOS —
+    см. tools_mac/README.txt."""
+    if sys.platform == "win32":
+        bundled = base_dir / "tools" / "aapt.exe"
+    else:
+        bundled = base_dir / "tools_mac" / "aapt"
     return str(bundled) if bundled.is_file() else None
 
 

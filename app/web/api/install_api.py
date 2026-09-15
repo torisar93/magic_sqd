@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
-                           list_devices, normalize_console_command, scan_for_adb_hosts,
+                           list_devices, normalize_console_command, scan_network_for_wifi_adb,
                            split_top_level_command)
 from ...content_sync import (fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
                              sync_model_subfolder, sync_shared_folder)
@@ -733,18 +733,24 @@ class InstallApi:
         ok = "connected to" in output.lower() or "already connected" in output.lower()
         return {"ok": ok, "auto": auto, "ip": ip, "message": output}
 
-    # Скан локальной подсети на открытый port — для случая, когда шлюз (см.
-    # wifi_connect выше) не помог: магнитола сама подключилась к сети/точке
-    # доступа ноутбука, поэтому IP не совпадает с гейтвеем. Синхронный, как и
-    # wifi_connect — JS-сторона (см. app.js:connectAdbWifi) ждёт результат,
-    # чтобы сразу показать список найденного техникy.
-    def scan_wifi(self, port: int) -> list[str]:
-        self._console_log(f"Сканирую локальную сеть на открытый порт {port}...")
-        found = scan_for_adb_hosts(port)
+    # Скан локальной подсети — для случая, когда шлюз (см. wifi_connect выше)
+    # не помог: магнитола сама подключилась к сети/точке доступа ноутбука,
+    # поэтому IP не совпадает с гейтвеем. Объединяет ping-скан, скан заданного
+    # порта и mDNS-резолв (см. scan_network_for_wifi_adb) — элементы либо
+    # голые IP (порт неизвестен), либо {"host":.., "port":..} с уже готовым
+    # портом (см. LabUI.connection в refinement05.js). Синхронный, как и
+    # wifi_connect — JS-сторона ждёт результат, чтобы сразу показать список
+    # найденного технику.
+    def scan_wifi(self, port: int) -> list:
+        self._console_log(f"Сканирую локальную сеть (порт {port}, ping, mDNS)...")
+        found = scan_network_for_wifi_adb(port)
         if found:
-            self._console_log(f"Найдены устройства с открытым портом {port}: {', '.join(found)}")
+            labels = [item if isinstance(item, str) else
+                      (f"{item['host']}:{item['port']}" if item.get('port') else item['host'])
+                      for item in found]
+            self._console_log(f"Найдены устройства: {', '.join(labels)}")
         else:
-            self._console_log(f"Не нашёл в сети устройств с открытым портом {port}.")
+            self._console_log("Не нашёл устройств в сети.")
         return found
 
     def start_stage(self, model_key: str, stage_index: int, device_serial: str | None,

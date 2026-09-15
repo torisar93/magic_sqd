@@ -3,6 +3,9 @@
 __pycache__/
 *.pyc
 
+# Мусор Finder на macOS
+.DS_Store
+
 # Артефакты сборки PyInstaller (пересобираются из magic_sqd.spec)
 build/
 dist/
@@ -19,6 +22,14 @@ tools/apksigner.jar
 # отдельная копия platform-tools под Windows 7-сборку (старее, см. tools_win7/README.txt)
 tools_win7/*.exe
 tools_win7/*.dll
+
+# platform-tools для macOS-сборки (adb/fastboot/aapt без расширения — Mach-O) +
+# минимальный JRE/apksigner.jar для переподписи APK, см. tools_mac/README.txt
+tools_mac/adb
+tools_mac/fastboot
+tools_mac/aapt
+tools_mac/jre_minimal/
+tools_mac/apksigner.jar
 
 # Служебные файлы Claude Code (локальные настройки/скиллы, не часть продукта)
 .claude/
