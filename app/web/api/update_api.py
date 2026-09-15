@@ -22,14 +22,17 @@ Inno Setup и одинаково понимают эти флаги."""
 from __future__ import annotations
 import concurrent.futures
 import json
+import platform
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from pathlib import Path
 
 from ..events import event_bridge
@@ -46,6 +49,12 @@ GITHUB_API_URL = "https://api.github.com/repos/torisar93/magic_sqd/releases"
 # OWN_SERVER_ASSET_NAME, для него версионировать нечего.
 _ASSET_RE = re.compile(r"^MagicSQD_Setup_\d+\.\d+\.\d+\.exe$", re.IGNORECASE)
 _ASSET_RE_WIN7 = re.compile(r"^MagicSQD_Setup_Win7_\d+\.\d+\.\d+\.exe$", re.IGNORECASE)
+# Имена из macos-arm64 job в .github/workflows/build-release.yml (см. её же
+# комментарий про то, что x86_64 собирается вручную, а не в CI) —
+# соответствующий .dmg подбирается по реальной архитектуре машины техника
+# (platform.machine() в __init__), не по одному фиксированному имени.
+_ASSET_RE_MAC_ARM64 = re.compile(r"^MagicSQD_\d+\.\d+\.\d+_arm64\.dmg$", re.IGNORECASE)
+_ASSET_RE_MAC_X64 = re.compile(r"^MagicSQD_\d+\.\d+\.\d+_x86_64\.dmg$", re.IGNORECASE)
 OWN_SERVER_ASSET_NAME = "MagicSQD_Setup.exe"
 REQUEST_TIMEOUT_SECONDS = 8
 DOWNLOAD_TIMEOUT_SECONDS = 60
@@ -68,14 +77,27 @@ class UpdateApi:
     def __init__(self, base_dir: Path, is_win7: bool = False):
         self.base_dir = base_dir
         self.is_win7 = is_win7
+        self.is_mac = sys.platform == "darwin"
         # Win7-сборка (см. installer_win7_x86.iss) публикует свой собственный
         # инсталлятор в том же GitHub-релизе, что и обычная сборка (см.
         # server/README.md §9 — один тег на цикл, три ассета). Свой сервер
         # (магазин content_config.get_download_base_url) зеркалирует ТОЛЬКО
         # обычную x64-сборку под фиксированным OWN_SERVER_ASSET_NAME (см.
         # server/backend.py:_handle_exe_upload) — для Win7 своего зеркала
-        # нет, поэтому этот источник ниже пропускается.
-        self._asset_re = _ASSET_RE_WIN7 if is_win7 else _ASSET_RE
+        # нет, поэтому этот источник ниже пропускается. macOS — та же idea:
+        # свой сервер зеркалирует только Windows x64, поэтому здесь тоже
+        # только GitHub (см. _check_own_server), а нужный .dmg выбирается по
+        # архитектуре ЭТОГО процесса — platform.machine() отражает то, ПОД
+        # ЧЕМ он реально исполняется прямо сейчас (для x86_64-сборки,
+        # запущенной под Rosetta на Apple Silicon, вернёт именно "x86_64",
+        # а не архитектуру самого железа) — то есть даёт ровно тот .dmg,
+        # который совместим с уже установленной копией.
+        if is_win7:
+            self._asset_re = _ASSET_RE_WIN7
+        elif self.is_mac:
+            self._asset_re = _ASSET_RE_MAC_X64 if platform.machine() == "x86_64" else _ASSET_RE_MAC_ARM64
+        else:
+            self._asset_re = _ASSET_RE
         self._installing = False
 
     # -- проверка -----------------------------------------------------------
@@ -94,7 +116,7 @@ class UpdateApi:
         return best
 
     def _check_own_server(self) -> dict | None:
-        if self.is_win7:
+        if self.is_win7 or self.is_mac:
             return None
         url = get_download_base_url(self.base_dir)
         if not url:
@@ -150,6 +172,20 @@ class UpdateApi:
     def install(self, download_url: str) -> dict:
         if self._installing:
             return {"ok": False, "error": "Обновление уже выполняется."}
+        if self.is_mac:
+            # Тихая переустановка ниже (_worker/_spawn_installer) — целиком
+            # про Inno Setup (.exe с /VERYSILENT, .bat-обёртка) и не имеет
+            # аналога для .dmg: подменить уже ЗАПУЩЕННЫЙ .app на диске —
+            # отдельная, рискованная задача (нет подписи/нотаризации, см.
+            # server/README.md, тем более не проверенная руками на реальном
+            # запущенном приложении), поэтому вместо тихой установки просто
+            # открываем .dmg в браузере — тот же путь, что и ручное скачивание
+            # с сайта, только без похода на сайт.
+            try:
+                webbrowser.open(download_url)
+            except Exception as exc:  # noqa: BLE001 - открытие ссылки не должно ронять программу
+                return {"ok": False, "error": f"Не удалось открыть ссылку на скачивание: {exc}"}
+            return {"ok": True, "manual": True}
         self._installing = True
         threading.Thread(target=self._worker, args=(download_url,), daemon=True).start()
         return {"ok": True}

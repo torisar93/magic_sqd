@@ -148,6 +148,82 @@ jobs:
           name: MagicSQD_Setup_Win7
           path: installer_output/MagicSQD_Setup_Win7_*.exe
 
+  # ARM64 (Apple Silicon) — собирается нативно на macos-15 (Apple Silicon
+  # раннер, см. github.com/actions/runner-images). Intel (x86_64) сюда
+  # намеренно не добавлен: GitHub больше не даёт стандартный Intel-раннер
+  # для macOS (только платный "large"/"-intel", может быть недоступен на
+  # обычном личном аккаунте даже для публичного репозитория) — Intel-сборка
+  # пока собирается вручную на реальном Mac через Rosetta (magic_sqd_mac.spec,
+  # тот же спек, что и здесь; см. память проекта/CLAUDE_MACBOOK_HANDOFF.md
+  # про lipo-шим, без которого PyInstaller не может "утоньшить" bootloader
+  # до x86_64 под Rosetta на этой машине).
+  macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      # См. комментарий в windows-desktop про env: вместо прямой подстановки
+      # ${{ secrets.X }} — та же самая правка/причина.
+      - name: Write local config files from secrets
+        env:
+          SERVER_JSON: ${{ secrets.MAGICSQD_SERVER_JSON }}
+          SUBMIT_JSON: ${{ secrets.MAGICSQD_SUBMIT_JSON }}
+          ADMIN_JSON: ${{ secrets.MAGICSQD_ADMIN_JSON }}
+        run: |
+          printf '%s' "$SERVER_JSON" > server.json
+          printf '%s' "$SUBMIT_JSON" > submit.json
+          printf '%s' "$ADMIN_JSON" > admin.json
+
+      # BUNDLE() в magic_sqd_mac.spec сам ад-хок подписывает получившийся
+      # .app (без этого macOS вообще отказывается запускать нативный
+      # arm64-бинарник) — полноценной подписи Developer ID/нотаризации пока
+      # нет (см. server/README.md), поэтому у техника при первом запуске
+      # будет предупреждение Gatekeeper "неизвестный разработчик" — снимается
+      # один раз через Настройки → Конфиденциальность и безопасность.
+      - name: PyInstaller build
+        run: python -m PyInstaller magic_sqd_mac.spec --noconfirm
+
+      # tools_mac/ (adb/fastboot/aapt + apksigner.jar/jre_minimal) — не в git
+      # (см. tools_mac/README.txt), тот же принцип, что и tools_x64.zip для
+      # Windows: собранный заранее архив лежит на своём сервере, качаем и
+      # распаковываем прямо внутрь .app/Contents/MacOS/ (см. main_web.py:
+      # get_base_dir — это ВСЕГДА папка рядом с исполняемым файлом).
+      - name: Restore tools_mac/ + cars/_shared (не в git, см. tools_mac/README.txt)
+        run: |
+          APP="dist/Magic SQD.app/Contents/MacOS"
+          curl -fsSL "https://magicsqd.ru/ci-tools/tools_mac.zip" -o tools_mac_ci.zip
+          mkdir -p "$APP/tools_mac"
+          unzip -q -o tools_mac_ci.zip -d "$APP/tools_mac"
+          chmod +x "$APP/tools_mac/adb" "$APP/tools_mac/fastboot" "$APP/tools_mac/aapt" "$APP/tools_mac/jre_minimal/bin/java"
+          mkdir -p "$APP/cars/_shared"
+          find cars/_shared -maxdepth 1 -type f -exec cp {} "$APP/cars/_shared/" \;
+
+      # Обычный .zip .app потерял бы бит исполняемости/атрибуты при
+      # скачивании через некоторые браузеры/облака — DMG (как и заказывал
+      # пользователь) переживает это надёжно, плюс даёт стандартный
+      # macOS-жест "перетащить в Programs" (см. Applications-симлинк).
+      # Без кастомного фона (стрелка/иконки) — добавится отдельно, когда
+      # будет готова картинка (см. чат/память проекта).
+      - name: Package DMG
+        run: |
+          VERSION=$(python3 -c "import re; print(re.search(r'APP_VERSION\s*=\s*\"([^\"]+)\"', open('app/version.py').read()).group(1))")
+          mkdir -p dmg_staging installer_output
+          cp -R "dist/Magic SQD.app" dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create -volname "Magic SQD" -srcfolder dmg_staging -ov -format UDZO "installer_output/MagicSQD_${VERSION}_arm64.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MagicSQD_macOS_arm64
+          path: installer_output/MagicSQD_*_arm64.dmg
+
   android:
     runs-on: ubuntu-latest
     steps:
@@ -214,7 +290,7 @@ jobs:
   # installer_win7_x86.iss (OutputBaseFilename) без каких-либо изменений.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows-desktop, windows-win7, android]
+    needs: [windows-desktop, windows-win7, macos-arm64, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -263,4 +339,10 @@ jobs:
           files: |
             artifacts/MagicSQD_Setup/MagicSQD_Setup_*.exe
             artifacts/MagicSQD_Setup_Win7/MagicSQD_Setup_Win7_*.exe
+            artifacts/MagicSQD_macOS_arm64/MagicSQD_*_arm64.dmg
             artifacts/MagicSQD_Android/MagicSQD_Android_*.apk
+          # Intel-сборка macOS (MagicSQD_X.Y.Z_x86_64.dmg) собирается вручную
+          # на реальном Mac через Rosetta (см. macos-arm64 job выше) и
+          # ЗАГРУЖАЕТСЯ ОТДЕЛЬНО в уже созданный релиз через
+          # `gh release upload vX.Y.Z installer_output/MagicSQD_*_x86_64.dmg`
+          # — этот workflow её не собирает и не ждёт.

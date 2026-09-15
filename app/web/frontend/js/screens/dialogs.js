@@ -796,6 +796,21 @@
       progressLabel.style.display = "";
       logEl.style.display = "";
       const result = await window.pywebview.api.update_install(downloadUrl);
+      if (result.ok && result.manual) {
+        // macOS (см. update_api.py:install) — тихой переустановки нет,
+        // update_install просто открыл .dmg в браузере и на этом всё:
+        // update_progress/update_finished тут не придут вообще (это не
+        // ошибка, скачивание и правда не начиналось на стороне программы),
+        // поэтому не ждём их — сразу показываем итог как есть.
+        installing = false;
+        installBtn.disabled = false;
+        installBtn.textContent = "Установить";
+        laterBtn.style.display = "";
+        progressTrack.style.display = "none";
+        progressLabel.style.display = "none";
+        log("Открыл страницу загрузки в браузере — скачайте и замените приложение в Программах вручную.");
+        return;
+      }
       if (!result.ok) {
         installing = false;
         installBtn.disabled = false;
