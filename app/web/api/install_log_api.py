@@ -13,14 +13,14 @@ class InstallLogApi:
         self.base_dir = base_dir
 
     def send(self, platform: str, brand: str, model: str, modification: str,
-              success: bool, log_text: str) -> dict:
+              success: bool, log_text: str, email: str | None = None) -> dict:
         config = get_submit_config(self.base_dir)
         if not config:
             return {"ok": False, "error": "submit.json не настроен"}
         client_id = get_or_create_client_id(self.base_dir)
         try:
             send_install_log(platform, brand, model, modification, success, log_text,
-                              client_id, config)
+                              client_id, config, email)
         except InstallLogError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}

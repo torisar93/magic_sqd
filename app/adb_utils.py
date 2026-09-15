@@ -227,7 +227,22 @@ class Adb:
             raise AdbError(f"Команда не ответила за {timeout} сек: {' '.join(cmd)}") from exc
 
         if check and result.returncode != 0:
-            raise AdbError(f"Команда завершилась с ошибкой ({result.returncode}): {' '.join(cmd)}")
+            # capture_output=True выше и так уже ловит stdout/stderr на КАЖДЫЙ
+            # вызов — раньше это просто никогда не читалось при ошибке, из-за
+            # чего в логе (и клиенту, и в присланном на сервер логе установки)
+            # был только код возврата и сама команда, без единого слова о
+            # РЕАЛЬНОЙ причине (device unauthorized, INSTALL_FAILED_*, нет
+            # места на флешке и т.п.) — реальный случай, RuStore не
+            # устанавливался ни одним способом, и по логу было невозможно
+            # понять почему. Комментарий выше про "стену текста" — про
+            # УСПЕШНЫЕ вызовы (там этот код не выполняется вообще), сюда не
+            # относится: ошибка и так уже прерывает установку одной строкой,
+            # добавить к ней реальную причину — чистый выигрыш, не шум.
+            detail = ((result.stdout or "") + (result.stderr or "")).strip()
+            message = f"Команда завершилась с ошибкой ({result.returncode}): {' '.join(cmd)}"
+            if detail:
+                message += f"\n{detail}"
+            raise AdbError(message)
         return result
 
     def shell(self, command: str, check=True, timeout=120):

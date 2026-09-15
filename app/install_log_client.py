@@ -17,7 +17,8 @@ class InstallLogError(RuntimeError):
 
 
 def send_install_log(platform: str, brand: str, model: str, modification: str,
-                      success: bool, log_text: str, client_id: str, config: SubmitConfig) -> None:
+                      success: bool, log_text: str, client_id: str, config: SubmitConfig,
+                      email: str | None = None) -> None:
     body = json.dumps({
         "platform": platform,
         "brand": brand,
@@ -26,6 +27,11 @@ def send_install_log(platform: str, brand: str, model: str, modification: str,
         "success": success,
         "log": log_text,
         "client_id": client_id,
+        # Почта аккаунта техника, если он был залогинен в момент установки
+        # (см. app/web/bridge.py: self.auth_email) — None, если анонимно, как
+        # и раньше. Позволяет в админке видеть, кто прислал лог, а не только
+        # непрозрачный client_id.
+        "email": email,
     }).encode("utf-8")
     request = urllib.request.Request(
         config.install_log_url,

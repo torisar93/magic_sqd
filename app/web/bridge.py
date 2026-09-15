@@ -226,7 +226,11 @@ class WebApi:
         self._install.mark_install_log_sent()
         threading.Thread(
             target=self._install_log.send,
-            args=(platform, brand, model, modification, success, log_text),
+            # self.auth_email — живое значение НА МОМЕНТ отправки (обновляется
+            # при входе/выходе, см. auth_login/auth_logout выше), не то, что
+            # было при старте программы. None, если техник не залогинен —
+            # анонимные логи по-прежнему работают как раньше.
+            args=(platform, brand, model, modification, success, log_text, self.auth_email),
             daemon=True,
         ).start()
 
@@ -241,7 +245,7 @@ class WebApi:
             return
         platform = "win7" if self.is_win7 else "windows"
         self._install_log.send(platform, pending["brand"], pending["model"],
-                                pending["modification"], False, pending["log_text"])
+                                pending["modification"], False, pending["log_text"], self.auth_email)
 
     # -- admin_api ------------------------------------------------------
     def admin_get_info(self) -> dict:
