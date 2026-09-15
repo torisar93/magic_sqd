@@ -60,6 +60,29 @@ _DEX_SHELL_ENTRY_CLASS = "MonjiShellInstaller"  # см. пояснение вы�
 _DEX_SHELL_INSTALL_FLAGS = 0x116
 
 
+class VersionDowngradeError(AdbError):
+    """PackageManager отклонил установку с INSTALL_FAILED_VERSION_DOWNGRADE —
+    на устройстве уже стоит версия с таким же или более высоким versionCode.
+    Отдельный тип (не голый AdbError) специально для install_apk_auto: реальный
+    случай (2026-09, Geely Cityray/Monji) — техник ставил APK постарее той,
+    что уже на магнитоле, install_apk_auto честно перебрал ВСЕ остальные
+    способы установки один за другим (все с тем же результатом или с CLSE —
+    сервис на этой платформе просто не поддерживается), и только в самом
+    конце показал длинный список из 5 разных ошибок вместо одной понятной
+    фразы "удалите старую версию". Смысла продолжать перебор нет — причина
+    отказа не в СПОСОБЕ установки, а в самой версии APK, и на любом другом
+    способе (если бы он вообще заработал на этой платформе) PackageManager
+    отказал бы точно так же."""
+
+
+_VERSION_DOWNGRADE_MARKER = "INSTALL_FAILED_VERSION_DOWNGRADE"
+
+
+def _raise_if_version_downgrade(text: str) -> None:
+    if _VERSION_DOWNGRADE_MARKER in text.upper():
+        raise VersionDowngradeError(text)
+
+
 def _check_pm_install_result(result) -> None:
     """pm install через adb shell (в отличие от "adb install" целиком) не
     всегда даёт надёжный код возврата — старые прошивки/adb используют shell
@@ -69,6 +92,7 @@ def _check_pm_install_result(result) -> None:
     нужно проверить именно вывод, а не полагаться на код возврата adb shell."""
     text = ((result.stdout or "") + (result.stderr or "")).strip()
     if "success" not in text.lower() or "failure" in text.lower():
+        _raise_if_version_downgrade(text)
         raise AdbError(text or "pm install не подтвердил успех (пустой вывод)")
 
 
@@ -171,7 +195,11 @@ class InstallContext:
     def install_apk(self, path, reinstall=True, extra_args=None, timeout=180):
         self.check_cancelled()
         self.log(f"Установка APK: {Path(path).name}")
-        return self._adb.install(path, reinstall=reinstall, extra_args=extra_args, timeout=timeout)
+        try:
+            return self._adb.install(path, reinstall=reinstall, extra_args=extra_args, timeout=timeout)
+        except AdbError as exc:
+            _raise_if_version_downgrade(str(exc))
+            raise
 
     def install_selected_apks(self, extra_args=None):
         for apk in self.selected_apks:
@@ -198,7 +226,10 @@ class InstallContext:
         self.check_cancelled()
         path = self._maybe_resign(path)
         if self._install_method is not None:
-            self._install_with_method(self._install_method, path, extra_args)
+            try:
+                self._install_with_method(self._install_method, path, extra_args)
+            except VersionDowngradeError:
+                raise InstallCancelled(self._version_downgrade_message(path))
             return
         errors = []
         order = range(len(_INSTALL_METHOD_LABELS))
@@ -207,6 +238,15 @@ class InstallContext:
         for method in order:
             try:
                 self._install_with_method(method, path, extra_args)
+            except VersionDowngradeError:
+                # Причина отказа не в способе установки, а в самой версии APK
+                # — дальше по списку способов пробовать бессмысленно, они
+                # либо не поддерживаются этой платформой вовсе (см. остальные
+                # ошибки в этом же переборе), либо упрутся в тот же самый
+                # INSTALL_FAILED_VERSION_DOWNGRADE. Понятное сообщение вместо
+                # длинного списка из N разных "не сработало" (см.
+                # VersionDowngradeError).
+                raise InstallCancelled(self._version_downgrade_message(path))
             except AdbError as exc:
                 errors.append(f"{_INSTALL_METHOD_LABELS[method]}: {exc}")
                 continue
@@ -218,6 +258,14 @@ class InstallContext:
         raise InstallCancelled(
             f"Не удалось установить {Path(path).name} ни одним из способов "
             "(adb install / pm install / pm install -S / localinstall.apk):\n" + "\n".join(errors)
+        )
+
+    @staticmethod
+    def _version_downgrade_message(path) -> str:
+        return (
+            f"На магнитоле уже установлена версия «{Path(path).name}» новее (или такая же), чем в этой "
+            "сборке — Android не позволяет тихо откатить версию назад. Удалите текущую версию приложения "
+            "на магнитоле вручную (через её диспетчер приложений) и запустите установку заново."
         )
 
     def _maybe_resign(self, path) -> Path:
@@ -430,6 +478,7 @@ class InstallContext:
             self.log(f"{path.name} уже был установлен, monji подтвердил успех повторной установки.")
             return
         else:
+            _raise_if_version_downgrade(text)
             raise AdbError(text or "dex-хелпер не подтвердил успех (пакет не появился в списке)")
         self._grant_all_permissions_if_available(package)
         self.shell(f"am force-stop {package}", check=False)

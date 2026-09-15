@@ -910,6 +910,16 @@
     wizardContentEl.appendChild(el("div", { class: "stage-loading" }, [modelSyncLabel, modelSyncBar]));
     renderNav();
     log(`Открыта модель: ${model.display_label}`);
+    // Диагностическая шапка лога установки (та же причина, что у десктопной
+    // версии — см. app/web/frontend/js/screens/stage_wizard.js: без версии
+    // программы и client_id в присылаемом на сервер логе установки
+    // невозможно понять, с какой сборки пришла жалоба техника). На Android
+    // раньше этой строки не было вовсе — версия/id только тут появились в
+    // "app_version" (см. WebBridge.kt).
+    try {
+      const info = Bridge.call("app_version", {});
+      log(`Magic SQD v${info.version} (Android) · client=${info.client_id}`);
+    } catch (e) { /* не критично для установки — просто не будет диагностической строки */ }
     Bridge.call("sync_model_payload", { model_key: model.key });
     pollSyncProgress("model", modelSyncLabel, "Скачиваю файлы модели с сервера...", modelSyncBar, modelSyncFill);
     Bridge.call("scanner_list_apks", {});

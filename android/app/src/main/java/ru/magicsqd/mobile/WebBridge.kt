@@ -124,11 +124,15 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             when (method) {
                 // versionName из PackageManager (см. build.gradle.kts) — само
                 // приложение раньше нигде не показывало свою версию, только
-                // Google Play/RuStore её знали (см. аудит проекта).
-                "app_version" -> JSONObject().put(
-                    "version",
-                    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
-                ).toString()
+                // Google Play/RuStore её знали (см. аудит проекта). client_id —
+                // тот же id, что уходит в install-логи (getOrCreateClientId) —
+                // чтобы диагностическая шапка лога установки (см. app.js:
+                // openModel) могла показать и версию, и id одним вызовом, как
+                // на десктопе (app/web/bridge.py: app_get_info).
+                "app_version" -> JSONObject()
+                    .put("version", context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?")
+                    .put("client_id", getOrCreateClientId())
+                    .toString()
                 "settings_info" -> settingsInfo().toString()
                 "settings_preferences" -> settingsPreferences().toString()
                 "settings_clear_cache" -> clearCache().toString()
