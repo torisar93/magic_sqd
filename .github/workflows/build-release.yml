@@ -209,15 +209,18 @@ jobs:
       # скачивании через некоторые браузеры/облака — DMG (как и заказывал
       # пользователь) переживает это надёжно, плюс даёт стандартный
       # macOS-жест "перетащить в Programs" (см. Applications-симлинк).
-      # Без кастомного фона (стрелка/иконки) — добавится отдельно, когда
-      # будет готова картинка (см. чат/память проекта).
+      # dmgbuild (не голый hdiutil) — пишет .DS_Store напрямую вместо
+      # автоматизации живого Finder, поэтому без гонки/пятисекундных задержек
+      # на раннере; фон/раскладка иконок — assets/dmg_background(@2x).png +
+      # scripts/dmg_settings.py (см. память проекта project_macos_dmg_packaging).
+      - name: Install dmgbuild (кастомный фон DMG)
+        run: pip install dmgbuild
+
       - name: Package DMG
         run: |
           VERSION=$(python3 -c "import re; print(re.search(r'APP_VERSION\s*=\s*\"([^\"]+)\"', open('app/version.py').read()).group(1))")
-          mkdir -p dmg_staging installer_output
-          cp -R "dist/Magic SQD.app" dmg_staging/
-          ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "Magic SQD" -srcfolder dmg_staging -ov -format UDZO "installer_output/MagicSQD_${VERSION}_arm64.dmg"
+          mkdir -p installer_output
+          dmgbuild -s scripts/dmg_settings.py -D app="dist/Magic SQD.app" "Magic SQD" "installer_output/MagicSQD_${VERSION}_arm64.dmg"
 
       - uses: actions/upload-artifact@v4
         with:

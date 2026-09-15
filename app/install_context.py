@@ -16,15 +16,16 @@ class InstallCancelled(RuntimeError):
 _INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm install -S (поток)",
                           "app_process + localinstall.apk (Chery DesaySV)",
                           "adb push + pm install -i (подмена установщика, Geely OneOS/NewEra)",
-                          "app_process + dex-хелпер (PackageInstaller.Session, Geely OneOS)")
-# Те же 6 способов, но короткими устойчивыми ключами — хранятся в
+                          "app_process + dex-хелпер (PackageInstaller.Session, Geely OneOS)",
+                          "adb install -g -t -d --install-reason 64 (Haval, «revived» ГУ)")
+# Те же способы, но короткими устойчивыми ключами — хранятся в
 # StepSpec.apps_install_method/_wizard_spec.json/stages.py (см.
 # car_generator.py) как явная подсказка "начни перебор с этого способа",
 # когда автор модели уже знает, какой из них рабочий на этой магнитоле
 # (не жёсткая привязка — если он всё-таки не сработает, install_apk_auto
 # просто пойдёт дальше по остальным способам в обычном порядке).
 INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "localinstall", "pm_install_spoofed",
-                        "dex_shell_install")
+                        "dex_shell_install", "adb_install_haval_revived")
 
 # Платформа Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
 # блокирует обычный "pm install" на уровне прошивки; единственный найденный
@@ -58,6 +59,20 @@ _DEX_SHELL_HELPER_NAME = "dex_shell_helper.dex"
 _DEX_SHELL_REMOTE_HELPER = "/data/local/tmp/dex_shell_helper.dex"
 _DEX_SHELL_ENTRY_CLASS = "MonjiShellInstaller"  # см. пояснение выше — имя из самого .dex
 _DEX_SHELL_INSTALL_FLAGS = 0x116
+
+# Некоторые новые магнитолы Haval (прошивка "headunit revived", моделей пока
+# нет в программе — способ добавлен заранее, чтобы можно было на него
+# сослаться в apps_install_method, когда модели появятся) отклоняют обычный
+# "adb install"/"adb install -r", но ставят APK с этим набором флагов —
+# подтверждено пользователем вручную: `adb install -g -r -t -d
+# --install-reason 64 "headunit revived.apk"`. -g — выдать все runtime-
+# разрешения из манифеста сразу, -t — разрешить тестовые пакеты, -d —
+# разрешить установку версии старше уже стоящей (downgrade), --install-reason
+# 64 — код причины установки, с которым эта прошивка соглашается (обычная
+# установка без него отклоняется). -r (переустановка) добавляется отдельно
+# самим install_apk (reinstall=True по умолчанию), здесь его дублировать не
+# нужно.
+_HAVAL_REVIVED_EXTRA_ARGS = ("-g", "-t", "-d", "--install-reason", "64")
 
 
 class VersionDowngradeError(AdbError):
@@ -304,6 +319,8 @@ class InstallContext:
             self.install_apk_pm_spoofed(path, extra_args=extra_args)
         elif method == 5:
             self.install_apk_dex_shell(path)
+        elif method == 6:
+            self.install_apk_haval_revived(path, extra_args=extra_args)
         else:
             self.install_apk_localinstall(path)
 
@@ -369,6 +386,17 @@ class InstallContext:
             self.log("Флаг -i отклонён этой прошивкой — пробую pm install без подмены установщика")
             result = self.shell(f"pm install -t -g -r {quoted_remote_path}{extra}", check=False)
         _check_pm_install_result(result)
+
+    def install_apk_haval_revived(self, path, extra_args=None) -> None:
+        """"adb install" с флагами -g -t -d --install-reason 64 — см.
+        _HAVAL_REVIVED_EXTRA_ARGS выше за обоснованием и происхождением
+        флагов. В отличие от localinstall/dex_shell (отдельный протокол
+        через app_process), это обычный install_apk — просто с другим
+        набором флагов, поэтому реализован тонкой обёрткой поверх него."""
+        flags = list(_HAVAL_REVIVED_EXTRA_ARGS)
+        if extra_args:
+            flags += list(extra_args)
+        self.install_apk(path, extra_args=flags)
 
     def _installed_packages(self) -> set[str]:
         result = self.shell("pm list packages", check=False)

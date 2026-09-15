@@ -190,6 +190,48 @@ fun installApkOverAdb(
 }
 
 /**
+ * Тот же push, что и installApkOverAdb, но `pm install -r -g -t -d
+ * --install-reason 64 <path>` — некоторые новые магнитолы Haval (прошивка
+ * "headunit revived", моделей пока нет в программе — способ добавлен
+ * заранее) отклоняют обычный "pm install -r", но ставят APK с этим набором
+ * флагов (desktop-версия: app/install_context.py:
+ * install_apk_haval_revived, там же обоснование каждого флага — подтверждено
+ * пользователем вручную командой `adb install -g -r -t -d --install-reason
+ * 64 "headunit revived.apk"`).
+ */
+fun installApkHavalRevivedOverAdb(
+    transport: AdbTransport,
+    apkBytes: ByteArray,
+    remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
+    log: (String) -> Unit,
+): AdbInstallResult {
+    AdbInstallProgress.beginTransfer(apkBytes.size.toLong())
+    when (val pushResult = syncPushBytes(transport, apkBytes, remotePath, log)) {
+        is AdbPushResult.Failed -> return AdbInstallResult.Failed(pushResult.reason)
+        AdbPushResult.Success -> {}
+    }
+    log("Файл записан на устройство. Запускаю pm install -r -g -t -d --install-reason 64 $remotePath ...")
+    AdbInstallProgress.installing()
+
+    val installResult = runAdbShellCommand(
+        transport, "pm install -r -g -t -d --install-reason 64 $remotePath", log, timeoutMs = 120000
+    )
+    val pmOutput = when (installResult) {
+        is AdbShellResult.Output -> installResult.text
+        is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install отклонён: ${installResult.reason}")
+        is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install ошибка: ${installResult.reason}")
+    }
+
+    runAdbShellCommand(transport, "rm -f $remotePath", log) // best effort, на результат не влияет
+
+    return if (pmOutput.contains("Success", ignoreCase = true)) {
+        AdbInstallResult.Success(pmOutput.trim())
+    } else {
+        AdbInstallResult.Failed("pm install не вернул Success: ${pmOutput.trim()}")
+    }
+}
+
+/**
  * Тот же push, что и installApkOverAdb, но `pm install -i
  * com.android.packageinstaller -t -g -r <path>` — подмена "личности"
  * установщика под системный Package Installer, портировано 1:1 из

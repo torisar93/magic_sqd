@@ -214,6 +214,7 @@ class InstallEngine(
                 AdbSession.installApkDexShell(bytes, currentApkName, helper.readBytes(), methodLog)
             }
         },
+        "adb_install_haval_revived" to AdbSession::installApkHavalRevived,
     )
 
     /** Устанавливает список APK (по абсолютным локальным путям) по очереди,

@@ -169,6 +169,9 @@ object AdbSession {
     fun installApkSpoofed(bytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
         installApkSpoofedOverAdb(requireTransport(), bytes, log = log)
 
+    fun installApkHavalRevived(bytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
+        installApkHavalRevivedOverAdb(requireTransport(), bytes, log = log)
+
     fun installApkLocalinstall(bytes: ByteArray, helperBytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
         installApkViaLocalinstall(requireTransport(), bytes, helperBytes, log = log)
 
