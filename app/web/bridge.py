@@ -6,6 +6,7 @@ JSON-совместимые dict/list/str/bool/number/None. Каждая гру�
 существующий бизнес-код (scanner.py, runner.py, ...) — см. критичные файлы в
 плане миграции."""
 from __future__ import annotations
+import sys
 import threading
 from pathlib import Path
 
@@ -39,6 +40,7 @@ class WebApi:
         # дорогой per-frame эффект, которого WebView2-сборка не замечает
         # только благодаря аппаратному ускорению).
         self.is_win7 = is_win7
+        self.is_mac = sys.platform == "darwin"
         self.cars_dir = base_dir / "cars"
         self.apk_dir = base_dir / "apk"
         self.adb_path = find_adb_path(base_dir)
@@ -233,6 +235,20 @@ class WebApi:
         return self._report.send(brand, model, reason, description)
 
     # -- install_log_api --------------------------------------------------
+    def _install_log_platform(self) -> str:
+        """"windows"/"win7"/"macos" — раньше тут было только "win7"/
+        "windows" (написано до macOS-порта), из-за чего установки с Mac
+        уходили в админку ПОМЕЧЕННЫМИ КАК WINDOWS (не терялись, а просто
+        неверно подписывались — реальный найденный случай при разборе
+        логов в админке). Значение "android" сюда не попадает — Android
+        шлёт свои логи отдельно (см. android/.../install_log_bridge.py),
+        этот класс — только desktop-сборки."""
+        if self.is_win7:
+            return "win7"
+        if self.is_mac:
+            return "macos"
+        return "windows"
+
     def install_log_send(self, brand: str, model: str, modification: str,
                           success: bool, log_text: str) -> None:
         # Фоновым потоком и без возврата результата в JS (тот и не ждёт
@@ -240,7 +256,7 @@ class WebApi:
         # время, а это должно происходить незаметно, не задерживая ничего в
         # интерфейсе (в отличие от report_send, где отправка — явное действие
         # с "Отправка..." в диалоге и есть что ждать).
-        platform = "win7" if self.is_win7 else "windows"
+        platform = self._install_log_platform()
         # Помечаем сессию отправленной СРАЗУ, а не после ответа сети —
         # аварийная отправка того же самого при закрытии окна (см.
         # flush_abandoned_install_log) была бы хуже, чем редкая потеря одной
@@ -265,7 +281,7 @@ class WebApi:
         pending = self._install.pending_session_log()
         if pending is None:
             return
-        platform = "win7" if self.is_win7 else "windows"
+        platform = self._install_log_platform()
         self._install_log.send(platform, pending["brand"], pending["model"],
                                 pending["modification"], False, pending["log_text"], self.auth_email)
 

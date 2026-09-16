@@ -26,7 +26,17 @@ private const val WRITE_CHUNK_SIZE = 4 * 1024 * 1024
 // (сама рекомендация "reattach" — это то, что ПОМОГАЕТ вручную, а не то,
 // что строго обязательно: повторная попытка с нуля даёт шине шанс
 // восстановиться без ручного вмешательства).
-private const val WRITE_RETRY_ATTEMPTS = 3
+// ДОБАВЛЕНО ПОЗЖЕ: реальный случай на клиенте (install_logs, v1.0.0) —
+// файл 211МБ упал с этой же ошибкой, и весь usb-этап провалился даже
+// после нескольких попыток БЕЗ паузы между ними. UsbFlashFormat.kt (см.
+// writeWithRetry там же) для точно такой же ошибки уже делает
+// Thread.sleep(300) между попытками — "дать устройству прийти в себя" — а
+// здесь этой паузы не было вовсе, упущение при переносе того же приёма в
+// отдельный файл. Добавили ту же паузу и подняли число попыток — на
+// большом файле шанс словить временный сбой шины выше, чем на команде
+// форматирования, которая работает с одним сектором.
+private const val WRITE_RETRY_ATTEMPTS = 5
+private const val WRITE_RETRY_DELAY_MS = 300L
 
 /**
  * Пишет один локальный файл на смонтированную флешку по относительному
@@ -78,6 +88,7 @@ fun writeFileToUsb(fs: FileSystem, localFile: File, destRelativePath: String, lo
             if (attempt < WRITE_RETRY_ATTEMPTS) {
                 log("Сбой записи $destRelativePath (попытка $attempt/$WRITE_RETRY_ATTEMPTS): " +
                     "${e.message}. Повторяю...")
+                Thread.sleep(WRITE_RETRY_DELAY_MS)
             }
         }
     }
