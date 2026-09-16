@@ -12,7 +12,9 @@ magic_sqd.spec)."""
 from __future__ import annotations
 import ssl
 import os
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -447,6 +449,21 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     events.set_window(window)
     events.event_bridge.start_pump()
 
+    # pywebview с private_mode=True и БЕЗ явного storage_path сам вычисляет
+    # cache_dir как tempfile.TemporaryDirectory().name (см. webview/platforms/
+    # winforms.py:init_storage) — берёт только .name и тут же теряет ссылку
+    # на сам объект TemporaryDirectory, а у него есть finalizer, который
+    # удаляет папку при сборке мусора. В CPython это может сработать (через
+    # refcounting) почти сразу же, ДО того как WebView2 успеет создать в ней
+    # свои файлы профиля — реальный найденный случай: интерфейс на части
+    # запусков рендерился с пустыми/съехавшими блоками СЛУЧАЙНО, без единой
+    # ошибки в debug_all.log (там только наши js_api-вызовы, до этой гонки
+    # внутри самого pywebview/WinForms он не достаёт). Явный storage_path
+    # (сделанный через mkdtemp, у которого никакого finalizer нет) убирает
+    # эту гонку полностью, сохраняя тот же смысл private_mode — свежий
+    # профиль на каждый запуск, чистим сами после закрытия окна.
+    webview2_storage = Path(tempfile.mkdtemp(prefix="magicsqd_webview2_"))
+
     _log_step("webview.start()")
     try:
         webview.start(
@@ -461,10 +478,12 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
             # залипал на старых локальных CSS/JS между обновлениями. Для
             # установщика важнее всегда открыть актуальный интерфейс.
             private_mode=True,
+            storage_path=str(webview2_storage),
             **({"gui": renderer["gui"]} if renderer["gui"] else {}),
         )
     finally:
         _log_step("webview.start() returned (normal close)")
+        shutil.rmtree(webview2_storage, ignore_errors=True)
         # adb.exe запускает свой собственный фоновый сервер-процесс при
         # первом обращении (adb devices/connect/...) и живёт отдельно от
         # клиентских вызовов — без явного "adb kill-server" он остаётся в
