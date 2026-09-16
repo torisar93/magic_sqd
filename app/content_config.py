@@ -24,9 +24,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .platform_paths import bundled_tools_root
+
 
 def _read_server_json(base_dir: Path) -> dict:
-    path = base_dir / "server.json"
+    # На macOS server.json кладётся PyInstaller-ом в Contents/Resources/ (см.
+    # datas= в magic_sqd_mac.spec), а не рядом с исполняемым файлом
+    # (Contents/MacOS/) — та же причина, что и у tools_mac/, см.
+    # bundled_tools_root. На Windows/при запуске из исходников это то же
+    # самое, что base_dir.
+    path = bundled_tools_root(base_dir) / "server.json"
     if not path.exists():
         return {}
     try:

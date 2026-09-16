@@ -18,6 +18,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .platform_paths import bundled_tools_root
+
 
 @dataclass
 class SubmitConfig:
@@ -65,7 +67,10 @@ class SubmitConfig:
 
 
 def get_submit_config(base_dir: Path) -> SubmitConfig | None:
-    path = base_dir / "submit.json"
+    # На macOS submit.json лежит в Contents/Resources/ (см. datas= в
+    # magic_sqd_mac.spec), не рядом с исполняемым файлом — см.
+    # app/content_config.py:_read_server_json за тем же паттерном.
+    path = bundled_tools_root(base_dir) / "submit.json"
     if not path.exists():
         return None
     try:

@@ -14,9 +14,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .platform_paths import bundled_tools_root
+
 
 def get_admin_base_url(base_dir: Path) -> str | None:
-    path = base_dir / "admin.json"
+    # На macOS admin.json лежит в Contents/Resources/ (см. datas= в
+    # magic_sqd_mac.spec), не рядом с исполняемым файлом — см.
+    # app/content_config.py:_read_server_json за тем же паттерном.
+    # admin_saved_login.json ниже — наоборот, пишем/читаем рядом с exe как и
+    # раньше: это runtime-файл самой программы, а не файл из сборки.
+    path = bundled_tools_root(base_dir) / "admin.json"
     if not path.exists():
         return None
     try:
