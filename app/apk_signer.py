@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 from .adb_utils import CREATE_NO_WINDOW
+from .platform_paths import bundled_tools_root
 
 
 class ApkSignError(RuntimeError):
@@ -37,13 +38,15 @@ def find_java_path(base_dir: Path) -> Path | None:
     if sys.platform == "win32":
         candidate = base_dir / "tools" / "jre_minimal" / "bin" / "java.exe"
     else:
-        candidate = base_dir / "tools_mac" / "jre_minimal" / "bin" / "java"
+        candidate = bundled_tools_root(base_dir) / "tools_mac" / "jre_minimal" / "bin" / "java"
     return candidate if candidate.exists() else None
 
 
 def find_apksigner_jar(base_dir: Path) -> Path | None:
-    tools_dir = "tools" if sys.platform == "win32" else "tools_mac"
-    candidate = base_dir / tools_dir / "apksigner.jar"
+    if sys.platform == "win32":
+        candidate = base_dir / "tools" / "apksigner.jar"
+    else:
+        candidate = bundled_tools_root(base_dir) / "tools_mac" / "apksigner.jar"
     return candidate if candidate.exists() else None
 
 

@@ -193,17 +193,47 @@ jobs:
       # tools_mac/ (adb/fastboot/aapt + apksigner.jar/jre_minimal) — не в git
       # (см. tools_mac/README.txt), тот же принцип, что и tools_x64.zip для
       # Windows: собранный заранее архив лежит на своём сервере, качаем и
-      # распаковываем прямо внутрь .app/Contents/MacOS/ (см. main_web.py:
-      # get_base_dir — это ВСЕГДА папка рядом с исполняемым файлом).
-      - name: Restore tools_mac/ + cars/_shared (не в git, см. tools_mac/README.txt)
+      # Кладём В Contents/Resources/, а НЕ в Contents/MacOS/ (где живёт
+      # base_dir=get_base_dir(), "папка рядом с исполняемым файлом") — см.
+      # app/platform_paths.py:bundled_tools_root за полным обоснованием:
+      # codesign не может запечатать бандл, если среди файлов НАПРЯМУЮ
+      # внутри Contents/MacOS/ есть хоть один обычный (не Mach-O) файл —
+      # реальный случай, "приложение повреждено" при попытке открыть
+      # установленную из DMG копию (codesign --verify: "a sealed resource is
+      # missing or invalid", воспроизведено на минимальном тестовом .app с
+      # одним лишним .txt прямо в Contents/MacOS/). Resources/ — та же
+      # папка, куда PyInstaller BUNDLE() сам кладёт datas= из .spec (см.
+      # main_web.py:get_frontend_dir, sys._MEIPASS) — там подпись всегда
+      # проходит чисто. cars/_shared сюда НЕ кладём вовсе (раньше клали) —
+      # sync_scripts() и так перезаписывает её заново при КАЖДОМ запуске
+      # программы (см. content_sync.py), предзаполнять нечем: то же самое
+      # значение появится само на первом же старте, сетевой доступ для
+      # этого уже требуется (общий каталог моделей тоже качается тогда же).
+      - name: Restore tools_mac/ (не в git, см. tools_mac/README.txt)
         run: |
-          APP="dist/Magic SQD.app/Contents/MacOS"
+          APP="dist/Magic SQD.app/Contents/Resources"
           curl -fsSL "https://magicsqd.ru/ci-tools/tools_mac.zip" -o tools_mac_ci.zip
           mkdir -p "$APP/tools_mac"
           unzip -q -o tools_mac_ci.zip -d "$APP/tools_mac"
           chmod +x "$APP/tools_mac/adb" "$APP/tools_mac/fastboot" "$APP/tools_mac/aapt" "$APP/tools_mac/jre_minimal/bin/java"
-          mkdir -p "$APP/cars/_shared"
-          find cars/_shared -maxdepth 1 -type f -exec cp {} "$APP/cars/_shared/" \;
+
+      # BUNDLE() в magic_sqd_mac.spec уже подписал .app ад-хок ДО этого шага
+      # — добавление файлов выше внутрь уже запечатанного бандла требует
+      # переподписи. Сначала подписываем каждый вложенный Mach-O-бинарник
+      # ОТДЕЛЬНО (--deep на весь бандл разом падает на не-Mach-O файлах
+      # внутри tools_mac/jre_minimal — политики/лицензии JRE, тоже
+      # воспроизведено и понято на минимальном тесте), потом сам .app —
+      # подпись остаётся неполноценной (нет Developer ID/нотаризации, см.
+      # server/README.md), но теперь хотя бы соответствует содержимому.
+      - name: Re-sign .app after adding tools_mac
+        run: |
+          find "dist/Magic SQD.app/Contents/Resources/tools_mac" -type f | while read -r f; do
+            if file "$f" | grep -q "Mach-O"; then
+              codesign --force --sign - "$f"
+            fi
+          done
+          codesign --force --sign - "dist/Magic SQD.app"
+          codesign --verify --deep --strict "dist/Magic SQD.app"
 
       # Обычный .zip .app потерял бы бит исполняемости/атрибуты при
       # скачивании через некоторые браузеры/облака — DMG (как и заказывал

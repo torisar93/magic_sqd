@@ -39,6 +39,7 @@ import zipfile
 from pathlib import Path
 
 from .content_config import get_base_url
+from .platform_paths import bundled_tools_root
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
@@ -80,7 +81,7 @@ def _find_aapt(base_dir: Path) -> str | None:
     if sys.platform == "win32":
         bundled = base_dir / "tools" / "aapt.exe"
     else:
-        bundled = base_dir / "tools_mac" / "aapt"
+        bundled = bundled_tools_root(base_dir) / "tools_mac" / "aapt"
     return str(bundled) if bundled.is_file() else None
 
 

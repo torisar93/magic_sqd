@@ -10,18 +10,20 @@ import time
 from pathlib import Path
 
 from . import mdns_scan
+from .platform_paths import bundled_tools_root
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 def find_adb_path(base_dir: Path) -> str:
     """Ищет adb сначала в tools/ (Windows, adb.exe) или tools_mac/ (macOS,
-    Mach-O без расширения — см. tools_mac/README.txt) рядом с приложением,
-    потом в PATH."""
+    Mach-O без расширения — см. tools_mac/README.txt) рядом с приложением
+    (на macOS — см. platform_paths.bundled_tools_root за тем, почему НЕ
+    прямо рядом), потом в PATH."""
     if sys.platform == "win32":
         bundled = base_dir / "tools" / "adb.exe"
     else:
-        bundled = base_dir / "tools_mac" / "adb"
+        bundled = bundled_tools_root(base_dir) / "tools_mac" / "adb"
     if bundled.exists():
         return str(bundled)
     return "adb"
