@@ -92,6 +92,28 @@ class WebApi:
             "app_version": APP_VERSION,
         }
 
+    def client_log_error(self, message: str, stack: str = "") -> None:
+        """window.onerror/unhandledrejection в app.js шлют сюда любую
+        необработанную JS-ошибку (см. events.js/app.js) — раньше такие
+        ошибки были видны ТОЛЬКО в DevTools, которую обычный техник открыть
+        не может (F12 в обычной сборке не работает), и даже DEBUG_LOG_ALL
+        (см. main_web.py:_enable_debug_log_all) их не ловил — он оборачивает
+        только сами js_api-методы, а не то, что происходит на стороне JS
+        ДО или ПОМИМО вызова моста. Пишем в отдельный файл ВСЕГДА (не только
+        при включённом подробном логировании) — разовая JS-ошибка достаточно
+        редкое и важное событие, чтобы не требовать заранее включённой
+        диагностики, чтобы её поймать."""
+        try:
+            log_path = self.base_dir / "js_errors.log"
+            with open(log_path, "a", encoding="utf-8") as f:
+                import time
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+                if stack:
+                    f.write(f"{stack}\n")
+                f.write("---\n")
+        except OSError:
+            pass
+
     # -- sync_api -----------------------------------------------------------
     def sync_startup(self) -> dict:
         return self._sync.startup_sync()

@@ -13,6 +13,7 @@ from __future__ import annotations
 import ssl
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import time
@@ -214,6 +215,28 @@ def get_webview_profile_dir(base_dir: Path) -> Path:
     if local_app_data:
         return Path(local_app_data) / "MagicSQD" / "webview_profile"
     return base_dir / "webview_profile"
+
+
+def _pick_safe_http_port() -> int:
+    """pywebview (http_server=True, без явного http_port) сам выбирает
+    порт для своего локального сервера через random.randint(1023, 65535)
+    (см. webview/http.py:_get_random_port) — ничего не зная про список
+    "небезопасных" портов Chromium (net/base/port_util.cc: 6000, 6566,
+    6665-6669, 6697, 10080 и др. — исторически связанные с другими
+    протоколами, IRC и т.п.). Если пал на такой порт — WebView2 отказывается
+    открывать страницу вообще (ERR_UNSAFE_PORT), окно остаётся пустым/со
+    страницей ошибки. Реальный подтверждённый случай — интерфейс ломался
+    СЛУЧАЙНО на части запусков без единой ошибки в нашем логе (сама
+    Chromium-проверка происходит до того, как наш код вообще получает
+    управление). OS-диапазон динамических/эфемерных портов (49152-65535,
+    IANA) целиком выше всех известных "небезопасных" портов Chromium —
+    привязка к порту 0 и чтение назначенного ОС порта гарантированно
+    остаётся в этом диапазоне, тот же стандартный приём, что и везде для
+    "выдай мне свободный порт", без необходимости дублировать список
+    Chromium вручную."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 def _set_dpi_aware():
@@ -474,6 +497,14 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
             # после обновления; отдельный локальный origin корректно
             # инвалидирует эти ресурсы и не открывает приложение в сеть.
             http_server=True,
+            # Без этого pywebview сам выбирает порт случайно на всём
+            # диапазоне 1023-65535 (см. _pick_safe_http_port выше) — и
+            # изредка попадает на порт из "чёрного списка" Chromium
+            # (ERR_UNSAFE_PORT), тогда WebView2 отказывается открывать
+            # страницу вообще. Подтверждённый реальный случай — окно
+            # показывало "Не удаётся открыть эту страницу" на порте 6668
+            # (диапазон IRC, 6665-6669, в списке небезопасных у Chromium).
+            http_port=_pick_safe_http_port(),
             # Постоянный профиль не дал выигрыша в скорости, но на практике
             # залипал на старых локальных CSS/JS между обновлениями. Для
             # установщика важнее всегда открыть актуальный интерфейс.
