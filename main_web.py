@@ -217,6 +217,26 @@ def get_webview_profile_dir(base_dir: Path) -> Path:
     return base_dir / "webview_profile"
 
 
+def _raise_http_server_backlog() -> None:
+    """socketserver.TCPServer.request_queue_size (очередь ещё НЕ принятых
+    подключений на уровне ОС/сокета) по умолчанию в CPython равен 5 — это
+    и есть request_queue_size у WSGIServer, на котором стоит локальный
+    сервер pywebview (webview/http.py: ThreadedAdapter/WSGIServer). index.
+    html сейчас разом запрашивает 35 файлов (было 19 на момент появления
+    http_server=True в v0.5.8 — см. историю коммитов) — WebView2/Chromium
+    открывает НЕСКОЛЬКО соединений на источник параллельно, и когда их
+    одновременно в очереди оказывается больше 5, лишние получают
+    net::ERR_CONNECTION_REFUSED (подтверждено скриншотом DevTools: стабильно
+    несколько CSS падают с этой ошибкой на КАЖДОМ запуске, не только
+    изредка). Раньше при 19 файлах очередь из 5 обычно не успевала
+    заполниться (WSGIRequestHandler отрабатывает быстро), сейчас — почти
+    всегда переполняется. Поднимаем лимит с большим запасом (Windows
+    допускает SOMAXCONN значительно выше) ДО того как локальный сервер
+    стартует — сам класс общий на процесс, других TCPServer тут нет."""
+    import socketserver
+    socketserver.TCPServer.request_queue_size = 128
+
+
 def _start_local_http_server_ready(frontend_url: str, port: int, timeout: float = 5.0) -> None:
     """pywebview с http_server=True сам стартует свой локальный сервер в
     ФОНОВОМ потоке (см. webview/http.py:BottleServer.start_server —
@@ -517,6 +537,7 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     # профиль на каждый запуск, чистим сами после закрытия окна.
     webview2_storage = Path(tempfile.mkdtemp(prefix="magicsqd_webview2_"))
 
+    _raise_http_server_backlog()
     http_port = _pick_safe_http_port()
     _log_step(f"starting local http server on port {http_port} and waiting for it to be ready")
     _start_local_http_server_ready(str(frontend_dir / "index.html"), http_port)
