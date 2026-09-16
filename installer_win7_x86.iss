@@ -20,7 +20,7 @@
 ; crash.log, докачанный контент cars/apk через content_sync.py).
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.10.7"
+#define MyAppVersion "0.10.8"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -53,6 +53,16 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Создать значок на рабочем столе"; GroupDescription: "Дополнительные значки:"
+
+[InstallDelete]
+; См. installer.iss — тот же PyInstaller 6+ onedir и тот же баг: [Files]
+; ниже никогда не удаляет файлы, которых больше нет в новой версии, из-за
+; чего автообновление годами копило в _internal\ старые .js/.css от прошлых
+; переделок интерфейса. Пользовательские данные лежат рядом с _internal, не
+; внутри него — удалять эту папку целиком перед установкой безопасно.
+Type: filesandordirs; Name: "{app}\_internal"
+; Плоская раскладка эпохи до PyInstaller 6 — на случай очень старых машин.
+Type: filesandordirs; Name: "{app}\app"
 
 [Files]
 ; См. installer.iss — та же причина: content_sync.py докачивает apk/

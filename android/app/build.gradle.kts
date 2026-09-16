@@ -23,8 +23,8 @@ android {
         applicationId = "ru.magicsqd.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 61
-        versionName = "0.10.7"
+        versionCode = 62
+        versionName = "0.10.8"
 
         ndk {
             // arm64-v8a/armeabi-v7a — реальные телефоны; x86_64 — эмулятор для UI-отладки

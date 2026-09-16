@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "0.10.7"
+#define MyAppVersion "0.10.8"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -42,6 +42,27 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Создать значок на рабочем столе"; GroupDescription: "Дополнительные значки:"
+
+[InstallDelete]
+; PyInstaller 6+ onedir кладёт ВЕСЬ код и app/web/frontend/ в _internal/
+; рядом с exe (см. main_web.py: get_frontend_dir), а не прямо в {app} —
+; [Files] ниже копирует/перезаписывает файлы поверх при каждой установке
+; (в т.ч. при тихом автообновлении, см. app/web/api/update_api.py), но
+; НИКОГДА не удаляет файлы, которых больше нет в новой версии (штатное
+; поведение Inno Setup, не баг с нашей стороны). Реальный найденный случай:
+; несколько переделок интерфейса подряд оставляли в _internal\app\web\
+; frontend\ старые .js/.css от предыдущих версий на машине, обновлявшейся
+; через автообновление год за годом — сломанный интерфейс ("Обновление
+; снова сломало интерфейс, чистая установка в порядке" — на чистой
+; установке этого мусора просто неоткуда взяться). Пользовательские данные
+; (cars/, apk/, *.json конфиги, логи, admin_saved_login.json) лежат РЯДОМ
+; с {app}\_internal, не внутри него (см. get_base_dir) — полностью удалять
+; эту папку перед каждой установкой безопасно и не трогает их.
+Type: filesandordirs; Name: "{app}\_internal"
+; На случай машин, обновляющихся ещё с эпохи ДО PyInstaller 6 (плоская
+; раскладка, без _internal\) — та же папка могла остаться прямо в {app}\app.
+; Не мешает: если её нет, Inno Setup просто пропускает пункт без ошибки.
+Type: filesandordirs; Name: "{app}\app"
 
 [Files]
 ; apk/ (общая библиотека APK) и cars/*/files, cars/*/usb_files (payload
