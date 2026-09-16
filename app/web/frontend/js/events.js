@@ -49,8 +49,20 @@
     }
   }
   window.addEventListener("error", (e) => {
+    // Ошибки ЗАГРУЗКИ ресурса (<script src>/<link href>/<img> не нашли
+    // файл, сеть оборвалась и т.п.) не всплывают до window — событие
+    // "error" на них видно ТОЛЬКО в фазе capture, на самом элементе (см.
+    // MDN: GlobalEventHandlers/error). Без capture:true этот обработчик
+    // ловил только настоящие JS runtime-ошибки, а сломанную/пропавшую
+    // css/js-подгрузку — никогда. e.target — DOM-элемент только для
+    // ошибок загрузки ресурса; у обычной JS-ошибки e.target === window.
+    if (e.target && e.target !== window) {
+      const el = e.target;
+      sendError(`resource load failed: <${el.tagName}> ${el.src || el.href || ""}`, "");
+      return;
+    }
     sendError(String(e.message || e.error || "unknown error"), e.error && e.error.stack || "");
-  });
+  }, true);
   window.addEventListener("unhandledrejection", (e) => {
     const reason = e.reason;
     sendError("unhandledrejection: " + String(reason && reason.message || reason),
