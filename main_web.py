@@ -217,6 +217,36 @@ def get_webview_profile_dir(base_dir: Path) -> Path:
     return base_dir / "webview_profile"
 
 
+def _start_local_http_server_ready(frontend_url: str, port: int, timeout: float = 5.0) -> None:
+    """pywebview с http_server=True сам стартует свой локальный сервер в
+    ФОНОВОМ потоке (см. webview/http.py:BottleServer.start_server —
+    server.thread.start(), без какого-либо ожидания) и сразу возвращает
+    управление — WinForms/WebView2 в основном потоке почти сразу после
+    этого начинает грузить index.html и все 20+ <link>/<script> из <head>.
+    Реальный подтверждённый случай (скриншот DevTools, вкладка Console):
+    первые несколько CSS/JS падали с net::ERR_CONNECTION_REFUSED — сам
+    сервер ещё не успел забиндиться на порт к этому моменту. Чистая гонка
+    между двумя потоками без какой-либо синхронизации на стороне pywebview.
+
+    Стартуем сервер ЗДЕСЬ сами, через тот же http.start_global_server,
+    что использует pywebview изнутри (см. __init__.py:start — проверяет
+    `http.global_server is None` и просто НЕ стартует его повторно, раз
+    видит, что мы это уже сделали) — и ждём, пока порт реально не начнёт
+    принимать соединения, ПРЕЖДЕ чем создавать окно и запускать навигацию."""
+    import webview.http as webview_http
+    webview_http.start_global_server(http_port=port, urls=[frontend_url])
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.2)
+            try:
+                sock.connect(("127.0.0.1", port))
+                return
+            except OSError:
+                time.sleep(0.02)
+    _log_step(f"local http server on port {port} did not become ready within {timeout}s")
+
+
 def _pick_safe_http_port() -> int:
     """pywebview (http_server=True, без явного http_port) сам выбирает
     порт для своего локального сервера через random.randint(1023, 65535)
@@ -487,6 +517,10 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     # профиль на каждый запуск, чистим сами после закрытия окна.
     webview2_storage = Path(tempfile.mkdtemp(prefix="magicsqd_webview2_"))
 
+    http_port = _pick_safe_http_port()
+    _log_step(f"starting local http server on port {http_port} and waiting for it to be ready")
+    _start_local_http_server_ready(str(frontend_dir / "index.html"), http_port)
+
     _log_step("webview.start()")
     try:
         webview.start(
@@ -496,6 +530,9 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
             # профиле WebView2 file:// мог подхватывать устаревшие CSS/JS
             # после обновления; отдельный локальный origin корректно
             # инвалидирует эти ресурсы и не открывает приложение в сеть.
+            # Сам сервер уже запущен и проверен на готовность выше
+            # (_start_local_http_server_ready) — pywebview здесь видит
+            # http.global_server уже выставленным и не стартует повторно.
             http_server=True,
             # Без этого pywebview сам выбирает порт случайно на всём
             # диапазоне 1023-65535 (см. _pick_safe_http_port выше) — и
@@ -504,7 +541,7 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
             # страницу вообще. Подтверждённый реальный случай — окно
             # показывало "Не удаётся открыть эту страницу" на порте 6668
             # (диапазон IRC, 6665-6669, в списке небезопасных у Chromium).
-            http_port=_pick_safe_http_port(),
+            http_port=http_port,
             # Постоянный профиль не дал выигрыша в скорости, но на практике
             # залипал на старых локальных CSS/JS между обновлениями. Для
             # установщика важнее всегда открыть актуальный интерфейс.
