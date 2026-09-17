@@ -36,7 +36,20 @@ object UsbFlashSession {
         }
         return try {
             target.init()
-            val partitionFs = target.partitions[0].fileSystem
+            // Сразу после подключения раздел иногда ещё не успел
+            // определиться (см. install_logs на сервере, 2026-09: "Index 0
+            // out of bounds for length 0" — сырое исключение от голого
+            // partitions[0] на пустом списке) — JS-сторона сама ретраит
+            // usbConnect несколько раз подряд, так что это не фатально
+            // (в логах видно, что через несколько попыток монтирование
+            // всё-таки удаётся), но лучше человеческое сообщение, чем
+            // голый IndexOutOfBoundsException на каждую неудачную попытку.
+            val partitions = target.partitions
+            if (partitions.isEmpty()) {
+                return Result.failure(IllegalStateException(
+                    "Флешка подключена, но разделы ещё не определились — пробую снова..."))
+            }
+            val partitionFs = partitions[0].fileSystem
             device = target
             fs = partitionFs
             log("Флешка смонтирована: ${partitionFs.volumeLabel ?: "(без метки)"}, ${partitionFs.type}")

@@ -38,6 +38,27 @@ private const val WRITE_CHUNK_SIZE = 4 * 1024 * 1024
 private const val WRITE_RETRY_ATTEMPTS = 5
 private const val WRITE_RETRY_DELAY_MS = 300L
 
+// ДОБАВЛЕНО ПОЗЖЕ (install_logs на сервере, 2026-09): реальные клиентские
+// падения — "IllegalArgumentException: newLimit > capacity: (65536 >
+// 32768)" и т.п. — это баг самой libaums 0.10.0, а не наш: ClusterChain.
+// write() (me/jahnen/libaums/core/fs/fat32/ClusterChain.kt, метод write())
+// объединяет до 4 подряд идущих кластеров в одну запись ради скорости
+// (source.limit(source.position() + clusterSize * maxConsecutiveClusters)),
+// но не проверяет, что переданный ему буфер реально содержит столько
+// байт — если ЧУЖОЙ вызов той же ClusterChain (например, внутренняя
+// запись самой директории при createFile()/delete() — см. FatDirectory,
+// буфер там размером ровно в один кластер) попадает на директорию, чьи
+// собственные кластеры выделились подряд (обычное дело на свежесделанной
+// FAT32-флешке), — вылетает ровно это исключение. В upstream не
+// исправлено (последний тег repo — 0.10.0, https://github.com/magnusja/
+// libaums/blob/v0.10.0/libaums/src/main/java/me/jahnen/libaums/core/fs/
+// fat32/ClusterChain.kt#L230). Патчить/форкать бинарную зависимость —
+// намного больше риска, чем просто повторить попытку: на новом
+// createFile()/delete() ниже директория почти наверняка переиспользует
+// кластеры по-другому и обойдёт то же самое совпадение. IOException
+// ловится тут же ниже отдельно — этот класс исключений НЕ является его
+// подклассом, поэтому раньше падал с первой же попытки, вообще без ретрая.
+
 /**
  * Пишет один локальный файл на смонтированную флешку по относительному
  * пути (создавая недостающие подпапки) — аналог desktop UsbContext.copy_file
@@ -56,7 +77,7 @@ fun writeFileToUsb(fs: FileSystem, localFile: File, destRelativePath: String, lo
     }
     val fileName = segments.last()
 
-    var lastError: IOException? = null
+    var lastError: Exception? = null
     for (attempt in 1..WRITE_RETRY_ATTEMPTS) {
         // Свежий createFile на каждой попытке — предыдущая могла оставить
         // на флешке частично записанный (битый) файл того же имени.
@@ -83,7 +104,8 @@ fun writeFileToUsb(fs: FileSystem, localFile: File, destRelativePath: String, lo
             target.close()
             log("Записано: $destRelativePath ($offset байт)")
             return
-        } catch (e: IOException) {
+        } catch (e: Exception) {
+            if (e !is IOException && e !is IllegalArgumentException) throw e
             lastError = e
             if (attempt < WRITE_RETRY_ATTEMPTS) {
                 log("Сбой записи $destRelativePath (попытка $attempt/$WRITE_RETRY_ATTEMPTS): " +
