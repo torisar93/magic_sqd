@@ -264,15 +264,26 @@ class UpdateApi:
         обёртке в кавычки — cmd.exe читает его как обычный текстовый скрипт
         построчно, а не как один аргумент командной строки."""
         bat_path = Path(tempfile.gettempdir()) / "magicsqd_update.bat"
+        # Пауза — через ping, а не timeout: timeout.exe завершается сразу с
+        # ошибкой "Input redirection is not supported", если у процесса нет
+        # настоящего stdin (у нашего GUI-процесса без консоли его нет), и
+        # тогда задержка пропадала бы вовсе. ping от stdin не зависит.
         bat_path.write_text(
             "@echo off\r\n"
-            "timeout /t 3 /nobreak >nul\r\n"
+            "ping -n 4 127.0.0.1 >nul\r\n"
             f'start "" "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n',
             encoding="utf-8",
         )
+        # CREATE_NO_WINDOW, а не DETACHED_PROCESS: у DETACHED_PROCESS cmd.exe
+        # вообще не получает консоли и заводит НОВОЕ ВИДИМОЕ окно под каждую
+        # консольную команду внутри .bat (ping/timeout) — именно оно и
+        # мелькало на экране с паузой перед перезапуском. CREATE_NO_WINDOW даёт
+        # скрытую консоль, общую для всего .bat; процесс при этом всё равно
+        # самостоятельный и переживает закрытие программы.
         subprocess.Popen(
             ["cmd", "/c", str(bat_path)],
-            creationflags=subprocess.DETACHED_PROCESS,
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             close_fds=True,
         )
 
