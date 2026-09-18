@@ -21,14 +21,6 @@
   const section=document.getElementById('install-content').closest('.card');section.classList.add('workflow-card');section.querySelector('.card-header').hidden=true;
   document.getElementById('back-to-catalog').textContent='‹ Модели';
   const completion=document.getElementById('completion-dialog');completion.querySelector('.modal-logo').replaceWith(n('div','completion-check','✓'));completion.querySelector('h2').textContent='Всё готово';
-  window.labStageError=(message)=>{
-    const modal=n('dialog','stage-error');modal.setAttribute('aria-label','Ошибка установки');
-    modal.append(n('div','error-symbol','!'),n('h2','','Не удалось завершить этап'),n('p','','Проверьте подключение устройства. Подробности сохранены в логе.'));
-    const details=n('details');details.append(n('summary','','Подробности'),n('pre','',String(message||'')));modal.append(details);
-    const actions=n('div','dialog-actions');const log=n('button','','Открыть лог');log.onclick=()=>{modal.close();setLogExpanded(true);};
-    const retry=n('button','accent','Повторить');retry.onclick=()=>{modal.close();document.querySelector('.stage-primary-actions>.accent')?.click();};
-    actions.append(log,retry);modal.append(actions);modal.addEventListener('close',()=>modal.remove());document.body.append(modal);modal.showModal();
-  };
   const events=window.events;if(events)events.on('apk_progress',LabUI.progress);if(events)events.on('install_log',e=>{const line=document.querySelector('.run-event');if(line&&!line.closest('.progress08'))line.textContent=e.message||e.line||e.text||'Выполняется…';});
   LabUI.watchLog();
   const send=document.getElementById('adb-console-send');if(send){send.replaceChildren(LabUI.symbol('send'));send.setAttribute('aria-label','Отправить');}

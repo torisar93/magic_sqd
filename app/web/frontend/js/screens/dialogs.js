@@ -81,10 +81,19 @@
       updateControls();
     }
 
+    // При ошибке — та же подсказка «откройте лог, скопируйте, отправьте
+    // разработчику» и те же кнопки, что в окне остальных этапов (StageRun).
+    let hintNode = null;
     function setStatus(state, title, detail) {
       dialog.dataset.usbState = state;
       statusEl.textContent = title;
       statusDetailEl.textContent = detail || "";
+      hintNode?.remove();
+      hintNode = null;
+      if (state === "error" && window.StageRun) {
+        hintNode = window.StageRun.hintBlock();
+        statusDetailEl.closest('.usb06-transfer').after(hintNode);
+      }
     }
 
     function updateControls() {

@@ -150,6 +150,38 @@
     if (open) logPanelEl.scrollTop = logPanelEl.scrollHeight;
   }
 
+  // Окно «этап выполняется → итог» (js/stage_run.js, общее с десктопом) — одно
+  // на все этапы с процессом. Перерисовку страницы/переход дальше (afterRunClose)
+  // делаем только когда техник закрыл окно с итогом, иначе render() сотрёт
+  // страницу прямо под ним.
+  let activeRun = null;
+  let afterRunClose = null;
+  window.StageRun.configure({ openLog: () => setLogOpen(true) });
+
+  function onRunClosed() {
+    activeRun = null;
+    const after = afterRunClose;
+    afterRunClose = null;
+    if (after) after();
+  }
+
+  // tag — какой именно процесс открыл окно: результат чужого процесса (например,
+  // неожиданное событие подключения флешки во время установки) не должен
+  // закрыть чужое окно.
+  let activeRunTag = null;
+  function openStageRun(options) {
+    activeRunTag = options.tag || null;
+    activeRun = window.StageRun.open({ ...options, onClose: onRunClosed });
+    return activeRun;
+  }
+
+  function finishRun(outcome, after, tag = null) {
+    const run = activeRun;
+    if (!run || run.finished || (tag && activeRunTag !== tag)) { after(); return; }
+    afterRunClose = after;
+    run.finish(outcome);
+  }
+
   // Известные shell-команды консоли (см. WebBridge.kt: adbShellCommand —
   // здесь ВСЕГДА ровно одна shell-команда на уже подключённом устройстве,
   // нет отдельных adb-команд верхнего уровня вроде "devices"/"install
@@ -1073,8 +1105,17 @@
     if (labInstallBusy) return;
     setUsbStatus(false, "Флешка: подключаюсь...");
     usbConnectBtn.disabled = true;
+    openStageRun({
+      title: "Подключение флешки", icon: "usb", tag: "usb-connect",
+      detail: "Ищем накопитель и читаем его файловую систему…",
+      retry: onUsbConnect,
+    });
     try { Bridge.call("usb_connect", {}); }
-    catch (error) { setUsbStatus(false, `Не удалось подключиться: ${error.message || error}`); }
+    catch (error) {
+      const message = error.message || String(error);
+      setUsbStatus(false, `Не удалось подключиться: ${message}`);
+      finishRun({ success: false, message }, () => {}, "usb-connect");
+    }
   }
 
   function onUsbConnectResult(event) {
@@ -1084,9 +1125,11 @@
       const capacity = bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} ГБ` : `${Math.round(bytes / 1024 ** 2)} МБ`;
       setUsbStatus(true, `${r.label || "Без метки"} · ${capacity}`);
       log("Флешка смонтирована.");
+      finishRun({ success: true, message: `Флешка подключена: ${r.label || "без метки"} · ${capacity}.` }, () => {}, "usb-connect");
     } else {
       setUsbStatus(false, "Флешка: не подключена");
       log(`Флешка: не удалось подключиться — ${r.reason || "?"}`);
+      finishRun({ success: false, message: r.reason || "Не удалось подключить флешку." }, () => {}, "usb-connect");
     }
   }
 
@@ -1097,7 +1140,16 @@
       "Все данные на флешке будут БЕЗВОЗВРАТНО удалены. Продолжить?",
       () => {
         log("Форматирую флешку...");
-        Bridge.call("usb_format", { label: "MAGICSQD" });
+        openStageRun({
+          title: "Форматирование флешки", icon: "format", tag: "usb-format",
+          detail: "Не отключайте флешку. Это может занять около минуты.",
+        });
+        try { Bridge.call("usb_format", { label: "MAGICSQD" }); }
+        catch (error) {
+          const message = error.message || String(error);
+          log(`Ошибка форматирования: ${message}`);
+          finishRun({ success: false, message }, () => {}, "usb-format");
+        }
       }
     );
   }
@@ -1105,6 +1157,10 @@
   function onUsbFormatResult(event) {
     const r = event.result || {};
     log(r.success ? "Флешка отформатирована." : `Ошибка форматирования: ${r.reason || "?"}`);
+    finishRun({
+      success: !!r.success,
+      message: r.success ? "Флешка отформатирована в FAT32 и готова к записи." : (r.reason || "Не удалось отформатировать флешку."),
+    }, () => {}, "usb-format");
   }
 
   // Минимальный confirm-диалог (см. onAdbAskInput — та же причина: нативные
@@ -1142,24 +1198,35 @@
       stageOperation = null;
     }
     log(r.success ? "Этап выполнен успешно." : `Этап завершился с ошибкой: ${r.reason || "?"}`);
-    // Перерисовываем текущий этап заново, если результат относится к нему —
-    // сбрасывает задизейбленные во время выполнения кнопки.
-    if (stages[currentIndex] && stages[currentIndex].index === event.index) {
-      const stage=stages[currentIndex];
-      if (stage.type === "usb") {
-        usbStageResults[stage.index] = r;
-        usbOperation = null;
-      }
-      if(r.success&&stage.type==='apps'){
-        advanceAfter(currentIndex);
-        if(stage.next==null){
-          document.querySelector('.stage-primary-actions')?.remove();clear(wizardContentEl);
-          wizardContentEl.append(el('div',{class:'stage-page'},[el('h2',{text:'Установка завершена'}),el('p',{class:'stage-text',text:'Все выбранные приложения установлены.'})]));
-          wizardNextBtn.style.display='';wizardNextBtn.textContent='К моделям';nextAction=()=>showScreen('picker');
+    const finishedStage = stages.find(item => item.index === event.index);
+    // Перерисовываем текущий этап заново (сбрасывает задизейбленные во время
+    // выполнения кнопки) и продвигаем мастер — но только когда техник закроет
+    // окно с итогом (см. finishRun).
+    const afterClose = () => {
+      if (stages[currentIndex] && stages[currentIndex].index === event.index) {
+        const stage=stages[currentIndex];
+        if (stage.type === "usb") {
+          usbStageResults[stage.index] = r;
+          usbOperation = null;
         }
-      }else render();
-      if(!r.success && !["apps", "usb", "adb", "actions", "telnet"].includes(stage.type))showLabNotice('Не удалось завершить этап',r.reason||'Откройте лог для подробностей.',true);
-    }
+        if(r.success&&stage.type==='apps'){
+          advanceAfter(currentIndex);
+          if(stage.next==null){
+            document.querySelector('.stage-primary-actions')?.remove();clear(wizardContentEl);
+            wizardContentEl.append(el('div',{class:'stage-page'},[el('h2',{text:'Установка завершена'}),el('p',{class:'stage-text',text:'Все выбранные приложения установлены.'})]));
+            wizardNextBtn.style.display='';wizardNextBtn.textContent='К моделям';nextAction=()=>showScreen('picker');
+          }
+        }else render();
+        if(!r.success && !["apps", "usb", "adb", "actions", "telnet"].includes(stage.type))showLabNotice('Не удалось завершить этап',r.reason||'Откройте лог для подробностей.',true);
+      }
+    };
+    finishRun({
+      success: !!r.success,
+      cancelled: !!(r.cancelled || r.canceled),
+      message: r.success
+        ? (finishedStage?.type === "apps" ? "Все выбранные приложения установлены." : "")
+        : (r.reason || ""),
+    }, afterClose, "stage");
   }
 
   function showLabNotice(title,message,withLog=false){
@@ -1572,11 +1639,23 @@
     renderNav();
     page.querySelectorAll("button, input, select").forEach(node => { node.disabled = true; });
     card.dataset.state = "running";
-    const status = el("div", { class: "flow-operation-status", role: "status" }, [
-      el("span", { class: "flow-operation-spinner", "aria-hidden": "true" }),
-      el("span", { class: "flow-operation-detail", text: card.classList.contains('flow-action-card') ? "Выполняется…" : "Выполняем команды. Дождитесь ответа магнитолы…" }),
-    ]);
-    card.append(status);
+    openStageRun({
+      title: actionIndex != null
+        ? (card.querySelector("h3")?.textContent || "Выполнение действия")
+        : method === "telnet_run_stage" ? "Подключение по сети" : "Выполнение команд на магнитоле",
+      stageIndex: args.index, tag: "stage",
+      icon: method === "telnet_run_stage" ? "wifi" : "terminal",
+      detail: "Выполняем команды. Дождитесь ответа магнитолы…",
+      // Повтор после закрытия окна: страница к этому моменту уже перерисована,
+      // поэтому карточку ищем заново.
+      retry: () => {
+        const freshPage = document.querySelector(".flow-stage");
+        const freshCard = actionIndex == null
+          ? freshPage?.querySelector(".flow-card")
+          : freshPage?.querySelectorAll(".flow-action-card")[actionIndex];
+        if (freshPage && freshCard) runStageOperation(method, args, freshPage, freshCard, actionIndex);
+      },
+    });
     try { Bridge.call(method, args); }
     catch (error) { onAdbStageResult({ index: args.index, result: { success: false, reason: error.message || String(error) } }); }
   }
@@ -2007,19 +2086,19 @@
       btn.disabled = true;
       labInstallBusy=true;
       appInstallOperation={index:stage.index,cancelRequested:false};
-      screenWizard.classList.add('is-installing-apps');
       renderNav();
-      const status=LabUI.busy(page,'Установка приложений',selection.entries.map(apk=>({name:apk.name||basename(apk.path),path:apk.path})));
-      const stop=usbStageButton('Остановить','stop',()=>{
-        if (!appInstallOperation || appInstallOperation.cancelRequested) return;
-        appInstallOperation.cancelRequested=true;stop.disabled=true;
-        stop.replaceChildren(usbStageIcon('stop'),el('span',{text:'Останавливаю…'}));
-        try { Bridge.call('adb_cancel_install',{}); }
-        catch(error){appInstallOperation.cancelRequested=false;stop.disabled=false;stop.replaceChildren(usbStageIcon('stop'),el('span',{text:'Остановить'}));log(`Не удалось остановить установку: ${error.message||error}`);}
+      openStageRun({
+        title: 'Установка приложений', stageIndex: stage.index, tag: 'stage',
+        items: selection.entries.map(apk=>({name:apk.name||basename(apk.path),path:apk.path})),
+        cancellable: true,
+        onCancel: () => {
+          if (!appInstallOperation || appInstallOperation.cancelRequested) return;
+          appInstallOperation.cancelRequested = true;
+          try { Bridge.call('adb_cancel_install',{}); }
+          catch(error){ appInstallOperation.cancelRequested = false; log(`Не удалось остановить установку: ${error.message||error}`); }
+        },
+        retry: () => document.querySelector('.apps-install-start')?.click(),
       });
-      stop.classList.add('apps-install-stop','danger');
-      status.append(el('div',{class:'install-actions apps-run-actions'},[stop]));
-      wizardContentEl.scrollTop=0;
       try {
         Bridge.call("adb_install_apks", {
           index: stage.index, apkPaths, appsInstallMethod: stage.apps_install_method || "",
@@ -2158,9 +2237,17 @@
     card.dataset.state = "running";
     const button = card.querySelector(":scope > .usb-step-action");
     button.querySelector("span:not(.ui-icon)").textContent = kind === "password" ? "Получаем пароль…" : "Записываем…";
-    const status = el("div", { class: "usb-operation-status", role: "status" }, [el("span", { class: "usb-operation-detail", text: kind === "password" ? "Читаем данные с флешки…" : "Не отключайте флешку до завершения записи." })]);
-    status.append(el("progress", { class: "usb-operation-progress", "aria-label": kind === "password" ? "Чтение данных" : "Запись файлов" }));
-    card.append(status);
+    openStageRun({
+      title: { files: "Запись файлов на флешку", flag: "Запись файла на флешку", password: "Получение пароля ADB" }[kind] || "Работа с флешкой",
+      stageIndex: stage.index, icon: kind === "password" ? "key" : "usb",
+      tag: kind === "files" ? "stage" : `qr-${kind}`,
+      detail: kind === "password" ? "Читаем сохранённые данные с флешки…" : "Не отключайте флешку до завершения записи.",
+      // После закрытия окна страница перерисована — кнопку действия ищем заново.
+      retry: () => {
+        const cards = [...document.querySelectorAll(".usb-stage > .usb-step-card")];
+        (kind === "password" ? cards[2] : cards[0])?.querySelector(":scope > .usb-step-action")?.click();
+      },
+    });
     return true;
   }
 
@@ -2276,7 +2363,10 @@
     usbOperation = null;
     labInstallBusy = false;
     qrAdbWriteStatus = event.result || { ok: false, error: "неизвестная ошибка" };
-    if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render();
+    finishRun({
+      success: !!qrAdbWriteStatus.ok,
+      message: qrAdbWriteStatus.ok ? "Файл записан. Теперь вставьте эту флешку в магнитолу." : (qrAdbWriteStatus.error || "Не удалось записать файл."),
+    }, () => { if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render(); }, "qr-flag");
   }
 
   function onQrAdbPasswordResult(event) {
@@ -2284,7 +2374,10 @@
     usbOperation = null;
     labInstallBusy = false;
     qrAdbResult = event.result || { ok: false, error: "неизвестная ошибка" };
-    if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render();
+    finishRun({
+      success: !!qrAdbResult.ok,
+      message: qrAdbResult.ok ? "Пароль получен. Введите его на экране магнитолы." : (qrAdbResult.error || "Не удалось получить пароль."),
+    }, () => { if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render(); }, "qr-password");
   }
 
   // "telnet"-этап: включает ADB-отладку на магнитоле удалённо (см.

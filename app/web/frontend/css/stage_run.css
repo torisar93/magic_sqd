@@ -1,0 +1,31 @@
+/* Окно «этап выполняется → результат» (js/components/stage_run.js). Файл
+   ОДИНАКОВЫЙ на десктопе и на Android (см. шапку stage_run.js). Слой окна
+   задаётся переменной --stage-run-z: на Android оно должно лежать ниже лога
+   (z-index 90), чтобы «Открыть лог» показывал лог поверх. */
+.stage-run-overlay{position:fixed;inset:0;z-index:var(--stage-run-z,85);display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;background:#080f16b8;backdrop-filter:blur(8px);animation:stage-run-fade .18s ease both}
+.stage-run-box{position:relative;width:min(640px,100%);max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);overflow:auto;overscroll-behavior:contain;box-sizing:border-box;padding:28px;border-radius:22px;border:1px solid #dafff033;background:radial-gradient(ellipse at 0 0,#56756826,transparent 75%),linear-gradient(145deg,#28363e,#1d2931);color:#e9eff2;box-shadow:0 24px 80px #0009;outline:none;text-align:center;animation:stage-run-pop .22s cubic-bezier(.2,.8,.3,1.05) both}
+.stage-run-host{display:block}
+.stage-run-box .progress08.run-status{width:100%;max-width:none;margin:0;padding:0;background:none!important;border:0!important;box-shadow:none!important}
+.stage-run-box .progress08 h2{margin:0 0 8px}
+.stage-run-queue{width:100%;margin-top:20px;text-align:left}
+.stage-run-queue .queue-summary{margin-top:0}
+.stage-run-result{display:flex;flex-direction:column;align-items:center;gap:12px}
+.stage-run-symbol{display:grid;place-items:center;width:68px;height:68px;border-radius:50%;font-size:32px;line-height:1;font-weight:600}
+.stage-run-result[data-state=success] .stage-run-symbol{background:#1d4a3f;color:#a0efda}
+.stage-run-result[data-state=error] .stage-run-symbol{background:#4b3036;color:#ffb6b6}
+.stage-run-result[data-state=cancelled] .stage-run-symbol{background:#3f3a26;color:#ecd99b;font-size:24px}
+.stage-run-title{margin:6px 0 0;font-size:25px;line-height:1.25}
+.stage-run-message{margin:0;max-width:52ch;color:#c9d7dd;font-size:16px;line-height:1.55;overflow-wrap:anywhere}
+.stage-run-hint{margin:4px 0 0;padding:12px 14px;border-radius:12px;background:#ffffff0f;color:#e3ecef;font-size:14px;line-height:1.55;text-align:left;max-width:52ch}
+.stage-run-details{width:100%;text-align:left}
+.stage-run-details summary{cursor:pointer;padding:8px 0;color:#a1b6c2;font-size:14px}
+.stage-run-details pre{margin:0;padding:12px;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:10px;background:#0000002e;color:#b9c8cf;font:12.5px/1.55 ui-monospace,Menlo,Consolas,monospace}
+.stage-run-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:22px}
+.stage-run-actions button{min-height:44px}
+.stage-run-hint-block{margin:14px 0 18px;text-align:left}
+.stage-run-hint-block .stage-run-hint{max-width:none}
+.stage-run-hint-block .stage-run-actions{justify-content:flex-start;margin-top:12px}
+@keyframes stage-run-fade{from{opacity:0}to{opacity:1}}
+@keyframes stage-run-pop{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+@media(max-width:600px){.stage-run-overlay{padding:12px}.stage-run-box{padding:22px 16px;border-radius:18px}.stage-run-title{font-size:22px}.stage-run-actions{flex-direction:column;align-items:stretch}.stage-run-actions button{width:100%}}
+@media(prefers-reduced-motion:reduce){.stage-run-overlay,.stage-run-box{animation:none}}

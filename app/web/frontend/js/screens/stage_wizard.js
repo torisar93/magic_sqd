@@ -50,6 +50,12 @@
   let nextAction = () => advanceAfter(currentIndex);
   let sharedApksPromise = null;
   let runnerBusy = false;
+  // Окно «этап выполняется → итог» (js/components/stage_run.js) — одно на все
+  // типы этапов с процессом. Перерисовку страницы/переход к следующему этапу
+  // (afterRunClose) выполняем только когда техник закрыл окно с итогом, иначе
+  // render() сотрёт страницу прямо под ним.
+  let activeRun = null;
+  let afterRunClose = null;
   let activeAppPicker = null;
   let activeCommand = null;
   const commandResults = new Map();
@@ -108,6 +114,7 @@
     window.events.on("install_log", (event) => {
       if (!event.passive) sessionHasActivity = true;
       log(event.text);
+      if (!event.passive && activeRun) activeRun.detail(event.text);
     });
     window.events.on("install_finished", onInstallFinished);
     window.events.on("ask_input", (event) => showAskInputDialog(event));
@@ -264,12 +271,37 @@
     dialog.showModal();
   }
 
+  // Закрыть окно этапа с итогом; последующая перерисовка/переход — в after()
+  // (запускается при закрытии окна техником). Без открытого окна (этап
+  // запущен не через него) — сразу.
+  function finishRun(outcome, after) {
+    const run = activeRun;
+    if (!run || run.finished) { activeRun = null; after(); return; }
+    afterRunClose = after;
+    run.finish(outcome);
+  }
+
+  function onRunClosed() {
+    activeRun = null;
+    const after = afterRunClose;
+    afterRunClose = null;
+    if (after) after();
+  }
+
+  function openStageRun(options) {
+    activeRun = window.StageRun.open({ ...options, onClose: onRunClosed });
+    return activeRun;
+  }
+
   function onInstallFinished(event) {
     runnerBusy = false;
+    log(event.message);
+    finishRun({ success: !!event.success, message: event.message }, () => afterStageFinished(event));
+  }
+
+  function afterStageFinished(event) {
     contentEl.classList.remove('installing-apps');
     contentEl.parentElement.classList.remove('installing-apps');
-    log(event.message);
-    if(!event.success&&event.stage_index===currentIndex)queueMicrotask(()=>window.labStageError(event.message));
     if (event.stage_index !== currentIndex) return; // ушли с этой страницы, пока этап работал в фоне
     // "actions" — кнопки необязательны и нажимаются в любом порядке/сколько
     // угодно раз, поэтому в отличие от остальных типов этапов ни успех, ни
@@ -299,6 +331,7 @@
   // -- открытие модели --------------------------------------------------
   async function open(selectedModel) {
     ensureMounted();
+    if (activeRun) { activeRun.dispose(); activeRun = null; afterRunClose = null; }
     // Модель сменили, не долистав предыдущую (см. app.js: returnToCatalog
     // — обычный уход обрабатывается ТАМ, до вызова open() заново; этот флаш
     // — на случай прямого перехода к другой модели из каталога/поиска, минуя
@@ -1324,32 +1357,61 @@
       if (!drive) { status(driveStatus, 'Выберите флешку из списка.', true); driveSelect.focus(); return; }
       setBusy(true); one.dataset.state = 'busy'; status(writeStatus, 'Записываем svlog.flag…');
       writeBtn.lastChild.textContent = 'Записываем…';
+      const run = window.StageRun.open({
+        title: 'Запись файла на флешку', icon: 'usb',
+        detail: 'Не отключайте флешку, пока идёт запись.',
+        retry: () => writeBtn.click(),
+      });
       try {
         const result = await window.pywebview.api.qr_adb_write_flag(drive.letter);
-        if (!live()) return;
+        if (!live()) { run.dispose(); return; }
         if (!result.ok) throw new Error(result.error || 'Не удалось записать файл.');
         writeDrive = drive.letter; one.dataset.state = 'done'; two.dataset.state = 'active';
         status(writeStatus, 'Файл записан. Теперь подключите эту флешку к магнитоле.');
-      } catch (err) { if (live()) { one.dataset.state = 'active'; status(writeStatus, err.message || String(err), true); } }
+        run.finish({ success: true, message: 'Файл записан на флешку. Теперь подключите её к магнитоле.' });
+      } catch (err) {
+        if (live()) {
+          one.dataset.state = 'active'; status(writeStatus, err.message || String(err), true);
+          run.finish({ success: false, message: err.message || String(err) });
+        } else run.dispose();
+      }
       finally { setBusy(false); writeBtn.lastChild.textContent = 'Записать файл'; }
     };
     getBtn.onclick = async () => {
       if (busy || loading || !live()) return;
       setBusy(true); resultBox.hidden = true; three.dataset.state = 'busy';
       status(readStatus, ''); getBtn.lastChild.textContent = 'Читаем флешку…';
+      const run = window.StageRun.open({
+        title: 'Получение пароля ADB', icon: 'key',
+        detail: 'Читаем сохранённые логи с флешки.',
+        retry: () => getBtn.click(),
+      });
       try {
-        if (!await refreshDrives()) return;
-        if (!live()) return;
+        if (!await refreshDrives()) {
+          if (live()) run.finish({ success: false, message: 'Не удалось прочитать список накопителей.' }); else run.dispose();
+          return;
+        }
+        if (!live()) { run.dispose(); return; }
         const drive = currentDrive();
-        if (!drive) { status(readStatus, 'Подключите флешку и выберите её в списке.', true); return; }
+        if (!drive) {
+          status(readStatus, 'Подключите флешку и выберите её в списке.', true);
+          run.finish({ success: false, message: 'Подключите флешку и выберите её в списке.' });
+          return;
+        }
         const result = await window.pywebview.api.qr_adb_get_password(drive.letter);
-        if (!live()) return;
+        if (!live()) { run.dispose(); return; }
         if (!result.ok) throw new Error(result.error || 'Не удалось получить пароль.');
         codeEl.textContent = result.code;
         meta.textContent = `SN: ${result.sn} · ${result.logs_folder}/${result.zip_name}`;
         resultDrive = drive.letter; resultBox.hidden = false; three.dataset.state = 'done';
         two.dataset.state = 'done'; status(readStatus, 'Пароль готов. Введите его на экране магнитолы.');
-      } catch (err) { if (live()) status(readStatus, err.message || String(err), true); }
+        run.finish({ success: true, message: 'Пароль готов. Введите его на экране магнитолы.' });
+      } catch (err) {
+        if (live()) {
+          status(readStatus, err.message || String(err), true);
+          run.finish({ success: false, message: err.message || String(err) });
+        } else run.dispose();
+      }
       finally { if (three.dataset.state === 'busy') three.dataset.state = ''; setBusy(false); getBtn.lastChild.textContent = 'Получить пароль'; }
     };
     copyBtn.onclick = async () => {
@@ -1391,13 +1453,10 @@
   function buildStartStopButtons(panel, stage, getDevice, { startLabel, requiresDevice = true } = {}) {
     const btnRow = el("div", { class: "stage-primary-actions" });
     const startBtn = el("button", { class: "accent", text: startLabel || "Начать этот этап" });
-    const stopBtn = el("button", { class: "danger", text: "Стоп", disabled: !runnerBusy ? "" : null });
     if (runnerBusy) startBtn.disabled = true;
     btnRow.appendChild(startBtn);
-    btnRow.appendChild(stopBtn);
     panel.appendChild(btnRow);
     if (stage.type === 'apps') {
-      stopBtn.hidden = true;
       panel.querySelector('.apps08-toolbar').append(btnRow);
     }
     // Раньше (для uart/telnet/adb/actions) кнопка запуска подменяла собой
@@ -1415,39 +1474,33 @@
       if (requiresDevice && !device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
       if (runnerBusy) return;
       startBtn.disabled = true;
-      stopBtn.disabled = false;
       runnerBusy = true;
       navBackBtn.disabled=true; navNextBtn.disabled=true;
       const items=panel._appChooser ? panel._appChooser.entries() : [];
-      const state = LabUI.busy(panel,stage.type==='apps'?'Установка приложений':'Выполняется этап',items);
-      if (stage.type === 'apps') {
-        contentEl.classList.add('installing-apps');contentEl.parentElement.classList.add('installing-apps');
-        startBtn.hidden = true;stopBtn.hidden = false;
-        btnRow.classList.add('install-actions');state.append(btnRow);
-      }
-      if (stage.type !== 'apps') {
-        state.classList.add('stage06-command-running');
-        state.querySelector('.install-count')?.remove();
-        state.querySelector('.install-graphic>.ui-icon')?.replaceWith(UsbUI.icon(stage.type==='telnet'?'wifi':'settings'));
-        state.querySelector('.run-event').textContent = 'Ожидаем результат выполнения. Подробности появляются в логе.';
-      }
+      const runTitle = {
+        apps: 'Установка приложений', adb: 'Выполнение команд на магнитоле',
+        uart: 'Подключение через UART', telnet: 'Подключение по сети',
+      }[stage.type] || 'Выполняется этап';
+      openStageRun({
+        title: runTitle, stageIndex: stage.index, items, cancellable: true,
+        icon: stage.type === 'telnet' ? 'wifi' : 'settings',
+        detail: 'Ожидаем результат выполнения. Подробности появляются в логе.',
+        onCancel: () => window.pywebview.api.install_cancel_stage(),
+        retry: () => document.querySelector('.stage-primary-actions>.accent')?.click(),
+      });
+      const failToStart = (message) => {
+        runnerBusy = false;
+        log(message);
+        finishRun({ success: false, message }, () => render());
+      };
       try {
         const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selected);
         if (result.ok) return;
-        runnerBusy = false;
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        log(result.error || "Не удалось запустить этап.");
-        render();window.notice(result.error||"Не удалось запустить этап.",{title:"Установка не началась",danger:true});
+        failToStart(result.error || "Не удалось запустить этап.");
       } catch (err) {
-        runnerBusy = false;
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        log(`Не удалось запустить этап: ${err.message || err}`);
-        render();window.notice(String(err.message||err),{title:"Установка не началась",danger:true});
+        failToStart(`Не удалось запустить этап: ${err.message || err}`);
       }
     });
-    stopBtn.addEventListener("click", () => window.pywebview.api.install_cancel_stage());
   }
 
   function renderAdbStage(panel, stage, getDevice) {
@@ -1491,7 +1544,7 @@
       button.disabled = runnerBusy; buttons.push(button);
       const feedback = el('p', {class:'stage06-action-status',role:'status','data-error':String(result?.success===false),text:result?.message||''});
       card.append(el('span',{class:'stage06-symbol'},[UsbUI.icon(result?.success?'check':'settings')]),el('h3',{text:action.label||`Действие ${i+1}`}),button,feedback);
-      button.onclick = async () => {
+      const runAction = async () => {
         if (runnerBusy) return;
         const device = getDevice();
         if (!device && !(await window.confirmDialog('Не выбрано подключённое устройство ADB. Продолжить всё равно?'))) return;
@@ -1500,15 +1553,23 @@
         buttons.forEach(b=>b.disabled=true); navBackBtn.disabled=true; navNextBtn.disabled=true;
         card.dataset.state='busy'; feedback.dataset.error='false'; feedback.textContent='Выполняется… Подробности — в логе.';
         button.lastChild.textContent='Выполняется…';
+        openStageRun({
+          title: action.label || `Действие ${i+1}`, stageIndex: stage.index, icon: 'settings', cancellable: true,
+          detail: 'Выполняем команды на магнитоле. Подробности появляются в логе.',
+          onCancel: () => window.pywebview.api.install_cancel_stage(),
+          retry: runAction,
+        });
         try {
           const result = await window.pywebview.api.install_run_action(model.key, stage.index, i, device, selectedApkPaths());
           if (!result.ok) throw new Error(result.error||'Не удалось выполнить действие.');
         } catch (error) {
           runnerBusy=false; activeCommand=null;
           const message=error.message||String(error);
-          commandResults.set(key,{success:false,message}); log(message); render();
+          commandResults.set(key,{success:false,message}); log(message);
+          finishRun({ success: false, message }, () => render());
         }
       };
+      button.onclick = runAction;
       list.append(card);
     });
     panel.append(list,el('p',{class:'app-desc',text:'Действия можно выполнять по отдельности. После завершения нажмите «Далее».'}));
