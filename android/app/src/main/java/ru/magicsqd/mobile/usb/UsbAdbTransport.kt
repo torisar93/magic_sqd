@@ -231,6 +231,15 @@ private const val TIMEOUT_MS = 5000
 // нажал "Разрешить" на экране устройства, поэтому таймаут намного больше.
 private const val AUTH_APPROVAL_TIMEOUT_MS = 30000
 
+/**
+ * Транспорт ничего не вернул вместо ответа устройства: соединение закрыто,
+ * оборвалось или магнитола замолчала дольше таймаута (сам транспорт
+ * различать эти случаи не умеет — read() возвращает -1 и в том, и в другом).
+ * Отдельный тип, чтобы InstallEngine мог один раз переподключиться и
+ * повторить установку, а не показывать технику сырое «получили -1 байт».
+ */
+class AdbLinkLostException(message: String) : IllegalStateException(message)
+
 /** Читает одно ADB-сообщение (заголовок + payload, если есть). */
 fun readMessage(
     transport: AdbTransport,
@@ -238,7 +247,11 @@ fun readMessage(
 ): Pair<AdbMessageHeader, ByteArray> {
     val headerBuf = ByteArray(24)
     val read = transport.read(headerBuf, timeoutMs)
-    check(read == 24) { "Ожидали 24-байтный заголовок, получили $read байт" }
+    if (read != 24) {
+        throw AdbLinkLostException(
+            "Магнитола перестала отвечать или связь с ней оборвалась (ADB: получено $read из 24 байт заголовка)."
+        )
+    }
     val header = parseHeader(headerBuf)
     val payload = if (header.dataLength > 0) {
         val buf = ByteArray(header.dataLength)

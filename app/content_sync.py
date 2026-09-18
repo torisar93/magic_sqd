@@ -227,6 +227,28 @@ def _is_stale(local_path: Path, item: dict) -> bool:
     return False
 
 
+def _replace_with_retry(tmp_dest: Path, dest: Path, attempts: int = 6, delay: float = 0.4) -> None:
+    """Подменяет dest скачанным .part. На Windows файл-приёмник, который в этот
+    момент открыт (окно с инструкцией показывает картинку, антивирус или
+    индексатор сканирует свежий файл), не даёт себя заменить — WinError 32 —
+    и раньше .part оставался лежать, а весь этап проверки обновлений падал
+    (реальные логи двух разных пользователей). Такая занятость почти всегда
+    краткая — повторяем; если не отпустило, убираем .part и сообщаем
+    понятной ошибкой: старый файл на месте, следующая синхронизация повторит."""
+    for attempt in range(attempts):
+        try:
+            tmp_dest.replace(dest)
+            return
+        except PermissionError as exc:
+            if attempt + 1 < attempts:
+                time.sleep(delay * (attempt + 1))
+                continue
+            tmp_dest.unlink(missing_ok=True)
+            raise ContentSyncError(
+                f"Не удалось обновить {dest.name}: файл занят другой программой "
+                f"(останется прежняя версия, обновится при следующей проверке): {exc}") from exc
+
+
 def download_file(base_url: str, remote_path: str, dest: Path,
                    log=lambda m: None, chunk_size: int = CHUNK_SIZE,
                    check_cancelled=lambda: None, mtime: float | None = None,
@@ -275,7 +297,7 @@ def download_file(base_url: str, remote_path: str, dest: Path,
     except BaseException:
         tmp_dest.unlink(missing_ok=True)
         raise
-    tmp_dest.replace(dest)
+    _replace_with_retry(tmp_dest, dest)
     if mtime is not None:
         # Штампуем mtime сервера на локальный файл — это то, с чем следующий
         # sync сравнит manifest.json (см. _is_stale), а не время скачивания.

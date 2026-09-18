@@ -113,6 +113,14 @@ def _check_pm_install_result(result) -> None:
         raise AdbError(text or "pm install не подтвердил успех (пустой вывод)")
 
 
+def _short_reason(exc, limit: int = 300) -> str:
+    """Причина отказа одной строкой для лога: без переводов строк, не длиннее limit.
+    Сообщение AdbError начинается с длинной команды (полный путь к adb, файлы),
+    а сама причина — в конце, поэтому при обрезке оставляем ХВОСТ."""
+    text = " ".join(str(exc).split())
+    return text if len(text) <= limit else "…" + text[-(limit - 1):]
+
+
 class InstallContext:
     def __init__(self, adb_path, device_serial, model_dir: Path, selected_apks,
                  log_fn, cancel_flag, ask_input_fn=None, shared_dir: Path | None = None,
@@ -308,6 +316,11 @@ class InstallContext:
                 raise InstallCancelled(self._version_downgrade_message(path))
             except AdbError as exc:
                 errors.append(f"{_INSTALL_METHOD_LABELS[method]}: {exc}")
+                # Причину отказа каждого способа — сразу в лог: итоговое сообщение
+                # уходит только в окно результата и не попадает в лог, если
+                # техник закрыл программу раньше (так и вышло в реальных логах —
+                # 7 «Установка APK…» подряд и ни одной причины).
+                self.log(f"  ↳ не сработало ({_INSTALL_METHOD_LABELS[method]}): {_short_reason(exc)}")
                 continue
             self._install_method = method
             if method > 0:

@@ -9,6 +9,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.TimeUnit
 
+// Сколько ждём возвращения магнитолы после обрыва связи посреди установки.
+private const val LINK_RECOVERY_TIMEOUT_MS = 45_000L
+
 sealed class StageRunResult {
     object Success : StageRunResult()
     data class Failed(val reason: String) : StageRunResult()
@@ -194,6 +197,10 @@ class InstallEngine(
     // значение поля на момент вызова.
     private var currentApkName: String = "install.apk"
 
+    private fun linkLostAdvice(apkName: String, technical: String?): String =
+        "Связь с магнитолой оборвалась во время установки «$apkName». Проверьте Wi-Fi или кабель, " +
+            "что магнитола не ушла в сон, и запустите этап заново. Техническая причина: ${technical ?: "нет ответа от устройства"}"
+
     private val INSTALL_METHODS: List<Pair<String, (ByteArray, (String) -> Unit) -> AdbInstallResult>> = listOf(
         "pm_install" to AdbSession::installApk,
         "pm_install_stream" to AdbSession::installApkPmStream,
@@ -250,15 +257,33 @@ class InstallEngine(
                 onProgress(path, index, apkPaths.size, "error")
                 return StageRunResult.Failed(reason)
             }
-            fun perform(install: (ByteArray, (String) -> Unit) -> AdbInstallResult, bytes: ByteArray): AdbInstallResult =
-                try {
-                    AdbInstallProgress.observe({ onDetail(path, index, apkPaths.size, it) }, cancelled) {
-                        install(bytes, log)
+            // Обрыв связи посреди передачи (Wi-Fi/кабель моргнули, магнитола на миг
+            // замолчала) — один раз ждём возвращения устройства, переподключаемся тем
+            // же транспортом и повторяем ТОТ ЖЕ способ. Если не помогло — понятное
+            // сообщение вместо технического «получили -1 байт».
+            fun perform(install: (ByteArray, (String) -> Unit) -> AdbInstallResult, bytes: ByteArray): AdbInstallResult {
+                val apkName = File(path).name
+                var reconnected = false
+                while (true) {
+                    try {
+                        return AdbInstallProgress.observe({ onDetail(path, index, apkPaths.size, it) }, cancelled) {
+                            install(bytes, log)
+                        }
+                    } catch (e: AdbLinkLostException) {
+                        onProgress(path, index, apkPaths.size, "error")
+                        if (reconnected || cancelled()) throw AdbLinkLostException(linkLostAdvice(apkName, e.message))
+                        reconnected = true
+                        log("Связь с магнитолой оборвалась во время установки ${apkName} — жду её возвращения и повторяю...")
+                        val back = AdbSession.waitForDeviceAndReconnect(context, LINK_RECOVERY_TIMEOUT_MS, log)
+                        if (back !is AdbHandshakeResult.Connected) throw AdbLinkLostException(linkLostAdvice(apkName, e.message))
+                        log("Связь восстановлена, повторяю установку ${apkName}.")
+                        onProgress(path, index, apkPaths.size, "running")
+                    } catch (e: Exception) {
+                        onProgress(path, index, apkPaths.size, "error")
+                        throw e
                     }
-                } catch (e: Exception) {
-                    onProgress(path, index, apkPaths.size, "error")
-                    throw e
                 }
+            }
             val file = File(path)
             if (!file.exists()) return failed("Файл не скачан: $path")
             log("Устанавливаю ${file.name}...")
@@ -325,7 +350,11 @@ class InstallEngine(
             for (methodIndex in order) {
                 val (label, install) = INSTALL_METHODS[methodIndex]
                 when (val r = perform(install, bytes)) {
-                    is AdbInstallResult.Failed -> errors.add("$label: ${r.reason}")
+                    is AdbInstallResult.Failed -> {
+                        errors.add("$label: ${r.reason}")
+                        // Причина каждого отказа сразу в лог — итоговая ошибка идёт только в окно этапа.
+                        log("  ↳ не сработало ($label): ${r.reason.split(Regex("\\s+")).joinToString(" ").take(300)}")
+                    }
                     is AdbInstallResult.Success -> {
                         confirmedMethod = methodIndex
                         if (methodIndex != 0) {
