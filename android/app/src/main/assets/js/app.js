@@ -2099,10 +2099,18 @@
         },
         retry: () => document.querySelector('.apps-install-start')?.click(),
       });
+      // Помеченные админом GPS-приложения (флаг mock_location из сайдкара, только
+      // общая библиотека): если выбрано ровно ОДНО — после установки ему выдаётся
+      // фиктивное местоположение; если несколько — не выдаём никому (какое из них
+      // нужно технику, неизвестно).
+      const flaggedPaths = apkPaths.filter(p => apkLibrary.some(a => a.path === p && a.mock_location));
+      if (flaggedPaths.length > 1) {
+        log("Выбрано несколько GPS-приложений с автовыдачей фиктивного местоположения — автоматически оно не выдаётся, выберите приложение вручную на этапе «Доп. действия».");
+      }
       try {
         Bridge.call("adb_install_apks", {
           index: stage.index, apkPaths, appsInstallMethod: stage.apps_install_method || "",
-          modelKey: model.key,
+          modelKey: model.key, mockLocationPath: flaggedPaths.length === 1 ? flaggedPaths[0] : "",
         });
       } catch(error) { onAdbStageResult({index:stage.index,result:{success:false,reason:error.message||String(error)}}); }
     });

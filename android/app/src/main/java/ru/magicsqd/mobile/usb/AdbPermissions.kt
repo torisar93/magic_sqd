@@ -64,7 +64,14 @@ object AdbPermissions {
     // через "доверенный" магазин (актуально для всего, что ставит эта
     // программа) — без него enableAccessibilityService/enableNotificationListener
     // ниже пишут нужные settings, но система их не применяет.
-    private val EXTRA_APPOPS = listOf("REQUEST_INSTALL_PACKAGES", "ACTIVATE_VPN", "ACCESS_RESTRICTED_SETTINGS")
+    // + SCHEDULE_EXACT_ALARM/RUN_ANY_IN_BACKGROUND/RUN_IN_BACKGROUND/MANAGE_MEDIA —
+    // см. cars/_shared/adb_permissions.py (_EXTRA_APPOPS): точные будильники,
+    // фон без ограничений, изменение медиафайлов без подтверждения. Незнакомый
+    // прошивке op молча не применится, остальные сработают.
+    private val EXTRA_APPOPS = listOf(
+        "REQUEST_INSTALL_PACKAGES", "ACTIVATE_VPN", "ACCESS_RESTRICTED_SETTINGS",
+        "SCHEDULE_EXACT_ALARM", "RUN_ANY_IN_BACKGROUND", "RUN_IN_BACKGROUND", "MANAGE_MEDIA",
+    )
     private const val WRITE_SECURE_SETTINGS = "android.permission.WRITE_SECURE_SETTINGS"
 
     private val REQUESTED_PERMISSIONS_HEADER = Regex("^requested permissions:\\s*$")
@@ -159,8 +166,8 @@ object AdbPermissions {
         log("Доступ к уведомлениям включён: $component")
     }
 
-    private fun shellText(command: String, log: (String) -> Unit): String =
-        when (val r = AdbSession.shell(command, log)) {
+    private fun shellText(command: String, log: (String) -> Unit, timeoutMs: Int = 5000): String =
+        when (val r = AdbSession.shell(command, log, timeoutMs)) {
             is AdbShellResult.Output -> r.text
             else -> ""
         }
@@ -195,6 +202,13 @@ object AdbPermissions {
         log("Готово.")
     }
 
+    // Когда пакету в последний раз выдавали разрешения — чтобы автовыдача после
+    // установки (InstallEngine) не дублировала инлайн-выдачу способов localinstall/
+    // dex_shell (AdbInstall.kt), которые выдают ДО первого запуска приложения.
+    private val lastGrantAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    fun grantedSince(pkg: String, sinceMillis: Long): Boolean = (lastGrantAt[pkg] ?: 0L) >= sinceMillis
+
     /** Выдаёт пакету все разрешения, которые он запрашивает в манифесте
      * (см. dumpsys), плюс WRITE_SECURE_SETTINGS и appops-спецдоступы — то,
      * что на большинстве магнитол нельзя дать через штатный экран настроек.
@@ -202,8 +216,12 @@ object AdbPermissions {
      * возможностей и доступ к уведомлениям. Плюс освобождает от ограничений
      * энергосбережения (Doze). */
     fun grantAllPermissions(pkg: String, log: (String) -> Unit) {
+        lastGrantAt[pkg] = System.currentTimeMillis()
         log("Выдаю разрешения: $pkg")
-        val dumpsysOutput = shellText("dumpsys package $pkg", log)
+        // dumpsys package у крупных приложений выдаёт сотни КБ и не укладывается
+        // в общие 5 с AdbSession.shell — вывод обрывается, и список запрошенных
+        // разрешений получается неполным.
+        val dumpsysOutput = shellText("dumpsys package $pkg", log, 20_000)
         val requested = parseRequestedPermissions(dumpsysOutput).ifEmpty { COMMON_DANGEROUS_PERMISSIONS }
 
         for (perm in requested) {

@@ -26,15 +26,19 @@ class ApkInfo:
     category: str = ""  # "" = "Без категории" (лежит прямо в apk/)
     remote_only: bool = False  # есть на сервере, но ещё не скачан локально
     size: int = -1
+    # Пометка админа «выдавать фиктивное местоположение» (только раздел GPS) —
+    # см. app/scanner.py:ApkInfo.mock_location на десктопе.
+    mock_location: bool = False
 
 
 def _read_local_apk_meta(apk_path: Path):
     meta_path = apk_path.with_suffix(".json")
     try:
         data = json.loads(meta_path.read_text(encoding="utf-8"))
-        return str(data.get("name") or apk_path.stem), str(data.get("description") or "")
-    except (OSError, json.JSONDecodeError):
-        return apk_path.stem, ""
+        return (str(data.get("name") or apk_path.stem), str(data.get("description") or ""),
+                data.get("mock_location") is True)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return apk_path.stem, "", False
 
 
 def _scan_local_dir(dir_path: Path, category: str) -> list:
@@ -42,8 +46,9 @@ def _scan_local_dir(dir_path: Path, category: str) -> list:
         return []
     items = []
     for f in sorted(dir_path.glob("*.apk")):
-        name, description = _read_local_apk_meta(f)
-        items.append(ApkInfo(path=str(f), name=name, description=description, category=category))
+        name, description, mock_location = _read_local_apk_meta(f)
+        items.append(ApkInfo(path=str(f), name=name, description=description, category=category,
+                             mock_location=mock_location))
     return items
 
 
@@ -87,7 +92,7 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
                 continue
             entry = {
                 "path": str(local_path), "name": Path(rel).stem, "description": "",
-                "category": category, "remote_only": True, "size": size,
+                "category": category, "remote_only": True, "size": size, "mock_location": False,
             }
             remote_entries.append(entry)
             json_rel = rel[:-4] + ".json"
@@ -103,7 +108,8 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
                         data = json.loads(resp.read().decode("utf-8"))
                     entry["name"] = str(data.get("name") or entry["name"])
                     entry["description"] = str(data.get("description") or "")
-                except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+                    entry["mock_location"] = data.get("mock_location") is True
+                except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
                     pass
 
             with ThreadPoolExecutor(max_workers=_META_FETCH_WORKERS) as executor:

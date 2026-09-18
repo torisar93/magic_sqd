@@ -357,8 +357,9 @@ class WebApi:
     def admin_create_apk_category(self, name: str) -> dict:
         return self._admin.create_apk_category(name)
 
-    def admin_add_apk(self, file_path: str, name: str, description: str, category: str) -> dict:
-        return self._admin.add_apk(file_path, name, description, category)
+    def admin_add_apk(self, file_path: str, name: str, description: str, category: str,
+                      mock_location: bool = False) -> dict:
+        return self._admin.add_apk(file_path, name, description, category, mock_location)
 
     def admin_browse_server_cars(self, rel_path: str) -> dict:
         return self._admin.browse_server_cars(rel_path)

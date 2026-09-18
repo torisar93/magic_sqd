@@ -187,10 +187,13 @@ class AdminApi:
         (self.apk_dir / name).mkdir(parents=True, exist_ok=True)
         return {"ok": True, "name": name}
 
-    def add_apk(self, file_path: str, name: str, description: str, category: str) -> dict:
+    def add_apk(self, file_path: str, name: str, description: str, category: str,
+                mock_location: bool = False) -> dict:
         """Копирует выбранный APK в apk/<category>/ (или в корень apk/, если
         category пуста) и пишет рядом <файл>.json с "красивым" именем и
-        описанием — тот же формат, что читает scan_apk_dir(). Затем в фоне
+        описанием — тот же формат, что читает scan_apk_dir() (плюс необязательная
+        пометка "mock_location": true — только для раздела GPS, см.
+        app/scanner.py:ApkInfo.mock_location). Затем в фоне
         пытается опубликовать ТОЛЬКО этот файл на сервер, если уже есть
         кешированная сессия (см. _publish_apk_async) — сам не логинит,
         чтобы не спрашивать пароль на каждый добавленный APK, только
@@ -206,6 +209,7 @@ class AdminApi:
         if not name:
             return {"ok": False, "error": "Введите название приложения."}
         description = description.strip()
+        mock_location = bool(mock_location) and category.lower() == "gps"
 
         dest_dir = (self.apk_dir / category) if category else self.apk_dir
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -213,16 +217,18 @@ class AdminApi:
         try:
             shutil.copy2(src, dest)
             meta = {"name": name, "description": description}
+            if mock_location:
+                meta["mock_location"] = True
             dest.with_suffix(".json").write_text(
                 json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         except OSError as exc:
             return {"ok": False, "error": f"Не удалось сохранить файл: {exc}"}
 
-        self._publish_apk_async(category, dest.name, dest, name, description)
+        self._publish_apk_async(category, dest.name, dest, name, description, mock_location)
         return {"ok": True}
 
     def _publish_apk_async(self, category: str, filename: str, path: Path,
-                            name: str, description: str) -> None:
+                            name: str, description: str, mock_location: bool = False) -> None:
         cookie = get_cached_session(self.base_url) if self.base_url else None
         if not (self.base_url and cookie):
             event_bridge.push({
@@ -234,14 +240,15 @@ class AdminApi:
             event_bridge.push({"kind": "apk_upload_finished", "success": True})
             return
         threading.Thread(
-            target=self._publish_apk_worker, args=(cookie, category, filename, path, name, description),
+            target=self._publish_apk_worker,
+            args=(cookie, category, filename, path, name, description, mock_location),
             daemon=True).start()
 
     def _publish_apk_worker(self, cookie: str, category: str, filename: str, path: Path,
-                             name: str, description: str) -> None:
+                             name: str, description: str, mock_location: bool = False) -> None:
         try:
             upload_single_apk(self.base_url, cookie, category, filename, path, log=self._apk_log)
-            edit_apk_metadata(self.base_url, cookie, category, filename, name, description)
+            edit_apk_metadata(self.base_url, cookie, category, filename, name, description, mock_location)
             self._apk_log(f"Опубликовано на сервере: {filename}.")
             event_bridge.push({"kind": "apk_upload_finished", "success": True})
         except AdminClientError as exc:

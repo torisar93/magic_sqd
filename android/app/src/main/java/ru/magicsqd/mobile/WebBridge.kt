@@ -828,6 +828,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val paths = (0 until pathsArr.length()).map { pathsArr.getString(it) }
         val preferredMethod = args.optString("appsInstallMethod", "")
         val modelDir = File(args.getString("modelKey"))
+        // Путь единственного выбранного GPS-приложения с пометкой «выдавать
+        // фиктивное местоположение» (JS передаёт только когда такое ровно одно).
+        val mockLocationPath = args.optString("mockLocationPath", "").ifEmpty { null }
         labCancelInstall = false
         runExclusive({ pushStageResult(stageIndex, StageRunResult.Failed("Другая операция ещё выполняется")) }) {
             val result = try {
@@ -843,7 +846,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                         },
                         onDetail = { path, completed, total, detail ->
                             pushApkProgress(stageIndex, path, completed, total, "running", detail)
-                        })
+                        },
+                        mockLocationPath = mockLocationPath)
                 }
             } catch (e: Exception) {
                 StageRunResult.Failed((e.message ?: "неизвестная ошибка"))

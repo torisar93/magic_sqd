@@ -587,6 +587,7 @@
   // ==================================================================
   const adminApk = (() => {
     let dialog, categorySelect, fileLabel, nameInput, descriptionInput, progressEl, logEl, addBtn;
+    let mockRow, mockCheckbox;
     let pickedFile = null;
     let publishing = false;
 
@@ -599,6 +600,9 @@
       progressEl = document.getElementById("admin-apk-progress");
       logEl = document.getElementById("admin-apk-log");
       addBtn = document.getElementById("admin-apk-add");
+      mockRow = document.getElementById("admin-apk-mock-row");
+      mockCheckbox = document.getElementById("admin-apk-mock-location");
+      categorySelect.addEventListener("change", updateMockRow);
 
       document.getElementById("admin-apk-pick-file").addEventListener("click", onPickFile);
       document.getElementById("admin-apk-new-folder").addEventListener("click", onNewFolder);
@@ -654,6 +658,14 @@
       await reloadCategories(result.name);
     }
 
+    // Пометка «выдавать фиктивное местоположение» — только для раздела GPS:
+    // показываем чекбокс, только пока выбрана папка GPS (без учёта регистра).
+    function updateMockRow() {
+      const isGps = categorySelect.value.trim().toLowerCase() === "gps";
+      mockRow.hidden = !isGps;
+      if (!isGps) mockCheckbox.checked = false;
+    }
+
     function setPublishing(value) {
       publishing = value;
       progressEl.style.display = value ? "" : "none";
@@ -673,7 +685,7 @@
       addBtn.disabled = true;
       setPublishing(true);
       const result = await window.pywebview.api.admin_add_apk(
-        pickedFile.path, name, descriptionInput.value.trim(), categorySelect.value
+        pickedFile.path, name, descriptionInput.value.trim(), categorySelect.value, mockCheckbox.checked
       );
       addBtn.disabled = false;
       if (!result.ok) {
@@ -686,6 +698,7 @@
       fileLabel.textContent = "(не выбрано)";
       nameInput.value = "";
       descriptionInput.value = "";
+      mockCheckbox.checked = false;
       // progress/publishing гасится по событию apk_upload_finished (см. onPublishFinished) —
       // публикация идёт в фоне на стороне Python и может занять время (сеть).
     }
@@ -708,7 +721,9 @@
       descriptionInput.value = "";
       clear(logEl);
       setPublishing(false);
+      mockCheckbox.checked = false;
       await reloadCategories("");
+      updateMockRow();
       dialog.showModal();
     }
 

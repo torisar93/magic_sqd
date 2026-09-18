@@ -121,6 +121,11 @@ class ApkInfo:
     category: str = ""  # "" = лежит прямо в apk/ ("Без категории")
     remote_only: bool = False  # есть на сервере, но ещё не скачан локально
     size: int = -1  # известен, только когда remote_only=True (см. scan_apks)
+    # Пометка админа в <файл>.json ("mock_location": true) — только для
+    # приложений из раздела GPS: если техник выбрал ровно ОДНО такое
+    # приложение, после установки ему автоматически выдаётся фиктивное
+    # местоположение (см. install_context.InstallContext._mock_location_target).
+    mock_location: bool = False
 
 
 def scan_cars(cars_dir: Path) -> dict[str, list[ModelGroup]]:
@@ -370,6 +375,7 @@ def scan_apks(apk_dir: Path, remote_catalog: list[dict] | None = None) -> list[A
             category=category,
             remote_only=True,
             size=entry.get("size", -1),
+            mock_location=read_apk_mock_location(apk_path),
         )
 
     return sorted(apks.values(), key=lambda a: (a.category != "", a.category.lower(), a.name.lower()))
@@ -395,6 +401,19 @@ def _read_apk_meta(apk_path: Path) -> tuple[str, str]:
     return name, description
 
 
+def read_apk_mock_location(apk_path: Path) -> bool:
+    """Стоит ли в <файл>.json пометка "mock_location": true (см. ApkInfo.
+    mock_location). Битый/отсутствующий сайдкар — False."""
+    meta_path = Path(apk_path).with_suffix(".json")
+    if not meta_path.exists():
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return isinstance(meta, dict) and meta.get("mock_location") is True
+
+
 def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
     """Все *.apk одной папки (без подпапок). Имя/описание можно задать в
     <файл>.json рядом с APK — те же поля "name"/"description", что и в
@@ -403,7 +422,8 @@ def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
     apks = []
     for apk_path in sorted(folder.glob("*.apk"), key=lambda p: p.name.lower()):
         name, description = _read_apk_meta(apk_path)
-        apks.append(ApkInfo(path=apk_path, name=name, description=description, category=category))
+        apks.append(ApkInfo(path=apk_path, name=name, description=description, category=category,
+                            mock_location=read_apk_mock_location(apk_path)))
     return apks
 
 

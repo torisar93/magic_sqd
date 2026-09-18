@@ -96,7 +96,16 @@ _MANAGE_EXTERNAL_STORAGE_OP = "MANAGE_EXTERNAL_STORAGE"
 #   их не применяет, и в самом приложении провал выглядит как обычный
 #   "нужно открыть", будто мы вообще не пытались. Безвредно для приложений,
 #   которым это не нужно.
-_EXTRA_APPOPS = ["REQUEST_INSTALL_PACKAGES", "ACTIVATE_VPN", "ACCESS_RESTRICTED_SETTINGS"]
+#   SCHEDULE_EXACT_ALARM — точные будильники/таймеры (Android 12+: без
+#   этого op приложение не может ставить точные срабатывания по времени).
+#   RUN_ANY_IN_BACKGROUND / RUN_IN_BACKGROUND — работа в фоне без
+#   ограничений (дополняет белый список Doze ниже: сам Doze-список не
+#   снимает "фоновые ограничения" приложения из настроек Android 9+).
+#   MANAGE_MEDIA — изменение/удаление медиафайлов без запроса подтверждения
+#   (Android 12+). Незнакомый прошивке op просто молча не применится
+#   (check=False), остальные сработают.
+_EXTRA_APPOPS = ["REQUEST_INSTALL_PACKAGES", "ACTIVATE_VPN", "ACCESS_RESTRICTED_SETTINGS",
+                 "SCHEDULE_EXACT_ALARM", "RUN_ANY_IN_BACKGROUND", "RUN_IN_BACKGROUND", "MANAGE_MEDIA"]
 
 # WRITE_SECURE_SETTINGS — обычное (не appops) разрешение, но с protection
 # level signature|privileged — недоступно приложению через диалог, зато

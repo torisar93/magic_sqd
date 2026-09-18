@@ -265,6 +265,12 @@
       <span class="field-label">Описание (необязательно)</span>
       <input type="text" id="admin-apk-description" />
     </div>
+    <label class="field" id="admin-apk-mock-row" hidden style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer">
+      <input type="checkbox" id="admin-apk-mock-location" style="margin-top: 3px" />
+      <span>Автоматически выдавать фиктивное местоположение
+        <small style="display: block; color: var(--text-dim)">Только раздел GPS: если техник выбрал ровно одно такое приложение — после установки оно станет приложением для фиктивных местоположений.</small>
+      </span>
+    </label>
     <div class="progress-bar" id="admin-apk-progress" style="display: none"></div>
     <div class="dialog-log" id="admin-apk-log"></div>
     <div class="dialog-actions spread">

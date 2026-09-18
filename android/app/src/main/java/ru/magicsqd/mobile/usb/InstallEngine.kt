@@ -232,7 +232,8 @@ class InstallEngine(
 
     fun installApksWithProgress(apkPaths: List<String>, preferredMethod: String = "", modelDir: File? = null,
         cancelled: () -> Boolean = { false }, onProgress: (String, Int, Int, String) -> Unit = { _, _, _, _ -> },
-        onDetail: (String, Int, Int, ApkOperationProgress) -> Unit = { _, _, _, _ -> }): StageRunResult {
+        onDetail: (String, Int, Int, ApkOperationProgress) -> Unit = { _, _, _, _ -> },
+        mockLocationPath: String? = null): StageRunResult {
         var confirmedMethod: Int? = null
         val order = INSTALL_METHODS.indices.let { indices ->
             val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
@@ -242,6 +243,7 @@ class InstallEngine(
 
         for ((index, path) in apkPaths.withIndex()) {
             if (cancelled()) return StageRunResult.Failed("Очередь остановлена пользователем")
+            val startedAt = System.currentTimeMillis()
             onProgress(path, index, apkPaths.size, "running")
             onDetail(path, index, apkPaths.size, ApkOperationProgress("install"))
             fun failed(reason: String): StageRunResult.Failed {
@@ -276,11 +278,44 @@ class InstallEngine(
             }
             currentApkName = file.name
 
+            // После КАЖДОЙ успешной установки (любым способом) — все разрешения, а
+            // помеченному GPS-приложению (см. mockLocationPath) ещё и фиктивное
+            // местоположение. Имя пакета — из самого APK, а не из вывода способа
+            // установки (у большинства способов имени нет). Сбой выдачи не должен
+            // срывать установку — приложение уже стоит.
+            fun afterInstall() {
+                val pkg = try {
+                    context.packageManager.getPackageArchiveInfo(signedFile.path, 0)?.packageName
+                } catch (e: Exception) { null }
+                if (pkg == null) {
+                    log("Не удалось определить имя пакета ${file.name} — разрешения автоматически не выданы.")
+                    return
+                }
+                if (!AdbPermissions.grantedSince(pkg, startedAt)) {
+                    try {
+                        AdbPermissions.grantAllPermissions(pkg, log)
+                    } catch (e: Exception) {
+                        log("Не удалось выдать разрешения $pkg: ${e.message}. Приложение установлено — разрешения можно выдать вручную на этапе «Доп. действия».")
+                    }
+                }
+                if (path == mockLocationPath) {
+                    try {
+                        AdbPermissions.setMockLocationApp(pkg, log)
+                    } catch (e: Exception) {
+                        log("Не удалось выдать фиктивное местоположение $pkg: ${e.message}.")
+                    }
+                }
+            }
+
             if (confirmedMethod != null) {
                 val (_, install) = INSTALL_METHODS[confirmedMethod]
                 when (val r = perform(install, bytes)) {
                     is AdbInstallResult.Failed -> return failed("${file.name}: ${r.reason}")
-                    is AdbInstallResult.Success -> { log("Установлено: ${file.name}"); onProgress(path, index + 1, apkPaths.size, "done") }
+                    is AdbInstallResult.Success -> {
+                        log("Установлено: ${file.name}")
+                        afterInstall()
+                        onProgress(path, index + 1, apkPaths.size, "done")
+                    }
                 }
                 continue
             }
@@ -298,6 +333,7 @@ class InstallEngine(
                         }
                         log("Установлено: ${file.name}")
                         installed = true
+                        afterInstall()
                         onProgress(path, index + 1, apkPaths.size, "done")
                     }
                 }

@@ -514,12 +514,13 @@ def upload_single_apk(base_url: str, session_cookie: str, category: str, filenam
 
 
 def edit_apk_metadata(base_url: str, session_cookie: str, category: str, filename: str,
-                       name: str, description: str) -> None:
+                       name: str, description: str, mock_location: bool = False) -> None:
     """Пишет/переносит категорию и <файл>.json с именем/описанием (см.
     server/backend.py: POST /admin/api/apks/edit?category=&filename=) —
     вызывается сразу после upload_single_apk, чтобы "красивое" имя,
     введённое в "Добавить APK...", попало на сервер вместе с файлом."""
-    body = json.dumps({"category": category, "name": name, "description": description}).encode("utf-8")
+    body = json.dumps({"category": category, "name": name, "description": description,
+                       "mock_location": bool(mock_location)}).encode("utf-8")
     parts = urlsplit(base_url)
     conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
     conn = conn_cls(parts.netloc, timeout=30)

@@ -30,6 +30,7 @@ def apk_to_dict(apk) -> dict:
         "category": apk.category,
         "remote_only": apk.remote_only,
         "size": apk.size,
+        "mock_location": bool(getattr(apk, "mock_location", False)),
     }
 
 

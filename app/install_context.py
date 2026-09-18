@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 
 from .adb_utils import Adb, AdbError
+from .apk_package import read_package_name
+from .scanner import read_apk_mock_location
 
 
 class InstallCancelled(RuntimeError):
@@ -145,6 +147,14 @@ class InstallContext:
             INSTALL_METHOD_KEYS.index(preferred_install_method)
             if preferred_install_method in INSTALL_METHOD_KEYS else None
         )
+        # Пакеты, которым уже выдали разрешения в этом запуске — чтобы
+        # инлайн-выдача в localinstall/dex_shell и общая после установки
+        # (_after_app_installed) не сработали дважды на одном приложении.
+        self._granted_packages: set[str] = set()
+        # Имя пакета, которое localinstall/dex_shell определили сравнением
+        # списков пакетов до/после — запасной вариант, если из самого APK
+        # его прочитать не удалось (см. _after_app_installed).
+        self._last_diff_package: str | None = None
 
     # --- служебное -------------------------------------------------
     def log(self, message):
@@ -217,8 +227,42 @@ class InstallContext:
             raise
 
     def install_selected_apks(self, extra_args=None):
+        mock_target = self._mock_location_target()
         for apk in self.selected_apks:
+            self._last_diff_package = None
             self.install_apk_auto(apk, extra_args=extra_args)
+            self._after_app_installed(apk, apk == mock_target)
+
+    def _mock_location_target(self) -> Path | None:
+        """Приложение, которому после установки нужно выдать фиктивное
+        местоположение: ровно ОДНО из выбранных с пометкой админа
+        ("mock_location": true в <файл>.json, только раздел GPS). Если таких
+        несколько — не выдаём никому: какое из них техник хочет использовать,
+        неизвестно, а фиктивное местоположение действует на устройстве
+        только для одного приложения."""
+        flagged = [apk for apk in self.selected_apks if read_apk_mock_location(apk)]
+        if len(flagged) > 1:
+            self.log("Выбрано несколько GPS-приложений с автовыдачей фиктивного местоположения "
+                     "— автоматически оно не выдаётся, выберите приложение вручную на этапе "
+                     "«Доп. действия».")
+            return None
+        return flagged[0] if flagged else None
+
+    def _after_app_installed(self, apk: Path, give_mock_location: bool) -> None:
+        """После КАЖДОГО успешно установленного приложения (любым способом
+        и по любому подключению — сюда приходят все семь способов через
+        install_apk_auto) выдаёт ему все разрешения, а помеченному GPS-
+        приложению — ещё и фиктивное местоположение. Ошибка выдачи не должна
+        срывать установку: приложение уже стоит, разрешения можно выдать
+        вручную на этапе «Доп. действия» — поэтому любой сбой (кроме
+        «Стоп» от техника) только пишется в лог."""
+        package = read_package_name(apk) or self._last_diff_package
+        if not package:
+            self.log(f"Не удалось определить имя пакета «{apk.name}» — разрешения автоматически не выданы.")
+            return
+        self._grant_all_permissions_if_available(package)
+        if give_mock_location:
+            self._set_mock_location_if_available(package)
 
     def install_apk_auto(self, path, extra_args=None):
         """Устанавливает APK, автоматически подбирая рабочий способ — по
@@ -439,6 +483,7 @@ class InstallContext:
             text = ((result.stdout or "") + (result.stderr or "")).strip()
             raise AdbError(text or "localinstall не подтвердил успех (пакет не появился в списке)")
         package = next(iter(new_packages))
+        self._last_diff_package = package
         self._grant_all_permissions_if_available(package)
         self.shell(f"am force-stop {package}", check=False)
         self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1", check=False)
@@ -487,6 +532,7 @@ class InstallContext:
         new_packages = after - before
         if len(new_packages) == 1:
             package = next(iter(new_packages))
+            self._last_diff_package = package
         elif not new_packages and any(line.strip() == "Success" for line in text.splitlines()):
             # Пакет уже стоял ДО этой попытки (повторная установка того же
             # APK — например после разрыва/переподключения ADB очередь
@@ -512,22 +558,53 @@ class InstallContext:
         self.shell(f"am force-stop {package}", check=False)
         self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1", check=False)
 
+    def _load_shared_module(self, name: str):
+        """Модуль из cars/_shared (adb_permissions.py и т.п.) — тот же приём
+        через sys.path, что и в сгенерированных stages.py; None, если папки
+        нет или модуля нет на этой копии."""
+        if not self.shared_dir:
+            return None
+        shared_str = str(self.shared_dir)
+        if shared_str not in sys.path:
+            sys.path.insert(0, shared_str)
+        try:
+            return __import__(name)
+        except ImportError:
+            return None
+
     def _grant_all_permissions_if_available(self, package: str) -> None:
         """cars/_shared/adb_permissions.py уже умеет выдавать все нужные
         разрешения/appops по имени пакета (используется "actions"-этапами
         моделей) — переиспользуем её и здесь вместо дублирования той же
         логики в app/, раз cars/_shared гарантированно синхронизирована на
-        клиент (см. content_sync.py:sync_scripts)."""
-        if not self.shared_dir:
+        клиент (см. content_sync.py:sync_scripts). Второй раз на тот же
+        пакет в одном запуске не выдаёт (см. _granted_packages). Сбой — только
+        в лог, кроме «Стоп» от техника (InstallCancelled)."""
+        if package in self._granted_packages:
             return
-        shared_str = str(self.shared_dir)
-        if shared_str not in sys.path:
-            sys.path.insert(0, shared_str)
+        module = self._load_shared_module("adb_permissions")
+        if module is None:
+            return
+        self._granted_packages.add(package)
         try:
-            from adb_permissions import grant_all_permissions
-        except ImportError:
+            module.grant_all_permissions(self, package)
+        except InstallCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - выдача разрешений не должна ронять установку
+            self.log(f"Не удалось выдать разрешения {package}: {exc}. Приложение установлено — "
+                     "разрешения можно выдать вручную на этапе «Доп. действия».")
+
+    def _set_mock_location_if_available(self, package: str) -> None:
+        module = self._load_shared_module("adb_permissions")
+        if module is None:
             return
-        grant_all_permissions(self, package)
+        self.log(f"Выдаю фиктивное местоположение приложению {package}…")
+        try:
+            module.set_mock_location_app(self, package)
+        except InstallCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"Не удалось выдать фиктивное местоположение {package}: {exc}.")
 
     def uninstall(self, package, check=False):
         return self._adb.uninstall(package, check=check)
