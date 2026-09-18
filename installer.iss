@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "1.0.6"
+#define MyAppVersion "1.0.7"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
@@ -19,8 +19,13 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+; Только «для текущего пользователя», БЕЗ выбора в мастере: диалог позволял
+; поставить «для всех пользователей» в Program Files, а там у обычной учётной
+; записи нет прав на запись — программа не могла ни докачать контент, ни
+; сохранить client_id, ни обновить инструкции (реальные логи: 17 записей от
+; 9 разных пользователей за 4 дня, WinError 5). Без OverridesAllowed ключ
+; /ALLUSERS и диалог выбора режима недоступны.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=installer_output
 OutputBaseFilename=MagicSQD_Setup_{#MyAppVersion}
 SetupIconFile=assets\icon.ico
