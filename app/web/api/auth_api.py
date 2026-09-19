@@ -14,7 +14,9 @@ from ..events import event_bridge
 from ... import pending_submissions
 from ...admin_config import get_admin_base_url
 from ...admin_client import get_cached_session, set_cached_session, clear_cached_session
-from ...auth_client import AuthClientError, change_password as _change_password, download_my_car, \
+from ...auth_client import AuthClientError, boosty_confirm as _boosty_confirm, boosty_refresh as _boosty_refresh, \
+    boosty_start as _boosty_start, boosty_status as _boosty_status, boosty_unlink as _boosty_unlink, \
+    change_password as _change_password, download_my_car, \
     forgot_password as _forgot_password, login as _login, logout as _logout, me as _me, \
     my_cars as _my_cars, register as _register
 from ...auth_config import clear_saved_session, load_saved_session, save_saved_session
@@ -116,6 +118,32 @@ class AuthApi:
         admin_cookie = get_cached_session(admin_base) if admin_base else None
         save_saved_session(self.base_dir, self._email, new_cookie, admin_cookie)
         return {"ok": True}
+
+    # -- Boosty: подписчик любого платного уровня снимает лимиты на место и чат --
+    def _boosty_call(self, fn, *args) -> dict:
+        base_url = self._auth_base_url()
+        if not (base_url and self._user_cookie):
+            return {"ok": False, "error": "Не выполнен вход."}
+        try:
+            result = fn(base_url, self._user_cookie, *args)
+        except AuthClientError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, **(result or {})}
+
+    def boosty_status(self) -> dict:
+        return self._boosty_call(_boosty_status)
+
+    def boosty_start(self, email: str) -> dict:
+        return self._boosty_call(_boosty_start, email)
+
+    def boosty_confirm(self, code: str) -> dict:
+        return self._boosty_call(_boosty_confirm, code)
+
+    def boosty_refresh(self) -> dict:
+        return self._boosty_call(_boosty_refresh)
+
+    def boosty_unlink(self) -> dict:
+        return self._boosty_call(_boosty_unlink)
 
     def forgot_password(self, email: str) -> dict:
         base_url = self._auth_base_url()

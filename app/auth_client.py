@@ -113,6 +113,32 @@ def my_cars(base_url: str, user_cookie: str, all_states: bool = False) -> list[d
     return payload.get("items", [])
 
 
+def boosty_status(base_url: str, user_cookie: str) -> dict:
+    """Привязка к Boosty и действующие лимиты (см. /auth/boosty/status)."""
+    payload, _ = _request(base_url, "GET", "/auth/boosty/status", cookie=user_cookie)
+    return payload
+
+
+def boosty_start(base_url: str, user_cookie: str, email: str) -> None:
+    """Шлёт код на почту Boosty (сервер сам проверит, что почта не занята другим аккаунтом)."""
+    _request(base_url, "POST", "/auth/boosty/start", body={"email": email}, cookie=user_cookie)
+
+
+def boosty_confirm(base_url: str, user_cookie: str, code: str) -> dict:
+    payload, _ = _request(base_url, "POST", "/auth/boosty/confirm", body={"code": code}, cookie=user_cookie)
+    return payload
+
+
+def boosty_refresh(base_url: str, user_cookie: str) -> dict:
+    payload, _ = _request(base_url, "POST", "/auth/boosty/refresh", body={}, cookie=user_cookie)
+    return payload
+
+
+def boosty_unlink(base_url: str, user_cookie: str) -> dict:
+    payload, _ = _request(base_url, "POST", "/auth/boosty/unlink", body={}, cookie=user_cookie)
+    return payload
+
+
 def download_my_car(base_url: str, user_cookie: str, name: str, dest_path) -> None:
     """Скачивает свою заявку (см. /auth/my-cars/download) в dest_path —
     тот же стриминг-приём, что и admin_client.download_submission, но с

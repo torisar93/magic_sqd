@@ -14,6 +14,7 @@ window.authDialog = (() => {
     newPasswordRepeatInput, changePasswordStatusEl, changePasswordSubmitBtn;
   let mode = "login"; // "login" | "register"
   let currentEmail = null;
+  let boosty = {};
 
   function attach(refs) {
     toggleEl = refs.toggleEl;
@@ -38,6 +39,19 @@ window.authDialog = (() => {
     newPasswordRepeatInput = loggedinEl.querySelector("#catalog-account-new-password-repeat");
     changePasswordStatusEl = loggedinEl.querySelector("#catalog-account-change-password-status");
     changePasswordSubmitBtn = loggedinEl.querySelector("#catalog-account-change-password-submit");
+
+    boosty.stateEl = loggedinEl.querySelector("#catalog-account-boosty-state");
+    boosty.toggleBtn = loggedinEl.querySelector("#catalog-account-boosty-toggle");
+    boosty.formEl = loggedinEl.querySelector("#catalog-account-boosty-form");
+    boosty.emailInput = loggedinEl.querySelector("#catalog-account-boosty-email");
+    boosty.sendBtn = loggedinEl.querySelector("#catalog-account-boosty-send");
+    boosty.codeField = loggedinEl.querySelector("#catalog-account-boosty-code-field");
+    boosty.codeInput = loggedinEl.querySelector("#catalog-account-boosty-code");
+    boosty.confirmBtn = loggedinEl.querySelector("#catalog-account-boosty-confirm");
+    boosty.statusEl = loggedinEl.querySelector("#catalog-account-boosty-status");
+    boosty.actionsEl = loggedinEl.querySelector("#catalog-account-boosty-actions");
+    boosty.refreshBtn = loggedinEl.querySelector("#catalog-account-boosty-refresh");
+    boosty.unlinkBtn = loggedinEl.querySelector("#catalog-account-boosty-unlink");
 
     // safely() — тонкая обёртка вокруг обработчиков клика: не даёт нажать
     // повторно, пока предыдущий запрос ещё не завершился (кнопка всё равно
@@ -77,7 +91,101 @@ window.authDialog = (() => {
     currentPasswordInput.addEventListener("keydown", onChangePasswordEnter);
     newPasswordInput.addEventListener("keydown", onChangePasswordEnter);
     newPasswordRepeatInput.addEventListener("keydown", onChangePasswordEnter);
+    boosty.toggleBtn.addEventListener("click", () => {
+      boosty.formEl.hidden = !boosty.formEl.hidden;
+      boosty.toggleBtn.setAttribute("aria-expanded", String(!boosty.formEl.hidden));
+      if (!boosty.formEl.hidden) {
+        if (!boosty.emailInput.value) boosty.emailInput.value = currentEmail || "";
+        boosty.emailInput.focus({ preventScroll: true });
+      }
+    });
+    boosty.sendBtn.addEventListener("click", safely(onBoostySend, boosty.sendBtn, boosty.statusEl));
+    boosty.confirmBtn.addEventListener("click", safely(onBoostyConfirm, boosty.confirmBtn, boosty.statusEl));
+    boosty.refreshBtn.addEventListener("click", safely(onBoostyRefresh, boosty.refreshBtn, boosty.statusEl));
+    boosty.unlinkBtn.addEventListener("click", safely(onBoostyUnlink, boosty.unlinkBtn, boosty.statusEl));
+    boosty.codeInput.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); boosty.confirmBtn.click(); } });
+    // Каждый раз при открытии окна аккаунта — свежий статус подписки.
+    toggleEl.addEventListener("click", () => { if (currentEmail) refreshBoosty(); });
     setMode("login");
+  }
+
+  // -- Boosty: связать аккаунт по почте Boosty; подписчик любого платного уровня
+  // снимает лимиты на место и ИИ-чат (см. server/backend.py: /auth/boosty/*) --
+  const mb = (bytes) => `${Math.round(bytes / 1048576)} МБ`;
+
+  function renderBoosty(status) {
+    const el = boosty.stateEl;
+    el.dataset.state = "";
+    if (!status || !status.ok) {
+      el.textContent = "Boosty: не удалось получить статус.";
+      boosty.toggleBtn.hidden = false; boosty.actionsEl.hidden = true;
+      return;
+    }
+    const chat = status.chat_per_hour === null ? "без лимита" : `${status.chat_per_hour} запросов в час`;
+    const space = status.storage_limit_bytes === null || status.storage_limit_bytes === undefined
+      ? `${mb(status.storage_used_bytes || 0)}, без лимита`
+      : `${mb(status.storage_used_bytes || 0)} из ${mb(status.storage_limit_bytes)}`;
+    let text;
+    if (!status.configured) text = "Boosty: интеграция пока не включена.";
+    else if (status.subscriber) text = `Подписчик Boosty${status.level ? ` (${status.level})` : ""} — лимиты сняты. Чат: ${chat}. Место: ${space}.`;
+    else if (status.linked) text = `Boosty привязан (${status.email}), но платной подписки не найдено. Чат: ${chat}. Место: ${space}.`;
+    else text = `Подписчикам Boosty (любой платный уровень) лимиты снимаются. Сейчас чат: ${chat}, место: ${space}. Нажмите «Связать с Boosty».`;
+    el.textContent = text;
+    boosty.toggleBtn.hidden = !status.configured || status.linked;
+    boosty.actionsEl.hidden = !status.linked;
+    if (status.linked) { boosty.formEl.hidden = true; boosty.toggleBtn.setAttribute("aria-expanded", "false"); }
+  }
+
+  async function refreshBoosty() {
+    try { renderBoosty(await window.pywebview.api.auth_boosty_status()); }
+    catch (_) { renderBoosty(null); }
+  }
+
+  async function onBoostySend() {
+    boosty.statusEl.dataset.state = "error";
+    const email = boosty.emailInput.value.trim();
+    if (!email) { boosty.statusEl.textContent = "Введите почту, на которую зарегистрирован Boosty."; return; }
+    boosty.sendBtn.disabled = true;
+    boosty.statusEl.textContent = "Отправляю код...";
+    const res = await window.pywebview.api.auth_boosty_start(email);
+    if (!res.ok) { boosty.statusEl.textContent = res.error; return; }
+    boosty.statusEl.dataset.state = "success";
+    boosty.statusEl.textContent = `Код отправлен на ${email}. Введите его ниже (действует 15 минут).`;
+    boosty.codeField.hidden = false; boosty.confirmBtn.hidden = false;
+    boosty.codeInput.focus({ preventScroll: true });
+  }
+
+  async function onBoostyConfirm() {
+    boosty.statusEl.dataset.state = "error";
+    const code = boosty.codeInput.value.trim();
+    if (!/^\d{6}$/.test(code)) { boosty.statusEl.textContent = "Введите 6 цифр из письма."; return; }
+    boosty.confirmBtn.disabled = true;
+    boosty.statusEl.textContent = "Проверяю...";
+    const res = await window.pywebview.api.auth_boosty_confirm(code);
+    if (!res.ok) { boosty.statusEl.textContent = res.error; return; }
+    boosty.codeInput.value = ""; boosty.codeField.hidden = true; boosty.confirmBtn.hidden = true;
+    boosty.statusEl.dataset.state = "success";
+    boosty.statusEl.textContent = res.subscriber ? "Готово: подписка найдена, лимиты сняты." : "Аккаунт привязан, но платной подписки на эту почту пока не найдено.";
+    renderBoosty(res);
+  }
+
+  async function onBoostyRefresh() {
+    boosty.statusEl.dataset.state = "error";
+    boosty.refreshBtn.disabled = true;
+    boosty.statusEl.textContent = "Проверяю подписку...";
+    const res = await window.pywebview.api.auth_boosty_refresh();
+    if (!res.ok) { boosty.statusEl.textContent = res.error; return; }
+    boosty.statusEl.dataset.state = "success";
+    boosty.statusEl.textContent = "Статус обновлён.";
+    renderBoosty(res);
+  }
+
+  async function onBoostyUnlink() {
+    if (!(await window.confirmDialog("Отвязать Boosty? Лимиты вернутся к обычным, пока вы не свяжете аккаунт снова."))) return;
+    const res = await window.pywebview.api.auth_boosty_unlink();
+    boosty.statusEl.dataset.state = res.ok ? "success" : "error";
+    boosty.statusEl.textContent = res.ok ? "Boosty отвязан." : res.error;
+    if (res.ok) renderBoosty(res);
   }
 
   function setMode(newMode) {
@@ -115,6 +223,9 @@ window.authDialog = (() => {
       titleEl.textContent = "Аккаунт";
       subtitleEl.hidden = true;
       loggedinEmailEl.textContent = email;
+      boosty.formEl.hidden = true; boosty.codeField.hidden = true; boosty.confirmBtn.hidden = true;
+      boosty.statusEl.textContent = ""; boosty.codeInput.value = "";
+      refreshBoosty();
     } else {
       subtitleEl.hidden = false;
       setMode("login");

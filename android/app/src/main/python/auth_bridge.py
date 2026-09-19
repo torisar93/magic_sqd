@@ -98,6 +98,23 @@ def _safe_extract(zip_path: Path, dest: Path) -> None:
                 shutil.copyfileobj(src, out)
 
 
+def boosty_call(base_url: str, user_cookie: str, action: str, arg: str = "") -> str:
+    """Boosty: подписчик любого платного уровня снимает лимиты на место и ИИ-чат.
+    action: status | start (arg — почта Boosty) | confirm (arg — код из письма) |
+    refresh | unlink. Возвращает JSON ответа сервера ({"ok": false, "error"} при отказе)."""
+    if action == "status":
+        payload, _ = _request(base_url, "GET", "/auth/boosty/status", cookie=user_cookie)
+    elif action == "start":
+        payload, _ = _request(base_url, "POST", "/auth/boosty/start", body={"email": arg}, cookie=user_cookie)
+    elif action == "confirm":
+        payload, _ = _request(base_url, "POST", "/auth/boosty/confirm", body={"code": arg}, cookie=user_cookie)
+    elif action in ("refresh", "unlink"):
+        payload, _ = _request(base_url, "POST", f"/auth/boosty/{action}", body={}, cookie=user_cookie)
+    else:
+        payload = {"ok": False, "error": "неизвестное действие"}
+    return json.dumps(payload)
+
+
 def sync_my_cars(base_url: str, user_cookie: str, cars_dir: str) -> str:
     """Скачивает и распаковывает СВОИ заявки (на модерации и отклонённые) прямо в
     cars_dir/<Марка>/<Модель>/ — возвращает {"ok": true, "synced": [брэнды/
