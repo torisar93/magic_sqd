@@ -18,6 +18,9 @@ class ZipSlipError(RuntimeError):
     pass
 
 
+SUBMISSION_STATUS_FILENAME = ".submission_status"  # то же имя, что в scanner.py
+
+
 def _request(base_url: str, method: str, path: str, body: dict | None = None,
              cookie: str = "") -> tuple[dict, list[str]]:
     data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -96,11 +99,18 @@ def _safe_extract(zip_path: Path, dest: Path) -> None:
 
 
 def sync_my_cars(base_url: str, user_cookie: str, cars_dir: str) -> str:
-    """Скачивает и распаковывает КАЖДУЮ свою заявку на модерации прямо в
+    """Скачивает и распаковывает СВОИ заявки (на модерации и отклонённые) прямо в
     cars_dir/<Марка>/<Модель>/ — возвращает {"ok": true, "synced": [брэнды/
     модели]} или {"ok": false, "error"}. Вызывается при старте (если есть
-    сохранённая сессия) и сразу после входа (см. WebBridge.kt)."""
-    payload, _ = _request(base_url, "GET", "/auth/my-cars", cookie=user_cookie)
+    сохранённая сессия) и сразу после входа (см. WebBridge.kt).
+
+    Отклонённая заявка остаётся в профиле техника (сервер её не удаляет) и
+    подтягивается на любое его устройство со статусом «Отклонена модератором»
+    (маркер-файл в папке модели, см. scanner.SUBMISSION_STATUS_FILENAME).
+    Одобренные приходят обычным каталогом — свою копию не дублируем, только
+    убираем маркер. Отклонённую правку УЖЕ существующей в каталоге модели не
+    распаковываем поверх неё — она затёрла бы общую версию."""
+    payload, _ = _request(base_url, "GET", "/auth/my-cars?all=1", cookie=user_cookie)
     if not payload.get("ok"):
         return json.dumps(payload)
     cars_path = Path(cars_dir)
@@ -110,7 +120,14 @@ def sync_my_cars(base_url: str, user_cookie: str, cars_dir: str) -> str:
         if not brand or not model:
             continue  # очень старая заявка без метаданных — как и на desktop
         name = item["name"]
+        status = item.get("status") or "pending"
         model_dir = cars_path / brand / model
+        marker = model_dir / SUBMISSION_STATUS_FILENAME
+        if status == "approved":
+            marker.unlink(missing_ok=True)
+            continue
+        if status == "rejected" and model_dir.exists() and not marker.exists():
+            continue  # такая модель уже есть в общем каталоге — не затираем её
         tmp_zip = cars_path / f".{Path(name).stem}.download.zip"
         conn_request = urllib.request.Request(
             f"{base_url}/auth/my-cars/download?name={quote(name)}", headers={"Cookie": user_cookie})
@@ -118,6 +135,7 @@ def sync_my_cars(base_url: str, user_cookie: str, cars_dir: str) -> str:
             with urllib.request.urlopen(conn_request, timeout=60) as resp:
                 tmp_zip.write_bytes(resp.read())
             _safe_extract(tmp_zip, model_dir)
+            marker.write_text(status, encoding="utf-8")
             synced.append({"brand": brand, "model": model})
         except (urllib.error.URLError, TimeoutError, OSError, zipfile.BadZipFile, ZipSlipError):
             continue  # эта заявка не подтянулась — не блокируем остальные

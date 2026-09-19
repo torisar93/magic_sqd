@@ -178,7 +178,7 @@ class AuthApi:
 
     def _sync_worker(self, base_url: str, user_cookie: str) -> None:
         try:
-            items = _my_cars(base_url, user_cookie)
+            items = _my_cars(base_url, user_cookie, all_states=True)
         except AuthClientError as exc:
             event_bridge.push({"kind": "auth_sync_finished", "success": False, "error": str(exc)})
             return
@@ -187,6 +187,13 @@ class AuthApi:
             name, brand, model, modification = item["name"], item.get("brand"), item.get("model"), item.get("modification")
             if not brand or not model:
                 continue  # очень старая заявка без метаданных — как и в submissions_api.py
+            status = item.get("status") or "pending"
+            if status == "approved":
+                # Уже в общем каталоге — свою копию рядом не дублируем; прежний
+                # локальный стейдж (когда заявка ещё ждала) больше не нужен.
+                pending_submissions.discard(self.base_dir, name)
+                self._scanner_api.unregister_pending_by_submission(name)
+                continue
             tmp_zip = self.base_dir / pending_submissions.PENDING_DIRNAME / f"{Path(name).stem}.download.zip"
             try:
                 download_my_car(base_url, user_cookie, name, tmp_zip)
@@ -195,6 +202,7 @@ class AuthApi:
                     brand=brand, name=model, dir=model_dir,
                     stages_script=(model_dir / "stages.py") if (model_dir / "stages.py").exists() else None,
                     modification=modification or None, is_pending=True, submission_name=name,
+                    submission_status=status,
                 )
                 staged_models.append(self._scanner_api.register_pending(model_info))
             except AuthClientError:

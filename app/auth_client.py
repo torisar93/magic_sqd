@@ -104,8 +104,12 @@ def me(base_url: str, user_cookie: str) -> dict:
     return {"email": payload.get("email"), "is_admin": bool(payload.get("is_admin"))}
 
 
-def my_cars(base_url: str, user_cookie: str) -> list[dict]:
-    payload, _ = _request(base_url, "GET", "/auth/my-cars", cookie=user_cookie)
+def my_cars(base_url: str, user_cookie: str, all_states: bool = False) -> list[dict]:
+    """Свои заявки. all_states=True — вместе со статусом каждой (на модерации/
+    одобрена/отклонена, поле "status"); сервер без этой возможности молча отдаёт
+    только ожидающие — статус тогда считаем «на модерации» (см. вызывающего)."""
+    path = "/auth/my-cars?all=1" if all_states else "/auth/my-cars"
+    payload, _ = _request(base_url, "GET", path, cookie=user_cookie)
     return payload.get("items", [])
 
 

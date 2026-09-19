@@ -74,6 +74,10 @@ class ModelInfo:
     # submissions_publish/submissions_reject.
     is_pending: bool = False
     submission_name: str = ""
+    # Статус СВОЕЙ заявки техника на сервере ("pending" — на модерации,
+    # "rejected" — отклонена; одобренные приходят обычным каталогом и сюда не
+    # попадают). Пустая строка — не заявка/статус неизвестен (админский стейдж).
+    submission_status: str = ""
     # Необязательный логотип из папки модели/модификации. Сам файл остаётся
     # рядом с инструкцией; API превращает его в data URI для карточки.
     logo_path: Path | None = None

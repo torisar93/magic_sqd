@@ -4,6 +4,7 @@
 urllib.request.urlopen), чтобы отправлять файл кусками и иметь возможность
 проверять отмену между кусками (прошивки — гигабайты, отправка не должна
 ни разбухать в памяти целиком, ни виснуть намертво по кнопке "Отмена")."""
+import json
 import http.client
 import tempfile
 import zipfile
@@ -97,8 +98,14 @@ def _send(archive_path: Path, size: int, brand: str, model: str, modification: s
         response = conn.getresponse()
         body = response.read()
         if response.status != 200:
-            raise SubmitError(
-                f"Сервер отклонил отправку ({response.status}): {body.decode('utf-8', 'replace')}")
+            text = body.decode("utf-8", "replace")
+            try:
+                # Сервер отвечает {"ok": false, "error": "понятный текст"} (например, про
+                # лимит места на аккаунт) — показываем текст, а не сырой JSON.
+                text = json.loads(text).get("error") or text
+            except (ValueError, AttributeError):
+                pass
+            raise SubmitError(f"Сервер отклонил отправку ({response.status}): {text}")
     except (OSError, http.client.HTTPException) as exc:
         raise SubmitError(f"Не удалось связаться с сервером: {exc}") from exc
     finally:

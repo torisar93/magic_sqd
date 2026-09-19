@@ -34,6 +34,9 @@ def apk_to_dict(apk) -> dict:
     }
 
 
+SUBMISSION_STATUS_LABELS = {"pending": "На модерации", "rejected": "Отклонена модератором"}
+
+
 class ScannerApi:
     def __init__(self, cars_dir, apk_dir):
         self.cars_dir = cars_dir
@@ -143,6 +146,8 @@ class ScannerApi:
             "status_color": model_status_color(model),
             "is_pending": model.is_pending,
             "submission_name": model.submission_name,
+            "submission_status": model.submission_status,
+            "submission_status_label": SUBMISSION_STATUS_LABELS.get(model.submission_status, ""),
             "logo": self._logo_data_uri(model.logo_path),
             "hero": self._logo_data_uri(model.hero_path),
         }

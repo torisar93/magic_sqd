@@ -11,6 +11,7 @@ MODEL_STATUSES = ("ok", "needs_review", "broken")
 _RECENTLY_UPDATED_HOURS = 24
 NO_INSTRUCTION_MARKER = "no_instruction.txt"
 VERSION_FILENAME = "version.json"
+SUBMISSION_STATUS_FILENAME = ".submission_status"
 LOGO_FILENAMES = ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg")
 # Большая фотография модели для .model-hero (см. app/scanner.py на
 # desktop-стороне — то же самое, синхронизируется вместе с остальными
@@ -33,6 +34,9 @@ class ModelInfo:
     updated_at: str = ""
     logo_path: Path = None
     hero_path: Path = None
+    # Статус своей заявки на сервере ("pending"/"rejected"), см. auth_bridge.
+    # sync_my_cars — маркер-файл SUBMISSION_STATUS_FILENAME в папке модели.
+    submission_status: str = ""
 
     @property
     def display_label(self) -> str:
@@ -113,7 +117,16 @@ def _build_model_info(brand: str, name: str, modification, leaf_dir: Path) -> Mo
         updated_at=updated_at,
         logo_path=_find_logo(leaf_dir),
         hero_path=_find_hero(leaf_dir),
+        submission_status=_read_submission_status(leaf_dir),
     )
+
+
+def _read_submission_status(model_dir: Path) -> str:
+    try:
+        value = (model_dir / SUBMISSION_STATUS_FILENAME).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return value if value in ("pending", "rejected") else ""
 
 
 def _find_logo(directory: Path):

@@ -128,6 +128,8 @@ def _model_to_dict(model) -> dict:
         "has_wizard_spec": (model.dir / "_wizard_spec.json").exists(),
         "status": model.status,
         "status_color": model_status_color(model),
+        "submission_status": model.submission_status,
+        "submission_status_label": {"pending": "На модерации", "rejected": "Отклонена модератором"}.get(model.submission_status, ""),
         "logo": _logo_rel_path(model.logo_path),
         "hero": _logo_rel_path(model.hero_path),
     }
