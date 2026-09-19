@@ -388,8 +388,26 @@
   const CHAT_PROVIDER_COMMAND_RE = /^\/(deepseek|qwen|auto)\b\s*(.*)$/is;
   const CHAT_PROVIDER_LABELS = { deepseek: "DeepSeek", qwen: "Qwen" };
 
+  // Тело запроса к /chat на сервере ограничено (см. server/backend.py:
+  // CHAT_MAX_BODY_BYTES) — один вывод вроде `dumpsys package …` (десятки
+  // КБ) раньше забивал всю переписку: каждый следующий запрос отвечал
+  // «некорректный запрос», пока вывод не уходил из последних реплик
+  // (реальный лог #331). Модели хватает начала и конца вывода — режем
+  // середину; в самом логе на экране вывод остаётся полным.
+  const CHAT_OUTPUT_MAX_CHARS = 6000;
+  const CHAT_LOG_LINE_MAX_CHARS = 500;
+
+  function clipChatText(text, limit) {
+    const value = String(text == null ? "" : text);
+    if (value.length <= limit) return value;
+    const head = Math.floor(limit * 0.6);
+    const tail = limit - head;
+    return `${value.slice(0, head)}\n… [обрезано ${value.length - limit} симв.] …\n${value.slice(value.length - tail)}`;
+  }
+
   function chatRecentLogLines() {
-    return Array.from(logPanelEl.querySelectorAll(".log-line")).map((e) => e.textContent).slice(-CHAT_RECENT_LOG_LINES);
+    return Array.from(logPanelEl.querySelectorAll(".log-line"))
+      .map((e) => clipChatText(e.textContent, CHAT_LOG_LINE_MAX_CHARS)).slice(-CHAT_RECENT_LOG_LINES);
   }
 
   function renderChatCommandLine(command, reason, providerTag) {
@@ -482,7 +500,8 @@
 
   function onChatCommandResult(event) {
     log(event.output || "(пусто)");
-    chatHistory.push({ role: "tool_result", command: event.command, output: event.output, ok: !!event.ok });
+    chatHistory.push({ role: "tool_result", command: event.command,
+      output: clipChatText(event.output, CHAT_OUTPUT_MAX_CHARS), ok: !!event.ok });
     // Замыкаем агентный цикл — модель видит результат и может предложить
     // следующий шаг или завершить обычным текстовым ответом.
     chatSendTurn();

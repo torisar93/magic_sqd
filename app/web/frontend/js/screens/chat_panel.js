@@ -38,8 +38,26 @@ window.chatPanel = (() => {
     return line;
   }
 
+  // Тело запроса к /chat на сервере ограничено (см. server/backend.py:
+  // CHAT_MAX_BODY_BYTES) — один вывод вроде `dumpsys package …` (десятки
+  // КБ) раньше забивал всю переписку: каждый следующий запрос отвечал
+  // «некорректный запрос», пока вывод не уходил из последних реплик
+  // (реальный лог #331). Модели хватает начала и конца вывода — режем
+  // середину; в самом логе на экране вывод остаётся полным.
+  const OUTPUT_MAX_CHARS = 6000;
+  const LOG_LINE_MAX_CHARS = 500;
+
+  function clipText(text, limit) {
+    const value = String(text == null ? "" : text);
+    if (value.length <= limit) return value;
+    const head = Math.floor(limit * 0.6);
+    const tail = limit - head;
+    return `${value.slice(0, head)}\n… [обрезано ${value.length - limit} симв.] …\n${value.slice(value.length - tail)}`;
+  }
+
   function recentLogLines() {
-    const lines = Array.from(panelEl.querySelectorAll(".log-line")).map((el) => el.dataset.logText || el.textContent);
+    const lines = Array.from(panelEl.querySelectorAll(".log-line"))
+      .map((el) => clipText(el.dataset.logText || el.textContent, LOG_LINE_MAX_CHARS));
     return lines.slice(-RECENT_LOG_LINES);
   }
 
@@ -153,7 +171,8 @@ window.chatPanel = (() => {
 
   function onChatCommandResult(event) {
     addLine(event.output || "(пусто)", event.ok ? undefined : "log-line-error");
-    history.push({ role: "tool_result", command: event.command, output: event.output, ok: !!event.ok });
+    history.push({ role: "tool_result", command: event.command,
+      output: clipText(event.output, OUTPUT_MAX_CHARS), ok: !!event.ok });
     // Замыкаем агентный цикл — модель видит результат и может предложить
     // следующий шаг или завершить обычным текстовым ответом.
     sendTurn();
