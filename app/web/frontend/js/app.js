@@ -616,7 +616,7 @@ window.addEventListener("pywebviewready", async () => {
   }
 
   applyAdminMode(info.admin_mode);
-  window.authDialog.setLoggedIn(info.auth_email || null);
+  window.authDialog.setLoggedIn(info.auth_email || null, Boolean(info.auth_subscriber));
   // Диагностика (см. main_web.py:_enable_debug_log_all, переключается из
   // "Настроек" — settings.js) — показываем client_id в углу, чтобы можно
   // было сверить с папкой debug_logs/<id>/, если включена у нескольких

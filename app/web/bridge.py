@@ -75,6 +75,7 @@ class WebApi:
         # — но новых входов через него больше нет, только через auth_login.
         auth_status = self._auth.status()
         self.auth_email = auth_status.get("email") if auth_status.get("ok") else None
+        self.auth_subscriber = bool(auth_status.get("subscriber")) if auth_status.get("ok") else False
         self.admin_mode = (admin_mode or auth_status.get("is_admin", False)
                             or self._admin.try_saved_login().get("ok", False))
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner, self._auth)
@@ -91,6 +92,7 @@ class WebApi:
             "client_id": self.client_id, "is_win7": self.is_win7,
             "under_program_files": is_under_program_files(self.base_dir),
             "auth_email": self.auth_email,
+            "auth_subscriber": self.auth_subscriber,
             "app_version": APP_VERSION,
         }
 
@@ -329,6 +331,7 @@ class WebApi:
         result = self._auth.login(email, password)
         if result.get("ok"):
             self.auth_email = result.get("email")
+            self.auth_subscriber = bool(result.get("subscriber"))
             if result.get("is_admin"):
                 self.admin_mode = True
                 self._settings.admin_mode = True
@@ -338,8 +341,15 @@ class WebApi:
         result = self._auth.logout()
         if result.get("ok"):
             self.auth_email = None
+            self.auth_subscriber = False
             self.admin_mode = False
             self._settings.admin_mode = False
+        return result
+
+    def auth_refresh_subscriber(self) -> dict:
+        result = self._auth.refresh_subscriber()
+        if result.get("ok"):
+            self.auth_subscriber = bool(result.get("subscriber"))
         return result
 
     def auth_change_password(self, current_password: str, new_password: str) -> dict:

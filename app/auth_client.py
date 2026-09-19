@@ -69,7 +69,7 @@ def login(base_url: str, email: str, password: str) -> dict:
     if not user_cookie:
         raise AuthClientError("Сервер не выдал сессию входа.")
     return {"email": payload.get("email", email), "is_admin": bool(payload.get("is_admin")),
-            "user_cookie": user_cookie, "admin_cookie": admin_cookie}
+            "subscriber": bool(payload.get("subscriber")), "user_cookie": user_cookie, "admin_cookie": admin_cookie}
 
 
 def logout(base_url: str, user_cookie: str) -> None:
@@ -101,7 +101,8 @@ def me(base_url: str, user_cookie: str) -> dict:
     """{"email", "is_admin"} — бросает AuthClientError (в т.ч. на 401), если
     сессия невалидна/истекла."""
     payload, _ = _request(base_url, "GET", "/auth/me", cookie=user_cookie)
-    return {"email": payload.get("email"), "is_admin": bool(payload.get("is_admin"))}
+    return {"email": payload.get("email"), "is_admin": bool(payload.get("is_admin")),
+            "subscriber": bool(payload.get("subscriber"))}
 
 
 def my_cars(base_url: str, user_cookie: str, all_states: bool = False) -> list[dict]:

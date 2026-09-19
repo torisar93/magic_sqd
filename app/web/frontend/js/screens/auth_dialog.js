@@ -14,6 +14,8 @@ window.authDialog = (() => {
     newPasswordRepeatInput, changePasswordStatusEl, changePasswordSubmitBtn;
   let mode = "login"; // "login" | "register"
   let currentEmail = null;
+  let isSubscriber = false;
+  let adminVisible = false;
 
   function attach(refs) {
     toggleEl = refs.toggleEl;
@@ -77,6 +79,15 @@ window.authDialog = (() => {
     currentPasswordInput.addEventListener("keydown", onChangePasswordEnter);
     newPasswordInput.addEventListener("keydown", onChangePasswordEnter);
     newPasswordRepeatInput.addEventListener("keydown", onChangePasswordEnter);
+    // Статус подписчика выставляется вручную и может измениться, пока программа открыта —
+    // обновляем при каждом открытии окна аккаунта.
+    toggleEl.addEventListener("click", async () => {
+      if (!currentEmail) return;
+      try {
+        const r = await window.pywebview.api.auth_refresh_subscriber();
+        if (r && r.ok) applySubscriber(Boolean(r.subscriber));
+      } catch (_) { /* нет связи — остаётся прежний цвет */ }
+    });
     setMode("login");
   }
 
@@ -103,7 +114,7 @@ window.authDialog = (() => {
   // Вызывается при старте (см. app.js: app_get_info().auth_email) и сразу
   // после успешного входа/выхода — переключает попап между формой входа
   // и "Вы вошли как ...", и подпись самой кнопки в шапке каталога.
-  function setLoggedIn(email) {
+  function setLoggedIn(email, subscriber = false) {
     currentEmail = email;
     const globalStatus = popoverEl.querySelector("#catalog-account-global-status");
     if (globalStatus) globalStatus.textContent = "";
@@ -111,6 +122,7 @@ window.authDialog = (() => {
     loggedinEl.hidden = !email;
     toggleEl.textContent = email || "Вход";
     toggleEl.title = email ? `Аккаунт: ${email}` : "Вход в аккаунт";
+    applySubscriber(Boolean(email) && subscriber);
     if (email) {
       titleEl.textContent = "Аккаунт";
       subtitleEl.hidden = true;
@@ -130,6 +142,22 @@ window.authDialog = (() => {
     newPasswordInput.value = "";
     newPasswordRepeatInput.value = "";
     changePasswordStatusEl.textContent = "";
+  }
+
+  // Подписчик Boosty — кнопка аккаунта в шапке и подпись роли окрашены в цвет Boosty.
+  function applySubscriber(subscriber) {
+    isSubscriber = Boolean(subscriber);
+    toggleEl.classList.toggle("is-subscriber", isSubscriber);
+    if (isSubscriber && currentEmail) toggleEl.title = `Аккаунт: ${currentEmail} · подписчик Boosty`;
+    const role = popoverEl.querySelector("#catalog-account-role");
+    if (role) role.dataset.subscriber = String(isSubscriber);
+    updateRoleLabel();
+  }
+
+  function updateRoleLabel() {
+    const role = popoverEl.querySelector("#catalog-account-role");
+    if (!role) return;
+    role.textContent = adminVisible ? "Администратор" : (isSubscriber ? "Подписчик Boosty" : "Аккаунт техника");
   }
 
   async function onSubmit() {
@@ -167,7 +195,7 @@ window.authDialog = (() => {
     }
     popoverEl.hidden = true;
     toggleEl.setAttribute("aria-expanded", "false");
-    setLoggedIn(result.email);
+    setLoggedIn(result.email, Boolean(result.subscriber));
     if (result.is_admin) {
       window.applyAdminMode(true);
       window.notice("Вход выполнен — функции администратора включены.");
@@ -252,8 +280,8 @@ window.authDialog = (() => {
   // admin-кнопку.
   function setAdminVisible(enabled) {
     if (logoutBtn) logoutBtn.hidden = enabled;
-    const role = popoverEl?.querySelector("#catalog-account-role");
-    if (role) role.textContent = enabled ? "Администратор" : "Аккаунт техника";
+    adminVisible = Boolean(enabled);
+    updateRoleLabel();
   }
 
   return { attach, setLoggedIn, setAdminVisible };

@@ -4,6 +4,9 @@
 @property --button13-y { syntax:'<percentage>'; inherits:false; initial-value:35%; }
 
 #catalog-admin-toggle { color:var(--text,#e8f0f3)!important; }
+/* Подписчик Boosty (статус ставит владелец вручную): кнопка аккаунта и подпись роли в цвете Boosty. */
+#catalog-admin-toggle.is-subscriber { color:#f6a17a!important; border-color:#f6a17a55!important; box-shadow:0 0 0 1px #f6a17a22 inset; }
+#catalog-account-role[data-subscriber="true"] { color:#f6a17a; }
 
 .button13 {
   transition:transform var(--button14-transform-time,340ms) cubic-bezier(.2,.8,.2,1),border-color 220ms,

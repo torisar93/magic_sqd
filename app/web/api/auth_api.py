@@ -83,7 +83,8 @@ class AuthApi:
         if remember:
             save_saved_session(self.base_dir, result["email"], result["user_cookie"], result["admin_cookie"])
         self.sync_my_cars()
-        return {"ok": True, "email": result["email"], "is_admin": result["is_admin"]}
+        return {"ok": True, "email": result["email"], "is_admin": result["is_admin"],
+                "subscriber": result.get("subscriber", False)}
 
     def logout(self) -> dict:
         base_url = self._auth_base_url()
@@ -155,7 +156,20 @@ class AuthApi:
             return {"ok": False}
         self._email, self._user_cookie = info["email"], saved["user_cookie"]
         self.sync_my_cars()
-        return {"ok": True, "email": info["email"], "is_admin": info["is_admin"]}
+        return {"ok": True, "email": info["email"], "is_admin": info["is_admin"],
+                "subscriber": info.get("subscriber", False)}
+
+    def refresh_subscriber(self) -> dict:
+        """Свежий статус «подписчик Boosty» (владелец выставляет его вручную и он может измениться,
+        пока программа открыта) — для цвета кнопки аккаунта."""
+        base_url = self._auth_base_url()
+        if not (base_url and self._user_cookie):
+            return {"ok": False}
+        try:
+            info = _me(base_url, self._user_cookie)
+        except AuthClientError:
+            return {"ok": False}
+        return {"ok": True, "subscriber": info.get("subscriber", False)}
 
     # ------------------------------------------------------------------
     def sync_my_cars(self) -> dict:
