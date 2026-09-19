@@ -1,5 +1,7 @@
 """Объект ctx, передаваемый в install.py каждой модели."""
 from __future__ import annotations
+import hashlib
+import re
 import shlex
 import sys
 import time
@@ -92,12 +94,25 @@ class VersionDowngradeError(AdbError):
     отказал бы точно так же."""
 
 
+class SignatureMismatchError(VersionDowngradeError):
+    """INSTALL_FAILED_UPDATE_INCOMPATIBLE — на устройстве уже стоит приложение с
+    ТЕМ ЖЕ именем пакета, но подписанное другим ключом (реальный случай, Geely
+    Monji: GLauncher.Link и 3screen — оба com.maxinf.car). Как и с понижением
+    версии, причина не в способе установки — перебор остальных бесполезен.
+    Наследует VersionDowngradeError, чтобы уже существующие места, останавливающие
+    перебор, сработали и здесь; тексты для техника различаются."""
+
+
 _VERSION_DOWNGRADE_MARKER = "INSTALL_FAILED_VERSION_DOWNGRADE"
+_SIGNATURE_MISMATCH_MARKER = "INSTALL_FAILED_UPDATE_INCOMPATIBLE"
 
 
 def _raise_if_version_downgrade(text: str) -> None:
-    if _VERSION_DOWNGRADE_MARKER in text.upper():
+    upper = text.upper()
+    if _VERSION_DOWNGRADE_MARKER in upper:
         raise VersionDowngradeError(text)
+    if _SIGNATURE_MISMATCH_MARKER in upper:
+        raise SignatureMismatchError(text)
 
 
 def _check_pm_install_result(result) -> None:
@@ -234,7 +249,43 @@ class InstallContext:
             _raise_if_version_downgrade(str(exc))
             raise
 
+    def _duplicate_package_conflict(self) -> str | None:
+        """Выбраны РАЗНЫЕ файлы с одним именем пакета (например GLauncher.Link и
+        3screen — оба com.maxinf.car): они заменяют друг друга, второй не встанет
+        из-за другой подписи, а техник остаётся с половиной списка. Ловим ДО
+        установки. Копии с одинаковым содержимым (тот же APK из пакета модели и
+        из общей библиотеки) — не конфликт."""
+        by_package: dict[str, list[Path]] = {}
+        for apk in dict.fromkeys(Path(a) for a in self.selected_apks):
+            package = read_package_name(apk)
+            if package:
+                by_package.setdefault(package, []).append(apk)
+        for package, files in by_package.items():
+            if len(files) < 2:
+                continue
+            try:
+                digests = set()
+                for f in files:
+                    h = hashlib.sha256()
+                    with open(f, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(chunk)
+                    digests.add(h.digest())
+            except OSError:
+                continue
+            if len(digests) > 1:
+                names = ", ".join(f"«{f.name}»" for f in files)
+                return (
+                    f"Выбраны приложения с одним и тем же именем пакета ({package}): {names}. Они заменяют друг "
+                    "друга и не могут стоять вместе (второе не установится из-за другой подписи). "
+                    "Оставьте что-то одно и запустите этап заново."
+                )
+        return None
+
     def install_selected_apks(self, extra_args=None):
+        conflict = self._duplicate_package_conflict()
+        if conflict:
+            raise InstallCancelled(conflict)
         mock_target = self._mock_location_target()
         for apk in self.selected_apks:
             self._last_diff_package = None
@@ -295,8 +346,8 @@ class InstallContext:
         if self._install_method is not None:
             try:
                 self._install_with_method(self._install_method, path, extra_args)
-            except VersionDowngradeError:
-                raise InstallCancelled(self._version_downgrade_message(path))
+            except VersionDowngradeError as exc:
+                raise InstallCancelled(self._rejection_message(path, exc))
             return
         errors = []
         order = range(len(_INSTALL_METHOD_LABELS))
@@ -305,7 +356,7 @@ class InstallContext:
         for method in order:
             try:
                 self._install_with_method(method, path, extra_args)
-            except VersionDowngradeError:
+            except VersionDowngradeError as exc:
                 # Причина отказа не в способе установки, а в самой версии APK
                 # — дальше по списку способов пробовать бессмысленно, они
                 # либо не поддерживаются этой платформой вовсе (см. остальные
@@ -313,7 +364,7 @@ class InstallContext:
                 # INSTALL_FAILED_VERSION_DOWNGRADE. Понятное сообщение вместо
                 # длинного списка из N разных "не сработало" (см.
                 # VersionDowngradeError).
-                raise InstallCancelled(self._version_downgrade_message(path))
+                raise InstallCancelled(self._rejection_message(path, exc))
             except AdbError as exc:
                 errors.append(f"{_INSTALL_METHOD_LABELS[method]}: {exc}")
                 # Причину отказа каждого способа — сразу в лог: итоговое сообщение
@@ -331,6 +382,19 @@ class InstallContext:
             f"Не удалось установить {Path(path).name} ни одним из способов "
             "(adb install / pm install / pm install -S / localinstall.apk):\n" + "\n".join(errors)
         )
+
+    @classmethod
+    def _rejection_message(cls, path, exc) -> str:
+        if isinstance(exc, SignatureMismatchError):
+            match = re.search(r"Package (\S+) signatures", str(exc))
+            what = f"приложение {match.group(1)}" if match else "приложение с тем же именем пакета"
+            return (
+                f"«{Path(path).name}» не установилось: на магнитоле уже стоит {what}, подписанное другим "
+                "ключом (другая сборка или другое приложение с тем же пакетом) — поверх обновить нельзя. "
+                "Удалите его на магнитоле вручную (Настройки → Приложения) и запустите установку заново "
+                "или не выбирайте такие приложения вместе."
+            )
+        return cls._version_downgrade_message(path)
 
     @staticmethod
     def _version_downgrade_message(path) -> str:

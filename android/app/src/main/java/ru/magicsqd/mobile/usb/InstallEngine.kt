@@ -197,6 +197,62 @@ class InstallEngine(
     // значение поля на момент вызова.
     private var currentApkName: String = "install.apk"
 
+    /** Отказ, причина которого не в СПОСОБЕ установки, а в самом APK: перебор остальных
+     *  способов бесполезен (на Monji/Geely OneOS они и так закрываются) — сразу понятное
+     *  сообщение технику вместо сырого «Failure status=5 …». null — обычный отказ. */
+    private fun definitiveRejection(apkName: String, reason: String): String? {
+        val upper = reason.uppercase()
+        return when {
+            "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in upper -> {
+                val pkg = Regex("Package (\\S+) signatures").find(reason)?.groupValues?.get(1)
+                val what = if (pkg != null) "приложение $pkg" else "приложение с тем же именем пакета"
+                "«$apkName» не установилось: на магнитоле уже стоит $what, подписанное другим ключом " +
+                    "(другая сборка или другое приложение с тем же пакетом) — поверх обновить нельзя. " +
+                    "Удалите его на магнитоле вручную (Настройки → Приложения) и запустите установку заново " +
+                    "или не выбирайте такие приложения вместе."
+            }
+            "INSTALL_FAILED_VERSION_DOWNGRADE" in upper ->
+                "На магнитоле уже установлена версия «$apkName» новее (или такая же), чем в этой сборке — " +
+                    "Android не позволяет тихо откатить версию назад. Удалите текущую версию приложения " +
+                    "на магнитоле вручную (через её диспетчер приложений) и запустите установку заново."
+            else -> null
+        }
+    }
+
+    /** Выбраны разные файлы с ОДНИМ именем пакета (например GLauncher.Link и 3screen — оба
+     *  com.maxinf.car): они заменяют друг друга, второй не встанет из-за другой подписи, и
+     *  техник остаётся с половиной списка. Останавливаем ДО установки. Одинаковые по
+     *  содержимому копии (тот же APK из пакета модели и из общей библиотеки) — не конфликт. */
+    private fun duplicatePackageConflict(apkPaths: List<String>): String? {
+        val byPackage = linkedMapOf<String, MutableList<File>>()
+        for (path in apkPaths.distinct()) {
+            val f = File(path)
+            if (!f.exists()) continue
+            val pkg = try {
+                context.packageManager.getPackageArchiveInfo(f.path, 0)?.packageName
+            } catch (e: Exception) { null } ?: continue
+            byPackage.getOrPut(pkg) { mutableListOf() }.add(f)
+        }
+        for ((pkg, files) in byPackage) {
+            if (files.size < 2) continue
+            val digests = files.map { file ->
+                val md = java.security.MessageDigest.getInstance("SHA-256")
+                file.inputStream().use { input ->
+                    val buf = ByteArray(1 shl 16)
+                    while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+                }
+                md.digest().joinToString("") { "%02x".format(it) }
+            }.toSet()
+            if (digests.size > 1) {
+                return "Выбраны приложения с одним и тем же именем пакета ($pkg): " +
+                    files.joinToString(", ") { "«${it.name}»" } +
+                    ". Они заменяют друг друга и не могут стоять вместе (второе не установится из-за другой " +
+                    "подписи). Оставьте что-то одно и запустите этап заново."
+            }
+        }
+        return null
+    }
+
     private fun linkLostAdvice(apkName: String, technical: String?): String =
         "Связь с магнитолой оборвалась во время установки «$apkName». Проверьте Wi-Fi или кабель, " +
             "что магнитола не ушла в сон, и запустите этап заново. Техническая причина: ${technical ?: "нет ответа от устройства"}"
@@ -241,6 +297,7 @@ class InstallEngine(
         cancelled: () -> Boolean = { false }, onProgress: (String, Int, Int, String) -> Unit = { _, _, _, _ -> },
         onDetail: (String, Int, Int, ApkOperationProgress) -> Unit = { _, _, _, _ -> },
         mockLocationPath: String? = null): StageRunResult {
+        duplicatePackageConflict(apkPaths)?.let { return StageRunResult.Failed(it) }
         var confirmedMethod: Int? = null
         val order = INSTALL_METHODS.indices.let { indices ->
             val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
@@ -335,7 +392,8 @@ class InstallEngine(
             if (confirmedMethod != null) {
                 val (_, install) = INSTALL_METHODS[confirmedMethod]
                 when (val r = perform(install, bytes)) {
-                    is AdbInstallResult.Failed -> return failed("${file.name}: ${r.reason}")
+                    is AdbInstallResult.Failed ->
+                        return failed(definitiveRejection(file.name, r.reason) ?: "${file.name}: ${r.reason}")
                     is AdbInstallResult.Success -> {
                         log("Установлено: ${file.name}")
                         afterInstall()
@@ -354,6 +412,7 @@ class InstallEngine(
                         errors.add("$label: ${r.reason}")
                         // Причина каждого отказа сразу в лог — итоговая ошибка идёт только в окно этапа.
                         log("  ↳ не сработало ($label): ${r.reason.split(Regex("\\s+")).joinToString(" ").take(300)}")
+                        definitiveRejection(file.name, r.reason)?.let { return failed(it) }
                     }
                     is AdbInstallResult.Success -> {
                         confirmedMethod = methodIndex

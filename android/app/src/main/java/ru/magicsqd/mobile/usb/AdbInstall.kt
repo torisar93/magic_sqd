@@ -28,6 +28,10 @@ sealed class AdbInstallResult {
     data class Failed(val reason: String) : AdbInstallResult()
 }
 
+/** Вывод установщика содержит «Success» отдельной строкой (а не «Failure ... Success»). */
+internal fun helperReportedSuccess(text: String): Boolean =
+    text.lineSequence().any { it.trim() == "Success" }
+
 sealed class AdbPushResult {
     object Success : AdbPushResult()
     data class Failed(val reason: String) : AdbPushResult()
@@ -467,6 +471,18 @@ fun installApkViaDexShell(
             is AdbShellResult.Output -> installResult.text
             is AdbShellResult.Rejected -> installResult.reason
             is AdbShellResult.Failed -> installResult.reason
+        }
+        // Приложение уже стояло до этой попытки (повторный запуск этапа после сбоя на
+        // другом приложении) — список пакетов не меняется, хотя monji сам подтвердил
+        // успех строкой «Success» (стандартный итог PackageInstaller-сессии). Раньше
+        // это считалось отказом: перебирались ВСЕ способы, на Monji/Geely OneOS они
+        // сразу закрываются, и этап падал на каждом уже установленном приложении
+        // (реальные логи #299/#300/#309). Десктоп это уже учитывает — см.
+        // app/install_context.py:install_apk_dex_shell. Разрешения выдаст вызывающий
+        // код (InstallEngine.afterInstall) — имя пакета берётся из самого APK.
+        if (newPackages.isEmpty() && helperReportedSuccess(text)) {
+            log("$apkName уже был установлен, monji подтвердил успех повторной установки.")
+            return AdbInstallResult.Success("dex_shell_install: повторная установка")
         }
         val candidates = if (newPackages.isEmpty()) "нет" else newPackages.joinToString(", ")
         return AdbInstallResult.Failed(
