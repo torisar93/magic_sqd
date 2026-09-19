@@ -181,7 +181,6 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "auth_login" -> { authLogin(args.getString("email"), args.getString("password")); "{}" }
                 "auth_logout" -> { authLogout(); "{}" }
                 "auth_forgot_password" -> { authForgotPassword(args.getString("email")); "{}" }
-                "auth_boosty" -> { authBoosty(args.getString("action"), args.optString("arg", "")); "{}" }
                 "scan_hosts" -> { scanHosts(args.optInt("port", 5555)); "{}" }
                 "scan_adb_service" -> { scanAdbService(); "{}" }
                 "adb_ask_input_response" -> {
@@ -270,23 +269,6 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
             }
             pushEvent(JSONObject().put("kind", "auth_forgot_password_result").put("result", JSONObject(resultJson)))
-        }.start()
-    }
-
-    /** Boosty (см. auth_bridge.py:boosty_call, server/backend.py: /auth/boosty/…) —
-     * статус привязки, отправка/подтверждение кода, обновление, отвязка. Результат —
-     * событием auth_boosty_result вместе с названием действия. */
-    private fun authBoosty(action: String, arg: String) {
-        val cookie = authUserCookie()
-        Thread {
-            val resultJson = if (cookie == null) {
-                JSONObject().put("ok", false).put("error", "Не выполнен вход.").toString()
-            } else try {
-                pyModule("auth_bridge").callAttr("boosty_call", AUTH_BASE_URL, cookie, action, arg).toString()
-            } catch (e: Exception) {
-                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
-            }
-            pushEvent(JSONObject().put("kind", "auth_boosty_result").put("action", action).put("result", JSONObject(resultJson)))
         }.start()
     }
 

@@ -348,21 +348,6 @@ class WebApi:
     def auth_forgot_password(self, email: str) -> dict:
         return self._auth.forgot_password(email)
 
-    def auth_boosty_status(self) -> dict:
-        return self._auth.boosty_status()
-
-    def auth_boosty_start(self, email: str) -> dict:
-        return self._auth.boosty_start(email)
-
-    def auth_boosty_confirm(self, code: str) -> dict:
-        return self._auth.boosty_confirm(code)
-
-    def auth_boosty_refresh(self) -> dict:
-        return self._auth.boosty_refresh()
-
-    def auth_boosty_unlink(self) -> dict:
-        return self._auth.boosty_unlink()
-
     def admin_cancel_upload(self) -> dict:
         return self._admin.cancel_upload()
 

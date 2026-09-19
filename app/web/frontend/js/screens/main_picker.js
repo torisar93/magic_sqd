@@ -72,27 +72,6 @@
               <p id="catalog-account-change-password-status" class="menus13-status" role="status" aria-live="polite"></p>
               <button id="catalog-account-change-password-submit" class="accent">Сохранить пароль</button>
             </div>
-            <div id="catalog-account-boosty">
-              <p id="catalog-account-boosty-state" class="menus13-status" role="status" aria-live="polite">Boosty: проверяю…</p>
-              <button id="catalog-account-boosty-toggle" class="menus13-action" aria-expanded="false" aria-controls="catalog-account-boosty-form"><span data-menu-icon="link"></span><span>Связать с Boosty</span></button>
-              <div id="catalog-account-boosty-form" hidden>
-                <div class="field">
-                  <label class="field-label" for="catalog-account-boosty-email">Почта вашего аккаунта Boosty</label>
-                  <input type="email" inputmode="email" id="catalog-account-boosty-email" autocomplete="email" placeholder="name@example.com" />
-                </div>
-                <button id="catalog-account-boosty-send" class="accent">Отправить код на почту</button>
-                <div class="field" id="catalog-account-boosty-code-field" hidden>
-                  <label class="field-label" for="catalog-account-boosty-code">Код из письма</label>
-                  <input type="text" inputmode="numeric" maxlength="6" id="catalog-account-boosty-code" autocomplete="one-time-code" />
-                </div>
-                <button id="catalog-account-boosty-confirm" class="accent" hidden>Подтвердить</button>
-                <p id="catalog-account-boosty-status" class="menus13-status" role="status" aria-live="polite"></p>
-              </div>
-              <div class="dialog-actions spread" id="catalog-account-boosty-actions" hidden>
-                <button id="catalog-account-boosty-refresh">Обновить статус</button>
-                <button id="catalog-account-boosty-unlink" class="link-btn">Отвязать</button>
-              </div>
-            </div>
             <button id="catalog-account-logout" class="danger menus13-action"><span data-menu-icon="back"></span><span>Выйти из аккаунта</span></button>
           </div>
           <div id="catalog-admin-actions" hidden><h3 class="menus13-group-title">Управление каталогом</h3></div>

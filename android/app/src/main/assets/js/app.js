@@ -2731,83 +2731,6 @@
     return overlay;
   }
 
-  // Boosty: подписчик любого платного уровня снимает лимиты на место и ИИ-чат
-  // (см. WebBridge.kt: authBoosty, server/backend.py: /auth/boosty/*). Связка по
-  // почте Boosty с подтверждением кодом из письма.
-  let boostyCallback = null;
-  function buildBoostySection(accountEmail) {
-    const box = el("div", { class: "menu13-boosty" });
-    const mb = (bytes) => `${Math.round(bytes / 1048576)} МБ`;
-    const stateEl = el("p", { class: "settings-muted menu13-status", role: "status", "aria-live": "polite", text: "Boosty: проверяю…" });
-    const linkBtn = menuAction("Связать с Boosty", "link", "accent");
-    const form = el("div", { class: "menu13-account-form", hidden: true });
-    const emailInput = el("input", { type: "email", inputmode: "email", autocomplete: "email", autocapitalize: "none", spellcheck: "false", placeholder: "Почта вашего аккаунта Boosty" });
-    emailInput.value = accountEmail || "";
-    const sendBtn = menuAction("Отправить код на почту", "user", "accent");
-    const codeInput = el("input", { type: "text", inputmode: "numeric", maxlength: "6", autocomplete: "one-time-code", placeholder: "Код из письма", hidden: true });
-    const confirmBtn = menuAction("Подтвердить", "user", "accent");
-    confirmBtn.hidden = true;
-    const statusEl = el("p", { class: "settings-muted menu13-status", role: "status", "aria-live": "polite", text: "" });
-    const refreshBtn = menuAction("Обновить статус подписки", "back");
-    const unlinkBtn = el("button", { class: "link-btn", type: "button", text: "Отвязать Boosty" });
-    const actions = el("div", { class: "menu13-boosty-actions", hidden: true }, [refreshBtn, unlinkBtn]);
-    form.append(emailInput, sendBtn, codeInput, confirmBtn);
-    box.append(stateEl, linkBtn, form, statusEl, actions);
-
-    function render(status) {
-      if (!status || !status.ok) {
-        stateEl.textContent = "Boosty: не удалось получить статус.";
-        return;
-      }
-      const chat = status.chat_per_hour === null ? "без лимита" : `${status.chat_per_hour} запросов в час`;
-      const space = status.storage_limit_bytes === null || status.storage_limit_bytes === undefined
-        ? `${mb(status.storage_used_bytes || 0)}, без лимита`
-        : `${mb(status.storage_used_bytes || 0)} из ${mb(status.storage_limit_bytes)}`;
-      if (!status.configured) stateEl.textContent = "Boosty: интеграция пока не включена.";
-      else if (status.subscriber) stateEl.textContent = `Подписчик Boosty${status.level ? ` (${status.level})` : ""} — лимиты сняты. Чат: ${chat}. Место: ${space}.`;
-      else if (status.linked) stateEl.textContent = `Boosty привязан (${status.email}), но платной подписки не найдено. Чат: ${chat}. Место: ${space}.`;
-      else stateEl.textContent = `Подписчикам Boosty (любой платный уровень) лимиты снимаются. Сейчас чат: ${chat}, место: ${space}.`;
-      linkBtn.hidden = !status.configured || status.linked;
-      actions.hidden = !status.linked;
-      if (status.linked) form.hidden = true;
-    }
-
-    linkBtn.addEventListener("click", () => { form.hidden = !form.hidden; if (!form.hidden) emailInput.focus({ preventScroll: true }); });
-    sendBtn.addEventListener("click", () => {
-      const email = emailInput.value.trim();
-      if (!email) { statusEl.dataset.state = "error"; statusEl.textContent = "Введите почту, на которую зарегистрирован Boosty."; return; }
-      sendBtn.disabled = true; statusEl.dataset.state = "pending"; statusEl.textContent = "Отправляю код...";
-      Bridge.call("auth_boosty", { action: "start", arg: email });
-    });
-    confirmBtn.addEventListener("click", () => {
-      const code = codeInput.value.trim();
-      if (!/^\d{6}$/.test(code)) { statusEl.dataset.state = "error"; statusEl.textContent = "Введите 6 цифр из письма."; return; }
-      confirmBtn.disabled = true; statusEl.dataset.state = "pending"; statusEl.textContent = "Проверяю...";
-      Bridge.call("auth_boosty", { action: "confirm", arg: code });
-    });
-    refreshBtn.addEventListener("click", () => { refreshBtn.disabled = true; statusEl.dataset.state = "pending"; statusEl.textContent = "Проверяю подписку..."; Bridge.call("auth_boosty", { action: "refresh" }); });
-    unlinkBtn.addEventListener("click", () => { if (confirm("Отвязать Boosty? Лимиты вернутся к обычным, пока вы не свяжете аккаунт снова.")) Bridge.call("auth_boosty", { action: "unlink" }); });
-
-    boostyCallback = (action, result) => {
-      sendBtn.disabled = false; confirmBtn.disabled = false; refreshBtn.disabled = false;
-      if (action === "status") { render(result); return; }
-      if (!result.ok) { statusEl.dataset.state = "error"; statusEl.textContent = result.error || "Не удалось выполнить действие."; return; }
-      statusEl.dataset.state = "success";
-      if (action === "start") {
-        statusEl.textContent = "Код отправлен. Введите его ниже (действует 15 минут).";
-        codeInput.hidden = false; confirmBtn.hidden = false; codeInput.focus({ preventScroll: true });
-        return;
-      }
-      codeInput.value = ""; codeInput.hidden = true; confirmBtn.hidden = true;
-      statusEl.textContent = action === "confirm"
-        ? (result.subscriber ? "Готово: подписка найдена, лимиты сняты." : "Аккаунт привязан, но платной подписки на эту почту пока не найдено.")
-        : action === "unlink" ? "Boosty отвязан." : "Статус обновлён.";
-      render(result);
-    };
-    Bridge.call("auth_boosty", { action: "status" });
-    return box;
-  }
-
   function buildAccountSection() {
     const container = el("section", { class: "settings-section menu13-account" });
     let mode = "login"; // "login" | "register"
@@ -2823,7 +2746,6 @@
           ]),
           el("div", { class: "menu13-account-note" }, [AppIcons.icon("car"), el("p", { text: "Ваши модели на модерации появляются в каталоге автоматически." })]),
         );
-        container.appendChild(buildBoostySection(email));
         const logoutBtn = menuAction("Выйти из аккаунта", "back", "menu13-logout");
         logoutBtn.addEventListener("click", () => {
           logoutBtn.disabled = true;
@@ -3192,7 +3114,6 @@
     window.events.on("auth_login_result", (event) => { if (accountRenderCallback) accountRenderCallback("login", event.result); });
     window.events.on("auth_logout_result", (event) => { if (accountRenderCallback) accountRenderCallback("logout", event.result); });
     window.events.on("auth_forgot_password_result", (event) => { if (accountRenderCallback) accountRenderCallback("forgot_password", event.result); });
-    window.events.on("auth_boosty_result", (event) => { if (boostyCallback) boostyCallback(event.action, event.result || {}); });
     // Свои заявки на модерации подтянулись (при старте с сохранённой
     // сессией или сразу после входа, см. WebBridge.kt: authSyncMyCars) —
     // список машин нужно перечитать, иначе они не появятся в каталоге до
