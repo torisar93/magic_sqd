@@ -98,6 +98,13 @@ def _safe_extract(zip_path: Path, dest: Path) -> None:
                 shutil.copyfileobj(src, out)
 
 
+def me(base_url: str, user_cookie: str) -> str:
+    """Текущий аккаунт по сессии: {"ok", "email", "is_admin", "subscriber"} или {"ok": false, "error"}.
+    subscriber — отметка «подписчик Boosty», которую владелец ставит вручную (для цвета значка аккаунта)."""
+    payload, _ = _request(base_url, "GET", "/auth/me", cookie=user_cookie)
+    return json.dumps(payload)
+
+
 def sync_my_cars(base_url: str, user_cookie: str, cars_dir: str) -> str:
     """Скачивает и распаковывает СВОИ заявки (на модерации и отклонённые) прямо в
     cars_dir/<Марка>/<Модель>/ — возвращает {"ok": true, "synced": [брэнды/

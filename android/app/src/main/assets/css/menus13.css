@@ -252,3 +252,10 @@
   .menu13-overlay .menu13-sheet, .menu13-switch, .menu13-switch::after { animation: none !important; transition: none !important; }
 }
 html.reduce-motion .menu13-overlay .menu13-sheet { animation: none !important; }
+
+/* Подписчик Boosty (статус ставит владелец вручную): значок аккаунта и почта — в цвете Boosty */
+.menu13-account-link.is-subscriber .menu13-avatar,
+.menu13-profile.is-subscriber .menu13-avatar { color: #f6a17a; border-color: #f6a17a66; background: linear-gradient(135deg, #f6a17a26, #f6a17a08); }
+.menu13-account-link.is-subscriber { border-color: #f6a17a44; }
+.menu13-account-link.is-subscriber .menu13-link-copy small,
+.menu13-profile.is-subscriber .menu13-profile-copy span { color: #f6a17a; }

@@ -180,6 +180,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "auth_register" -> { authRegister(args.getString("email"), args.getString("password")); "{}" }
                 "auth_login" -> { authLogin(args.getString("email"), args.getString("password")); "{}" }
                 "auth_logout" -> { authLogout(); "{}" }
+                "auth_refresh_subscriber" -> { authRefreshSubscriber(); "{}" }
                 "auth_forgot_password" -> { authForgotPassword(args.getString("email")); "{}" }
                 "scan_hosts" -> { scanHosts(args.optInt("port", 5555)); "{}" }
                 "scan_adb_service" -> { scanAdbService(); "{}" }
@@ -232,7 +233,24 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     }
     private fun clearAuthSession() { authPrefs().edit().clear().apply() }
 
-    private fun authStatus(): JSONObject = JSONObject().put("email", authEmail())
+    private fun authStatus(): JSONObject =
+        JSONObject().put("email", authEmail()).put("subscriber", authPrefs().getBoolean("subscriber", false))
+
+    /** Свежий статус «подписчик Boosty» (владелец ставит его вручную и он может меняться) — для цвета
+     * значка аккаунта. Результат — событием auth_subscriber_result; при сбое связи остаётся прежний. */
+    private fun authRefreshSubscriber() {
+        val cookie = authUserCookie() ?: return
+        Thread {
+            try {
+                val obj = JSONObject(pyModule("auth_bridge").callAttr("me", AUTH_BASE_URL, cookie).toString())
+                if (obj.optBoolean("ok")) {
+                    val subscriber = obj.optBoolean("subscriber", false)
+                    authPrefs().edit().putBoolean("subscriber", subscriber).apply()
+                    pushEvent(JSONObject().put("kind", "auth_subscriber_result").put("subscriber", subscriber))
+                }
+            } catch (e: Exception) { /* нет связи — остаётся прежний цвет */ }
+        }.start()
+    }
 
     private fun authRegister(email: String, password: String) {
         Thread {
@@ -255,6 +273,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             val result = JSONObject(resultJson)
             if (result.optBoolean("ok")) {
                 saveAuthSession(result.getString("email"), result.getString("user_cookie"))
+                authPrefs().edit().putBoolean("subscriber", result.optBoolean("subscriber", false)).apply()
             }
             pushEvent(JSONObject().put("kind", "auth_login_result").put("result", result))
             if (result.optBoolean("ok")) authSyncMyCars()

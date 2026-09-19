@@ -2740,7 +2740,7 @@
       clear(container);
       if (email) {
         container.append(
-          el("div", { class: "menu13-profile" }, [
+          el("div", { class: `menu13-profile${Bridge.call("auth_status", {}).subscriber ? " is-subscriber" : ""}` }, [
             el("span", { class: "menu13-avatar" }, [AppIcons.icon("user")]),
             el("div", { class: "menu13-profile-copy" }, [el("strong", { text: email }), el("span", { text: "Аккаунт техника" })]),
           ]),
@@ -2864,6 +2864,7 @@
 
     const initialInfo = Bridge.call("auth_status", {});
     render(initialInfo.email);
+    if (initialInfo.email) Bridge.call("auth_refresh_subscriber", {});
     return container;
   }
 
@@ -2941,7 +2942,9 @@
       el("span", { class: "menu13-link-copy" }, [el("strong", { text: "Аккаунт" }), el("small", { text: auth.email || "Вход и регистрация" })]),
       AppIcons.icon("chevron"),
     ]);
+    account.classList.toggle("is-subscriber", Boolean(auth.email && auth.subscriber));
     account.addEventListener("click", () => { overlay.remove(); showAccountModal(); });
+    if (auth.email) Bridge.call("auth_refresh_subscriber", {}); // цвет обновится событием auth_subscriber_result
     const github = el("a", { class: "menu13-action menu13-link", href: "https://github.com/torisar93/magic_sqd", target: "_blank", rel: "noopener" }, [
       AppIcons.icon("link"), el("span", { class: "menu13-action-label", text: "GitHub проекта" }), AppIcons.icon("chevron"),
     ]);
@@ -3114,6 +3117,10 @@
     window.events.on("auth_login_result", (event) => { if (accountRenderCallback) accountRenderCallback("login", event.result); });
     window.events.on("auth_logout_result", (event) => { if (accountRenderCallback) accountRenderCallback("logout", event.result); });
     window.events.on("auth_forgot_password_result", (event) => { if (accountRenderCallback) accountRenderCallback("forgot_password", event.result); });
+    // Статус подписчика Boosty (ставится вручную) — значок аккаунта в настройках и профиль окрашиваются в цвет Boosty.
+    window.events.on("auth_subscriber_result", (event) => {
+      document.querySelectorAll(".menu13-account-link, .menu13-profile").forEach((node) => node.classList.toggle("is-subscriber", Boolean(event.subscriber)));
+    });
     // Свои заявки на модерации подтянулись (при старте с сохранённой
     // сессией или сразу после входа, см. WebBridge.kt: authSyncMyCars) —
     // список машин нужно перечитать, иначе они не появятся в каталоге до
