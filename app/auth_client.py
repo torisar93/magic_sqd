@@ -113,6 +113,24 @@ def my_cars(base_url: str, user_cookie: str, all_states: bool = False) -> list[d
     return payload.get("items", [])
 
 
+def tg_start(base_url: str, purpose: str, poll_secret: str, client_desc: str, user_cookie: str | None = None) -> dict:
+    """Начало входа/привязки через Telegram: {"code", "link", "bot", "expires_in"}. purpose — "login"
+    (без сессии) или "link" (нужна сессия). poll_secret знает только это приложение."""
+    payload, _ = _request(base_url, "POST", "/auth/tg/start", cookie=user_cookie,
+                          body={"purpose": purpose, "poll_secret": poll_secret, "client": client_desc})
+    return payload
+
+
+def tg_poll(base_url: str, code: str, poll_secret: str) -> tuple[dict, list[str]]:
+    """Опрос: (json со "status": pending|awaiting|expired|error|done, cookie при успешном входе)."""
+    return _request(base_url, "POST", "/auth/tg/poll", body={"code": code, "poll_secret": poll_secret})
+
+
+def tg_unlink(base_url: str, user_cookie: str) -> dict:
+    payload, _ = _request(base_url, "POST", "/auth/tg/unlink", body={}, cookie=user_cookie)
+    return payload
+
+
 def boosty_status(base_url: str, user_cookie: str) -> dict:
     """Привязка к Boosty и действующие лимиты (см. /auth/boosty/status)."""
     payload, _ = _request(base_url, "GET", "/auth/boosty/status", cookie=user_cookie)

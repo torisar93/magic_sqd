@@ -98,6 +98,29 @@ def _safe_extract(zip_path: Path, dest: Path) -> None:
                 shutil.copyfileobj(src, out)
 
 
+def tg_start(base_url: str, purpose: str, poll_secret: str, client_desc: str, user_cookie: str = "") -> str:
+    """Вход/привязка через Telegram-бота: {"ok", "code", "link", "expires_in"} или {"ok": false, "error"}.
+    purpose — "login" или "link" (для "link" нужна user_cookie)."""
+    payload, _ = _request(base_url, "POST", "/auth/tg/start",
+                          body={"purpose": purpose, "poll_secret": poll_secret, "client": client_desc},
+                          cookie=user_cookie or "")
+    return json.dumps(payload)
+
+
+def tg_poll(base_url: str, code: str, poll_secret: str) -> str:
+    """Опрос: {"status": pending|awaiting|expired|error|done, ...}. При успешном ВХОДЕ в ответ добавляется
+    "user_cookie" (сессия), которую вызывающий сохраняет и не отдаёт дальше в JS."""
+    payload, cookies = _request(base_url, "POST", "/auth/tg/poll", body={"code": code, "poll_secret": poll_secret})
+    if payload.get("status") == "done" and payload.get("purpose") == "login":
+        payload["user_cookie"] = next((c for c in cookies if c.startswith("magicsqd_user_session=")), "")
+    return json.dumps(payload)
+
+
+def tg_unlink(base_url: str, user_cookie: str) -> str:
+    payload, _ = _request(base_url, "POST", "/auth/tg/unlink", body={}, cookie=user_cookie)
+    return json.dumps(payload)
+
+
 def boosty_call(base_url: str, user_cookie: str, action: str, arg: str = "") -> str:
     """Boosty: подписчик любого платного уровня снимает лимиты на место и ИИ-чат.
     action: status | start (arg — почта Boosty) | confirm (arg — код из письма) |

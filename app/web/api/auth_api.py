@@ -7,7 +7,10 @@ admin_client.py/ADMIN_SESSION_COOKIE, которым пользуется отд
 веб-кабинет разработчика (см. auth_client.login: сервер сам присылает обе
 cookie одним ответом)."""
 from __future__ import annotations
+import secrets
+import sys
 import threading
+import webbrowser
 from pathlib import Path
 
 from ..events import event_bridge
@@ -18,7 +21,7 @@ from ...auth_client import AuthClientError, boosty_confirm as _boosty_confirm, b
     boosty_start as _boosty_start, boosty_status as _boosty_status, boosty_unlink as _boosty_unlink, \
     change_password as _change_password, download_my_car, \
     forgot_password as _forgot_password, login as _login, logout as _logout, me as _me, \
-    my_cars as _my_cars, register as _register
+    my_cars as _my_cars, register as _register, tg_poll as _tg_poll, tg_start as _tg_start, tg_unlink as _tg_unlink
 from ...auth_config import clear_saved_session, load_saved_session, save_saved_session
 from ...scanner import ModelInfo
 from ...submit_config import get_submit_config
@@ -34,6 +37,7 @@ class AuthApi:
         # вызов, тот же приём, что и у admin_client._session_cache.
         self._email: str | None = None
         self._user_cookie: str | None = None
+        self._tg_pending: dict | None = None
 
     @property
     def user_cookie(self) -> str | None:
@@ -118,6 +122,74 @@ class AuthApi:
         admin_cookie = get_cached_session(admin_base) if admin_base else None
         save_saved_session(self.base_dir, self._email, new_cookie, admin_cookie)
         return {"ok": True}
+
+    # -- Telegram: вход/регистрация без почты и привязка к существующему аккаунту --
+    _EXTERNAL_HOSTS = ("https://t.me/", "https://boosty.to/")
+
+    def open_external(self, url: str) -> dict:
+        """Открывает в системном браузере только ссылки на Telegram и Boosty."""
+        if not any(str(url).startswith(prefix) for prefix in self._EXTERNAL_HOSTS):
+            return {"ok": False, "error": "Ссылка не разрешена."}
+        try:
+            webbrowser.open(url)
+        except Exception:  # noqa: BLE001 - браузера может не быть
+            return {"ok": False, "error": "Не удалось открыть браузер."}
+        return {"ok": True}
+
+    def tg_start(self, purpose: str) -> dict:
+        base_url = self._auth_base_url()
+        if base_url is None:
+            return {"ok": False, "error": "Сервер не настроен (нет submit.json)."}
+        if purpose == "link" and not self._user_cookie:
+            return {"ok": False, "error": "Не выполнен вход."}
+        secret = secrets.token_urlsafe(24)
+        system = {"win32": "Windows", "darwin": "macOS"}.get(sys.platform, sys.platform)
+        try:
+            payload = _tg_start(base_url, purpose, secret, f"Magic SQD · {system}",
+                                self._user_cookie if purpose == "link" else None)
+        except AuthClientError as exc:
+            return {"ok": False, "error": str(exc)}
+        self._tg_pending = {"code": payload["code"], "secret": secret, "purpose": purpose}
+        self.open_external(payload["link"])
+        return {"ok": True, "link": payload["link"], "expires_in": payload.get("expires_in", 600)}
+
+    def tg_poll(self) -> dict:
+        """Один опрос. {"ok", "status": pending|awaiting|expired|error|done, ...}; при успешном ВХОДЕ
+        сессия уже установлена (как после обычного login) и в ответе есть email/is_admin."""
+        pending = getattr(self, "_tg_pending", None)
+        base_url = self._auth_base_url()
+        if not (pending and base_url):
+            return {"ok": False, "status": "expired", "error": "Запрос входа не активен."}
+        try:
+            payload, cookies = _tg_poll(base_url, pending["code"], pending["secret"])
+        except AuthClientError as exc:
+            return {"ok": False, "status": "error", "error": str(exc)}
+        status = payload.get("status")
+        if status in ("expired", "error"):
+            self._tg_pending = None
+            return {"ok": False, "status": status, "error": payload.get("error") or "Ссылка устарела — начните заново."}
+        if status != "done":
+            return {"ok": True, "status": status}
+        self._tg_pending = None
+        if pending["purpose"] == "link":
+            return payload
+        user_cookie = next((c for c in cookies if c.startswith("magicsqd_user_session=")), None)
+        admin_cookie = next((c for c in cookies if c.startswith("magicsqd_admin_session=")), None)
+        if not user_cookie:
+            return {"ok": False, "status": "error", "error": "Сервер не выдал сессию входа."}
+        self._email, self._user_cookie = payload["email"], user_cookie
+        self._apply_admin_cookie(admin_cookie)
+        save_saved_session(self.base_dir, payload["email"], user_cookie, admin_cookie)
+        self.sync_my_cars()
+        return {"ok": True, "status": "done", "purpose": "login", "email": payload["email"],
+                "is_admin": bool(payload.get("is_admin")), "created": bool(payload.get("created"))}
+
+    def tg_cancel(self) -> dict:
+        self._tg_pending = None
+        return {"ok": True}
+
+    def tg_unlink(self) -> dict:
+        return self._boosty_call(_tg_unlink)
 
     # -- Boosty: подписчик любого платного уровня снимает лимиты на место и чат --
     def _boosty_call(self, fn, *args) -> dict:
