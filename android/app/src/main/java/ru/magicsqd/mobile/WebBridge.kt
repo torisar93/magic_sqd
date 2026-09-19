@@ -182,11 +182,6 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "auth_logout" -> { authLogout(); "{}" }
                 "auth_forgot_password" -> { authForgotPassword(args.getString("email")); "{}" }
                 "auth_boosty" -> { authBoosty(args.getString("action"), args.optString("arg", "")); "{}" }
-                "auth_tg_start" -> { authTgStart(args.optString("purpose", "login")); "{}" }
-                "auth_tg_poll" -> { authTgPoll(); "{}" }
-                "auth_tg_cancel" -> { tgPending = null; "{}" }
-                "auth_tg_unlink" -> { authTgUnlink(); "{}" }
-                "open_external" -> { openExternalUrl(args.getString("url")); "{}" }
                 "scan_hosts" -> { scanHosts(args.optInt("port", 5555)); "{}" }
                 "scan_adb_service" -> { scanAdbService(); "{}" }
                 "adb_ask_input_response" -> {
@@ -292,92 +287,6 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
             }
             pushEvent(JSONObject().put("kind", "auth_boosty_result").put("action", action).put("result", JSONObject(resultJson)))
-        }.start()
-    }
-
-    // -- Telegram: вход/регистрация без почты и привязка (см. auth_bridge.py: tg_*, сервер: /auth/tg/...) --
-    // Код запроса и poll_secret живут только здесь, в памяти: JS их не видит.
-    private var tgPending: Triple<String, String, String>? = null // code, poll_secret, purpose
-
-    private fun newTgSecret(): String {
-        val bytes = ByteArray(24)
-        java.security.SecureRandom().nextBytes(bytes)
-        return android.util.Base64.encodeToString(bytes, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
-    }
-
-    /** Открывает в системе только ссылки на Telegram и Boosty. */
-    private fun openExternalUrl(url: String) {
-        if (!(url.startsWith("https://t.me/") || url.startsWith("https://boosty.to/"))) return
-        try {
-            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-        } catch (e: Exception) { /* нет подходящего приложения/браузера — ссылка остаётся в интерфейсе */ }
-    }
-
-    private fun authTgStart(purpose: String) {
-        val cookie = authUserCookie()
-        Thread {
-            val resultJson = if (purpose == "link" && cookie == null) {
-                JSONObject().put("ok", false).put("error", "Не выполнен вход.").toString()
-            } else try {
-                val secret = newTgSecret()
-                val json = pyModule("auth_bridge").callAttr("tg_start", AUTH_BASE_URL, purpose, secret, "Magic SQD · Android", cookie ?: "").toString()
-                val obj = JSONObject(json)
-                if (obj.optBoolean("ok")) {
-                    tgPending = Triple(obj.getString("code"), secret, purpose)
-                    openExternalUrl(obj.getString("link"))
-                }
-                json
-            } catch (e: Exception) {
-                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
-            }
-            pushEvent(JSONObject().put("kind", "auth_tg_start_result").put("result", JSONObject(resultJson)))
-        }.start()
-    }
-
-    private fun authTgPoll() {
-        val pending = tgPending
-        Thread {
-            if (pending == null) {
-                pushEvent(JSONObject().put("kind", "auth_tg_poll_result").put("result",
-                    JSONObject().put("ok", false).put("status", "expired").put("error", "Запрос входа не активен.")))
-                return@Thread
-            }
-            val resultJson = try {
-                pyModule("auth_bridge").callAttr("tg_poll", AUTH_BASE_URL, pending.first, pending.second).toString()
-            } catch (e: Exception) {
-                JSONObject().put("ok", false).put("status", "error").put("error", (e.message ?: "неизвестная ошибка")).toString()
-            }
-            val result = JSONObject(resultJson)
-            val status = result.optString("status")
-            var loginDone = false
-            if (status == "done" || status == "expired" || status == "error") tgPending = null
-            if (status == "done" && pending.third == "login") {
-                val cookie = result.optString("user_cookie")
-                if (cookie.isNotEmpty()) {
-                    saveAuthSession(result.getString("email"), cookie)
-                    loginDone = true
-                } else {
-                    result.put("ok", false).put("status", "error").put("error", "Сервер не выдал сессию входа.")
-                }
-            }
-            result.remove("user_cookie")
-            pushEvent(JSONObject().put("kind", "auth_tg_poll_result").put("result", result))
-            if (loginDone) authSyncMyCars()
-        }.start()
-    }
-
-    private fun authTgUnlink() {
-        val cookie = authUserCookie()
-        Thread {
-            val resultJson = if (cookie == null) {
-                JSONObject().put("ok", false).put("error", "Не выполнен вход.").toString()
-            } else try {
-                pyModule("auth_bridge").callAttr("tg_unlink", AUTH_BASE_URL, cookie).toString()
-            } catch (e: Exception) {
-                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
-            }
-            pushEvent(JSONObject().put("kind", "auth_boosty_result").put("action", "unlink").put("result", JSONObject(resultJson)))
         }.start()
     }
 

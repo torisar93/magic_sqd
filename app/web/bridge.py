@@ -348,28 +348,6 @@ class WebApi:
     def auth_forgot_password(self, email: str) -> dict:
         return self._auth.forgot_password(email)
 
-    def auth_tg_start(self, purpose: str) -> dict:
-        return self._auth.tg_start(purpose)
-
-    def auth_tg_poll(self) -> dict:
-        result = self._auth.tg_poll()
-        # Успешный ВХОД через Telegram — то же состояние, что и после auth_login.
-        if result.get("ok") and result.get("status") == "done" and result.get("purpose") == "login":
-            self.auth_email = result.get("email")
-            if result.get("is_admin"):
-                self.admin_mode = True
-                self._settings.admin_mode = True
-        return result
-
-    def auth_tg_cancel(self) -> dict:
-        return self._auth.tg_cancel()
-
-    def auth_tg_unlink(self) -> dict:
-        return self._auth.tg_unlink()
-
-    def open_external(self, url: str) -> dict:
-        return self._auth.open_external(url)
-
     def auth_boosty_status(self) -> dict:
         return self._auth.boosty_status()
 

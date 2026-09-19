@@ -52,14 +52,6 @@
               <button id="catalog-account-submit" class="accent">Войти</button>
               <button id="catalog-account-switch">Нет аккаунта? Зарегистрироваться</button>
             </div>
-            <div class="menus13-tg-login">
-              <button id="catalog-account-tg-login" class="menus13-action"><span data-menu-icon="send"></span><span>Войти через Telegram</span></button>
-              <p id="catalog-account-tg-status" class="menus13-status" role="status" aria-live="polite"></p>
-              <div class="dialog-actions spread" id="catalog-account-tg-actions" hidden>
-                <button id="catalog-account-tg-open">Открыть Telegram</button>
-                <button id="catalog-account-tg-cancel" class="link-btn">Отмена</button>
-              </div>
-            </div>
           </div>
           <div id="catalog-account-loggedin" hidden>
             <div class="menus13-identity"><span class="menus13-identity-label">Вы вошли как</span><strong id="catalog-account-loggedin-email"></strong><span id="catalog-account-role">Аккаунт техника</span></div>
@@ -82,12 +74,23 @@
             </div>
             <div id="catalog-account-boosty">
               <p id="catalog-account-boosty-state" class="menus13-status" role="status" aria-live="polite">Boosty: проверяю…</p>
-              <button id="catalog-account-boosty-tg" class="menus13-action" hidden><span data-menu-icon="send"></span><span>Привязать Telegram</span></button>
-              <button id="catalog-account-boosty-open" class="menus13-action"><span data-menu-icon="link"></span><span>Страница Boosty</span></button>
-              <p id="catalog-account-boosty-status" class="menus13-status" role="status" aria-live="polite"></p>
+              <button id="catalog-account-boosty-toggle" class="menus13-action" aria-expanded="false" aria-controls="catalog-account-boosty-form"><span data-menu-icon="link"></span><span>Связать с Boosty</span></button>
+              <div id="catalog-account-boosty-form" hidden>
+                <div class="field">
+                  <label class="field-label" for="catalog-account-boosty-email">Почта вашего аккаунта Boosty</label>
+                  <input type="email" inputmode="email" id="catalog-account-boosty-email" autocomplete="email" placeholder="name@example.com" />
+                </div>
+                <button id="catalog-account-boosty-send" class="accent">Отправить код на почту</button>
+                <div class="field" id="catalog-account-boosty-code-field" hidden>
+                  <label class="field-label" for="catalog-account-boosty-code">Код из письма</label>
+                  <input type="text" inputmode="numeric" maxlength="6" id="catalog-account-boosty-code" autocomplete="one-time-code" />
+                </div>
+                <button id="catalog-account-boosty-confirm" class="accent" hidden>Подтвердить</button>
+                <p id="catalog-account-boosty-status" class="menus13-status" role="status" aria-live="polite"></p>
+              </div>
               <div class="dialog-actions spread" id="catalog-account-boosty-actions" hidden>
                 <button id="catalog-account-boosty-refresh">Обновить статус</button>
-                <button id="catalog-account-boosty-unlink" class="link-btn">Отвязать Telegram</button>
+                <button id="catalog-account-boosty-unlink" class="link-btn">Отвязать</button>
               </div>
             </div>
             <button id="catalog-account-logout" class="danger menus13-action"><span data-menu-icon="back"></span><span>Выйти из аккаунта</span></button>

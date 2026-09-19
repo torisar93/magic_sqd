@@ -15,7 +15,6 @@ window.authDialog = (() => {
   let mode = "login"; // "login" | "register"
   let currentEmail = null;
   let boosty = {};
-  let tg = {};
 
   function attach(refs) {
     toggleEl = refs.toggleEl;
@@ -42,17 +41,17 @@ window.authDialog = (() => {
     changePasswordSubmitBtn = loggedinEl.querySelector("#catalog-account-change-password-submit");
 
     boosty.stateEl = loggedinEl.querySelector("#catalog-account-boosty-state");
-    boosty.tgBtn = loggedinEl.querySelector("#catalog-account-boosty-tg");
-    boosty.openBtn = loggedinEl.querySelector("#catalog-account-boosty-open");
+    boosty.toggleBtn = loggedinEl.querySelector("#catalog-account-boosty-toggle");
+    boosty.formEl = loggedinEl.querySelector("#catalog-account-boosty-form");
+    boosty.emailInput = loggedinEl.querySelector("#catalog-account-boosty-email");
+    boosty.sendBtn = loggedinEl.querySelector("#catalog-account-boosty-send");
+    boosty.codeField = loggedinEl.querySelector("#catalog-account-boosty-code-field");
+    boosty.codeInput = loggedinEl.querySelector("#catalog-account-boosty-code");
+    boosty.confirmBtn = loggedinEl.querySelector("#catalog-account-boosty-confirm");
     boosty.statusEl = loggedinEl.querySelector("#catalog-account-boosty-status");
     boosty.actionsEl = loggedinEl.querySelector("#catalog-account-boosty-actions");
     boosty.refreshBtn = loggedinEl.querySelector("#catalog-account-boosty-refresh");
     boosty.unlinkBtn = loggedinEl.querySelector("#catalog-account-boosty-unlink");
-    tg.loginBtn = guestEl.querySelector("#catalog-account-tg-login");
-    tg.statusEl = guestEl.querySelector("#catalog-account-tg-status");
-    tg.actionsEl = guestEl.querySelector("#catalog-account-tg-actions");
-    tg.openBtn = guestEl.querySelector("#catalog-account-tg-open");
-    tg.cancelBtn = guestEl.querySelector("#catalog-account-tg-cancel");
 
     // safely() — тонкая обёртка вокруг обработчиков клика: не даёт нажать
     // повторно, пока предыдущий запрос ещё не завершился (кнопка всё равно
@@ -92,84 +91,49 @@ window.authDialog = (() => {
     currentPasswordInput.addEventListener("keydown", onChangePasswordEnter);
     newPasswordInput.addEventListener("keydown", onChangePasswordEnter);
     newPasswordRepeatInput.addEventListener("keydown", onChangePasswordEnter);
-    tg.loginBtn.addEventListener("click", safely(() => startTelegram("login"), tg.loginBtn, tg.statusEl));
-    tg.openBtn.addEventListener("click", () => { if (tg.link) window.pywebview.api.open_external(tg.link); });
-    tg.cancelBtn.addEventListener("click", cancelTelegram);
-    boosty.tgBtn.addEventListener("click", safely(() => startTelegram("link"), boosty.tgBtn, boosty.statusEl));
-    boosty.openBtn.addEventListener("click", () => window.pywebview.api.open_external(boosty.url || "https://boosty.to/magic_sqd"));
+    boosty.toggleBtn.addEventListener("click", () => {
+      boosty.formEl.hidden = !boosty.formEl.hidden;
+      boosty.toggleBtn.setAttribute("aria-expanded", String(!boosty.formEl.hidden));
+      if (!boosty.formEl.hidden) {
+        if (!boosty.emailInput.value) boosty.emailInput.value = currentEmail || "";
+        boosty.emailInput.focus({ preventScroll: true });
+      }
+    });
+    boosty.sendBtn.addEventListener("click", safely(onBoostySend, boosty.sendBtn, boosty.statusEl));
+    boosty.confirmBtn.addEventListener("click", safely(onBoostyConfirm, boosty.confirmBtn, boosty.statusEl));
     boosty.refreshBtn.addEventListener("click", safely(onBoostyRefresh, boosty.refreshBtn, boosty.statusEl));
     boosty.unlinkBtn.addEventListener("click", safely(onBoostyUnlink, boosty.unlinkBtn, boosty.statusEl));
+    boosty.codeInput.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); boosty.confirmBtn.click(); } });
     // Каждый раз при открытии окна аккаунта — свежий статус подписки.
     toggleEl.addEventListener("click", () => { if (currentEmail) refreshBoosty(); });
     setMode("login");
   }
 
-  // -- Telegram: вход/регистрация без почты и привязка к аккаунту; подписка Boosty определяется по
-  // членству привязанного Telegram в закрытой группе подписчиков (см. server/backend.py: /auth/tg/...) --
+  // -- Boosty: связать аккаунт по почте Boosty; подписчик любого платного уровня
+  // снимает лимиты на место и ИИ-чат (см. server/backend.py: /auth/boosty/*) --
   const mb = (bytes) => `${Math.round(bytes / 1048576)} МБ`;
-  let tgTimer = null;
-
-  function stopTelegramPolling() { if (tgTimer) { clearInterval(tgTimer); tgTimer = null; } }
-
-  function cancelTelegram() {
-    stopTelegramPolling();
-    tg.link = null; tg.actionsEl.hidden = true; tg.statusEl.textContent = "";
-    window.pywebview.api.auth_tg_cancel();
-  }
-
-  // purpose: "login" (гость) или "link" (уже вошёл по почте — привязать Telegram)
-  async function startTelegram(purpose) {
-    const statusTarget = purpose === "login" ? tg.statusEl : boosty.statusEl;
-    statusTarget.dataset.state = "error";
-    statusTarget.textContent = "Готовлю ссылку...";
-    const res = await window.pywebview.api.auth_tg_start(purpose);
-    if (!res.ok) { statusTarget.textContent = res.error; return; }
-    tg.link = res.link; tg.purpose = purpose;
-    statusTarget.dataset.state = "success";
-    statusTarget.textContent = "Открылся Telegram: нажмите Start у бота, затем «Подтвердить». Если он не открылся — кнопка «Открыть Telegram». Жду подтверждения…";
-    if (purpose === "login") tg.actionsEl.hidden = false;
-    stopTelegramPolling();
-    const startedAt = Date.now();
-    tgTimer = setInterval(async () => {
-      if (Date.now() - startedAt > (res.expires_in || 600) * 1000) { cancelTelegram(); statusTarget.dataset.state = "error"; statusTarget.textContent = "Время вышло. Нажмите кнопку ещё раз."; return; }
-      let r;
-      try { r = await window.pywebview.api.auth_tg_poll(); } catch (_) { return; }
-      if (r.status === "pending" || r.status === "awaiting") return;
-      stopTelegramPolling(); tg.actionsEl.hidden = true;
-      if (r.status !== "done") { statusTarget.dataset.state = "error"; statusTarget.textContent = r.error || "Не удалось подтвердить вход."; return; }
-      if (purpose === "link") { statusTarget.dataset.state = "success"; statusTarget.textContent = "Telegram привязан."; renderBoosty(r); return; }
-      popoverEl.hidden = true;
-      toggleEl.setAttribute("aria-expanded", "false");
-      setLoggedIn(r.email);
-      if (r.is_admin) { window.applyAdminMode(true); window.notice("Вход выполнен — функции администратора включены."); }
-      else window.notice(r.created ? "Аккаунт создан через Telegram — вы вошли." : "Вы вошли через Telegram.");
-    }, 2000);
-  }
 
   function renderBoosty(status) {
     const el = boosty.stateEl;
     el.dataset.state = "";
-    boosty.url = status && status.boosty_url;
     if (!status || !status.ok) {
       el.textContent = "Boosty: не удалось получить статус.";
-      boosty.tgBtn.hidden = true; boosty.actionsEl.hidden = true;
+      boosty.toggleBtn.hidden = false; boosty.actionsEl.hidden = true;
       return;
     }
-    const t = status.telegram || {};
     const chat = status.chat_per_hour === null ? "без лимита" : `${status.chat_per_hour} запросов в час`;
     const space = status.storage_limit_bytes === null || status.storage_limit_bytes === undefined
       ? `${mb(status.storage_used_bytes || 0)}, без лимита`
       : `${mb(status.storage_used_bytes || 0)} из ${mb(status.storage_limit_bytes)}`;
     let text;
-    if (!t.configured && !status.configured) text = "Boosty: интеграция пока не включена.";
-    else if (status.subscriber) text = `Подписчик Boosty — лимиты сняты. Чат: ${chat}. Место: ${space}.`;
-    else if (t.linked && t.group_configured) text = `Telegram привязан${t.username ? ` (@${t.username})` : ""}, но в закрытой группе подписчиков Boosty вас нет. Оформите подписку на Boosty, привяжите Telegram в Boosty и вступите в группу. Чат: ${chat}. Место: ${space}.`;
-    else if (t.linked) text = `Telegram привязан${t.username ? ` (@${t.username})` : ""}. Чат: ${chat}. Место: ${space}.`;
-    else text = `Подписчикам Boosty (любой платный уровень) лимиты снимаются. Привяжите Telegram — по нему мы узнаём о подписке. Сейчас чат: ${chat}, место: ${space}.`;
+    if (!status.configured) text = "Boosty: интеграция пока не включена.";
+    else if (status.subscriber) text = `Подписчик Boosty${status.level ? ` (${status.level})` : ""} — лимиты сняты. Чат: ${chat}. Место: ${space}.`;
+    else if (status.linked) text = `Boosty привязан (${status.email}), но платной подписки не найдено. Чат: ${chat}. Место: ${space}.`;
+    else text = `Подписчикам Boosty (любой платный уровень) лимиты снимаются. Сейчас чат: ${chat}, место: ${space}. Нажмите «Связать с Boosty».`;
     el.textContent = text;
-    boosty.tgBtn.hidden = !t.configured || !!t.linked;
-    boosty.actionsEl.hidden = !t.linked;
-    boosty.unlinkBtn.hidden = !t.can_unlink;
+    boosty.toggleBtn.hidden = !status.configured || status.linked;
+    boosty.actionsEl.hidden = !status.linked;
+    if (status.linked) { boosty.formEl.hidden = true; boosty.toggleBtn.setAttribute("aria-expanded", "false"); }
   }
 
   async function refreshBoosty() {
@@ -177,8 +141,37 @@ window.authDialog = (() => {
     catch (_) { renderBoosty(null); }
   }
 
+  async function onBoostySend() {
+    boosty.statusEl.dataset.state = "error";
+    const email = boosty.emailInput.value.trim();
+    if (!email) { boosty.statusEl.textContent = "Введите почту, на которую зарегистрирован Boosty."; return; }
+    boosty.sendBtn.disabled = true;
+    boosty.statusEl.textContent = "Отправляю код...";
+    const res = await window.pywebview.api.auth_boosty_start(email);
+    if (!res.ok) { boosty.statusEl.textContent = res.error; return; }
+    boosty.statusEl.dataset.state = "success";
+    boosty.statusEl.textContent = `Код отправлен на ${email}. Введите его ниже (действует 15 минут).`;
+    boosty.codeField.hidden = false; boosty.confirmBtn.hidden = false;
+    boosty.codeInput.focus({ preventScroll: true });
+  }
+
+  async function onBoostyConfirm() {
+    boosty.statusEl.dataset.state = "error";
+    const code = boosty.codeInput.value.trim();
+    if (!/^\d{6}$/.test(code)) { boosty.statusEl.textContent = "Введите 6 цифр из письма."; return; }
+    boosty.confirmBtn.disabled = true;
+    boosty.statusEl.textContent = "Проверяю...";
+    const res = await window.pywebview.api.auth_boosty_confirm(code);
+    if (!res.ok) { boosty.statusEl.textContent = res.error; return; }
+    boosty.codeInput.value = ""; boosty.codeField.hidden = true; boosty.confirmBtn.hidden = true;
+    boosty.statusEl.dataset.state = "success";
+    boosty.statusEl.textContent = res.subscriber ? "Готово: подписка найдена, лимиты сняты." : "Аккаунт привязан, но платной подписки на эту почту пока не найдено.";
+    renderBoosty(res);
+  }
+
   async function onBoostyRefresh() {
     boosty.statusEl.dataset.state = "error";
+    boosty.refreshBtn.disabled = true;
     boosty.statusEl.textContent = "Проверяю подписку...";
     const res = await window.pywebview.api.auth_boosty_refresh();
     if (!res.ok) { boosty.statusEl.textContent = res.error; return; }
@@ -188,10 +181,10 @@ window.authDialog = (() => {
   }
 
   async function onBoostyUnlink() {
-    if (!(await window.confirmDialog("Отвязать Telegram? Лимиты вернутся к обычным, пока вы не привяжете его снова."))) return;
-    const res = await window.pywebview.api.auth_tg_unlink();
+    if (!(await window.confirmDialog("Отвязать Boosty? Лимиты вернутся к обычным, пока вы не свяжете аккаунт снова."))) return;
+    const res = await window.pywebview.api.auth_boosty_unlink();
     boosty.statusEl.dataset.state = res.ok ? "success" : "error";
-    boosty.statusEl.textContent = res.ok ? "Telegram отвязан." : res.error;
+    boosty.statusEl.textContent = res.ok ? "Boosty отвязан." : res.error;
     if (res.ok) renderBoosty(res);
   }
 
@@ -230,7 +223,8 @@ window.authDialog = (() => {
       titleEl.textContent = "Аккаунт";
       subtitleEl.hidden = true;
       loggedinEmailEl.textContent = email;
-      boosty.statusEl.textContent = "";
+      boosty.formEl.hidden = true; boosty.codeField.hidden = true; boosty.confirmBtn.hidden = true;
+      boosty.statusEl.textContent = ""; boosty.codeInput.value = "";
       refreshBoosty();
     } else {
       subtitleEl.hidden = false;
