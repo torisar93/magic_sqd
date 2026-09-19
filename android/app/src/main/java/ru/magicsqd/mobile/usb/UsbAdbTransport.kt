@@ -321,16 +321,36 @@ fun performCnxnHandshake(
     }
     log("CNXN отправлен, жду ответ...")
 
-    val (respHeader, respPayload) = readMessage(transport)
-    log("Ответ: command=0x${respHeader.command.toUInt().toString(16)} dataLength=${respHeader.dataLength}")
+    // Молчание устройства на любом шаге рукопожатия — обычный отказ подключения, а не
+    // исключение: раньше оно вылетало наружу и (при автопереподключении посреди
+    // установки) технику показывалось сырое «получено -1 из 24 байт заголовка», а
+    // соединение оставалось сброшенным (реальные логи #325–#327).
+    return try {
+        val (respHeader, respPayload) = readMessage(transport)
+        log("Ответ: command=0x${respHeader.command.toUInt().toString(16)} dataLength=${respHeader.dataLength}")
 
-    return when (respHeader.command) {
-        AdbProtocol.A_CNXN -> AdbHandshakeResult.Connected(
-            String(respPayload, Charsets.US_ASCII).trimEnd(' ', ' ')
+        when (respHeader.command) {
+            // Устройство объявило данные о себе, а они не дошли (bulk-чтение вернуло -1):
+            // канал нестабилен — первая же команда останется без ответа. Раньше это
+            // считалось успешным подключением с пустым описанием устройства.
+            AdbProtocol.A_CNXN ->
+                if (respHeader.dataLength > 0 && respPayload.isEmpty()) {
+                    AdbHandshakeResult.Failed(
+                        "Магнитола ответила на подключение, но не передала данные о себе — связь нестабильна. " +
+                            "Проверьте кабель и OTG-переходник, переподключите кабель и повторите."
+                    )
+                } else {
+                    AdbHandshakeResult.Connected(String(respPayload, Charsets.US_ASCII).trimEnd(' ', ' '))
+                }
+            AdbProtocol.A_AUTH -> performAuth(transport, context, respHeader, respPayload, log)
+            AdbProtocol.A_STLS -> performTlsUpgrade(transport, context, log)
+            else -> AdbHandshakeResult.Failed("Неожиданная команда в ответе: 0x${respHeader.command.toUInt().toString(16)}")
+        }
+    } catch (e: AdbLinkLostException) {
+        AdbHandshakeResult.Failed(
+            "Магнитола не ответила на подключение или связь оборвалась. " +
+                "Проверьте кабель и OTG-переходник, переподключите кабель и повторите."
         )
-        AdbProtocol.A_AUTH -> performAuth(transport, context, respHeader, respPayload, log)
-        AdbProtocol.A_STLS -> performTlsUpgrade(transport, context, log)
-        else -> AdbHandshakeResult.Failed("Неожиданная команда в ответе: 0x${respHeader.command.toUInt().toString(16)}")
     }
 }
 

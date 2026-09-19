@@ -331,8 +331,14 @@ class InstallEngine(
                         if (reconnected || cancelled()) throw AdbLinkLostException(linkLostAdvice(apkName, e.message))
                         reconnected = true
                         log("Связь с магнитолой оборвалась во время установки ${apkName} — жду её возвращения и повторяю...")
-                        val back = AdbSession.waitForDeviceAndReconnect(context, LINK_RECOVERY_TIMEOUT_MS, log)
-                        if (back !is AdbHandshakeResult.Connected) throw AdbLinkLostException(linkLostAdvice(apkName, e.message))
+                        val back = try {
+                            AdbSession.waitForDeviceAndReconnect(context, LINK_RECOVERY_TIMEOUT_MS, log)
+                        } catch (r: Exception) {
+                            AdbHandshakeResult.Failed(r.message ?: r.javaClass.simpleName)
+                        }
+                        if (back !is AdbHandshakeResult.Connected) {
+                            throw AdbLinkLostException(linkLostAdvice(apkName, (back as AdbHandshakeResult.Failed).reason))
+                        }
                         log("Связь восстановлена, повторяю установку ${apkName}.")
                         onProgress(path, index, apkPaths.size, "running")
                     } catch (e: Exception) {

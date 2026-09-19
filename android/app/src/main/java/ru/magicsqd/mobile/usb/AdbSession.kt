@@ -128,13 +128,22 @@ object AdbSession {
     private fun waitForUsbAndReconnect(context: Context, timeoutMs: Long, log: (String) -> Unit): AdbHandshakeResult {
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val deadline = System.currentTimeMillis() + timeoutMs
+        var lastFailure: String? = null
         while (System.currentTimeMillis() < deadline) {
             if (usbManager.deviceList.values.any { findAdbInterface(it) != null }) {
-                return connectBlocking(context, log)
+                // Устройство уже видно, но рукопожатие могло не пройти (магнитола ещё
+                // поднимается после обрыва) — пробуем ещё до конца ожидания, а не
+                // сдаёмся после первой неудачи.
+                val result = connectBlocking(context, log)
+                if (result is AdbHandshakeResult.Connected) return result
+                lastFailure = (result as AdbHandshakeResult.Failed).reason
+                if (lastFailure.startsWith("Пользователь отклонил")) return result
             }
             Thread.sleep(1000)
         }
-        return AdbHandshakeResult.Failed("Устройство не переподключилось за ${timeoutMs / 1000}с")
+        return AdbHandshakeResult.Failed(
+            "Устройство не переподключилось за ${timeoutMs / 1000}с" + (lastFailure?.let { ": $it" } ?: "")
+        )
     }
 
     private fun waitForWifiAndReconnect(context: Context, timeoutMs: Long, log: (String) -> Unit): AdbHandshakeResult {
