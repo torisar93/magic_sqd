@@ -51,6 +51,11 @@ def get_sync_progress() -> str:
 # Планируется переход на RuStore для обновлений — тогда этот путь перестанет
 # быть единственным, но прямая ссылка остаётся рабочим запасным вариантом.
 _GITHUB_API_URL = "https://api.github.com/repos/torisar93/magic_sqd/releases"
+# Своё зеркало (см. scripts/mirror_release.sh в репозитории приложения): version.json с картой assets
+# {"android": "MagicSQD_Android.apk", ...}. GitHub из РФ доступен через раз, поэтому оба источника
+# опрашиваются параллельно и берётся более новая версия (как в desktop update_api.check).
+_OWN_SERVER_VERSION_URL = "https://magicsqd.ru/download/version.json"
+_OWN_SERVER_DOWNLOAD_BASE = "https://magicsqd.ru/download/"
 _REQUEST_TIMEOUT_SECONDS = 8
 _APK_ASSET_RE = re.compile(r"^MagicSQD_Android_(.+)\.apk$", re.IGNORECASE)
 
@@ -87,19 +92,50 @@ def supporters_fetch(base_url: str) -> str:
 
 
 def check_update(current_version: str) -> str:
-    """Молча возвращает {"available": false} при любой сетевой ошибке или
-    если релиз не несёт apk-ассет (например, между релизами перед вливанием
-    Android-сборки) — сбой проверки не должен ничего ломать в интерфейсе."""
+    """Молча возвращает {"available": false} при любой сетевой ошибке или если ни один источник не
+    нашёл версию новее — сбой проверки не должен ничего ломать в интерфейсе."""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        own = pool.submit(_check_update_own_server, current_version)
+        github = pool.submit(_check_update_github, current_version)
+        results = [r for r in (own.result(), github.result()) if r]
+    if not results:
+        return json.dumps({"available": False})
+    return json.dumps(max(results, key=lambda r: _parse_version(r["version"])))
+
+
+def _check_update_own_server(current_version: str):
+    try:
+        with urllib.request.urlopen(_OWN_SERVER_VERSION_URL, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
+            json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    assets = data.get("assets") if isinstance(data.get("assets"), dict) else {}
+    name = assets.get("android")
+    if not isinstance(name, str) or not name or "/" in name:
+        return None  # зеркала APK нет (version.json от старой карточки админки) — только GitHub
+    version = str(data.get("version") or "").strip().lstrip("vV")
+    if not version or _parse_version(version) <= _parse_version(current_version):
+        return None
+    return {"available": True, "version": version,
+            "changelog": str(data.get("changelog") or "").strip(),
+            "download_url": _OWN_SERVER_DOWNLOAD_BASE + name}
+
+
+def _check_update_github(current_version: str):
     try:
         req = urllib.request.Request(
             _GITHUB_API_URL, headers={"Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
             releases = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError,
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
             json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return json.dumps({"available": False})
+        return None
     if not releases:
-        return json.dumps({"available": False})
+        return None
 
     # releases[0] (не /releases/latest) — та же причина, что и у desktop
     # (см. update_api.py:_check_github) — включает prerelease, проект в альфе.
@@ -113,16 +149,15 @@ def check_update(current_version: str) -> str:
             apk_version = match.group(1)
             break
     if not apk_asset or not apk_version:
-        return json.dumps({"available": False})
+        return None
     if _parse_version(apk_version) <= _parse_version(current_version):
-        return json.dumps({"available": False})
-
-    return json.dumps({
+        return None
+    return {
         "available": True,
         "version": apk_version,
         "changelog": str(latest.get("body") or "").strip(),
         "download_url": apk_asset["browser_download_url"],
-    })
+    }
 
 
 def sync_cars(cars_dir: str, base_url: str) -> str:

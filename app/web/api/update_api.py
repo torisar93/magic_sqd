@@ -195,9 +195,19 @@ class UpdateApi:
         best = max(results, key=lambda r: _parse_version(r["version"]))
         return best
 
+    def _own_server_asset_key(self) -> str:
+        """Ключ в version.json["assets"] для ЭТОЙ сборки (см. scripts/mirror_release.sh)."""
+        if self.is_win7:
+            return "win7"
+        if self.is_mac:
+            return "macos_x86_64" if platform.machine() == "x86_64" else "macos_arm64"
+        return "windows"
+
     def _check_own_server(self) -> dict | None:
-        if self.is_win7 or self.is_mac:
-            return None
+        """Своё зеркало magicsqd.ru/download/ — с 1.0.17 не только Windows x64: version.json несёт карту
+        assets {"windows","win7","macos_arm64","macos_x86_64","android"} → имя файла на зеркале (кладёт
+        scripts/mirror_release.sh). Нет карты (version.json записан старой карточкой «Загрузить на сервер»
+        в админке) — как раньше, только Windows x64 под фиксированным OWN_SERVER_ASSET_NAME."""
         url = get_download_base_url(self.base_dir)
         if not url:
             return None
@@ -208,6 +218,13 @@ class UpdateApi:
         except (urllib.error.URLError, urllib.error.HTTPError,
                 json.JSONDecodeError, UnicodeDecodeError):
             return None
+        if not isinstance(data, dict):
+            return None
+        assets = data.get("assets") if isinstance(data.get("assets"), dict) else {}
+        key = self._own_server_asset_key()
+        asset_name = assets.get(key) or (OWN_SERVER_ASSET_NAME if key == "windows" else None)
+        if not isinstance(asset_name, str) or not asset_name or "/" in asset_name:
+            return None
         version = str(data.get("version") or "")
         if not version or _parse_version(version) <= _parse_version(APP_VERSION):
             return None
@@ -215,8 +232,8 @@ class UpdateApi:
             "available": True,
             "version": version,
             "changelog": str(data.get("changelog") or "").strip(),
-            "download_url": f"{url}/{OWN_SERVER_ASSET_NAME}",
-            "asset_name": OWN_SERVER_ASSET_NAME,
+            "download_url": f"{url}/{asset_name}",
+            "asset_name": asset_name,
         }
 
     def _check_github(self) -> dict | None:

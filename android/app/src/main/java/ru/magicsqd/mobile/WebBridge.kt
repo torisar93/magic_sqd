@@ -67,6 +67,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         private const val INSTALL_LOG_URL = "https://magicsqd.ru/install_log"
         // «Сообщить о проблеме» (см. reportSend, server/backend.py: POST /report) — тот же ключ-заглушка.
         private const val REPORT_URL = "https://magicsqd.ru/report"
+        // Пульс (см. startHeartbeat, ping_bridge.py, desktop app/ping_client.py) — счётчик пользователей и
+        // распределение по версиям в админке; тот же интервал, что на desktop (sync_api.PING_INTERVAL_SECONDS).
+        private const val PING_URL = "https://magicsqd.ru/ping"
+        private const val PING_INTERVAL_MS = 3L * 60 * 1000
     }
 
     // AdbSession/UsbFlashSession — общие на процесс синглтоны БЕЗ внутренней
@@ -115,6 +119,25 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // cookie либо ещё валидна 30 дней, либо auth_bridge.py тихо
         // вернёт ok:false, и JS просто ничего не покажет).
         authSyncMyCars()
+        startHeartbeat()
+    }
+
+    /** Пульс раз в PING_INTERVAL_MS, пока процесс жив: client_id, версия, platform=android. Раньше Android
+     * не пинговал вовсе — в админке «Новые установки» считались только компьютеры. Ошибки сети глотаются. */
+    private fun startHeartbeat() {
+        val version = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (_: Exception) { "" }
+        Thread {
+            while (true) {
+                try {
+                    pyModule("ping_bridge").callAttr("send_ping", getOrCreateClientId(), version, PING_URL, CHAT_KEY)
+                } catch (_: Exception) {
+                    // пульс необязателен
+                }
+                try { Thread.sleep(PING_INTERVAL_MS) } catch (_: InterruptedException) { return@Thread }
+            }
+        }.apply { isDaemon = true; name = "magicsqd-ping" }.start()
     }
 
     private val carsDir get() = java.io.File(context.filesDir, "cars").apply { mkdirs() }.absolutePath

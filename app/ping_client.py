@@ -36,8 +36,11 @@ def get_or_create_client_id(base_dir: Path) -> str:
     return client_id
 
 
-def send_ping(client_id: str, config: SubmitConfig, timeout: float = 10) -> None:
-    body = json.dumps({"client_id": client_id}).encode("utf-8")
+def send_ping(client_id: str, config: SubmitConfig, timeout: float = 10,
+              app_version: str = "", platform: str = "") -> None:
+    # app_version/platform (windows/win7/macos) — чтобы в админке было видно, на каких версиях сидят
+    # люди (раньше пульс нёс только client_id, распределение по версиям было невозможно узнать).
+    body = json.dumps({"client_id": client_id, "app_version": app_version, "platform": platform}).encode("utf-8")
     request = urllib.request.Request(
         config.ping_url,
         data=body,

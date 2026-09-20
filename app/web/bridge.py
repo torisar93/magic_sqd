@@ -80,7 +80,8 @@ class WebApi:
                             or self._admin.try_saved_login().get("ok", False))
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner, self._auth)
         self._submissions = SubmissionsApi(base_dir, self.cars_dir, self._scanner)
-        self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner)
+        self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner,
+                             platform_name=self._install_log_platform())
         self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
         self._update = UpdateApi(base_dir, is_win7=is_win7)
         self._chat = ChatApi(base_dir, self.adb_path, self._auth)

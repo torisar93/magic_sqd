@@ -28,7 +28,9 @@ PING_INTERVAL_SECONDS = 3 * 60
 
 
 class SyncApi:
-    def __init__(self, base_dir, cars_dir, apk_dir, scanner_api):
+    def __init__(self, base_dir, cars_dir, apk_dir, scanner_api, platform_name: str = "windows"):
+        # platform_name — "windows"/"win7"/"macos" для пульса (см. bridge.py:_install_log_platform)
+        self.platform_name = platform_name
         self.base_dir = base_dir
         self.cars_dir = cars_dir
         self.apk_dir = apk_dir
@@ -187,13 +189,14 @@ class SyncApi:
         if not config:
             return
         client_id = get_or_create_client_id(self.base_dir)
-        threading.Thread(target=self._heartbeat_loop, args=(client_id, config), daemon=True).start()
+        threading.Thread(target=self._heartbeat_loop, args=(client_id, config, self.platform_name), daemon=True).start()
 
     @staticmethod
-    def _heartbeat_loop(client_id, config) -> None:
+    def _heartbeat_loop(client_id, config, platform_name="windows") -> None:
+        from ...version import APP_VERSION
         while True:
             try:
-                send_ping(client_id, config)
+                send_ping(client_id, config, app_version=APP_VERSION, platform=platform_name)
             except PingError:
                 pass  # счётчик пользователей необязателен — сбой сети тут не показываем
             time.sleep(PING_INTERVAL_SECONDS)
