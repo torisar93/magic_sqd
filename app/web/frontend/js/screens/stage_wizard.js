@@ -1306,6 +1306,27 @@
     UsbUI.instruction('Действия на магнитоле', wrap);
   }
 
+  // Только для qr_adb_engineering_menu=true (Haval Jolion 2026 и родня, Desay x9h) —
+  // отдельный диалог, НЕ showUsbInstruction выше: тот общий для Geely/VOLGA и его
+  // содержимое трогать нельзя. Пункт меню назван либо "Customization", либо
+  // иероглифами — зависит от локализации прошивки конкретной магнитолы, точного
+  // скриншота меню у нас пока нет (проверено — ни в библиотеке моделей, ни в
+  // материалах по этому способу).
+  function showQrAdbPrepInstruction() {
+    const wrap = el('div');
+    const list = el('ol', {class: 'usb06-procedure'});
+    [
+      'Вставьте флешку в магнитолу.',
+      'Откроется инженерное меню.',
+      'Нажмите на нижний правый пункт меню — подписан либо «Customization», либо иероглифами (зависит от прошивки).',
+      'В открывшемся разделе выберите «ADB Open».',
+      'Откроется экран с QR-кодом.',
+      'Извлеките флешку из магнитолы и вернитесь к этому окну — запишите второй файл (следующий шаг).',
+    ].forEach(text => list.append(el('li', {text})));
+    wrap.append(list);
+    UsbUI.instruction('Инженерное меню магнитолы', wrap);
+  }
+
   async function renderUsbStage(panel, stage) {
     UsbUI.heading(panel, 'Подготовьте USB-накопитель с файлами для вашей магнитолы.');
     buildVariantPicker(panel, stage, stage.index);
@@ -1368,18 +1389,19 @@
     const driveStatus = el('p', {class:'usb06-step-status', role:'status', 'aria-live':'polite'});
 
     // -- доп. фаза "инженерное меню" (только needsPrep) --------------------
-    let prepWriteBtn, prepConfirmBtn, prepStatus, prepOne, prepTwo;
+    let prepWriteBtn, prepInstructionBtn, prepStatus, prepOne, prepTwo;
     if (needsPrep) {
       prepWriteBtn = UsbUI.button('usb06-prep-write', 'Записать файл', 'download', true);
-      prepConfirmBtn = UsbUI.button('usb06-prep-confirm', 'Меню открыто, продолжить', 'car');
+      prepInstructionBtn = UsbUI.button('usb06-prep-instruction', 'Открыть инструкцию', 'book');
       prepStatus = el('p', {class:'usb06-step-status', role:'status', 'aria-live':'polite'});
       prepOne = UsbUI.step(1, 'file', 'Запишите файл на флешку',
         'Будет создан файл svengmode.flag — он открывает инженерное меню магнитолы.', prepWriteBtn);
+      // "готово" у этой карточки — как и у соседней "Выполните шаги на магнитоле" ниже
+      // (two): не отдельная кнопка-подтверждение, а по факту успеха следующего шага
+      // (записи svlog.flag) — см. writeBtn.onclick.
       prepTwo = UsbUI.step(2, 'car', 'Откройте раздел с QR-кодом',
-        'Подключите флешку к магнитоле — откроется инженерное меню. Найдите в нём раздел с QR-кодом ' +
-        'и откройте его, затем нажмите кнопку ниже.', prepConfirmBtn);
+        'Подключите флешку к магнитоле — откроется инженерное меню.', prepInstructionBtn);
       prepOne.dataset.state = 'active'; prepOne.append(prepStatus);
-      prepConfirmBtn.disabled = true;
     }
     const stepOffset = needsPrep ? 2 : 0;
     const writeBtn = UsbUI.button('usb06-write', 'Записать файл', 'download', true);
@@ -1406,7 +1428,7 @@
     function syncControls() {
       const locked = busy || loading;
       [driveSelect, refreshBtn, showAllCheckbox, writeBtn, getBtn].forEach(c => c.disabled = locked);
-      if (needsPrep) { prepWriteBtn.disabled = locked; prepConfirmBtn.disabled = locked || !prepDrive; }
+      if (needsPrep) { prepWriteBtn.disabled = locked; prepInstructionBtn.disabled = locked; }
       helpBtn.disabled = busy;
       if (live()) {
         navNextBtn.disabled = runnerBusy;
@@ -1482,11 +1504,7 @@
         }
         finally { setBusy(false); prepWriteBtn.lastChild.textContent = 'Записать файл'; syncControls(); }
       };
-      prepConfirmBtn.onclick = () => {
-        if (busy || loading || !live() || !prepDrive) return;
-        prepTwo.dataset.state = 'done'; one.dataset.state = 'active';
-        syncControls();
-      };
+      prepInstructionBtn.onclick = () => showQrAdbPrepInstruction();
     }
     writeBtn.onclick = async () => {
       if (busy || loading || !live()) return;
@@ -1504,6 +1522,7 @@
         if (!live()) { run.dispose(); return; }
         if (!result.ok) throw new Error(result.error || 'Не удалось записать файл.');
         writeDrive = drive.letter; one.dataset.state = 'done'; two.dataset.state = 'active';
+        if (needsPrep) prepTwo.dataset.state = 'done';
         status(writeStatus, 'Файл записан. Теперь подключите эту флешку к магнитоле.');
         run.finish({ success: true, message: 'Файл записан на флешку. Теперь подключите её к магнитоле.' });
       } catch (err) {

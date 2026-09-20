@@ -871,11 +871,8 @@
   // только тут ещё и сам код нужно показать техника ПОСЛЕ переотрисовки.
   // Доп. фаза "инженерное меню" (только stage.qr_adb_engineering_menu=true — см.
   // car_generator.py: StepSpec.qr_adb_engineering_menu, сейчас Haval Jolion 2026/Desay
-  // x9h): qrAdbPrepStatus — тот же смысл, что qrAdbWriteStatus, но для svengmode.flag;
-  // qrAdbPrepConfirmed — чисто локальное состояние (нет отдельного bridge-вызова у
-  // "техник дошёл до раздела с QR-кодом", просто кнопка "Продолжить").
+  // x9h): qrAdbPrepStatus — тот же смысл, что qrAdbWriteStatus, но для svengmode.flag.
   let qrAdbPrepStatus = null;
-  let qrAdbPrepConfirmed = false;
   let qrAdbWriteStatus = null;
   let qrAdbResult = null;
   let usbOperation = null;
@@ -950,7 +947,6 @@
     prefetchedFiles = new Set();
     prefetchRequested.clear();
     qrAdbPrepStatus = null;
-    qrAdbPrepConfirmed = false;
     qrAdbWriteStatus = null;
     qrAdbResult = null;
     usbOperation = null;
@@ -2401,6 +2397,36 @@
     closeButton.focus({ preventScroll: true });
   }
 
+  // Только для qr_adb_engineering_menu=true (Haval Jolion 2026 и родня, Desay x9h) —
+  // отдельный диалог, НЕ openUsbInstructions выше: тот общий для Geely/VOLGA и его
+  // содержимое трогать нельзя. Пункт меню назван либо "Customization", либо
+  // иероглифами — зависит от локализации прошивки конкретной магнитолы, точного
+  // скриншота меню у нас пока нет (проверено — ни в библиотеке моделей, ни в
+  // материалах по этому способу).
+  function openQrAdbPrepInstructions() {
+    const overlay = el("div", { class: "modal-overlay dismissible usb-instruction-overlay" });
+    const close = () => overlay.remove();
+    const closeButton = usbStageButton("Закрыть", "close", close);
+    const box = el("section", { class: "modal-box usb-instruction-dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": "qr-adb-prep-instruction-title" });
+    const title = el("h2", { id: "qr-adb-prep-instruction-title", text: "Инженерное меню магнитолы" });
+    box.append(el("header", { class: "usb-instruction-heading" }, [usbStageIcon("book"), title, closeButton]));
+    const content = el("div", { class: "usb-instruction-content" });
+    const list = el("ol", { class: "usb-instruction-list" });
+    ["Вставьте флешку в магнитолу.",
+      "Откроется инженерное меню.",
+      "Нажмите на нижний правый пункт меню — подписан либо «Customization», либо иероглифами (зависит от прошивки).",
+      "В открывшемся разделе выберите «ADB Open».",
+      "Откроется экран с QR-кодом.",
+      "Извлеките флешку из магнитолы и вернитесь к этому окну — запишите второй файл (следующий шаг).",
+    ].forEach(text => list.append(el("li", { text })));
+    content.append(list);
+    box.append(content, el("footer", { class: "dialog-actions" }, [usbStageButton("Понятно", "check", close, true)]));
+    overlay.append(box);
+    overlay.addEventListener("click", event => { if (event.target === overlay) close(); });
+    document.body.append(overlay);
+    closeButton.focus({ preventScroll: true });
+  }
+
   function beginUsbOperation(kind, stage, card) {
     if (labInstallBusy) return false;
     if (!usbConnected) {
@@ -2512,7 +2538,7 @@
       const prepCard = usbStepCard(1, "Запишите файл на флешку", "Будет создан файл svengmode.flag — он открывает инженерное меню магнитолы.", "file", qrAdbPrepStatus?.ok ? "done" : qrAdbPrepStatus ? "error" : "active");
       const prepBtn = usbStageButton(qrAdbPrepStatus?.ok ? "Записать ещё раз" : "Записать файл", "download", () => {
         if (!beginUsbOperation("prep_flag", stage, prepCard)) return;
-        qrAdbPrepConfirmed = false; qrAdbWriteStatus = null; qrAdbResult = null;
+        qrAdbWriteStatus = null; qrAdbResult = null;
         sendUsbOperation("qr_adb_write_prep_flag", {}, stage);
       }, !qrAdbPrepStatus?.ok);
       prepCard.append(prepBtn);
@@ -2524,14 +2550,11 @@
             : (qrAdbPrepStatus.error || "Не удалось записать файл."),
         }));
       }
-      const prepConfirmCard = usbStepCard(2, "Откройте раздел с QR-кодом", "Подключите флешку к магнитоле — откроется инженерное меню. Найдите в нём раздел с QR-кодом и откройте его.", "car", qrAdbPrepConfirmed ? "done" : qrAdbPrepStatus?.ok ? "active" : "idle");
-      const confirmBtn = usbStageButton("Меню открыто, продолжить", "car", () => {
-        if (!qrAdbPrepStatus?.ok || qrAdbPrepConfirmed) return;
-        qrAdbPrepConfirmed = true; render();
-      }, false);
-      confirmBtn.disabled = !qrAdbPrepStatus?.ok || qrAdbPrepConfirmed;
-      prepConfirmCard.append(confirmBtn);
-      page.append(prepCard, prepConfirmCard);
+      // "готово" у этой карточки — как и у instructionCard ниже: не отдельная кнопка-
+      // подтверждение, а по факту успеха следующего шага (записи svlog.flag).
+      const prepInstructionCard = usbStepCard(2, "Откройте раздел с QR-кодом", "Подключите флешку к магнитоле — откроется инженерное меню.", "car", qrAdbWriteStatus?.ok ? "done" : qrAdbPrepStatus?.ok ? "active" : "idle");
+      prepInstructionCard.append(usbStageButton("Открыть инструкцию", "book", () => openQrAdbPrepInstructions()));
+      page.append(prepCard, prepInstructionCard);
     }
     const writeCard = usbStepCard(1 + off, needsPrep ? "Запишите второй файл на флешку" : "Запишите файл на флешку", "Будет создан файл svlog.flag для получения кода ADB.", "file", qrAdbWriteStatus?.ok ? "done" : qrAdbWriteStatus ? "error" : (needsPrep ? "idle" : "active"));
     const writeBtn = usbStageButton(qrAdbWriteStatus?.ok ? "Записать ещё раз" : "Записать файл", "download", () => {
