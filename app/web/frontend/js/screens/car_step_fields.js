@@ -485,6 +485,7 @@
       pm_install_spoofed: "adb push + pm install -i (подмена установщика, Geely OneOS/NewEra)",
       dex_shell_install: "app_process + dex-хелпер (PackageInstaller.Session, Geely OneOS)",
       adb_install_haval_revived: "adb install -g -t -d --install-reason 64 (Haval, «revived» ГУ)",
+      jdwp_whitelist: "JDWP-патч белого списка + pm install (Desay x9h — Haval Jolion 2026)",
     };
 
     // Подсказка "начни перебор способов установки APK с этого" — не

@@ -206,6 +206,54 @@ object AdbSession {
     fun installApkDexShell(bytes: ByteArray, apkName: String, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
         installApkViaDexShell(requireTransport(), bytes, apkName, helperBytes, log = log, prePushed = stagedPath != null)
 
+    /** Desay x9h (Haval Jolion 2026 / TR01025 и родня): JDWP-патч mInstallWhiteList + pm install (см.
+     * AdbJdwp.kt, desktop app/install_context.py:install_apk_jdwp_whitelist). packageName нужен ДО установки
+     * — берётся из самого APK (getPackageArchiveInfo). stagedPath — уже залитый движком файл. */
+    fun installApkJdwpWhitelist(bytes: ByteArray, packageName: String, log: (String) -> Unit,
+                                stagedPath: String? = null, apkName: String = "install.apk"): AdbInstallResult {
+        val transport = requireTransport()
+        if (packageName.isBlank()) return AdbInstallResult.Failed("не удалось прочитать имя пакета — нужно для JDWP-патча")
+        // 1) PID system_server
+        val pidResult = runAdbShellCommand(transport, "pidof system_server", log)
+        val pid = when (pidResult) {
+            is AdbShellResult.Output -> pidResult.text.trim().split(Regex("\s+")).firstOrNull() ?: ""
+            else -> ""
+        }
+        if (!pid.matches(Regex("\d+"))) return AdbInstallResult.Failed("не удалось получить PID system_server")
+        // 2) JDWP-поток к процессу и патч белого списка
+        try {
+            val (localId, remoteId) = openAdbStream(transport, "jdwp:$pid", log)
+            val jdwpStream = AdbByteStream(transport, localId, remoteId, log)
+            try {
+                log("JDWP: подключаюсь к system_server(pid $pid), патчу белый список для $packageName...")
+                JdwpClient(jdwpStream).patchWhitelist(listOf(packageName), log)
+            } finally {
+                jdwpStream.close()
+            }
+        } catch (e: JdwpException) {
+            return AdbInstallResult.Failed("JDWP-патч белого списка не удался: ${e.message}")
+        }
+        // 3) push (если не залит заранее) + pm install -r -t
+        val remotePath = stagedPath ?: "/data/local/tmp/$apkName"
+        if (stagedPath == null) {
+            AdbInstallProgress.beginTransfer(bytes.size.toLong())
+            when (val r = syncPushBytes(transport, bytes, remotePath, log)) {
+                is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
+                AdbPushResult.Success -> {}
+            }
+        }
+        AdbInstallProgress.installing()
+        val installResult = runAdbShellCommand(transport, "pm install -r -t $remotePath", log, timeoutMs = 120000)
+        if (stagedPath == null) runAdbShellCommand(transport, "rm -f $remotePath", log)
+        val pmOutput = when (installResult) {
+            is AdbShellResult.Output -> installResult.text
+            is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install отклонён: ${installResult.reason}")
+            is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install ошибка: ${installResult.reason}")
+        }
+        return if (pmOutput.contains("Success", ignoreCase = true)) AdbInstallResult.Success(pmOutput.trim())
+        else AdbInstallResult.Failed("pm install не вернул Success: ${pmOutput.trim()}")
+    }
+
     private fun requireTransport(): AdbTransport =
         transport ?: error("ADB не подключён — сначала нужно установить соединение с устройством")
 

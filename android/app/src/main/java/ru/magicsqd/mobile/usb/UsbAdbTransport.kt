@@ -573,6 +573,29 @@ sealed class AdbShellResult {
  * OPEN -> OKAY -> WRTE*(с ACK) -> CLSE. serviceName уже включает
  * ведущее двоеточие там, где оно нужно (например "shell:echo hi", "root:").
  */
+/** Открывает ADB-сервис и возвращает (localId, remoteId) для двунаправленного обмена (см. AdbByteStream,
+ * сервис jdwp:<pid> для JDWP-патча белого списка). Бросает, если устройство сразу закрыло поток. */
+fun openAdbStream(
+    transport: AdbTransport,
+    serviceName: String,
+    log: (String) -> Unit,
+    timeoutMs: Int = TIMEOUT_MS,
+): Pair<Int, Int> {
+    val service = serviceName.toByteArray(Charsets.UTF_8) + byteArrayOf(0)
+    val localId = newLocalStreamId()
+    if (!sendMessage(transport, AdbProtocol.A_OPEN, localId, 0, service)) {
+        throw JdwpException("не удалось отправить OPEN для $serviceName")
+    }
+    val (openResp, _) = readMessageForStream(transport, localId, log, timeoutMs)
+    if (openResp.command == AdbProtocol.A_CLSE) {
+        throw JdwpException("устройство закрыло поток $serviceName (сервис не поддерживается — не отлаживается?)")
+    }
+    if (openResp.command != AdbProtocol.A_OKAY) {
+        throw JdwpException("неожиданный ответ на OPEN $serviceName: 0x${openResp.command.toUInt().toString(16)}")
+    }
+    return localId to openResp.arg0
+}
+
 fun runAdbService(
     transport: AdbTransport,
     serviceName: String,

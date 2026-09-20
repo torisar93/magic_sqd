@@ -196,6 +196,8 @@ class InstallEngine(
     // ради одного нового способа не стали — closure просто читает текущее
     // значение поля на момент вызова.
     private var currentApkName: String = "install.apk"
+    // Имя пакета текущего APK (из getPackageArchiveInfo) — нужно способу jdwp_whitelist ДО установки.
+    private var currentPackageName: String = "" 
 
     /** Отказ, причина которого не в СПОСОБЕ установки, а в самом APK: перебор остальных
      *  способов бесполезен (на Monji/Geely OneOS они и так закрываются) — сразу понятное
@@ -280,6 +282,9 @@ class InstallEngine(
             }
         },
         "adb_install_haval_revived" to { bytes, staged, methodLog -> AdbSession.installApkHavalRevived(bytes, methodLog, staged) },
+        "jdwp_whitelist" to { bytes, staged, methodLog ->
+            AdbSession.installApkJdwpWhitelist(bytes, currentPackageName, methodLog, staged, currentApkName)
+        },
     )
 
     /** Устанавливает список APK (по абсолютным локальным путям) по очереди,
@@ -391,6 +396,9 @@ class InstallEngine(
             val stagedName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
             stagedRemote = "/data/local/tmp/$stagedName"
             currentApkName = stagedName
+            currentPackageName = try {
+                context.packageManager.getPackageArchiveInfo(path, 0)?.packageName ?: ""
+            } catch (_: Exception) { "" }
             fun stagedPath(): String? {
                 if (stagedValid) return stagedRemote
                 if (stagingFailed) return null   // заранее залить не вышло — способы заливают сами, как раньше

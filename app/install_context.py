@@ -21,7 +21,8 @@ _INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm
                           "app_process + localinstall.apk (Chery DesaySV)",
                           "adb push + pm install -i (подмена установщика, Geely OneOS/NewEra)",
                           "app_process + dex-хелпер (PackageInstaller.Session, Geely OneOS)",
-                          "adb install -g -t -d --install-reason 64 (Haval, «revived» ГУ)")
+                          "adb install -g -t -d --install-reason 64 (Haval, «revived» ГУ)",
+                          "JDWP-патч белого списка + pm install (Desay x9h — Haval Jolion 2026)")
 # Те же способы, но короткими устойчивыми ключами — хранятся в
 # StepSpec.apps_install_method/_wizard_spec.json/stages.py (см.
 # car_generator.py) как явная подсказка "начни перебор с этого способа",
@@ -29,7 +30,7 @@ _INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm
 # (не жёсткая привязка — если он всё-таки не сработает, install_apk_auto
 # просто пойдёт дальше по остальным способам в обычном порядке).
 INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "localinstall", "pm_install_spoofed",
-                        "dex_shell_install", "adb_install_haval_revived")
+                        "dex_shell_install", "adb_install_haval_revived", "jdwp_whitelist")
 
 # Платформа Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
 # блокирует обычный "pm install" на уровне прошивки; единственный найденный
@@ -452,6 +453,8 @@ class InstallContext:
             self.install_apk_dex_shell(path)
         elif method == 6:
             self.install_apk_haval_revived(path, extra_args=extra_args)
+        elif method == 7:
+            self.install_apk_jdwp_whitelist(path, extra_args=extra_args)
         else:
             self.install_apk_localinstall(path)
 
@@ -528,6 +531,60 @@ class InstallContext:
         if extra_args:
             flags += list(extra_args)
         self.install_apk(path, extra_args=flags)
+
+    def install_apk_jdwp_whitelist(self, path, remote_dir="/data/local/tmp", extra_args=None) -> None:
+        """Магнитолы Desay Semidrive x9h (Haval Jolion 2026 / TR01025, GWM Poer 2026 / TR4314 и родня):
+        прошивка запущена с ro.debuggable=1 и блокирует установку сторонних APK белым списком пакетов в
+        PackageManagerService.mInstallWhiteList — обычный pm install отдаёт INSTALL_FAILED_ABORTED / -115
+        (см. лог #364). Способ (по мотивам открытого DesayInstall): по JDWP добавляем имя пакета в этот
+        список в памяти, затем pm install. Патч живёт до перезагрузки; установленное приложение остаётся.
+        Реализация — свой минимальный JDWP-клиент (app/jdwp_whitelist.py), без полноценного JDK. На других
+        магнитолах способ отваливается чисто: либо adb forward jdwp: не проходит (процесс не отлаживается),
+        либо в system_server нет поля mInstallWhiteList."""
+        from .jdwp_whitelist import JdwpError
+
+        self.check_cancelled()
+        path = Path(path)
+        package = read_package_name(path)
+        if not package:
+            raise AdbError(f"не удалось прочитать имя пакета {path.name} — нужно для JDWP-патча белого списка")
+        remote_path = f"{remote_dir.rstrip('/')}/{path.name}"
+        self.log(f"Установка APK (JDWP-патч белого списка, Desay x9h): {path.name} [{package}]")
+        try:
+            self._jdwp_whitelist_packages([package])
+        except JdwpError as exc:
+            raise AdbError(f"JDWP-патч белого списка не удался: {exc}")
+        self.push(path, remote_path)
+        extra = (" " + " ".join(extra_args)) if extra_args else ""
+        result = self.shell(f"pm install -r -t {shlex.quote(remote_path)}{extra}", check=False)
+        _check_pm_install_result(result)
+
+    def _jdwp_whitelist_packages(self, packages: list[str]) -> None:
+        """pidof system_server → adb forward tcp:0 jdwp:<pid> → JDWP-патч mInstallWhiteList → снять forward.
+        forward на порт 0 просит adb выбрать свободный порт (печатает его) — без коллизий с чужими forward."""
+        import socket as _socket
+
+        from .jdwp_whitelist import JdwpClient, patch_whitelist
+
+        pid_result = self.shell("pidof system_server", check=False)
+        pid = ((pid_result.stdout or "").strip().split() or [""])[0]
+        if not pid.isdigit():
+            raise AdbError("не удалось получить PID system_server (магнитола не даёт pidof?)")
+        forward = self._adb.run("forward", "tcp:0", f"jdwp:{pid}", check=False)
+        port_text = (forward.stdout or "").strip()
+        if not port_text.isdigit():
+            err = ((forward.stderr or "") + (forward.stdout or "")).strip()
+            raise AdbError(f"не удалось пробросить JDWP-порт (процесс не отлаживается?): {err or 'нет порта'}")
+        port = int(port_text)
+        try:
+            self.log(f"JDWP: system_server(pid {pid}) проброшен на localhost:{port}, патчу белый список...")
+            sock = _socket.create_connection(("127.0.0.1", port), timeout=15)
+            try:
+                patch_whitelist(JdwpClient(sock), packages, log=self.log)
+            finally:
+                sock.close()
+        finally:
+            self._adb.run("forward", "--remove", f"tcp:{port}", check=False)
 
     def _installed_packages(self) -> set[str]:
         result = self.shell("pm list packages", check=False)
