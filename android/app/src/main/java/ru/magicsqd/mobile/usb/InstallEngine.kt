@@ -138,7 +138,11 @@ class InstallEngine(
                     val localPath = filesByName[name]
                         ?: return StageRunResult.Failed("Файл не найден для установки: $name")
                     val bytes = File(localPath).readBytes()
-                    val install = if (cmd.getString("kind") == "install_stream") AdbSession::installApkPmStream else AdbSession::installApk
+                    // Лямбда, а не ссылка на метод: у installApk*/PmStream появился 3-й параметр stagedPath
+                    // (со значением по умолчанию), и ссылка-метода уже не подходит под тип (ByteArray,(String)->Unit).
+                    val install: (ByteArray, (String) -> Unit) -> AdbInstallResult =
+                        if (cmd.getString("kind") == "install_stream") { b, l -> AdbSession.installApkPmStream(b, l) }
+                        else { b, l -> AdbSession.installApk(b, l) }
                     when (val r = install(bytes, log)) {
                         is AdbInstallResult.Failed -> return StageRunResult.Failed(r.reason)
                         is AdbInstallResult.Success -> log("Установлено: $name")

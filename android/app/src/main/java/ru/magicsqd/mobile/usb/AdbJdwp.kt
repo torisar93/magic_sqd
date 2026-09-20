@@ -147,8 +147,8 @@ class JdwpClient(private val stream: AdbByteStream) {
         refTypeIdSize = readInt(d, 12)
     }
 
-    fun suspend() { command(VM, VM_SUSPEND) }
-    fun resume() { command(VM, VM_RESUME) }
+    fun vmSuspend() { command(VM, VM_SUSPEND) }
+    fun vmResume() { command(VM, VM_RESUME) }
     fun dispose() { try { command(VM, VM_DISPOSE) } catch (_: Exception) {} }
 
     private fun stringPayload(text: String): ByteArray {
@@ -266,7 +266,7 @@ class JdwpClient(private val stream: AdbByteStream) {
     }
 
     fun patchWhitelist(packages: List<String>, log: (String) -> Unit) {
-        handshake(); idSizes(); suspend()
+        handshake(); idSizes(); vmSuspend()
         try {
             val pmsType = classesBySignature(PMS_SIGNATURE)
                 ?: throw JdwpException("PackageManagerService не найден в system_server — это не Desay x9h")
@@ -308,7 +308,7 @@ class JdwpClient(private val stream: AdbByteStream) {
                 log("$packageName: добавлен в белый список (размер ${size + 1})")
             }
         } finally {
-            try { resume() } catch (_: Exception) {}
+            try { vmResume() } catch (_: Exception) {}
             dispose()
         }
     }

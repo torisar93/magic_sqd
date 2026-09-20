@@ -216,10 +216,10 @@ object AdbSession {
         // 1) PID system_server
         val pidResult = runAdbShellCommand(transport, "pidof system_server", log)
         val pid = when (pidResult) {
-            is AdbShellResult.Output -> pidResult.text.trim().split(Regex("\s+")).firstOrNull() ?: ""
+            is AdbShellResult.Output -> pidResult.text.trim().split(Regex("\\s+")).firstOrNull() ?: ""
             else -> ""
         }
-        if (!pid.matches(Regex("\d+"))) return AdbInstallResult.Failed("не удалось получить PID system_server")
+        if (!pid.matches(Regex("\\d+"))) return AdbInstallResult.Failed("не удалось получить PID system_server")
         // 2) JDWP-поток к процессу и патч белого списка
         try {
             val (localId, remoteId) = openAdbStream(transport, "jdwp:$pid", log)
