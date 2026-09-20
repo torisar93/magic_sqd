@@ -357,7 +357,18 @@ fun performCnxnHandshake(
     // установки) технику показывалось сырое «получено -1 из 24 байт заголовка», а
     // соединение оставалось сброшенным (реальные логи #325–#327).
     return try {
-        val (respHeader, respPayload) = readMessage(transport)
+        var (respHeader, respPayload) = readMessage(transport)
+        // Устаревший CLSE от потока ПРОШЛОГО подключения (магнитола досылает его уже после нашего нового
+        // CNXN — реальный лог #305: «Неожиданная команда 0x45534c43», со второй попытки прошло) — не ответ
+        // на рукопожатие, читаем дальше. Ограничение — чтобы не зациклиться на потоке мусора.
+        var staleClosed = 0
+        while (respHeader.command == AdbProtocol.A_CLSE && staleClosed < 5) {
+            staleClosed++
+            log("Пропускаю устаревшее закрытие канала (CLSE) от прошлого подключения — жду ответ на CNXN...")
+            val next = readMessage(transport)
+            respHeader = next.first
+            respPayload = next.second
+        }
         log("Ответ: command=0x${respHeader.command.toUInt().toString(16)} dataLength=${respHeader.dataLength}")
 
         when (respHeader.command) {

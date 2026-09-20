@@ -940,6 +940,8 @@
     installCompletedShown = false;
     failedStages = new Map();
     wifiInstallFlow = null;
+    prefetchedFiles = new Set();
+    prefetchRequested.clear();
     qrAdbWriteStatus = null;
     qrAdbResult = null;
     usbOperation = null;
@@ -1063,6 +1065,27 @@
   // нет), потом показать окно подключения, и только после подключения — ставить. Состояние потока:
   // {index, proceed, phase: "download"|"connect", connecting}. null — потока нет.
   let wifiInstallFlow = null;
+  // Файлы adb/actions-этапов, скачанные заранее при Wi-Fi (см. prefetchStageFiles / WebBridge.adbPrefetchFiles).
+  let prefetchedFiles = new Set();
+  const prefetchRequested = new Set();
+
+  function prefetchStageFiles(stage, paths) {
+    const missing = (paths || []).filter((p) => p && !prefetchedFiles.has(p) && !prefetchRequested.has(p));
+    if (!missing.length) return;
+    missing.forEach((p) => prefetchRequested.add(p));
+    log("Wi-Fi: заранее скачиваю файлы этапа, пока есть интернет...");
+    try { Bridge.call("adb_prefetch_files", { index: stage.index, paths: missing }); }
+    catch (error) { missing.forEach((p) => prefetchRequested.delete(p)); log(`Не удалось начать скачивание файлов этапа: ${error.message || error}`); }
+  }
+
+  function onFilesPrefetched(event) {
+    const paths = event.paths || [];
+    paths.forEach((p) => prefetchRequested.delete(p));
+    if (event.ok) { paths.forEach((p) => prefetchedFiles.add(p)); log("Файлы этапа скачаны — можно подключаться к Wi-Fi магнитолы."); }
+    else log("Файлы этапа заранее скачать не удалось — при запуске попробую снова.");
+  }
+
+  const allPrefetched = (paths) => (paths || []).every((p) => prefetchedFiles.has(p));
 
   function beginWifiInstall(stage, apkPaths, proceed) {
     wifiInstallFlow = { index: stage.index, proceed, phase: "download", connecting: false };
@@ -1784,12 +1807,14 @@
     const card = flowCard("Команды ADB", "Выполнение на подключённой магнитоле.", "terminal");
     const commandsText = (stage.commands || []).map(describeCommand).filter(Boolean).join("\n");
     flowTechnicalDetails(card, commandsText, `Команды этапа · ${(stage.commands || []).length}`);
+    if (modelWifi) prefetchStageFiles(stage, stage.adb_files);
     const btn = usbStageButton("Выполнить", "play", () => {
       if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
       runStageOperation("adb_run_stage", {
         index: stage.index,
         commands: stage.commands || [],
         filesByName: filesByNameFrom(stage.adb_files),
+        skipDownload: allPrefetched(stage.adb_files),
       }, page, card);
     }, true);
     card.append(btn);
@@ -1798,6 +1823,7 @@
   }
 
   function renderActionsStage(page, stage) {
+    if (connectionModeFor(stage) === "wifi") prefetchStageFiles(stage, (stage.actions || []).flatMap((a) => a.files || []));
     page.classList.add("flow-stage");
     (stage.actions || []).forEach((action, actionIndex) => {
       const supported = !action.kind || ["command", "grant_permissions", "mock_location"].includes(action.kind);
@@ -1851,6 +1877,7 @@
         runStageOperation("adb_run_stage", {
           index: stage.index, commands: action.commands || [],
           filesByName: filesByNameFrom(action.files),
+          skipDownload: allPrefetched(action.files),
         }, page, card, actionIndex);
       });
       card.append(btn);
@@ -3399,6 +3426,7 @@
     window.events.on("qr_adb_password_result", onQrAdbPasswordResult);
     window.events.on("apk_library_result", onApkLibraryResult);
     window.events.on("apk_download_done", onApkDownloadDone);
+    window.events.on("files_prefetched", onFilesPrefetched);
     window.events.on("report_result", onReportResult);
     window.events.on("update_check_result", onUpdateCheckResult);
     window.events.on("supporters_result", (event) => { if (event.result && event.result.people) window.Thanks.set(event.result); });

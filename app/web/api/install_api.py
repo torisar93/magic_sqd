@@ -204,6 +204,9 @@ class InstallApi:
             # (см. stage_wizard.js: buildTransportBar) — читается один раз
             # здесь, а не на каждый рендер этапа.
             "wifi_port": load_wifi_port(model),
+            # Wi-Fi-модель (см. load_model_wifi): JS докачивает файлы adb/actions-этапов ЗАРАНЕЕ, при показе
+            # этапа, пока у компьютера ещё есть интернет (см. prefetch_stage).
+            "wifi": bool(model_wifi),
             **({"write_permission_warning": True} if write_permission_error else {}),
         }
 
@@ -795,6 +798,47 @@ class InstallApi:
         self._on_log("Приложения скачаны. Теперь подключитесь к Wi-Fi магнитолы.")
         return {"ok": True}
 
+    def prefetch_stage(self, model_key: str, stage_index: int, action_index: int | None = None) -> dict:
+        """Wi-Fi ADB (модель wifi или actions_connection=wifi): СВОИ файлы этапа adb/actions (files/adb_N,
+        files/actions_i_j) и сертификат переподписи докачиваются при ПОКАЗЕ этапа, а не при запуске — при
+        запуске компьютер уже в сети магнитолы без интернета (тот же принцип, что prefetch_apks для
+        приложений). action_index=None у actions-этапа — все его действия разом. Блокирующий; JS зовёт в
+        фоне и потом запускает этап/действие с prefetched=True (см. start_stage/run_action)."""
+        if self._runner.running or self._prefetching:
+            return {"ok": False, "error": "Установка уже выполняется."}
+        model = self._scanner_api.get_model(model_key)
+        if model is None:
+            return {"ok": False, "error": "unknown model key"}
+        stages = load_stages(model)
+        if not (0 <= stage_index < len(stages)):
+            return {"ok": False, "error": "unknown stage index"}
+        stage = stages[stage_index]
+        if stage.get("type") == "actions" and action_index is None:
+            dirs = [model.dir / "files" / f"actions_{stage_index + 1}_{i + 1}"
+                    for i in range(len(stage.get("actions") or []))]
+        else:
+            dirs = self._stage_own_dirs(model, stage, action_index, stage_index)
+        self._prefetch_cancel.clear()
+        self._prefetching = True
+
+        def check_cancelled():
+            if self._prefetch_cancel.is_set():
+                raise InstallCancelled("Скачивание остановлено пользователем.")
+
+        try:
+            for local_dir in dirs:
+                sync_model_subfolder(self.base_dir, local_dir, log=self._on_log,
+                                     check_cancelled=check_cancelled, on_progress=self._on_sync_progress)
+            self._runner.sync_resign_cert(model, check_cancelled=check_cancelled)
+        except InstallCancelled as exc:
+            return {"ok": False, "cancelled": True, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
+            return {"ok": False, "error": f"Не удалось скачать файлы этапа: {exc}"}
+        finally:
+            self._prefetching = False
+            self._on_sync_progress(0, 0)
+        return {"ok": True}
+
     def start_stage(self, model_key: str, stage_index: int, device_serial: str | None,
                      selected_apk_paths: list[str], prefetched: bool = False) -> dict:
         if self._runner.running:
@@ -887,7 +931,7 @@ class InstallApi:
     # renderActionsStage) отличает "этап выполняется" от "действие
     # выполняется" только тем, что не переходит на следующий этап по success.
     def run_action(self, model_key: str, stage_index: int, action_index: int,
-                    device_serial: str | None, selected_apk_paths: list[str]) -> dict:
+                    device_serial: str | None, selected_apk_paths: list[str], prefetched: bool = False) -> dict:
         if self._runner.running:
             return {"ok": False, "error": "Установка уже выполняется."}
         model = self._scanner_api.get_model(model_key)
@@ -903,7 +947,8 @@ class InstallApi:
         event_bridge.push({"kind": "install_log", "text": f"--- {action.get('label') or 'Действие'} ---"})
         try:
             self._runner.start(model, device_serial, selected_apk_paths, run_fn=action["run"],
-                                own_dirs=self._stage_own_dirs(model, stage, action_index, stage_index))
+                                own_dirs=self._stage_own_dirs(model, stage, action_index, stage_index),
+                                skip_sync=prefetched)
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}

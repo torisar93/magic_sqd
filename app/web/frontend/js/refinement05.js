@@ -56,7 +56,7 @@
       finally{if(g===generation){search.disabled=false;status.dataset.state='idle';}}
     }
     search.onclick=searchNow;
-    submit.onclick=async()=>{const p=validPort(),h=hostInput.value.trim();if(!p)return;if(!h||/\s/.test(h)){status.textContent='Введите IP или имя устройства без пробелов.';hostInput.focus();return;}generation++;busy=true;[close,cancel,submit,search,hostInput,portInput].forEach(x=>x.disabled=true);status.textContent='Подключаемся к устройству…';status.dataset.state='searching';
+    submit.onclick=async()=>{let h=hostInput.value.trim();const hp=h.match(/^([^:\s]+):(\d{1,5})$/);if(hp){h=hp[1];hostInput.value=h;portInput.value=hp[2];}const p=validPort();if(!p)return;if(!h||/\s/.test(h)){status.textContent='Введите IP или имя устройства без пробелов.';hostInput.focus();return;}if(/^\d+$/.test(h)){status.textContent='В адресе нет точек — IPv4 выглядит как 192.168.1.100.';hostInput.focus();return;}if(/^[\d.]+$/.test(h)&&!/^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(h)){status.textContent='Некорректный IPv4-адрес — четыре числа от 0 до 255 через точку.';hostInput.focus();return;}generation++;busy=true;[close,cancel,submit,search,hostInput,portInput].forEach(x=>x.disabled=true);status.textContent='Подключаемся к устройству…';status.dataset.state='searching';
       try{const result=await connect(h,p);if(result?.ok===false)throw new Error(result.message||result.error||'Не удалось подключиться. Проверьте адрес и порт.');modal.close();}
       catch(e){status.textContent=e.message||'Не удалось подключиться.';status.dataset.state='error';}
       finally{busy=false;[close,cancel,submit,search,hostInput,portInput].forEach(x=>x.disabled=false);}

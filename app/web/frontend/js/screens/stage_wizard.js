@@ -60,6 +60,10 @@
   let activeCommand = null;
   const commandResults = new Map();
   let modelWifiPort = 5555;
+  // Wi-Fi-модель (см. install_api.load_stages: "wifi"): файлы adb/actions-этапов докачиваем при показе
+  // этапа, пока интернет ещё есть (см. prefetchStageFiles), и запускаем с prefetched=true.
+  let modelWifi = false;
+  const prefetchedStages = new Set();
   let appDescriptionTooltip = null;
   // Показываем "Готово!"+Boosty один раз за сеанс работы с моделью — сброс
   // при каждом open() (см. android app.js: installCompletedShown, тот же
@@ -405,6 +409,8 @@
     } else {
       stages = result.stages;
       modelWifiPort = result.wifi_port || 5555;
+      modelWifi = !!result.wifi;
+      prefetchedStages.clear();
       await initAppSelectionDefaults();
       if (result.write_permission_warning && !writePermissionWarningShown) {
         writePermissionWarningShown = true;
@@ -1580,7 +1586,8 @@
           }
           prefetched = true;
         }
-        const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selected, prefetched);
+        const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selected,
+          prefetched || prefetchedStages.has(String(stage.index)));
         if (result.ok) return;
         failToStart(result.error || "Не удалось запустить этап.");
       } catch (err) {
@@ -1589,8 +1596,20 @@
     });
   }
 
+  // Wi-Fi: заранее докачать свои файлы этапа (см. install_api.prefetch_stage). Ключ — этап целиком.
+  async function prefetchStageFiles(stage) {
+    const key = String(stage.index);
+    if (prefetchedStages.has(key)) return;
+    try {
+      const result = await window.pywebview.api.install_prefetch_stage(model.key, stage.index, null);
+      if (result.ok) prefetchedStages.add(key);
+      else if (result.error) log(`Файлы этапа заранее не скачались: ${result.error}`);
+    } catch (error) { log(`Файлы этапа заранее не скачались: ${error.message || error}`); }
+  }
+
   function renderAdbStage(panel, stage, getDevice) {
     stageInfo(panel, 'settings', 'Выполнение команд', 'Команды этого этапа выполнятся на выбранном устройстве. Ход выполнения будет показан здесь и в логе.');
+    if (modelWifi) prefetchStageFiles(stage);
     buildStartStopButtons(panel, stage, getDevice);
   }
 
@@ -1618,6 +1637,7 @@
   // сами по себе). Нужно ADB-устройство, как и у "adb"-этапа — команды/выдача
   // разрешений/фиктивные местоположения все идут через ctx.shell.
   function renderActionsStage(panel, stage, getDevice) {
+    if ((stage.actions_connection || 'wired') === 'wifi') prefetchStageFiles(stage);
     const actions = stage.actions || [];
     const list = el('div', {class:'stage06-commands'});
     if (!actions.length) stageInfo(panel, 'settings', 'Нет доступных действий', 'Для этого этапа пока не добавлены команды.');
@@ -1646,7 +1666,8 @@
           retry: runAction,
         });
         try {
-          const result = await window.pywebview.api.install_run_action(model.key, stage.index, i, device, selectedApkPaths());
+          const result = await window.pywebview.api.install_run_action(model.key, stage.index, i, device, selectedApkPaths(),
+            prefetchedStages.has(String(stage.index)));
           if (!result.ok) throw new Error(result.error||'Не удалось выполнить действие.');
         } catch (error) {
           runnerBusy=false; activeCommand=null;

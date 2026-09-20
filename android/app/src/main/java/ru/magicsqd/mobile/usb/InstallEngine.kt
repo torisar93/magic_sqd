@@ -257,27 +257,29 @@ class InstallEngine(
         "Связь с магнитолой оборвалась во время установки «$apkName». Проверьте Wi-Fi или кабель, " +
             "что магнитола не ушла в сон, и запустите этап заново. Техническая причина: ${technical ?: "нет ответа от устройства"}"
 
-    private val INSTALL_METHODS: List<Pair<String, (ByteArray, (String) -> Unit) -> AdbInstallResult>> = listOf(
-        "pm_install" to AdbSession::installApk,
-        "pm_install_stream" to AdbSession::installApkPmStream,
-        "pm_install_spoofed" to AdbSession::installApkSpoofed,
-        "localinstall" to { bytes, methodLog ->
+    // (bytes, stagedPath, log): stagedPath — путь уже залитого на устройство APK (движок заливает его один
+    // раз перед перебором, см. installApksWithProgress) либо null — тогда способ заливает сам, как раньше.
+    private val INSTALL_METHODS: List<Pair<String, (ByteArray, String?, (String) -> Unit) -> AdbInstallResult>> = listOf(
+        "pm_install" to { bytes, staged, methodLog -> AdbSession.installApk(bytes, methodLog, staged) },
+        "pm_install_stream" to { bytes, staged, methodLog -> AdbSession.installApkPmStream(bytes, methodLog, staged) },
+        "pm_install_spoofed" to { bytes, staged, methodLog -> AdbSession.installApkSpoofed(bytes, methodLog, staged) },
+        "localinstall" to { bytes, staged, methodLog ->
             val helper = File(context.filesDir, "cars/_shared/chery_localinstall.apk")
             if (!helper.exists()) {
                 AdbInstallResult.Failed("chery_localinstall.apk не найден в cars/_shared (ещё не синхронизирован?)")
             } else {
-                AdbSession.installApkLocalinstall(bytes, helper.readBytes(), methodLog)
+                AdbSession.installApkLocalinstall(bytes, helper.readBytes(), methodLog, staged)
             }
         },
-        "dex_shell_install" to { bytes, methodLog ->
+        "dex_shell_install" to { bytes, staged, methodLog ->
             val helper = File(context.filesDir, "cars/_shared/dex_shell_helper.dex")
             if (!helper.exists()) {
                 AdbInstallResult.Failed("dex_shell_helper.dex не найден в cars/_shared (ещё не синхронизирован?)")
             } else {
-                AdbSession.installApkDexShell(bytes, currentApkName, helper.readBytes(), methodLog)
+                AdbSession.installApkDexShell(bytes, currentApkName, helper.readBytes(), methodLog, staged)
             }
         },
-        "adb_install_haval_revived" to AdbSession::installApkHavalRevived,
+        "adb_install_haval_revived" to { bytes, staged, methodLog -> AdbSession.installApkHavalRevived(bytes, methodLog, staged) },
     )
 
     /** Устанавливает список APK (по абсолютным локальным путям) по очереди,
@@ -299,10 +301,20 @@ class InstallEngine(
         mockLocationPath: String? = null): StageRunResult {
         duplicatePackageConflict(apkPaths)?.let { return StageRunResult.Failed(it) }
         var confirmedMethod: Int? = null
-        val order = INSTALL_METHODS.indices.let { indices ->
+        val baseOrder = INSTALL_METHODS.indices.let { indices ->
             val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
             if (preferredIndex >= 0) listOf(preferredIndex) + indices.filter { it != preferredIndex } else indices.toList()
         }
+        // Память «какой способ сработал на ЭТОЙ магнитоле» (по ro.product.model из баннера подключения) —
+        // впереди даже подсказки модели: реальный опыт с этим устройством важнее настройки в каталоге
+        // (Monjaro SE, лог #360: в каталоге стоял pm_install_spoofed, работал только dex_shell — 5 заливок
+        // по 246 МБ). Только порядок: если запомненный способ не сработает, перебор идёт дальше.
+        val deviceModel = AdbSession.deviceModel
+        val methodPrefs = context.getSharedPreferences("install_methods", Context.MODE_PRIVATE)
+        val remembered = deviceModel?.let { methodPrefs.getString(it, null) }
+        val rememberedIndex = INSTALL_METHODS.indexOfFirst { it.first == remembered }
+        val order = if (rememberedIndex >= 0) listOf(rememberedIndex) + baseOrder.filter { it != rememberedIndex } else baseOrder
+        if (rememberedIndex >= 0) log("Для этой магнитолы ($deviceModel) в прошлый раз сработал способ «$remembered» — начинаю с него.")
         val certDir = modelDir?.let { resignCertDirForModel(it) }
         // Раньше отсутствие сертификата было немым: потерянный resign_cert Changan
         // выглядел в логе как «переподпись не нужна» (логи #361/#362/#365).
@@ -321,18 +333,25 @@ class InstallEngine(
             // замолчала) — один раз ждём возвращения устройства, переподключаемся тем
             // же транспортом и повторяем ТОТ ЖЕ способ. Если не помогло — понятное
             // сообщение вместо технического «получили -1 байт».
-            fun perform(install: (ByteArray, (String) -> Unit) -> AdbInstallResult, bytes: ByteArray): AdbInstallResult {
+            // APK заливается на устройство ОДИН раз на все способы (stagedPath), а не каждым способом заново.
+            // Переменные объявлены до perform: после обрыва связи файл на устройстве считаем потерянным.
+            var stagedValid = false
+            var stagingFailed = false
+            var stagedRemote = ""
+            fun perform(install: (ByteArray, String?, (String) -> Unit) -> AdbInstallResult, bytes: ByteArray,
+                        staged: () -> String?): AdbInstallResult {
                 val apkName = File(path).name
                 var reconnected = false
                 while (true) {
                     try {
                         return AdbInstallProgress.observe({ onDetail(path, index, apkPaths.size, it) }, cancelled) {
-                            install(bytes, log)
+                            install(bytes, staged(), log)
                         }
                     } catch (e: AdbLinkLostException) {
                         onProgress(path, index, apkPaths.size, "error")
                         if (reconnected || cancelled()) throw AdbLinkLostException(linkLostAdvice(apkName, e.message))
                         reconnected = true
+                        stagedValid = false  // после обрыва файл на устройстве мог не долиться — зальём заново
                         log("Связь с магнитолой оборвалась во время установки ${apkName} — жду её возвращения и повторяю...")
                         val back = try {
                             AdbSession.waitForDeviceAndReconnect(context, LINK_RECOVERY_TIMEOUT_MS, log)
@@ -367,7 +386,35 @@ class InstallEngine(
             val bytes = try { signedFile.readBytes() } catch (e: Exception) {
                 return failed("Не удалось прочитать ${file.name}: ${e.message}")
             }
-            currentApkName = file.name
+            // Имя файла на устройстве — без пробелов и кавычек: pm install получает путь без экранирования.
+            // dex-хелпер работает с /data/local/tmp/<currentApkName> — тем же файлом.
+            val stagedName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            stagedRemote = "/data/local/tmp/$stagedName"
+            currentApkName = stagedName
+            fun stagedPath(): String? {
+                if (stagedValid) return stagedRemote
+                if (stagingFailed) return null   // заранее залить не вышло — способы заливают сами, как раньше
+                log("Заливаю ${file.name} на устройство один раз для всех способов установки...")
+                AdbInstallProgress.beginTransfer(bytes.size.toLong())
+                return when (val r = AdbSession.push(bytes, stagedRemote, log)) {
+                    is AdbPushResult.Failed -> {
+                        stagingFailed = true
+                        log("  ↳ не удалось залить заранее: ${r.reason} — каждый способ будет заливать сам")
+                        null
+                    }
+                    AdbPushResult.Success -> {
+                        AdbSession.shell("chmod 644 $stagedRemote", log)
+                        stagedValid = true
+                        stagedRemote
+                    }
+                }
+            }
+            fun dropStaged() {
+                if (stagedValid) {
+                    try { AdbSession.shell("rm -f $stagedRemote", log) } catch (_: Exception) { /* best effort */ }
+                    stagedValid = false
+                }
+            }
 
             // После КАЖДОЙ успешной установки (любым способом) — все разрешения, а
             // помеченному GPS-приложению (см. mockLocationPath) ещё и фиктивное
@@ -400,15 +447,18 @@ class InstallEngine(
 
             if (confirmedMethod != null) {
                 val (_, install) = INSTALL_METHODS[confirmedMethod]
-                when (val r = perform(install, bytes)) {
-                    is AdbInstallResult.Failed ->
+                when (val r = perform(install, bytes, { stagedPath() })) {
+                    is AdbInstallResult.Failed -> {
+                        dropStaged()
                         return failed(definitiveRejection(file.name, r.reason) ?: "${file.name}: ${r.reason}")
+                    }
                     is AdbInstallResult.Success -> {
                         log("Установлено: ${file.name}")
                         afterInstall()
                         onProgress(path, index + 1, apkPaths.size, "done")
                     }
                 }
+                dropStaged()
                 continue
             }
 
@@ -416,17 +466,21 @@ class InstallEngine(
             var installed = false
             for (methodIndex in order) {
                 val (label, install) = INSTALL_METHODS[methodIndex]
-                when (val r = perform(install, bytes)) {
+                when (val r = perform(install, bytes, { stagedPath() })) {
                     is AdbInstallResult.Failed -> {
                         errors.add("$label: ${r.reason}")
                         // Причина каждого отказа сразу в лог — итоговая ошибка идёт только в окно этапа.
                         log("  ↳ не сработало ($label): ${r.reason.split(Regex("\\s+")).joinToString(" ").take(300)}")
-                        definitiveRejection(file.name, r.reason)?.let { return failed(it) }
+                        definitiveRejection(file.name, r.reason)?.let { dropStaged(); return failed(it) }
                     }
                     is AdbInstallResult.Success -> {
                         confirmedMethod = methodIndex
                         if (methodIndex != 0) {
                             log("Сработал способ установки APK: $label — дальше буду использовать его же для остальных приложений.")
+                        }
+                        if (deviceModel != null && methodPrefs.getString(deviceModel, null) != label) {
+                            methodPrefs.edit().putString(deviceModel, label).apply()
+                            log("Запомнил: для магнитолы $deviceModel работает способ «$label» — в следующий раз начну с него.")
                         }
                         log("Установлено: ${file.name}")
                         installed = true
@@ -436,6 +490,7 @@ class InstallEngine(
                 }
                 if (installed) break
             }
+            dropStaged()
             if (!installed) {
                 return failed(
                     "Не удалось установить ${file.name} ни одним из способов:\n" + errors.joinToString("\n")

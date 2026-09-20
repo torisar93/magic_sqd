@@ -200,8 +200,11 @@ class WebApi:
         return self._install.cancel_stage()
 
     def install_run_action(self, model_key: str, stage_index: int, action_index: int, device_serial,
-                            selected_apk_paths: list) -> dict:
-        return self._install.run_action(model_key, stage_index, action_index, device_serial, selected_apk_paths)
+                            selected_apk_paths: list, prefetched: bool = False) -> dict:
+        return self._install.run_action(model_key, stage_index, action_index, device_serial, selected_apk_paths, prefetched)
+
+    def install_prefetch_stage(self, model_key: str, stage_index: int, action_index=None) -> dict:
+        return self._install.prefetch_stage(model_key, stage_index, action_index)
 
     def install_answer_input(self, req_id: str, value) -> dict:
         return self._install.answer_input(req_id, value)

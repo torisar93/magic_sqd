@@ -187,6 +187,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "adb_connect_wifi" -> { adbConnectWifi(args.getString("host"), args.optInt("port", 5555)); "{}" }
                 "adb_disconnect" -> { AdbSession.disconnect(); "{}" }
                 "adb_run_stage" -> { adbRunStage(args); "{}" }
+                "adb_prefetch_files" -> { adbPrefetchFiles(args); "{}" }
                 "adb_install_apks" -> { adbInstallApks(args); "{}" }
                 "adb_download_apks" -> { adbDownloadApks(args); "{}" }
                 "adb_cancel_install" -> { labCancelInstall = true; pushAdbLog("Остановка очереди после текущего приложения…"); "{}" }
@@ -887,6 +888,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val commands = args.getJSONArray("commands")
         val filesByNameObj = args.optJSONObject("filesByName") ?: JSONObject()
         val filesByName = filesByNameObj.keys().asSequence().associateWith { filesByNameObj.getString(it) }
+        // Wi-Fi: файлы уже скачаны заранее (adbPrefetchFiles) — в сети магнитолы интернета нет, сверка с
+        // сервером только ждала бы таймауты.
+        val skipDownload = args.optBoolean("skipDownload", false)
         runExclusive(::onBusy) {
             val result = try {
                 if (!AdbSession.isConnected) {
@@ -896,7 +900,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     // files/actions_i_j/..., см. #push/#install) качаются
                     // точечно прямо здесь — модель больше не докачивается
                     // целиком при открытии (см. mobile_bridge.sync_payload).
-                    ensureApksDownloaded(filesByName.values.toList())
+                    if (!skipDownload) ensureApksDownloaded(filesByName.values.toList())
                     installEngine().runAdbCommands(commands, filesByName)
                 }
             } catch (e: Exception) {
@@ -904,6 +908,23 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             }
             pushStageResult(stageIndex, result)
         }
+    }
+
+    /** Wi-Fi: заранее (при показе этапа adb/actions) докачать прикреплённые к нему файлы — при запуске телефон
+     * уже в сети магнитолы без интернета. Результат — событие files_prefetched; ошибки не показываются
+     * (при запуске обычный путь докачает, что сможет). */
+    private fun adbPrefetchFiles(args: JSONObject) {
+        val stageIndex = args.optInt("index", -1)
+        val arr = args.optJSONArray("paths") ?: JSONArray()
+        val paths = (0 until arr.length()).map { arr.getString(it) }
+        if (paths.isEmpty()) return
+        Thread {
+            val ok = try {
+                ensureApksDownloaded(paths)
+                paths.all { File(it).exists() }
+            } catch (_: Exception) { false }
+            pushEvent(JSONObject().put("kind", "files_prefetched").put("index", stageIndex).put("ok", ok).put("paths", JSONArray(paths)))
+        }.apply { isDaemon = true }.start()
     }
 
     /** Устанавливает список APK ("apps"-этап — обязательные + отмеченные

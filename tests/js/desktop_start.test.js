@@ -9,7 +9,7 @@ async function scenario(code, { mode, prefetch, askWifi, device = null, confirm 
   let handler = null;
   const btn = { addEventListener: (ev, h) => { handler = h; }, disabled: false, appendChild() {} };
   const ctx = {
-    el: () => btn, runnerBusy: false, navBackBtn: {}, navNextBtn: {}, model: { key: "M" },
+    el: () => btn, runnerBusy: false, navBackBtn: {}, navNextBtn: {}, model: { key: "M" }, prefetchedStages: new Set(),
     selectedApkPaths: () => ["/a.apk"], log() {}, render() {},
     openStageRun: (o) => { runs.push(o); },
     finishRun: (o) => finishes.push(o),

@@ -29,6 +29,14 @@ object AdbSession {
 
     val isConnected: Boolean get() = transport != null
 
+    /** ro.product.model из баннера последнего успешного подключения — ключ памяти «какой способ установки
+     * сработал на этой магнитоле» (см. InstallEngine.rememberedMethod). null, если магнитола его не назвала. */
+    @Volatile var deviceModel: String? = null
+        private set
+
+    private fun parseDeviceModel(banner: String): String? =
+        Regex("ro\\.product\\.model=([^;]+)").find(banner)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
+
     fun disconnect() {
         try {
             transport?.close()
@@ -72,6 +80,7 @@ object AdbSession {
         val usbTransport = UsbAdbTransport(conn, targetIface)
         val result = performCnxnHandshake(usbTransport, context, log)
         if (result is AdbHandshakeResult.Connected) {
+            deviceModel = parseDeviceModel(result.bannerFromDevice)
             transport = usbTransport
             mode = Mode.USB
         } else {
@@ -102,6 +111,7 @@ object AdbSession {
         val tcpTransport = TcpAdbTransport(socket)
         val result = performCnxnHandshake(tcpTransport, context, log)
         if (result is AdbHandshakeResult.Connected) {
+            deviceModel = parseDeviceModel(result.bannerFromDevice)
             transport = tcpTransport
             mode = Mode.WIFI
             wifiHost = host
@@ -170,23 +180,31 @@ object AdbSession {
     fun push(bytes: ByteArray, remotePath: String, log: (String) -> Unit): AdbPushResult =
         syncPushBytes(requireTransport(), bytes, remotePath, log)
 
-    fun installApk(bytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
-        installApkOverAdb(requireTransport(), bytes, log = log)
+    // stagedPath != null — APK уже залит движком по этому пути один раз для всех способов (см.
+    // InstallEngine.installApksWithProgress / AdbInstall.stageApkIfNeeded).
+    fun installApk(bytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkOverAdb(requireTransport(), bytes, log = log)
+        else installApkOverAdb(requireTransport(), bytes, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkPmStream(bytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
-        installApkStreamOverAdb(requireTransport(), bytes, log = log)
+    fun installApkPmStream(bytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkStreamOverAdb(requireTransport(), bytes, log = log)
+        else installApkStreamOverAdb(requireTransport(), bytes, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkSpoofed(bytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
-        installApkSpoofedOverAdb(requireTransport(), bytes, log = log)
+    fun installApkSpoofed(bytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkSpoofedOverAdb(requireTransport(), bytes, log = log)
+        else installApkSpoofedOverAdb(requireTransport(), bytes, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkHavalRevived(bytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
-        installApkHavalRevivedOverAdb(requireTransport(), bytes, log = log)
+    fun installApkHavalRevived(bytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkHavalRevivedOverAdb(requireTransport(), bytes, log = log)
+        else installApkHavalRevivedOverAdb(requireTransport(), bytes, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkLocalinstall(bytes: ByteArray, helperBytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
-        installApkViaLocalinstall(requireTransport(), bytes, helperBytes, log = log)
+    fun installApkLocalinstall(bytes: ByteArray, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkViaLocalinstall(requireTransport(), bytes, helperBytes, log = log)
+        else installApkViaLocalinstall(requireTransport(), bytes, helperBytes, log = log, remoteApk = stagedPath, prePushed = true)
 
-    fun installApkDexShell(bytes: ByteArray, apkName: String, helperBytes: ByteArray, log: (String) -> Unit): AdbInstallResult =
-        installApkViaDexShell(requireTransport(), bytes, apkName, helperBytes, log = log)
+    /** stagedPath, если задан, обязан быть "/data/local/tmp/<apkName>" — dex-хелпер работает именно с этим путём. */
+    fun installApkDexShell(bytes: ByteArray, apkName: String, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        installApkViaDexShell(requireTransport(), bytes, apkName, helperBytes, log = log, prePushed = stagedPath != null)
 
     private fun requireTransport(): AdbTransport =
         transport ?: error("ADB не подключён — сначала нужно установить соединение с устройством")
