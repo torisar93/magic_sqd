@@ -54,7 +54,8 @@ object AdbSession {
             .firstNotNullOfOrNull { device -> findAdbInterface(device)?.let { device to it } }
             ?: return AdbHandshakeResult.Failed(
                 "Устройство с ADB-интерфейсом не найдено среди подключённых по USB — " +
-                    "проверь, что на магнитоле включена отладка по USB и это OTG-подключение."
+                    "проверь, что на магнитоле включена отладка по USB и это OTG-подключение.",
+                noDevice = true
             )
 
         if (!requestUsbPermissionBlocking(context, target)) {

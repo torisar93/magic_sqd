@@ -556,6 +556,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 JSONObject().put("connected", true).put("banner", result.bannerFromDevice)
             is AdbHandshakeResult.Failed ->
                 JSONObject().put("connected", false).put("reason", result.reason)
+                    .put("no_device", result.noDevice)
         }
         pushEvent(JSONObject().put("kind", "adb_connect_result").put("result", event))
     }

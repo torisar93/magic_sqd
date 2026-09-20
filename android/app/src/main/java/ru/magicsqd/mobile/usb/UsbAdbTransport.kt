@@ -303,7 +303,9 @@ fun sendMessage(
 
 sealed class AdbHandshakeResult {
     data class Connected(val bannerFromDevice: String) : AdbHandshakeResult()
-    data class Failed(val reason: String) : AdbHandshakeResult()
+    /** noDevice — по USB вообще нет устройства с ADB-интерфейсом (не «отказали в доступе»,
+     * не «сбой рукопожатия»): по нему приложение показывает окно про OTG-переходник. */
+    data class Failed(val reason: String, val noDevice: Boolean = false) : AdbHandshakeResult()
 }
 
 /**

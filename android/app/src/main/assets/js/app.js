@@ -1084,6 +1084,7 @@
       setAdbStatus(false, "ADB: не подключено");
       log(`ADB: не удалось подключиться — ${r.reason || "?"}`);
       const stage = stages[currentIndex];
+      if (r.no_device && stage && connectionModeFor(stage) !== "wifi") showOtgHintModal();
       if (stage && connectionModeFor(stage) !== "wifi") {
         // USB-C↔USB-C кабель напрямую часто не работает: обе стороны
         // Type-C сами договариваются о роли host/device через CC-пин, и
@@ -2629,6 +2630,43 @@
     overlay.appendChild(el("div", { class: "modal-box info-modal" }, boxChildren));
     document.body.appendChild(overlay);
     return overlay;
+  }
+
+  // Окно «нужен OTG-переходник»: показывается, когда техник нажал «Подключить ADB»
+  // (проводное подключение), а по USB не найдено ни одного устройства с ADB
+  // (см. WebBridge.kt: adb_connect_result.no_device). Самая частая причина —
+  // кабель воткнут в телефон напрямую без OTG-переходника, или переходник
+  // вставлен уже ПОСЛЕ кабеля. Анимация — зацикленный анимированный WebP на всё окно
+  // (img/otg_hint.webp, ~270 КБ, сделан в Higgsfield/Kling: сначала переходник входит
+  // в телефон, потом штекер кабеля — в переходник), а не <video>: автозапуск видео в
+  // WebView зависит от настроек воспроизведения, картинка играет всегда. При включённом
+  // системном «уменьшении движения» — статичный кадр img/otg_hint_still.webp.
+  function showOtgHintModal() {
+    if (document.querySelector(".otg-hint-overlay")) return; // не плодить копии при повторных нажатиях
+    const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let overlay;
+    // Анимация занимает ВСЁ окно (фон), текст и кнопки лежат поверх неё в свободных полосах
+    // сверху и снизу кадра — сама сцена вставки (низ телефона, переходник, штекер) остаётся чистой.
+    overlay = showModal([
+      el("div", { class: "otg-sheet" }, [
+        el("img", { class: "otg-hint-anim", alt: "", "aria-hidden": "true",
+          src: reduceMotion ? "img/otg_hint_still.webp" : "img/otg_hint.webp" }),
+        el("div", { class: "otg-top" }, [
+          el("p", { class: "otg-hint-title", text: "Нужен OTG-переходник" }),
+          el("ol", { class: "otg-hint-steps" }, [
+            el("li", { text: "Сначала вставьте OTG-переходник в телефон." }),
+            el("li", { text: "И только потом подключите к нему кабель от магнитолы." }),
+          ]),
+          el("p", { class: "otg-hint-note", text: "Всё подключено, а окно появилось? Включите отладку по USB на магнитоле." }),
+        ]),
+        el("div", { class: "otg-bottom" }, [
+          el("button", { class: "accent", text: "Подключить снова", onclick: () => { overlay.remove(); onAdbConnect(); } }),
+          el("button", { text: "Закрыть", onclick: () => overlay.remove() }),
+        ]),
+      ]),
+    ]);
+    overlay.classList.add("otg-hint-overlay");
+    overlay.querySelector(".modal-box").classList.add("otg-hint-box");
   }
 
   const WELCOME_SHOWN_KEY = "magicsqd_welcome_shown_at";
