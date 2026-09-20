@@ -162,6 +162,9 @@ class InstallContext:
         # запуска install.py (один InstallContext на запуск, см. runner.py),
         # чтобы не перебирать все три способа заново на каждом следующем APK.
         self._install_method: int | None = None
+        # Строка «переподпись не используется» пишется один раз за запуск
+        # (см. _maybe_resign), а не на каждый APK.
+        self._resign_skip_logged = False
         # Подсказка "начни перебор с этого способа" (см. StepSpec.
         # apps_install_method в car_generator.py) — только меняет ПОРЯДОК
         # попыток в install_apk_auto, не пропускает остальные способы, если
@@ -418,6 +421,13 @@ class InstallContext:
         path = Path(path)
         cert_dir = resign_cert_dir_for_model(self.model_dir)
         if cert_dir is None or self.shared_dir is None:
+            # Раньше здесь было полное молчание — из-за него потерянный
+            # сертификат Changan (логи #361/#362/#365) выглядел в логе как
+            # «переподпись просто не нужна». Строка один раз за запуск.
+            if not self._resign_skip_logged:
+                self._resign_skip_logged = True
+                self.log("Переподпись APK для этой модели не используется "
+                         "(сертификата files/resign_cert нет).")
             return path
         base_dir = self.shared_dir.parent.parent
         out_path = path.with_name(f"{path.stem}_resigned{path.suffix}")

@@ -253,6 +253,14 @@ def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
             downloaded += sync_model_subfolder(base_url, cars_path, instr_dir, log=log,
                                                 on_progress=_progress_cb("model"), manifest=manifest)
 
+    # Сертификат переподписи модели (files/resign_cert, см. ApkResign.kt) —
+    # не APK и не инструкция, поэтому раньше его не качало ничто (apps-этап
+    # берёт только отмеченные APK): InstallEngine молча ставил APK без
+    # переподписи, а магнитолы Changan отвечали «-118 ... is not auth».
+    # Два крошечных файла, у моделей без сертификата вызов ничего не качает.
+    downloaded += sync_model_subfolder(base_url, cars_path, files_dir / "resign_cert", log=log,
+                                        on_progress=_progress_cb("model"), manifest=manifest)
+
     return json.dumps({"downloaded": downloaded, "log": lines})
 
 

@@ -82,6 +82,7 @@ class InstallRunner:
                 ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apks,
                                         log=self.on_log, check_cancelled=self._check_cancelled,
                                         on_progress=self.on_sync_progress)
+                self._sync_resign_cert(model)
             ctx = InstallContext(
                 adb_path=self.adb_path,
                 device_serial=device_serial,
@@ -109,3 +110,23 @@ class InstallRunner:
             # остановки — пользователь не остаётся с вечным индикатором.
             self.on_sync_progress(0, 0)
         self.on_finished(True, "Установка завершена успешно.")
+
+    def _sync_resign_cert(self, model) -> None:
+        """Сертификат переподписи модели (files/resign_cert/{private.pk8,
+        certificate.crt}, см. apk_signer.py) подтягиваем перед ЛЮБЫМ запуском
+        установки. Раньше его не качало ничто, кроме ручной кнопки «Скачать»
+        на всю модель: этап «apps» докачивает только отмеченные APK, а сам
+        сертификат — не APK. В итоге InstallContext._maybe_resign молча
+        пропускал переподпись, и магнитолы Changan отвечали «-118 ... is not
+        auth» на неподписанный APK (логи #361/#362/#365). Два крошечных
+        файла; у моделей без сертификата на сервере такой папки нет и
+        вызов ничего не качает. Сбой сети здесь не должен срывать установку —
+        просто предупреждаем в лог (без сертификата переподпись пропустится,
+        а _maybe_resign скажет об этом отдельной строкой)."""
+        try:
+            sync_model_subfolder(self.base_dir, model.dir / "files" / "resign_cert",
+                                 log=self.on_log, check_cancelled=self._check_cancelled)
+        except InstallCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - сеть/манифест не должны ронять установку
+            self.on_log(f"Не удалось проверить сертификат переподписи модели на сервере: {exc}")

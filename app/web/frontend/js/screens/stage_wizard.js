@@ -65,6 +65,14 @@
   // при каждом open() (см. android app.js: installCompletedShown, тот же
   // приём).
   let installCompletedShown = false;
+  // Этапы, которые в этом сеансе завершились ошибкой и с тех пор не были
+  // пройдены успешно (индекс этапа -> заголовок). Нужен, чтобы в конце мастера
+  // не писать «Все этапы установки выполнены», если обязательное приложение
+  // так и не встало, а техник просто нажал «Далее» (логи #361/#362/#365:
+  // Simple Control не установился, а лог заканчивался «успешно»). Этапы типа
+  // "actions" не считаем — их кнопки необязательны, ошибка одной не срывает
+  // установку. Сбрасывается при каждом open().
+  const failedStages = new Map();
 
   // Автоматический лог одной попытки установки (см. server/backend.py:
   // POST /install_log) — весь текст, что видел техник в log-панели за этот
@@ -296,7 +304,15 @@
   function onInstallFinished(event) {
     runnerBusy = false;
     log(event.message);
+    trackStageResult(event);
     finishRun({ success: !!event.success, message: event.message }, () => afterStageFinished(event));
+  }
+
+  function trackStageResult(event) {
+    const stage = stages[event.stage_index];
+    if (!stage || stage.type === "actions") return;
+    if (event.success) failedStages.delete(event.stage_index);
+    else failedStages.set(event.stage_index, stage.title || `этап ${event.stage_index + 1}`);
   }
 
   function afterStageFinished(event) {
@@ -320,7 +336,7 @@
       advanceAfter(currentIndex);
       if(wasLast){
         document.querySelector('.stage-primary-actions')?.remove();clear(contentEl);
-        contentEl.append(el('h1',{class:'workflow-title',text:'Установка завершена'}),el('p',{text:'Этап выполнен успешно. Можно вернуться к выбору автомобиля.'}));
+        contentEl.append(el('h1',{class:'workflow-title',text:failedStages.size?'Установка завершена с ошибками':'Установка завершена'}),el('p',{text:failedStages.size?`Этот этап выполнен, но не выполнено: ${[...failedStages.values()].join(', ')}. Вернитесь к ним и повторите.`:'Этап выполнен успешно. Можно вернуться к выбору автомобиля.'}));
         navNextBtn.style.display='';navNextBtn.textContent='К моделям';nextAction=()=>returnToCatalog();
       }
     } else {
@@ -367,6 +383,7 @@
     stages = [];
     modelWifiPort = 5555;
     installCompletedShown = false;
+    failedStages.clear();
 
     const result = await window.pywebview.api.install_load_stages(model.key);
     if (result.error) {
@@ -464,11 +481,18 @@
     if (nextId == null) {
       renderNav();
       if (stages.length) {
-        log("Все этапы установки выполнены.");
-        flushSessionLog(true);
-        if (!installCompletedShown) {
-          installCompletedShown = true;
-          window.boostyDialogs.showCompletionDialog();
+        if (failedStages.size) {
+          // Честный итог вместо «выполнены» + окна «Готово!»: часть этапов
+          // не прошла (см. failedStages выше) — лог всё равно уходит на сервер.
+          log(`Установка завершена с ошибками — не выполнено: ${[...failedStages.values()].join(", ")}.`);
+          flushSessionLog(true);
+        } else {
+          log("Все этапы установки выполнены.");
+          flushSessionLog(true);
+          if (!installCompletedShown) {
+            installCompletedShown = true;
+            window.boostyDialogs.showCompletionDialog();
+          }
         }
       }
       return;

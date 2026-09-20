@@ -304,6 +304,9 @@ class InstallEngine(
             if (preferredIndex >= 0) listOf(preferredIndex) + indices.filter { it != preferredIndex } else indices.toList()
         }
         val certDir = modelDir?.let { resignCertDirForModel(it) }
+        // Раньше отсутствие сертификата было немым: потерянный resign_cert Changan
+        // выглядел в логе как «переподпись не нужна» (логи #361/#362/#365).
+        if (certDir == null) log("Переподпись APK для этой модели не используется (сертификата files/resign_cert нет).")
 
         for ((index, path) in apkPaths.withIndex()) {
             if (cancelled()) return StageRunResult.Failed("Очередь остановлена пользователем")

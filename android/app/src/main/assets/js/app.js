@@ -909,6 +909,12 @@
   let modelWifiPort = 5555;
   let lastWifiHost = "";
   let installCompletedShown = false;
+  // Этапы, завершившиеся ошибкой и с тех пор не пройденные успешно (index
+  // этапа -> заголовок) — чтобы в конце мастера не писать «Все этапы
+  // установки выполнены», если обязательное приложение так и не встало, а
+  // техник просто нажал «Далее» (тот же фикс, что в desktop stage_wizard.js:
+  // failedStages). Этапы "actions" не считаем — их кнопки необязательны.
+  let failedStages = new Map();
   // Выбор техника на apps-этапах с apps_connection == "ask" (провод/Wi-Fi) —
   // по index этапа, чтобы сохранялся при переходах назад-вперёд в рамках
   // одного мастера (аналог appsSelection). См. connectionModeFor.
@@ -932,6 +938,7 @@
     apkLibraryLoaded = false;
     personalApks = [];
     installCompletedShown = false;
+    failedStages = new Map();
     qrAdbWriteStatus = null;
     qrAdbResult = null;
     usbOperation = null;
@@ -1219,6 +1226,10 @@
     }
     log(r.success ? "Этап выполнен успешно." : `Этап завершился с ошибкой: ${r.reason || "?"}`);
     const finishedStage = stages.find(item => item.index === event.index);
+    if (finishedStage && finishedStage.type !== "actions") {
+      if (r.success) failedStages.delete(event.index);
+      else failedStages.set(event.index, finishedStage.title || `этап ${event.index + 1}`);
+    }
     // Перерисовываем текущий этап заново (сбрасывает задизейбленные во время
     // выполнения кнопки) и продвигаем мастер — но только когда техник закроет
     // окно с итогом (см. finishRun).
@@ -1490,11 +1501,18 @@
     const stage = stages[index];
     const nextId = stage.type === "check" ? (stage.next_options || [])[optionIndex] : stage.next;
     if (nextId == null) {
-      log("Все этапы установки выполнены.");
-      flushSessionLog(true);
-      if (!installCompletedShown && stages.length) {
-        installCompletedShown = true;
-        showCompletionModal();
+      if (failedStages.size) {
+        // Честный итог вместо «выполнены» + окна «Готово!» — часть этапов не
+        // прошла (см. failedStages); лог всё равно уходит на сервер.
+        log(`Установка завершена с ошибками — не выполнено: ${[...failedStages.values()].join(", ")}.`);
+        flushSessionLog(true);
+      } else {
+        log("Все этапы установки выполнены.");
+        flushSessionLog(true);
+        if (!installCompletedShown && stages.length) {
+          installCompletedShown = true;
+          showCompletionModal();
+        }
       }
       renderNav();
       return;
