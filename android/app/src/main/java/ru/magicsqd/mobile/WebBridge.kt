@@ -24,6 +24,7 @@ import ru.magicsqd.mobile.usb.StageRunResult
 import ru.magicsqd.mobile.usb.UsbFlashSession
 import ru.magicsqd.mobile.usb.readQrAdbBugreportZip
 import ru.magicsqd.mobile.usb.writeQrAdbFlag
+import ru.magicsqd.mobile.usb.writeQrAdbPrepFlag
 import ru.magicsqd.mobile.usb.writeUsbStage
 import java.io.File
 
