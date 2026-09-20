@@ -27,7 +27,7 @@
 
           <img class="cat-logo" src="img/logo-full-dark.svg" alt="Magic SQD" />
           <nav class="cat-top-actions" aria-label="Ссылки проекта">
-            <a class="catalog-topbar-link catalog-topbar-boosty" id="catalog-boosty" href="https://boosty.to/magic_sqd" target="_blank" rel="noopener">Boosty</a>
+            <a class="catalog-topbar-link catalog-topbar-boosty" id="catalog-boosty" href="https://boosty.to/magic_sqd?locale=ru_RU" target="_blank" rel="noopener">Boosty</a>
             <a class="catalog-topbar-link" id="catalog-github" href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener">GitHub</a>
             <button class="catalog-settings" id="catalog-settings" type="button" aria-label="Настройки приложения" title="Настройки">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9.7 3.7h4.6l.7 2.1c.5.2 1 .5 1.4.8l2.1-.4 2.3 4-1.4 1.6v1.6l1.4 1.6-2.3 4-2.1-.4c-.4.3-.9.6-1.4.8l-.7 2.1H9.7L9 19.4c-.5-.2-1-.5-1.4-.8l-2.1.4-2.3-4 1.4-1.6v-1.6L3.2 10l2.3-4 2.1.4c.4-.3.9-.6 1.4-.8l.7-2.1Z"/><circle cx="12" cy="12" r="3.1"/></svg>

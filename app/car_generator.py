@@ -228,6 +228,14 @@ class StepSpec:
     # через COM-порт, выбранный техником на месте, поэтому это поле не
     # используется рантаймом.
     uart_wifi_port: int | None = None
+    # "qr_adb" — на некоторых магнитолах Desay Semidrive x9h (Haval Jolion 2026, GWM Poer
+    # 2026 — ro.debuggable=1 + инженерное меню) обычный флоу svlog.flag (см.
+    # app/qr_adb_password.py) недоступен напрямую: сначала нужно отдельным файлом-триггером
+    # svengmode.flag (общий файл в cars/_shared/, как и сам svlog.flag) открыть инженерное
+    # меню и вручную дойти в нём до раздела с QR-кодом — и только ПОСЛЕ этого обычный
+    # svlog.flag срабатывает и даёт «QNX OK». False (по умолчанию, все остальные модели —
+    # Geely/VOLGA) — прежнее поведение без этого предварительного шага, ничего не меняется.
+    qr_adb_engineering_menu: bool = False
     # "exe" — готовый установщик, который производитель магнитолы даёт
     # только собранным .exe без исходных скриптов/инструкций; этап просто
     # даёт пользователю его запустить и завершить установку в нём самому
@@ -647,6 +655,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             actions_connection=step_data.get("actions_connection", "wired"),
             actions_wifi_port=step_data.get("actions_wifi_port"),
             uart_wifi_port=step_data.get("uart_wifi_port"),
+            qr_adb_engineering_menu=step_data.get("qr_adb_engineering_menu", False),
             exe_file=exe_file,
             video_file=video_file,
             video_label=step_data.get("video_label", ""),
@@ -1006,6 +1015,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "actions_connection": step.actions_connection,
                 "actions_wifi_port": step.actions_wifi_port,
                 "uart_wifi_port": step.uart_wifi_port,
+                "qr_adb_engineering_menu": step.qr_adb_engineering_menu,
                 "exe_file": step.exe_file.name if step.exe_file else None,
                 "video_file": step.video_file.name if step.video_file else None,
                 "video_label": step.video_label,
@@ -1411,6 +1421,10 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
             if step.apps_install_method:
                 entry.append(f'        "apps_install_method": {step.apps_install_method!r},')
             entry.append(f'        "apps_wifi_port": {step.apps_wifi_port!r},')
+        elif step.type == "qr_adb" and step.qr_adb_engineering_menu:
+            # См. StepSpec.qr_adb_engineering_menu — только True стоит писать явно,
+            # это редкое исключение (пока только Haval Jolion 2026), а не общий случай.
+            entry.append(f'        "qr_adb_engineering_menu": {step.qr_adb_engineering_menu!r},')
         elif step.type == "usb":
             run_expr = f"m.usb_step_{i}"
             entry.append(f'        "run": {run_expr},')

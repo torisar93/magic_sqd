@@ -19,12 +19,15 @@
     return span;
   }
 
+  // ?locale=ru_RU — иначе Boosty открывается по умолчанию на английском (у Boosty нет
+  // предсказуемой привязки к языку ОС/браузера технику; куки-подхват языка ставится
+  // только ПОСЛЕ первого захода, а параметр в URL форсирует русский с первого клика).
   function boostyLinksRow() {
     return el("div", { class: "boosty-links" }, [
-      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd", target: "_blank" }, [
+      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd?locale=ru_RU", target: "_blank" }, [
         svgIcon(STAR_ICON_PATH), el("span", { text: "Подписаться на Boosty" }),
       ]),
-      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate", target: "_blank" }, [
+      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate?locale=ru_RU", target: "_blank" }, [
         svgIcon(HEART_ICON_PATH), el("span", { text: "Разовый донат" }),
       ]),
     ]);

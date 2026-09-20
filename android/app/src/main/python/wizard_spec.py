@@ -345,6 +345,11 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             # app.js: connectionModeFor/connectionPortFor).
             "actions_connection": step_data.get("actions_connection", "wired"),
             "actions_wifi_port": step_data.get("actions_wifi_port"),
+            # "qr_adb" — см. car_generator.py: StepSpec.qr_adb_engineering_menu (сейчас
+            # только у Haval Jolion 2026, Desay x9h) — доп. предварительный шаг с
+            # отдельным файлом-триггером перед обычным svlog.flag (см. app.js:
+            # renderQrAdbStage, qr_adb_password.py).
+            "qr_adb_engineering_menu": step_data.get("qr_adb_engineering_menu", False),
             "exe_file": exe_file,
             "video_file": video_file,
             "video_url": video_url,

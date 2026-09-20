@@ -236,6 +236,9 @@ class WebApi:
 
     # -- qr_adb_api -----------------------------------------------------
     # Список дисков — тот же usb_list_drives выше, отдельного не заводим.
+    def qr_adb_write_prep_flag(self, drive_letter: str) -> dict:
+        return self._qr_adb.write_prep_flag(drive_letter)
+
     def qr_adb_write_flag(self, drive_letter: str) -> dict:
         return self._qr_adb.write_flag(drive_letter)
 

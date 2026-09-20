@@ -833,6 +833,22 @@
           class: "app-desc",
           text: "Этап самостоятельно находит флешку с папкой logs_* и считает пароль (см. app/qr_adb_password.py). Магнитола на этом этапе не обязана быть подключена.",
         }));
+        const engRow = el("label", { class: "row", style: "margin-top: 8px" });
+        const engCheckbox = el("input", { type: "checkbox" });
+        engCheckbox.checked = !!step.qr_adb_engineering_menu;
+        engCheckbox.addEventListener("change", () => { step.qr_adb_engineering_menu = engCheckbox.checked; rerender(); });
+        engRow.appendChild(engCheckbox);
+        engRow.appendChild(document.createTextNode("Сначала нужно войти в инженерное меню отдельным файлом (Desay x9h)"));
+        container.appendChild(engRow);
+        if (step.qr_adb_engineering_menu) {
+          container.appendChild(el("p", {
+            class: "app-desc",
+            text: "Перед обычным файлом добавится отдельный шаг: запись файла svengmode.flag на флешку, "
+              + "который открывает инженерное меню магнитолы — техник вручную доходит в нём до раздела с "
+              + "QR-кодом, и только после этого обычный файл срабатывает. Сейчас нужно только Haval Jolion "
+              + "2026 (Desay x9h) — на остальных моделях платформы (Geely/VOLGA) галочку не ставить.",
+          }));
+        }
         renderOptionalInstructionButton(step);
       }
       // Универсально для ЛЮБОГО типа этапа (в отличие от всего выше) —

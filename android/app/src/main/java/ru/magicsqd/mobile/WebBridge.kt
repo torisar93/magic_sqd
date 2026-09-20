@@ -229,6 +229,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "usb_disconnect" -> { UsbFlashSession.disconnect(); "{}" }
                 "usb_format" -> { usbFormat(args); "{}" }
                 "usb_run_stage" -> { usbRunStage(args); "{}" }
+                "qr_adb_write_prep_flag" -> { qrAdbWritePrepFlag(); "{}" }
                 "qr_adb_write_flag" -> { qrAdbWriteFlag(); "{}" }
                 "qr_adb_get_password" -> { qrAdbGetPassword(); "{}" }
                 // "actions"-этап с kind=grant_permissions/mock_location (см.
@@ -1081,10 +1082,39 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         }
     }
 
+    /** Доп. шаг ПЕРЕД qrAdbWriteFlag — только для этапов с qr_adb_engineering_menu=true
+     * (см. car_generator.py: StepSpec.qr_adb_engineering_menu, сейчас только Haval Jolion
+     * 2026/Desay x9h): пишет svengmode.flag, который открывает инженерное меню магнитолы
+     * — техник вручную доходит в нём до раздела с QR-кодом, и только тогда обычный
+     * svlog.flag (см. qrAdbWriteFlag ниже) срабатывает. */
+    private fun qrAdbWritePrepFlag() = runExclusive(::onBusy) {
+        val event = try {
+            if (!UsbFlashSession.isMounted) {
+                JSONObject().put("ok", false).put("error", "Флешка не подключена — сначала подключите её сверху.")
+            } else {
+                val flagFile = File(carsDir, "_shared/svengmode.flag")
+                if (!flagFile.exists()) {
+                    JSONObject().put("ok", false).put(
+                        "error", "svengmode.flag не найден — обновите каталог (Настройки → Проверить обновления) и попробуйте снова."
+                    )
+                } else {
+                    writeQrAdbPrepFlag(UsbFlashSession.requireFs(), flagFile, ::pushAdbLog).fold(
+                        onSuccess = { JSONObject().put("ok", true) },
+                        onFailure = { e -> JSONObject().put("ok", false).put("error", e.message) },
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
+        }
+        pushEvent(JSONObject().put("kind", "qr_adb_prep_write_result").put("result", event))
+    }
+
     /** Портовая версия "Пароль ADB по QR-коду" (desktop: app/qr_adb_password.py,
      * app/web/api/qr_adb_api.py) — та же флешка/сессия, что и у "usb"-этапа
      * (см. USB_STAGE_TYPES в app.js — qr_adb добавлен туда же, чтобы техник
-     * подключал флешку тем же самым баром сверху). Шаг 1 процедуры: */
+     * подключал флешку тем же самым баром сверху). Шаг 1 процедуры (или шаг 2 —
+     * после qrAdbWritePrepFlag, для qr_adb_engineering_menu=true): */
     private fun qrAdbWriteFlag() = runExclusive(::onBusy) {
         val event = try {
             if (!UsbFlashSession.isMounted) {

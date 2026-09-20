@@ -11,18 +11,34 @@ import java.nio.ByteBuffer
  * расчёта пароля ADB). */
 private const val FLAG_FILENAME = "svlog.flag"
 
-/** Пишет svlog.flag в корень флешки — тонкая обёртка над writeFileToUsb
- * (см. UsbFlashWrite.kt), локальный файл уже должен быть на диске (общий
- * cars/_shared/svlog.flag, синхронизируется тем же путём, что и на
- * desktop). */
-fun writeQrAdbFlag(fs: FileSystem, localFlagFile: File, log: (String) -> Unit): Result<Unit> {
+/** Только для магнитол с qr_adb_engineering_menu=true (см. car_generator.py:
+ * StepSpec.qr_adb_engineering_menu — сейчас Haval Jolion 2026, Desay x9h). Пишется
+ * ПЕРВЫМ, до FLAG_FILENAME: отдельный файл-триггер, открывающий инженерное меню
+ * магнитолы — техник вручную доходит в нём до раздела с QR-кодом, и только тогда
+ * обычный svlog.flag срабатывает (см. WebBridge.kt: qrAdbWritePrepFlag). Обычный
+ * флоу Geely/VOLGA эту константу не использует вовсе. */
+private const val PREP_FLAG_FILENAME = "svengmode.flag"
+
+/** Общая часть writeQrAdbFlag/writeQrAdbPrepFlag ниже. */
+private fun writeFlag(fs: FileSystem, localFlagFile: File, filename: String, log: (String) -> Unit): Result<Unit> {
     return try {
-        writeFileToUsb(fs, localFlagFile, FLAG_FILENAME, log)
+        writeFileToUsb(fs, localFlagFile, filename, log)
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
     }
 }
+
+/** Пишет svengmode.flag в корень флешки — см. PREP_FLAG_FILENAME выше. */
+fun writeQrAdbPrepFlag(fs: FileSystem, localFlagFile: File, log: (String) -> Unit): Result<Unit> =
+    writeFlag(fs, localFlagFile, PREP_FLAG_FILENAME, log)
+
+/** Пишет svlog.flag в корень флешки — тонкая обёртка над writeFileToUsb
+ * (см. UsbFlashWrite.kt), локальный файл уже должен быть на диске (общий
+ * cars/_shared/svlog.flag, синхронизируется тем же путём, что и на
+ * desktop). */
+fun writeQrAdbFlag(fs: FileSystem, localFlagFile: File, log: (String) -> Unit): Result<Unit> =
+    writeFlag(fs, localFlagFile, FLAG_FILENAME, log)
 
 /** Находит самую свежую по имени папку logs_* в корне флешки (имя содержит
  * таймстемп — обычная сортировка строк даёт хронологический порядок), внутри

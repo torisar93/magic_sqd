@@ -869,6 +869,13 @@
   // отрисованный DOM из обработчика события: та же схема, что и у
   // остального мастера (см. onAdbStageResult — просто render() заново),
   // только тут ещё и сам код нужно показать техника ПОСЛЕ переотрисовки.
+  // Доп. фаза "инженерное меню" (только stage.qr_adb_engineering_menu=true — см.
+  // car_generator.py: StepSpec.qr_adb_engineering_menu, сейчас Haval Jolion 2026/Desay
+  // x9h): qrAdbPrepStatus — тот же смысл, что qrAdbWriteStatus, но для svengmode.flag;
+  // qrAdbPrepConfirmed — чисто локальное состояние (нет отдельного bridge-вызова у
+  // "техник дошёл до раздела с QR-кодом", просто кнопка "Продолжить").
+  let qrAdbPrepStatus = null;
+  let qrAdbPrepConfirmed = false;
   let qrAdbWriteStatus = null;
   let qrAdbResult = null;
   let usbOperation = null;
@@ -942,6 +949,8 @@
     wifiInstallFlow = null;
     prefetchedFiles = new Set();
     prefetchRequested.clear();
+    qrAdbPrepStatus = null;
+    qrAdbPrepConfirmed = false;
     qrAdbWriteStatus = null;
     qrAdbResult = null;
     usbOperation = null;
@@ -2325,7 +2334,11 @@
     page.querySelector(".stage-chip").textContent = "Подготовка флешки";
     page.querySelectorAll(":scope > .stage-text").forEach(node => node.remove());
     const intro = el("p", { class: "usb-stage-intro" });
-    if (stage.type === "qr_adb") intro.append(
+    if (stage.type === "qr_adb" && stage.qr_adb_engineering_menu) intro.append(
+      el("span", { class: "usb-intro-full", text: "Сначала откройте инженерное меню магнитолы, затем запишите файл и получите пароль для ADB." }),
+      el("span", { class: "usb-intro-compact", text: "Сначала инженерное меню, потом файл и пароль." }),
+    );
+    else if (stage.type === "qr_adb") intro.append(
       el("span", { class: "usb-intro-full", text: "Запишите файл на USB-накопитель и выполните дальнейшие шаги на магнитоле." }),
       el("span", { class: "usb-intro-compact", text: "Запишите файл и следуйте шагам ниже." }),
     );
@@ -2404,14 +2417,19 @@
     const button = card.querySelector(":scope > .usb-step-action");
     button.querySelector("span:not(.ui-icon)").textContent = kind === "password" ? "Получаем пароль…" : "Записываем…";
     openStageRun({
-      title: { files: "Запись файлов на флешку", flag: "Запись файла на флешку", password: "Получение пароля ADB" }[kind] || "Работа с флешкой",
+      title: { files: "Запись файлов на флешку", flag: "Запись файла на флешку", prep_flag: "Запись файла на флешку", password: "Получение пароля ADB" }[kind] || "Работа с флешкой",
       stageIndex: stage.index, icon: kind === "password" ? "key" : "usb",
       tag: kind === "files" ? "stage" : `qr-${kind}`,
       detail: kind === "password" ? "Читаем сохранённые данные с флешки…" : "Не отключайте флешку до завершения записи.",
-      // После закрытия окна страница перерисована — кнопку действия ищем заново.
+      // После закрытия окна страница перерисована — кнопку действия ищем заново. Карточки qr_adb
+      // с qr_adb_engineering_menu=true (см. car_generator.py) сдвинуты на 2 (доп. фаза "инженерное
+      // меню" перед обычными — см. renderQrAdbStage): prep_flag остаётся первой, flag/password
+      // сдвигаются на prepOffset.
       retry: () => {
         const cards = [...document.querySelectorAll(".usb-stage > .usb-step-card")];
-        (kind === "password" ? cards[2] : cards[0])?.querySelector(":scope > .usb-step-action")?.click();
+        const prepOffset = (stage.type === "qr_adb" && stage.qr_adb_engineering_menu) ? 2 : 0;
+        const idx = kind === "password" ? 2 + prepOffset : kind === "prep_flag" ? 0 : kind === "flag" ? prepOffset : 0;
+        cards[idx]?.querySelector(":scope > .usb-step-action")?.click();
       },
     });
     return true;
@@ -2421,7 +2439,8 @@
     try { Bridge.call(method, args); }
     catch (error) {
       const message = error.message || String(error);
-      if (method === "qr_adb_write_flag") onQrAdbWriteResult({ result: { ok: false, error: message } });
+      if (method === "qr_adb_write_prep_flag") onQrAdbPrepWriteResult({ result: { ok: false, error: message } });
+      else if (method === "qr_adb_write_flag") onQrAdbWriteResult({ result: { ok: false, error: message } });
       else if (method === "qr_adb_get_password") onQrAdbPasswordResult({ result: { ok: false, error: message } });
       else onAdbStageResult({ index: stage.index, result: { success: false, reason: message } });
     }
@@ -2487,7 +2506,34 @@
   // кнопкой в разных концах экрана.
   function renderQrAdbStage(page, stage) {
     prepareUsbStage(page, stage);
-    const writeCard = usbStepCard(1, "Запишите файл на флешку", "Будет создан файл svlog.flag для получения кода ADB.", "file", qrAdbWriteStatus?.ok ? "done" : qrAdbWriteStatus ? "error" : "active");
+    const needsPrep = !!stage.qr_adb_engineering_menu;
+    const off = needsPrep ? 2 : 0;
+    if (needsPrep) {
+      const prepCard = usbStepCard(1, "Запишите файл на флешку", "Будет создан файл svengmode.flag — он открывает инженерное меню магнитолы.", "file", qrAdbPrepStatus?.ok ? "done" : qrAdbPrepStatus ? "error" : "active");
+      const prepBtn = usbStageButton(qrAdbPrepStatus?.ok ? "Записать ещё раз" : "Записать файл", "download", () => {
+        if (!beginUsbOperation("prep_flag", stage, prepCard)) return;
+        qrAdbPrepConfirmed = false; qrAdbWriteStatus = null; qrAdbResult = null;
+        sendUsbOperation("qr_adb_write_prep_flag", {}, stage);
+      }, !qrAdbPrepStatus?.ok);
+      prepCard.append(prepBtn);
+      if (qrAdbPrepStatus) {
+        prepCard.append(el("p", {
+          class: "usb-step-feedback", role: "status",
+          text: qrAdbPrepStatus.ok
+            ? "Готово — подключите флешку к магнитоле и откройте раздел с QR-кодом (шаг 2)."
+            : (qrAdbPrepStatus.error || "Не удалось записать файл."),
+        }));
+      }
+      const prepConfirmCard = usbStepCard(2, "Откройте раздел с QR-кодом", "Подключите флешку к магнитоле — откроется инженерное меню. Найдите в нём раздел с QR-кодом и откройте его.", "car", qrAdbPrepConfirmed ? "done" : qrAdbPrepStatus?.ok ? "active" : "idle");
+      const confirmBtn = usbStageButton("Меню открыто, продолжить", "car", () => {
+        if (!qrAdbPrepStatus?.ok || qrAdbPrepConfirmed) return;
+        qrAdbPrepConfirmed = true; render();
+      }, false);
+      confirmBtn.disabled = !qrAdbPrepStatus?.ok || qrAdbPrepConfirmed;
+      prepConfirmCard.append(confirmBtn);
+      page.append(prepCard, prepConfirmCard);
+    }
+    const writeCard = usbStepCard(1 + off, needsPrep ? "Запишите второй файл на флешку" : "Запишите файл на флешку", "Будет создан файл svlog.flag для получения кода ADB.", "file", qrAdbWriteStatus?.ok ? "done" : qrAdbWriteStatus ? "error" : (needsPrep ? "idle" : "active"));
     const writeBtn = usbStageButton(qrAdbWriteStatus?.ok ? "Записать ещё раз" : "Записать файл", "download", () => {
       if (!beginUsbOperation("flag", stage, writeCard)) return;
       qrAdbResult = null;
@@ -2498,13 +2544,13 @@
       writeCard.append(el("p", {
         class: "usb-step-feedback", role: "status",
         text: qrAdbWriteStatus.ok
-          ? "Готово — теперь вставьте эту флешку в магнитолу (шаг 2)."
+          ? `Готово — теперь вставьте эту флешку в магнитолу (шаг ${2 + off}).`
           : (qrAdbWriteStatus.error || "Не удалось записать файл."),
       }));
     }
-    const instructionCard = usbStepCard(2, "Выполните шаги на магнитоле", "Следуйте инструкции на экране автомобиля.", "car", qrAdbWriteStatus?.ok && !qrAdbResult?.ok ? "active" : "idle");
+    const instructionCard = usbStepCard(2 + off, "Выполните шаги на магнитоле", needsPrep ? "Вставьте флешку ещё раз и дождитесь надписи «QNX OK»." : "Следуйте инструкции на экране автомобиля.", "car", qrAdbWriteStatus?.ok && !qrAdbResult?.ok ? "active" : "idle");
     instructionCard.append(usbStageButton("Открыть инструкцию", "book", () => openUsbInstructions(stage)));
-    const passwordCard = usbStepCard(3, "Подключите флешку снова", "После надписи «QNX OK» верните флешку в телефон и получите пароль.", "key", qrAdbResult?.ok ? "done" : qrAdbResult ? "error" : "idle");
+    const passwordCard = usbStepCard(3 + off, "Подключите флешку снова", "После надписи «QNX OK» верните флешку в телефон и получите пароль.", "key", qrAdbResult?.ok ? "done" : qrAdbResult ? "error" : "idle");
     const getBtn = usbStageButton("Получить пароль", "key", () => {
       if (!beginUsbOperation("password", stage, passwordCard)) return;
       sendUsbOperation("qr_adb_get_password", {}, stage);
@@ -2522,6 +2568,17 @@
     }
     page.append(writeCard, instructionCard, passwordCard);
     appendUsbOptions(page);
+  }
+
+  function onQrAdbPrepWriteResult(event) {
+    if (!usbOperation || usbOperation.kind !== "prep_flag") return;
+    usbOperation = null;
+    labInstallBusy = false;
+    qrAdbPrepStatus = event.result || { ok: false, error: "неизвестная ошибка" };
+    finishRun({
+      success: !!qrAdbPrepStatus.ok,
+      message: qrAdbPrepStatus.ok ? "Файл записан. Подключите флешку к магнитоле и откройте раздел с QR-кодом." : (qrAdbPrepStatus.error || "Не удалось записать файл."),
+    }, () => { if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render(); }, "qr-prep_flag");
   }
 
   function onQrAdbWriteResult(event) {
@@ -2719,12 +2776,13 @@
   // донат", без тиров/платного контента) — просто внешние ссылки, реально
   // открываются в системном браузере (см. MainActivity.kt:
   // shouldOverrideUrlLoading), не внутри WebView.
+  // ?locale=ru_RU — иначе Boosty открывается по умолчанию на английском (см. память проекта).
   function boostyLinksRow() {
     return el("div", { class: "boosty-links" }, [
-      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd", target: "_blank" }, [
+      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd?locale=ru_RU", target: "_blank" }, [
         svgIcon(STAR_ICON_PATH), el("span", { text: "Подписаться на Boosty" }),
       ]),
-      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate", target: "_blank" }, [
+      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate?locale=ru_RU", target: "_blank" }, [
         svgIcon(HEART_ICON_PATH), el("span", { text: "Разовый донат" }),
       ]),
     ]);
@@ -3422,6 +3480,7 @@
     window.events.on("adb_stage_result", onAdbStageResult);
     window.events.on("usb_connect_result", onUsbConnectResult);
     window.events.on("usb_format_result", onUsbFormatResult);
+    window.events.on("qr_adb_prep_write_result", onQrAdbPrepWriteResult);
     window.events.on("qr_adb_write_result", onQrAdbWriteResult);
     window.events.on("qr_adb_password_result", onQrAdbPasswordResult);
     window.events.on("apk_library_result", onApkLibraryResult);

@@ -286,6 +286,9 @@ class InstallApi:
             # UART — порт Wi-Fi ADB чисто справочно (см. StepSpec.
             # uart_wifi_port) — не используется рантаймом.
             "uart_wifi_port": stage.get("uart_wifi_port"),
+            # "qr_adb" — см. car_generator.py: StepSpec.qr_adb_engineering_menu
+            # (сейчас только у Haval Jolion 2026, Desay x9h).
+            "qr_adb_engineering_menu": stage.get("qr_adb_engineering_menu", False),
             "check_options": stage.get("check_options"),
             "exe_path": exe_path,
             "exe_name": Path(exe_path).name if exe_path else None,
