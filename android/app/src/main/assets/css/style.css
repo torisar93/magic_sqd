@@ -1351,3 +1351,44 @@ html, body { background: var(--bg); }
 .settings-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 .compact-log .log-bar { padding-top: 3px; padding-bottom: 3px; }
+
+/* Окно «Доступна новая версия» (см. app.js: onUpdateCheckResult): длинный список изменений прокручивается
+   ВНУТРИ окна, заголовок и кнопки «Скачать APK»/«Позже» всегда видны. Селектор с .modal-overlay — чтобы
+   перебить общий overflow:auto для .modal-box из ui-lab.css. */
+.modal-overlay .modal-box.update-modal { overflow: hidden; max-height: calc(100dvh - 32px); }
+.update-modal > * { flex: none; }
+.update-modal > p { margin: 0; }
+.update-modal .update-title { font-weight: 600; font-size: 17px; }
+.update-modal .update-notes-title { color: var(--text-dim); font-size: 13px; }
+.update-modal .update-notes {
+  flex: 1 1 auto; min-height: 72px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(125, 147, 164, 0.28); background: #141b22; color: var(--text-dim);
+  font-size: 14px; line-height: 1.5; scrollbar-width: thin;
+}
+
+/* Окно «Сообщить о проблеме» (см. app.js: showReportModal) */
+.report-modal textarea { min-height: 110px; resize: vertical; color: var(--text); font-size: 15px; }
+.report-modal select { color: var(--text); font-size: 15px; }
+
+/* Плавающая кнопка «Видео к этапу» (см. app.js: updateVideoButton) — над нижней панелью мастера, справа.
+   Есть видео — есть кнопка. Во время установки приложений прячется вместе с нижней панелью. */
+#wizard-video.video-fab {
+  position: fixed; right: 14px; bottom: calc(env(safe-area-inset-bottom, 0px) + 92px); z-index: 40;
+  display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 28px);
+  min-height: 52px; padding: 0 20px 0 14px; border-radius: 26px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.14) inset;
+}
+#wizard-video.video-fab .ui-icon, #wizard-video.video-fab svg { width: 22px; height: 22px; flex: 0 0 22px; }
+#wizard-video.video-fab .video-fab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+#screen-wizard.is-installing-apps > #wizard-video { display: none !important; }
+/* чтобы плавающая кнопка не закрывала последние строки этапа */
+#screen-wizard.has-video-fab #wizard-content { padding-bottom: 76px; }
+
+/* Проигрыватель видео этапа поверх приложения (см. app.js: showVideoOverlay) */
+.modal-overlay.video-overlay { padding: 0; background: #000; flex-direction: column; align-items: center; justify-content: center; z-index: 120; }
+.video-overlay video { width: 100%; max-height: calc(100dvh - 120px); background: #000; }
+.video-overlay .video-overlay-title { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 18px); left: 16px; right: 72px; color: #e9eff2; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-overlay .video-overlay-close { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 8px); right: 10px; width: 48px; height: 48px; padding: 0; border-radius: 50%; font-size: 20px; z-index: 2; }
+.video-overlay .video-overlay-status { color: #f3c6c6; min-height: 1.4em; margin: 12px 16px 0; text-align: center; }
+

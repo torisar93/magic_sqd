@@ -418,7 +418,6 @@ function onModelSelected(model) {
   document.getElementById("workspace-model-title").textContent = model.modification
     ? `${model.brand} ${model.name} — ${model.modification}`
     : `${model.brand} ${model.name}`;
-  document.getElementById("report-btn").disabled = false;
   document.getElementById("edit-car-btn").disabled = !model.has_wizard_spec;
   document.getElementById("workspace-edit-car").disabled = !model.has_wizard_spec;
   window.stageWizard.open(model);
@@ -437,7 +436,6 @@ function returnToCatalog() {
   shell.classList.add("catalog-home");
   shell.style.gridTemplateColumns = "";
   document.getElementById("workspace-nav").hidden = true;
-  document.getElementById("report-btn").disabled = true;
   document.getElementById("edit-car-btn").disabled = true;
   document.getElementById("workspace-edit-car").disabled = true;
   window.mainPicker.showModelListFor(previousModel);

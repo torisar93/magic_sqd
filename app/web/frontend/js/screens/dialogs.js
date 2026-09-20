@@ -308,10 +308,26 @@
   const report = (() => {
     let dialog, reasonSelect, descriptionEl, statusEl, sendBtn;
     let currentModel = null;
-    const REASONS = [
+    // Обращение может быть и к конкретной модели, и к работе программы в целом (кнопка доступна и на
+    // главной, где модель не выбрана): на главной — только «общие» причины.
+    const MODEL_REASONS = [
       "Появился способ установки", "Инструкция больше не актуальна",
-      "Появилась новая версия", "Не работает этап установки", "Другое",
+      "Появилась новая версия", "Не работает этап установки",
     ];
+    const APP_REASONS = [
+      "Ошибка в работе программы", "Не находит устройство или флешку",
+      "Не скачивается или не обновляется", "Предложение или идея",
+    ];
+    const OTHER_REASON = "Другое";
+    function fillReasons(list) {
+      clear(reasonSelect);
+      for (const reason of list) {
+        const option = document.createElement("option");
+        option.value = reason;
+        option.textContent = reason;
+        reasonSelect.appendChild(option);
+      }
+    }
 
     function init() {
       dialog = document.getElementById("report-dialog");
@@ -319,14 +335,6 @@
       descriptionEl = document.getElementById("report-description");
       statusEl = document.getElementById("report-status");
       sendBtn = document.getElementById("report-send");
-
-      clear(reasonSelect);
-      for (const reason of REASONS) {
-        const option = document.createElement("option");
-        option.value = reason;
-        option.textContent = reason;
-        reasonSelect.appendChild(option);
-      }
 
       sendBtn.addEventListener("click", onSend);
       document.getElementById("report-cancel").addEventListener("click", () => dialog.close());
@@ -338,10 +346,17 @@
         await window.notice("Отправка обращений не настроена (нет submit.json рядом с программой).");
         return;
       }
-      currentModel = model;
-      const reportModelName = model.modification ? `${model.name} — ${model.modification}` : model.name;
-      document.getElementById("report-dialog-title").textContent = `Сообщить о проблеме — ${model.brand} / ${reportModelName}`;
-      reasonSelect.value = model.no_instruction ? "Появился способ установки" : REASONS[0];
+      currentModel = model || null;
+      if (currentModel) {
+        const reportModelName = model.modification ? `${model.name} — ${model.modification}` : model.name;
+        document.getElementById("report-dialog-title").textContent = `Сообщить о проблеме — ${model.brand} / ${reportModelName}`;
+        fillReasons([...MODEL_REASONS, ...APP_REASONS, OTHER_REASON]);
+        reasonSelect.value = model.no_instruction ? "Появился способ установки" : MODEL_REASONS[0];
+      } else {
+        document.getElementById("report-dialog-title").textContent = "Сообщить о проблеме — работа программы";
+        fillReasons([...APP_REASONS, OTHER_REASON]);
+        reasonSelect.value = APP_REASONS[0];
+      }
       descriptionEl.value = "";
       statusEl.textContent = "";
       sendBtn.disabled = false;
@@ -349,12 +364,12 @@
     }
 
     async function onSend() {
-      const reportModelName = currentModel.modification
-        ? `${currentModel.name} — ${currentModel.modification}` : currentModel.name;
+      const reportModelName = currentModel
+        ? (currentModel.modification ? `${currentModel.name} — ${currentModel.modification}` : currentModel.name) : "";
       sendBtn.disabled = true;
       statusEl.textContent = "Отправка...";
       const result = await window.pywebview.api.report_send(
-        currentModel.brand, reportModelName, reasonSelect.value, descriptionEl.value.trim()
+        currentModel ? currentModel.brand : "", reportModelName, reasonSelect.value, descriptionEl.value.trim()
       );
       if (result.ok) {
         await window.notice(result.message);

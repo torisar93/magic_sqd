@@ -1647,18 +1647,22 @@
       const isLast = stage && stage.type !== "check" && stage.next == null;
       wizardNextBtn.textContent = isLast ? "Готово" : "Далее";
     }
+    // Видео к этапу — плавающая кнопка (не в нижней панели: там она не помещалась на узком экране и с
+    // длинной подписью, а «Далее» уезжало за край). Есть видео — кнопка есть, нет — нет.
+    updateVideoButton();
+    wizardPageLabel.textContent = stages.length ? `Этап ${currentIndex + 1} из ${stages.length}` : "";
+  }
+
+  function updateVideoButton() {
     const videoStage = stages.length ? stages[currentIndex] : null;
     const hasVideo = Boolean(videoStage && videoStage.video_url);
-    if (hasVideo) {
-      wizardVideoBtn.hidden = false;
-      wizardVideoBtn.replaceChildren(usbStageIcon('play'), el('span', {text:videoStage.video_label || "Смотреть видео"}));
-    } else {
-      wizardVideoBtn.hidden = true;
-    }
-    // На узком экране "Этап X из Y" и кнопка видео вместе не помещаются
-    // рядом с "Назад"/"Далее" — кнопка видео нужнее (это действие, а не
-    // просто справочный текст), поэтому прячем подпись, пока она активна.
-    wizardPageLabel.textContent = (!hasVideo && stages.length) ? `Этап ${currentIndex + 1} из ${stages.length}` : "";
+    wizardVideoBtn.hidden = !hasVideo;
+    screenWizard.classList.toggle("has-video-fab", hasVideo);
+    if (!hasVideo) return;
+    const label = videoStage.video_label || "Смотреть видео";
+    wizardVideoBtn.disabled = false;
+    wizardVideoBtn.setAttribute("aria-label", label);
+    wizardVideoBtn.replaceChildren(usbStageIcon('play'), el('span', { class: "video-fab-label", text: label }));
   }
 
   // Докачивает video_file (если ещё нет на диске) в фоне на Kotlin-стороне
@@ -1670,15 +1674,35 @@
     const stage = stages[currentIndex];
     if (!stage || !stage.video_url) return;
     wizardVideoBtn.disabled = true;
-    wizardVideoBtn.textContent = "Скачиваю...";
+    wizardVideoBtn.replaceChildren(usbStageIcon('play'), el('span', { class: "video-fab-label", text: "Скачиваю…" }));
     Bridge.call("ensure_video_downloaded", { path: stage.video_file });
   }
 
   function onVideoReady(event) {
     const stage = stages[currentIndex];
     if (!stage || stage.video_file !== event.path) return;
-    wizardVideoBtn.disabled = false;
-    window.location.href = stage.video_url;
+    updateVideoButton();
+    showVideoOverlay(stage.video_url, stage.video_label);
+  }
+
+  // Видео играет ПОВЕРХ приложения, а не переходом всего WebView на .mp4: раньше (window.location.href)
+  // страница мастера выгружалась, а системная «Назад» закрывала всё приложение (JS-обработчик
+  // window.__handleBackPress уже не существовал) — состояние мастера терялось. Оверлей .dismissible
+  // закрывается и по «Назад» (closeDismissibleModal), и крестиком, и тапом мимо плеера.
+  function showVideoOverlay(url, title) {
+    const overlay = el("div", { class: "modal-overlay dismissible video-overlay" });
+    const status = el("p", { class: "video-overlay-status", role: "status" });
+    const video = el("video", { controls: "", playsinline: "", preload: "metadata", src: url });
+    video.addEventListener("error", () => { status.textContent = "Не удалось воспроизвести видео."; });
+    overlay.append(...[
+      el("button", { class: "video-overlay-close", type: "button", "aria-label": "Закрыть видео", text: "✕", onclick: () => overlay.remove() }),
+      title ? el("div", { class: "video-overlay-title", text: title }) : null,
+      video, status,
+    ].filter(Boolean));
+    overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+    const started = video.play();
+    if (started && started.catch) started.catch(() => { /* автозапуск без жеста запрещён — включат кнопкой плеера */ });
   }
 
   function describeCommand(cmd) {
@@ -2697,17 +2721,31 @@
     } catch (e) { /* сбой проверки не должен мешать обычной работе */ }
   }
 
+  // При запуске сначала выясняем, есть ли обновление: если есть — показываем ТОЛЬКО окно обновления,
+  // без приветствия с Boosty (maybeShowWelcomeModal). Приветствие ждёт ответа проверки; если сеть
+  // тянет дольше WELCOME_WAIT_MS — показываем его как раньше, а пришедшее позже обновление его заменит.
+  const WELCOME_WAIT_MS = 4000;
+  let updateCheckAnswered = false;
+  let welcomeWaitTimer = null;
+
+  function startupPopups() {
+    welcomeWaitTimer = setTimeout(() => { if (!updateCheckAnswered) maybeShowWelcomeModal(); }, WELCOME_WAIT_MS);
+    checkForUpdate();
+  }
+
   function onUpdateCheckResult(event) {
+    updateCheckAnswered = true;
+    clearTimeout(welcomeWaitTimer);
     const update = event.result;
-    if (!update || !update.available) return;
+    if (!update || !update.available) { maybeShowWelcomeModal(); return; }
+    document.querySelector(".welcome-overlay")?.remove();
     let overlay;
     overlay = showModal([
       el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
-      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px", text: `Доступна новая версия: ${update.version}` }),
-      el("p", {
-        class: "stage-text", style: "color: var(--text-dim); white-space: pre-wrap",
-        text: `Что нового:\n${update.changelog || "—"}`,
-      }),
+      el("p", { class: "stage-text update-title", text: `Доступна новая версия: ${update.version}` }),
+      el("p", { class: "stage-text update-notes-title", text: "Что нового:" }),
+      // Длинный список изменений прокручивается внутри окна, кнопки внизу всегда на экране.
+      el("div", { class: "update-notes", tabindex: "0" }, [update.changelog || "—"]),
       el("a", {
         class: "accent", href: update.download_url, target: "_blank",
         text: "Скачать APK",
@@ -2715,6 +2753,7 @@
       }),
       el("button", { text: "Позже", onclick: () => overlay.remove() }),
     ]);
+    overlay.querySelector(".modal-box").classList.add("update-modal");
   }
 
   function showModal(boxChildren) {
@@ -2780,6 +2819,7 @@
       boostyLinksRow(),
       el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
     ]);
+    overlay.classList.add("welcome-overlay");
   }
 
   // Значок "?" в шапке (только на списке марок) — что за приложение,
@@ -3095,6 +3135,9 @@
     account.classList.toggle("is-subscriber", Boolean(auth.email && auth.subscriber));
     account.addEventListener("click", () => { overlay.remove(); showAccountModal(); });
     if (auth.email) Bridge.call("auth_refresh_subscriber", {}); // цвет обновится событием auth_subscriber_result
+    const reportIssue = menuAction("Сообщить о проблеме", "report");
+    reportIssue.dataset.action = "report";
+    reportIssue.addEventListener("click", () => { overlay.remove(); showReportModal(); });
     const github = el("a", { class: "menu13-action menu13-link", href: "https://github.com/torisar93/magic_sqd", target: "_blank", rel: "noopener" }, [
       AppIcons.icon("link"), el("span", { class: "menu13-action-label", text: "GitHub проекта" }), AppIcons.icon("chevron"),
     ]);
@@ -3119,10 +3162,68 @@
         ]), clear,
         el("small", { class: "menu13-hint", text: "Сценарии и настройки сохранятся." }),
       ]),
-      el("section", { class: "settings-section menu13-card" }, [menuHeading("Диагностика", "log"), copyLog, github]),
+      el("section", { class: "settings-section menu13-card" }, [menuHeading("Диагностика", "log"), reportIssue, copyLog, github]),
       el("p", { class: "menu13-version", text: `Magic SQD${version ? " · " + version : ""}` }),
     ], { className: "menu13-settings-overlay" });
     document.documentElement.classList.toggle("reduce-motion", info.preferences.reduced_motion);
+  }
+
+  // «Сообщить о проблеме»: к открытой модели ИЛИ к работе приложения в целом (на главной/вне мастера модель
+  // не привязывается). Отправка — на сервер (POST /report, см. report_bridge.py), результат — событие report_result.
+  const REPORT_MODEL_REASONS = [
+    "Появился способ установки", "Инструкция больше не актуальна",
+    "Появилась новая версия", "Не работает этап установки",
+  ];
+  const REPORT_APP_REASONS = [
+    "Ошибка в работе программы", "Не находит устройство или флешку",
+    "Не скачивается или не обновляется", "Предложение или идея",
+  ];
+  let reportInFlight = null;
+
+  function showReportModal() {
+    const forModel = screenWizard.classList.contains("active") && model ? model : null;
+    const reasons = forModel ? [...REPORT_MODEL_REASONS, ...REPORT_APP_REASONS, "Другое"] : [...REPORT_APP_REASONS, "Другое"];
+    let overlay;
+    const reasonSelect = el("select", { "aria-label": "Причина" }, reasons.map((r) => el("option", { value: r, text: r })));
+    reasonSelect.value = forModel && forModel.no_instruction ? "Появился способ установки" : reasons[0];
+    const description = el("textarea", { rows: "5", placeholder: "Что случилось? Чем подробнее, тем быстрее разберёмся.", "aria-label": "Описание" });
+    const status = el("p", { class: "stage-text report-status", role: "status", style: "color: var(--text-dim); min-height: 1.4em; margin: 0" });
+    const send = el("button", { class: "accent", text: "Отправить" });
+    const cancel = el("button", { text: "Отмена", onclick: () => { reportInFlight = null; overlay.remove(); } });
+    const target = forModel ? (forModel.display_label || forModel.name) : "работа приложения";
+    send.addEventListener("click", () => {
+      send.disabled = true;
+      status.textContent = "Отправка…";
+      reportInFlight = { overlay, status, send, cancel };
+      try {
+        Bridge.call("report_send", {
+          brand: forModel ? (forModel.brand || "") : "",
+          // как на ПК: «Модель — модификация» (марка идёт отдельным полем, без дубля в display_label)
+          model: forModel ? (forModel.modification ? `${forModel.name} — ${forModel.modification}` : (forModel.name || "")) : "",
+          reason: reasonSelect.value, description: description.value.trim(),
+        });
+      } catch (error) { onReportResult({ result: { ok: false, error: error.message || String(error) } }); }
+    });
+    overlay = showModal([
+      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px; margin: 0", text: "Сообщить о проблеме" }),
+      el("p", { class: "stage-text", style: "color: var(--text-dim); margin: 0", text: `К чему обращение: ${target}` }),
+      reasonSelect, description, status, send, cancel,
+    ]);
+    overlay.querySelector(".modal-box").classList.add("report-modal");
+  }
+
+  function onReportResult(event) {
+    const flight = reportInFlight;
+    if (!flight) return;
+    const r = event.result || {};
+    if (r.ok) {
+      reportInFlight = null;
+      flight.status.textContent = "Спасибо! Обращение отправлено.";
+      setTimeout(() => flight.overlay.remove(), 1200);
+    } else {
+      flight.send.disabled = false;
+      flight.status.textContent = r.error || "Не удалось отправить обращение.";
+    }
   }
 
   function showStatusWarningModal(modelSummary) {
@@ -3298,6 +3399,7 @@
     window.events.on("qr_adb_password_result", onQrAdbPasswordResult);
     window.events.on("apk_library_result", onApkLibraryResult);
     window.events.on("apk_download_done", onApkDownloadDone);
+    window.events.on("report_result", onReportResult);
     window.events.on("update_check_result", onUpdateCheckResult);
     window.events.on("supporters_result", (event) => { if (event.result && event.result.people) window.Thanks.set(event.result); });
     window.events.on("video_ready", onVideoReady);
@@ -3310,8 +3412,7 @@
     loadCars();
     const catalogWasEmpty = !carsData || !carsData.brands || carsData.brands.length === 0;
     if (preferences.auto_sync) startSync(catalogWasEmpty);
-    maybeShowWelcomeModal();
-    checkForUpdate();
+    startupPopups();
     loadSupporters();
   });
 })();

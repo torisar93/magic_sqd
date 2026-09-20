@@ -243,7 +243,8 @@ class WebApi:
         return self._report.get_info()
 
     def report_send(self, brand: str, model: str, reason: str, description: str) -> dict:
-        return self._report.send(brand, model, reason, description)
+        # brand/model пустые — обращение к работе программы в целом (кнопка есть и на главной).
+        return self._report.send(brand, model, reason, description, platform=self._install_log_platform())
 
     # -- install_log_api --------------------------------------------------
     def _install_log_platform(self) -> str:

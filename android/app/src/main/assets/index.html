@@ -97,9 +97,11 @@
           </div>
         </div>
       </div>
+      <!-- Видео к этапу — плавающая кнопка над нижней панелью (см. app.js: renderNav, css: .video-fab);
+           в самой панели для неё не хватало места на узких экранах и с длинной подписью. -->
+      <button id="wizard-video" class="video-fab accent" type="button" hidden aria-label="Смотреть видео"></button>
       <div class="wizard-nav">
         <button id="wizard-back">Назад</button>
-        <button id="wizard-video" hidden>▶ Смотреть видео</button>
         <span class="page-label" id="wizard-page-label"></span>
         <button id="wizard-next" class="accent">Далее</button>
       </div>

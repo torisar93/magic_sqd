@@ -15,12 +15,18 @@ class ReportError(RuntimeError):
     pass
 
 
-def send_report(brand: str, model: str, reason: str, description: str, config: SubmitConfig) -> None:
+def send_report(brand: str, model: str, reason: str, description: str, config: SubmitConfig,
+                app_version: str = "", platform: str = "", client_id: str = "") -> None:
+    """brand/model пустые — обращение к работе программы в целом (кнопка доступна и на главной).
+    app_version/platform/client_id — чтобы в админке было видно, на какой сборке проблема."""
     body = json.dumps({
         "brand": brand,
         "model": model,
         "reason": reason,
         "description": description,
+        "app_version": app_version,
+        "platform": platform,
+        "client_id": client_id,
     }).encode("utf-8")
     request = urllib.request.Request(
         config.report_url,

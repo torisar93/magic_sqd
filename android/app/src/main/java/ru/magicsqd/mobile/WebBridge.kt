@@ -65,6 +65,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // POST /install_log) — тот же ключ-заглушка от спама, что и у чата,
         // не отдельный секрет (см. комментарий про CHAT_KEY выше).
         private const val INSTALL_LOG_URL = "https://magicsqd.ru/install_log"
+        // «Сообщить о проблеме» (см. reportSend, server/backend.py: POST /report) — тот же ключ-заглушка.
+        private const val REPORT_URL = "https://magicsqd.ru/report"
     }
 
     // AdbSession/UsbFlashSession — общие на процесс синглтоны БЕЗ внутренней
@@ -172,6 +174,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     "{}"
                 }
                 "chat_confirm_command" -> { chatConfirmCommand(args.getString("command")); "{}" }
+                "report_send" -> {
+                    reportSend(
+                        args.optString("brand", ""), args.optString("model", ""),
+                        args.getString("reason"), args.optString("description", ""),
+                    )
+                    "{}"
+                }
                 "install_log_send" -> {
                     installLogSend(
                         args.getString("brand"), args.getString("model"), args.optString("modification", ""),
@@ -646,6 +655,25 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 // best-effort — сетевая ошибка тут не критична, следующая
                 // попытка установки пришлёт свой лог независимо от этой.
             }
+        }.start()
+    }
+
+    /** Обращение («Сообщить о проблеме»): brand/model пустые — к работе приложения в целом. Результат уходит
+     * событием report_result — в отличие от install_log_send, техник ждёт ответа в окне. */
+    private fun reportSend(brand: String, model: String, reason: String, description: String) {
+        val appVersion = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (_: Exception) { "" }
+        Thread {
+            val resultJson = try {
+                pyModule("report_bridge").callAttr(
+                    "send_report", brand, model, reason, description, appVersion,
+                    getOrCreateClientId(), REPORT_URL, CHAT_KEY,
+                ).toString()
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
+            }
+            pushEvent(JSONObject().put("kind", "report_result").put("result", JSONObject(resultJson)))
         }.start()
     }
 

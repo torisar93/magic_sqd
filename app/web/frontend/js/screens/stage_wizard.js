@@ -206,9 +206,22 @@
     navBackBtn.replaceChildren(UsbUI.icon('back'), el('span', {text:'Назад'}));
     navBackBtn.addEventListener("click", goBack);
     navNextBtn.addEventListener("click", () => {if(!runnerBusy)nextAction();});
-    navVideoBtn.addEventListener("click", () => {
+    navVideoBtn.addEventListener("click", async () => {
       const stage = currentIndex >= 0 ? stages[currentIndex] : null;
-      if (stage && stage.video_path) window.pywebview.api.install_open_video(stage.video_path);
+      if (!stage || !stage.video_path || navVideoBtn.disabled) return;
+      // Файл может докачиваться с сервера (до 150 МБ) — на это время кнопка занята, а неудача больше
+      // не молчит (раньше результат open_video вообще не читался).
+      navVideoBtn.disabled = true;
+      try {
+        const result = await window.pywebview.api.install_open_video(stage.video_path);
+        if (result && result.ok === false) {
+          window.notice(result.error || "Не удалось открыть видео.", { title: "Видео", danger: true });
+        }
+      } catch (error) {
+        window.notice(`Не удалось открыть видео: ${error.message || error}`, { title: "Видео", danger: true });
+      } finally {
+        navVideoBtn.disabled = false;
+      }
     });
     setupAskInputDialog(container);
   }
