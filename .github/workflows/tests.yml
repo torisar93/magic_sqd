@@ -1,0 +1,32 @@
+name: Tests
+
+# Тесты на каждый пуш/PR в main (см. tests/). Перед релизной сборкой те же тесты гоняет
+# build-release.yml (job `tests`, остальные jobs зависят от него) — упавший тест не даёт собрать релиз.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q tests
+
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Синтаксис всего фронтенда (ПК + Android)
+        run: find app/web/frontend/js android/app/src/main/assets/js -name '*.js' -exec node --check {} +
+      - run: node tests/js/run_all.js

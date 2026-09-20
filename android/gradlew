@@ -1,0 +1,21 @@
+#!/bin/sh
+# Минимальный gradlew (2026-09-20): запускает org.gradle.wrapper.GradleWrapperMain из
+# gradle/wrapper/gradle-wrapper.jar — тот же вызов, что в .github/workflows/build-release.yml. Сам Gradle
+# (версия из gradle/wrapper/gradle-wrapper.properties) wrapper докачает в ~/.gradle при первом запуске.
+# Java: $JAVA_HOME/bin/java, иначе java из PATH (нужна JDK 17, на Mac: ~/dev-tools/jdk-17*/Contents/Home).
+#
+#   ./gradlew --version                  # проверить, что wrapper работает (проект не конфигурируется)
+#   ./gradlew :app:compileDebugKotlin    # проверить Kotlin локально перед релизом (нужен Android SDK)
+#   ./gradlew :app:assembleRelease       # то, что делает CI
+set -e
+APP_HOME=$(cd "$(dirname "$0")" && pwd -P)
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  JAVACMD="$JAVA_HOME/bin/java"
+elif [ -z "${JAVA_HOME:-}" ] && [ -x "$HOME/dev-tools/jdk-17.0.20.1+1/Contents/Home/bin/java" ]; then
+  JAVACMD="$HOME/dev-tools/jdk-17.0.20.1+1/Contents/Home/bin/java"
+else
+  JAVACMD=java
+fi
+exec "$JAVACMD" ${DEFAULT_JVM_OPTS:-"-Xmx64m" "-Xms64m"} ${JAVA_OPTS:-} ${GRADLE_OPTS:-} \
+  "-Dorg.gradle.appname=gradlew" -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
+  org.gradle.wrapper.GradleWrapperMain "$@"

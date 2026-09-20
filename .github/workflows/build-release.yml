@@ -11,8 +11,25 @@ on:
       - "v*"
 
 jobs:
+  # Те же тесты, что в tests.yml — релиз не собирается, если они падают.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: find app/web/frontend/js android/app/src/main/assets/js -name '*.js' -exec node --check {} +
+      - run: node tests/js/run_all.js
+
   windows-desktop:
     runs-on: windows-latest
+    needs: tests
     steps:
       - uses: actions/checkout@v4
 
@@ -93,6 +110,7 @@ jobs:
 
   windows-win7:
     runs-on: windows-latest
+    needs: tests
     steps:
       - uses: actions/checkout@v4
 
@@ -159,6 +177,7 @@ jobs:
   # до x86_64 под Rosetta на этой машине).
   macos-arm64:
     runs-on: macos-15
+    needs: tests
     steps:
       - uses: actions/checkout@v4
 
@@ -259,6 +278,7 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    needs: tests
     steps:
       - uses: actions/checkout@v4
 

@@ -1,0 +1,3 @@
+# Только для тестов (tests/) — в сборку не попадает. Сами тесты не тянут pywebview/pyinstaller:
+# проверяемые модули (app/content_sync.py, app/runner.py, app/web/api/*.py, ...) импортируются без них.
+pytest==9.1.1

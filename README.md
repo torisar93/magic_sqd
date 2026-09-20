@@ -205,6 +205,32 @@ python -m venv .venv
 исходников, не проходя разблокировку через интерфейс. `--debug` —
 открывает DevTools (консоль браузера) для отладки фронтенда.
 
+## Тесты
+
+`tests/` — pytest для Python-части и node-тесты для фронтенда; ни pywebview,
+ни ADB, ни интернет им не нужны (сервер контента поднимается локально, см.
+`tests/conftest.py`). Гоняются на каждый пуш в `main`
+(`.github/workflows/tests.yml`) и перед каждой релизной сборкой
+(`build-release.yml`, job `tests` — упавший тест не даёт собрать релиз).
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q tests          # Python: докачка APK, сертификат переподписи, отчёты, «Спасибо вам»
+node tests/js/run_all.js           # JS: Wi-Fi-поток, кнопка «Начать установку», окна обновления и отчёта
+```
+
+JS-тесты вырезают функции из `app.js`/`stage_wizard.js`/`dialogs.js` по
+маркерам (имена функций) и исполняют в `vm` с заглушками — при переименовании
+функции тест честно падает с «marker not found».
+
+Версии зависимостей в `requirements.txt` зафиксированы (`==`) — это ровно то,
+чем собирался последний релиз; обновлять осознанно, отдельным коммитом.
+
+Android: `android/gradlew` — тот же вызов `GradleWrapperMain`, что в CI;
+`./gradlew :app:compileDebugKotlin` проверяет Kotlin локально (нужен Android
+SDK в `android/local.properties: sdk.dir`). Intel-DMG для macOS собирает
+`scripts/build_intel_dmg.sh` (см. шапку скрипта), CI его не собирает.
+
 ## Сборка .exe и инсталлятора
 
 ```powershell

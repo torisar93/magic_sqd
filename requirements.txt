@@ -1,5 +1,5 @@
-pywebview>=6.0
-pyinstaller>=6.0
-pyinstaller-hooks-contrib>=2024.0
-pyserial>=3.5
-certifi>=2024.0.0
+pywebview==6.2.1
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.7
+pyserial==3.5
+certifi==2026.7.22
