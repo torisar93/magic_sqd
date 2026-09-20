@@ -353,6 +353,38 @@ def _fix_window_position_win32(window) -> None:
         _log_step(f"_fix_window_position_win32 failed: {exc}")
 
 
+def _webview2_temp_root() -> str:
+    """Родительский каталог для webview2_storage ниже (см. webview.start:
+    storage_path) — обычно tempfile.gettempdir(), но на Windows это путь ВНУТРИ
+    профиля пользователя (C:\\Users\\<имя>\\AppData\\Local\\Temp), а WebView2 —
+    нативный компонент (.NET/WinForms → COM → Chromium), а не чистый Python:
+    в отличие от os/pathlib (Unicode-API с PEP 529), у него бывают проблемы,
+    если имя пользователя не ASCII (кириллица) или слишком длинное — реальная
+    жалоба клиента, лицензионная Windows: диалог WebView2 "Не удалось создать
+    каталог данных" с путём вида C:\\Users\\E106~1\\... — САМА Windows уже
+    показывает укороченное 8.3-имя в тексте ошибки, то есть WebView2 споткнулся
+    именно на этом сегменте пути.
+
+    GetShortPathNameW возвращает ASCII-безопасный АЛИАС уже существующего
+    каталога (не создаёт новый путь и не меняет прав доступа — тот же самый
+    каталог на диске, просто под другим именем), поэтому это самый безопасный
+    из возможных фиксов. Если короткие имена отключены на этом томе (fsutil
+    8dot3name) или что-то ещё пошло не так — тихо возвращаемся к обычному
+    tempfile.gettempdir(), как было раньше (ничего не ломаем для остальных)."""
+    base = tempfile.gettempdir()
+    if sys.platform != "win32":
+        return base
+    import ctypes
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        length = ctypes.windll.kernel32.GetShortPathNameW(base, buf, len(buf))
+        if length and length < len(buf):
+            return buf.value
+    except Exception as exc:
+        _log_step(f"_webview2_temp_root: GetShortPathNameW failed: {exc}")
+    return base
+
+
 def _ensure_renderer(base_dir: Path, title: str, force_qt: bool = False) -> dict | None:
     """Без WebView2 Runtime окно pywebview открывается пустым белым — сам
     рендерер (msedgewebview2.exe) не запускается вовсе, ни один JS не
@@ -535,7 +567,9 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     # (сделанный через mkdtemp, у которого никакого finalizer нет) убирает
     # эту гонку полностью, сохраняя тот же смысл private_mode — свежий
     # профиль на каждый запуск, чистим сами после закрытия окна.
-    webview2_storage = Path(tempfile.mkdtemp(prefix="magicsqd_webview2_"))
+    # dir=_webview2_temp_root() — см. её докстринг: ASCII-безопасный алиас
+    # %TEMP% на случай не-ASCII/длинного имени пользователя Windows.
+    webview2_storage = Path(tempfile.mkdtemp(prefix="magicsqd_webview2_", dir=_webview2_temp_root()))
 
     _raise_http_server_backlog()
     http_port = _pick_safe_http_port()
