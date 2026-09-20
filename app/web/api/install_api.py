@@ -20,8 +20,9 @@ from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
                            list_devices, normalize_console_command, scan_network_for_wifi_adb,
                            split_top_level_command)
-from ...content_sync import (fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
+from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
                              sync_model_subfolder, sync_shared_folder)
+from ...install_context import InstallCancelled
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir_with_remote
 from ...stage_runner import (StageDefinitionError, UnknownStageTypeError, load_model_wifi, load_stages,
@@ -97,6 +98,10 @@ class InstallApi:
             on_sync_progress=self._on_sync_progress,
         )
         self._pending_stage_index: int | None = None
+        # Остановка предварительной докачки (prefetch_apks) — у самого InstallRunner флаг создаётся только
+        # при start(), а докачка идёт ДО него.
+        self._prefetch_cancel = threading.Event()
+        self._prefetching = False
         self._manifest_cache: dict | None = None
         self._manifest_cache_time: float = 0.0
         # Лог текущей попытки установки (см. POST /install_log,
@@ -753,8 +758,45 @@ class InstallApi:
             self._console_log("Не нашёл устройств в сети.")
         return found
 
+    def prefetch_apks(self, model_key: str, stage_index: int, selected_apk_paths: list[str]) -> dict:
+        """Wi-Fi ADB: скачивает выбранные приложения (и сертификат переподписи модели) ДО подключения к
+        магнитоле. Как только компьютер уходит в сеть магнитолы, интернета у него обычно нет, и докачка
+        внутри самой установки (InstallRunner._run) уже не работает. Блокирующий вызов — JS ждёт результат
+        в том же окне «Установка приложений»; прогресс идёт обычными событиями sync_progress/install_log.
+        После успеха установку запускают с prefetched=True (см. start_stage)."""
+        if self._runner.running or self._prefetching:
+            return {"ok": False, "error": "Установка уже выполняется."}
+        model = self._scanner_api.get_model(model_key)
+        if model is None:
+            return {"ok": False, "error": "unknown model key"}
+        self._prefetch_cancel.clear()
+        self._prefetching = True
+
+        def check_cancelled():
+            if self._prefetch_cancel.is_set():
+                raise InstallCancelled("Установка остановлена пользователем.")
+
+        self._on_log("Wi-Fi ADB: сначала скачиваю приложения — пока есть интернет, потом подключимся к магнитоле.")
+        try:
+            ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apk_paths, log=self._on_log,
+                                   check_cancelled=check_cancelled, on_progress=self._on_sync_progress)
+            self._runner.sync_resign_cert(model, check_cancelled=check_cancelled)
+        except InstallCancelled as exc:
+            return {"ok": False, "cancelled": True, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
+            return {"ok": False, "error": f"Не удалось скачать приложения: {exc}"}
+        finally:
+            self._prefetching = False
+            self._on_sync_progress(0, 0)
+        missing = [Path(p).name for p in selected_apk_paths if not Path(p).exists()]
+        if missing:
+            return {"ok": False, "error": "Не удалось скачать: " + ", ".join(missing) + ". Проверьте интернет "
+                    "(компьютер не должен быть в Wi-Fi магнитолы без интернета) и повторите."}
+        self._on_log("Приложения скачаны. Теперь подключитесь к Wi-Fi магнитолы.")
+        return {"ok": True}
+
     def start_stage(self, model_key: str, stage_index: int, device_serial: str | None,
-                     selected_apk_paths: list[str]) -> dict:
+                     selected_apk_paths: list[str], prefetched: bool = False) -> dict:
         if self._runner.running:
             return {"ok": False, "error": "Установка уже выполняется."}
         model = self._scanner_api.get_model(model_key)
@@ -791,7 +833,8 @@ class InstallApi:
         try:
             self._runner.start(model, device_serial, selected_apk_paths, run_fn=run_fn,
                                 own_dirs=self._stage_own_dirs(model, stage, stage_index=stage_index),
-                                preferred_install_method=stage.get("apps_install_method", ""))
+                                preferred_install_method=stage.get("apps_install_method", ""),
+                                skip_sync=prefetched)
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
@@ -827,6 +870,9 @@ class InstallApi:
         return [model.dir / "files"]
 
     def cancel_stage(self) -> dict:
+        if self._prefetching:
+            self._prefetch_cancel.set()
+            event_bridge.push({"kind": "install_log", "text": "Останавливаю скачивание..."})
         if self._runner.running:
             self._runner.cancel()
             event_bridge.push({"kind": "install_log", "text": "Останавливаю этап..."})

@@ -32,7 +32,7 @@
     const decorate=()=>panel.querySelectorAll('.log-line:not([data-decorated])').forEach(LabUI.decorateLog);
     decorate();new MutationObserver(decorate).observe(panel,{childList:true});
   };
-  LabUI.connection=({port=5555,host='',title='Подключение по Wi-Fi',scan,connect,onClose})=>{
+  LabUI.connection=({port=5555,host='',title='Подключение по Wi-Fi',help='',scan,connect,onClose})=>{
     const modal=n('dialog','connection-dialog');modal.setAttribute('aria-label',title);
     const head=n('header','connection-heading'),badge=n('span','connection-symbol');badge.append(LabUI.symbol('wifi'));
     const close=n('button','icon-button');close.append(icon('close'));close.setAttribute('aria-label','Закрыть');
@@ -43,7 +43,7 @@
     const status=n('p','connection-status','Укажите адрес устройства или выберите его в сети.');status.setAttribute('role','status');
     const results=n('div','connection-results');const search=n('button','connection-search');search.append(LabUI.symbol('refresh'),n('span','','Найти устройства'));
     const actions=n('footer','dialog-actions'),cancel=n('button','','Отмена'),submit=n('button','accent','Подключиться');actions.append(cancel,submit);
-    modal.append(head,n('p','connection-help','Подключите оба устройства к одной сети Wi-Fi.'),fields,status,results,search,actions);document.body.append(modal);modal.showModal();
+    modal.append(head,n('p','connection-help',help||'Подключите оба устройства к одной сети Wi-Fi.'),fields,status,results,search,actions);document.body.append(modal);modal.showModal();
     let generation=0,busy=false;
     const validPort=()=>{const p=Number(portInput.value||portInput.placeholder);if(!Number.isInteger(p)||p<1||p>65535){status.textContent='Порт должен быть от 1 до 65535.';portInput.focus();return null;}return p;};
     const finish=()=>{generation++;onClose?.();modal.remove();};modal.addEventListener('close',finish,{once:true});

@@ -10,6 +10,7 @@ import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONArray
 import org.json.JSONObject
 import ru.magicsqd.mobile.usb.AdbConsoleFormat
+import ru.magicsqd.mobile.usb.AdbEchoStats
 import ru.magicsqd.mobile.usb.AdbHandshakeResult
 import ru.magicsqd.mobile.usb.AdbPermissions
 import ru.magicsqd.mobile.usb.AdbSession
@@ -140,6 +141,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "settings_sync_now" -> { startSync(); "{}" }
                 "start_sync" -> { startSync(); "{}" }
                 "app_update_check" -> { startUpdateCheck(); "{}" }
+                "supporters_load" -> { startSupportersLoad(); "{}" }
                 "get_sync_progress" -> pyModule("mobile_bridge").callAttr("get_sync_progress").toString()
                 "scanner_list_cars" -> pyModule("mobile_bridge").callAttr("list_cars", carsDir).toString()
                 "scanner_select_model" -> pyModule("mobile_bridge").callAttr(
@@ -161,6 +163,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "adb_disconnect" -> { AdbSession.disconnect(); "{}" }
                 "adb_run_stage" -> { adbRunStage(args); "{}" }
                 "adb_install_apks" -> { adbInstallApks(args); "{}" }
+                "adb_download_apks" -> { adbDownloadApks(args); "{}" }
                 "adb_cancel_install" -> { labCancelInstall = true; pushAdbLog("Остановка очереди после текущего приложения…"); "{}" }
                 "telnet_run_stage" -> { telnetRunStage(args); "{}" }
                 "adb_shell_command" -> { adbShellCommand(args.getString("command")); "{}" }
@@ -398,6 +401,19 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "{\"available\":false}"
             }
             pushEvent(JSONObject().put("kind", "update_check_result").put("result", JSONObject(resultJson)))
+        }.start()
+    }
+
+    /** Список «Спасибо вам» для окна «Всё готово» (см. mobile_bridge.supporters_fetch) — в фоне,
+     * сбой сети молча даёт пустой ответ (приложение покажет ранее сохранённый список). */
+    private fun startSupportersLoad() {
+        Thread {
+            val resultJson = try {
+                pyModule("mobile_bridge").callAttr("supporters_fetch", BASE_URL).toString()
+            } catch (e: Exception) {
+                "{}"
+            }
+            pushEvent(JSONObject().put("kind", "supporters_result").put("result", JSONObject(resultJson)))
         }.start()
     }
 
@@ -851,13 +867,17 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // Путь единственного выбранного GPS-приложения с пометкой «выдавать
         // фиктивное местоположение» (JS передаёт только когда такое ровно одно).
         val mockLocationPath = args.optString("mockLocationPath", "").ifEmpty { null }
+        // Wi-Fi ADB: файлы уже скачаны отдельно (adbDownloadApks) — у телефона в сети магнитолы интернета
+        // обычно нет, повторная сверка с сервером только ждала бы таймаут.
+        val skipDownload = args.optBoolean("skipDownload", false)
         labCancelInstall = false
+        AdbEchoStats.reset()
         runExclusive({ pushStageResult(stageIndex, StageRunResult.Failed("Другая операция ещё выполняется")) }) {
             val result = try {
                 if (!AdbSession.isConnected) {
                     StageRunResult.Failed("ADB не подключён — сначала подключись к устройству")
                 } else {
-                    ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
+                    if (!skipDownload) ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
                         pushApkProgress(stageIndex, path, 0, paths.size, "running", ApkOperationProgress("download", done, total))
                     }, { labCancelInstall }))
                     installEngine().installApksWithProgress(paths, preferredMethod, modelDir, { labCancelInstall },
@@ -872,7 +892,41 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             } catch (e: Exception) {
                 StageRunResult.Failed((e.message ?: "неизвестная ошибка"))
             }
+            // Штатные «эхо» закрытия каналов от магнитолы (см. readMessageForStream) — одной строкой вместо
+            // десятков нечитаемых («Пропускаю чужое сообщение…», лог #374).
+            val echoes = AdbEchoStats.take()
+            if (echoes > 0) pushAdbLog("Магнитола $echoes раз подтвердила закрытие служебных каналов ADB (CLSE) — это штатно, не ошибка.")
             pushStageResult(stageIndex, result)
+        }
+    }
+
+    /** Wi-Fi ADB на этапе приложений: сначала СКАЧАТЬ выбранное (пока у телефона есть интернет), и только
+     * потом подключаться к магнитоле — в её сети интернета обычно нет. Успех — событие apk_download_done,
+     * сбой/остановка — обычный adb_stage_result (тот же путь, что у неудачной установки). */
+    private fun adbDownloadApks(args: JSONObject) {
+        val stageIndex = args.optInt("index", -1)
+        val pathsArr = args.getJSONArray("apkPaths")
+        val paths = (0 until pathsArr.length()).map { pathsArr.getString(it) }
+        labCancelInstall = false
+        runExclusive({ pushStageResult(stageIndex, StageRunResult.Failed("Другая операция ещё выполняется")) }) {
+            try {
+                pushAdbLog("Wi-Fi ADB: сначала скачиваю приложения — пока есть интернет, потом подключимся к магнитоле.")
+                ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
+                    pushApkProgress(stageIndex, path, 0, paths.size, "running", ApkOperationProgress("download", done, total))
+                }, { labCancelInstall }))
+                // ensure_apks_downloaded при сбое скачивания только пишет строку в лог — проверяем сами.
+                val missing = paths.filter { !File(it).exists() }.map { File(it).name }
+                if (missing.isNotEmpty()) {
+                    pushStageResult(stageIndex, StageRunResult.Failed(
+                        "Не удалось скачать: ${missing.joinToString(", ")}. Проверьте интернет (телефон не должен " +
+                            "быть в Wi-Fi магнитолы без интернета) и повторите."))
+                } else {
+                    pushAdbLog("Приложения скачаны. Теперь подключитесь к Wi-Fi магнитолы.")
+                    pushEvent(JSONObject().put("kind", "apk_download_done").put("index", stageIndex))
+                }
+            } catch (e: Exception) {
+                pushStageResult(stageIndex, StageRunResult.Failed(e.message ?: "неизвестная ошибка"))
+            }
         }
     }
 

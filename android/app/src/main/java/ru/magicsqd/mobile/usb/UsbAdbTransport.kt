@@ -261,6 +261,26 @@ fun readMessage(
     return header to payload
 }
 
+/** Сколько штатных «эхо» CLSE пропущено с последнего reset() — см. readMessageForStream. */
+object AdbEchoStats {
+    private val count = java.util.concurrent.atomic.AtomicInteger(0)
+    fun reset() { count.set(0) }
+    fun add() { count.incrementAndGet() }
+    fun take(): Int = count.getAndSet(0)
+}
+
+/** Имя ADB-команды для человека вместо 0x45534c43. */
+fun adbCommandName(command: Int): String = when (command) {
+    AdbProtocol.A_CNXN -> "CNXN"
+    AdbProtocol.A_OPEN -> "OPEN"
+    AdbProtocol.A_OKAY -> "OKAY"
+    AdbProtocol.A_CLSE -> "CLSE"
+    AdbProtocol.A_WRTE -> "WRTE"
+    AdbProtocol.A_AUTH -> "AUTH"
+    AdbProtocol.A_SYNC -> "SYNC"
+    else -> "0x" + command.toUInt().toString(16)
+}
+
 /**
  * Читает следующее сообщение, АДРЕСОВАННОЕ конкретно потоку myLocalId
  * (device всегда кладёт наш local-id в arg1 своего ответа), пропуская и
@@ -279,7 +299,16 @@ fun readMessageForStream(
     repeat(20) {
         val (header, payload) = readMessage(transport, timeoutMs)
         if (header.arg1 == myLocalId) return header to payload
-        log("Пропускаю чужое сообщение (arg1=${header.arg1}, ждали $myLocalId): command=0x${header.command.toUInt().toString(16)}")
+        // CLSE от ранее закрытого потока — штатное эхо магнитолы на наш CLSE (мы его не вычитываем,
+        // а оно приходит уже после следующего OPEN). В журнале установки Monjaro SE (#374) таких строк
+        // было 53 из 627, при том что установка прошла успешно, — по одной строке на каждое это был
+        // нечитаемый шум. Считаем их (AdbEchoStats) и пишем ОДНОЙ понятной строкой в конце установки.
+        if (header.command == AdbProtocol.A_CLSE) {
+            AdbEchoStats.add()
+            return@repeat
+        }
+        // Любое другое «чужое» сообщение — по-прежнему отдельной строкой, но с читаемым именем команды.
+        log("Пропускаю сообщение другого потока: ${adbCommandName(header.command)} (поток ${header.arg1}, ждали $myLocalId)")
     }
     error("Не дождались сообщения для потока $myLocalId после 20 попыток")
 }

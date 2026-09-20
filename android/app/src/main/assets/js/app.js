@@ -939,6 +939,7 @@
     personalApks = [];
     installCompletedShown = false;
     failedStages = new Map();
+    wifiInstallFlow = null;
     qrAdbWriteStatus = null;
     qrAdbResult = null;
     usbOperation = null;
@@ -1058,6 +1059,56 @@
     return modelWifiPort;
   }
 
+  // Wi-Fi ADB на этапе приложений: сначала СКАЧАТЬ выбранное (у телефона в сети магнитолы интернета обычно
+  // нет), потом показать окно подключения, и только после подключения — ставить. Состояние потока:
+  // {index, proceed, phase: "download"|"connect", connecting}. null — потока нет.
+  let wifiInstallFlow = null;
+
+  function beginWifiInstall(stage, apkPaths, proceed) {
+    wifiInstallFlow = { index: stage.index, proceed, phase: "download", connecting: false };
+    Bridge.call("adb_download_apks", { index: stage.index, apkPaths });
+  }
+
+  function onApkDownloadDone(event) {
+    const flow = wifiInstallFlow;
+    if (!flow || flow.index !== event.index) return;
+    flow.phase = "connect";
+    askWifiForInstall(flow, "");
+  }
+
+  function askWifiForInstall(flow, problem) {
+    const stage = stages.find((s) => s.index === flow.index) || stages[currentIndex];
+    promptHostPicker(
+      "IP-адрес магнитолы для Wi-Fi ADB:",
+      connectionPortFor(stage),
+      (host, port) => {
+        lastWifiHost = host;
+        modelWifiPort = port;
+        flow.connecting = true;
+        setAdbStatus(false, "ADB: подключаюсь по Wi-Fi...");
+        Bridge.call("adb_connect_wifi", { host, port });
+      },
+      {
+        editablePort: true, discoverAdbService: true,
+        help: (problem ? `Не удалось подключиться: ${problem}. ` : "") +
+          "Приложения скачаны — интернет больше не нужен. Подключите телефон к Wi-Fi магнитолы и подключитесь по ADB.",
+        onDismiss: () => {
+          if (wifiInstallFlow === flow && !flow.connecting) {
+            cancelWifiInstall(flow, "Подключение отменено. Приложения уже скачаны — повторная установка будет быстрой.");
+          }
+        },
+      }
+    );
+  }
+
+  // Завершает поток как неудачную/остановленную установку — тем же путём, что и ошибка нативной установки
+  // (onAdbStageResult: окно результата, «Повторить»).
+  function cancelWifiInstall(flow, message) {
+    if (wifiInstallFlow === flow) wifiInstallFlow = null;
+    document.querySelector("dialog.connection-dialog")?.close();
+    onAdbStageResult({ index: flow.index, result: { success: false, cancelled: true, reason: message } });
+  }
+
   function onAdbConnect() {
     const stage = stages[currentIndex];
     if (connectionModeFor(stage) === "wifi") {
@@ -1080,6 +1131,9 @@
 
   function onAdbConnectResult(event) {
     const r = event.result || {};
+    // Подключение, начатое из Wi-Fi-потока установки (см. beginWifiInstall) — после него продолжаем/повторяем.
+    const flow = wifiInstallFlow && wifiInstallFlow.connecting ? wifiInstallFlow : null;
+    if (flow) flow.connecting = false;
     if (r.connected) {
       const banner = String(r.banner || "");
       const product = banner.match(/(?:^|[;:])r[od]\.product\.model=([^;]+)/i)?.[1];
@@ -1087,9 +1141,11 @@
       setAdbStatus(true, label ? `Подключено · ${label}` : "ADB подключено");
       adbStatusEl.title = banner || "ADB подключено";
       log(banner ? `ADB подключён: ${banner}` : "ADB подключён.");
+      if (flow) { wifiInstallFlow = null; flow.proceed(); }
     } else {
       setAdbStatus(false, "ADB: не подключено");
       log(`ADB: не удалось подключиться — ${r.reason || "?"}`);
+      if (flow) askWifiForInstall(flow, r.reason || "не удалось подключиться");
       const stage = stages[currentIndex];
       if (r.no_device && stage && connectionModeFor(stage) !== "wifi") showOtgHintModal();
       if (stage && connectionModeFor(stage) !== "wifi") {
@@ -1417,7 +1473,8 @@
   function promptHostPicker(title, port, onSubmit, opts) {
     opts=opts||{};
     let cancelScan=null;
-    LabUI.connection({title:port===23?'Подключение к магнитоле':'Подключение по Wi-Fi',port:port||5555,host:lastWifiHost||'',
+    let submitted=false;
+    LabUI.connection({title:port===23?'Подключение к магнитоле':'Подключение по Wi-Fi',port:port||5555,host:lastWifiHost||'',help:opts.help||'',
       scan:p=>new Promise(resolve=>{
         let hosts=[],services=[],waiting=opts.discoverAdbService?2:1;
         const finish=()=>{if(--waiting===0){cancelScan=null;resolve([...services,...hosts.filter(h=>!services.some(s=>s.host===h))]);}};
@@ -1426,8 +1483,8 @@
         if(opts.discoverAdbService){pendingAdbServiceScanCallback=endpoints=>{pendingAdbServiceScanCallback=null;services=endpoints;finish();};Bridge.call('scan_adb_service',{});}
         Bridge.call('scan_hosts',{port:p});
       }),
-      connect:(host,p)=>{onSubmit(host,p);return {ok:true};},
-      onClose:()=>{pendingScanCallback=null;pendingAdbServiceScanCallback=null;cancelScan?.();}
+      connect:(host,p)=>{submitted=true;onSubmit(host,p);return {ok:true};},
+      onClose:()=>{pendingScanCallback=null;pendingAdbServiceScanCallback=null;cancelScan?.();if(!submitted&&opts.onDismiss)opts.onDismiss();}
     });
   }
 
@@ -2117,7 +2174,9 @@
     btn.classList.add('apps-install-start');
     btn.addEventListener("click", () => {
       if (labInstallBusy) return;
-      if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
+      // Wi-Fi ADB: подключение НЕ нужно заранее — сначала скачиваем, потом окно подключения (beginWifiInstall).
+      const wifiFirst = connectionModeFor(stage) === "wifi";
+      if (!wifiFirst && !adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
       const selection = selectedAppsForStage(stage);
       const apkPaths = selection.entries.map(apk => apk.path);
       if (!apkPaths.length) { showLabNotice("Выберите приложения","Отметьте приложения, которые нужно установить."); return; }
@@ -2132,6 +2191,11 @@
         onCancel: () => {
           if (!appInstallOperation || appInstallOperation.cancelRequested) return;
           appInstallOperation.cancelRequested = true;
+          // Ждём подключения к магнитоле (скачивание уже закончено, нативной операции нет) — останавливаем поток здесь.
+          if (wifiInstallFlow && wifiInstallFlow.index === stage.index && wifiInstallFlow.phase === "connect" && !wifiInstallFlow.connecting) {
+            cancelWifiInstall(wifiInstallFlow, "Установка остановлена пользователем.");
+            return;
+          }
           try { Bridge.call('adb_cancel_install',{}); }
           catch(error){ appInstallOperation.cancelRequested = false; log(`Не удалось остановить установку: ${error.message||error}`); }
         },
@@ -2145,12 +2209,17 @@
       if (flaggedPaths.length > 1) {
         log("Выбрано несколько GPS-приложений с автовыдачей фиктивного местоположения — автоматически оно не выдаётся, выберите приложение вручную на этапе «Доп. действия».");
       }
+      const install = (skipDownload) => Bridge.call("adb_install_apks", {
+        index: stage.index, apkPaths, appsInstallMethod: stage.apps_install_method || "",
+        modelKey: model.key, mockLocationPath: flaggedPaths.length === 1 ? flaggedPaths[0] : "", skipDownload,
+      });
       try {
-        Bridge.call("adb_install_apks", {
-          index: stage.index, apkPaths, appsInstallMethod: stage.apps_install_method || "",
-          modelKey: model.key, mockLocationPath: flaggedPaths.length === 1 ? flaggedPaths[0] : "",
+        if (wifiFirst) beginWifiInstall(stage, apkPaths, () => {
+          try { install(true); }
+          catch(error) { onAdbStageResult({index:stage.index,result:{success:false,reason:error.message||String(error)}}); }
         });
-      } catch(error) { onAdbStageResult({index:stage.index,result:{success:false,reason:error.message||String(error)}}); }
+        else install(false);
+      } catch(error) { wifiInstallFlow = null; onAdbStageResult({index:stage.index,result:{success:false,reason:error.message||String(error)}}); }
     });
     card.insertBefore(btn, card.querySelector('.apps-inline-search'));
     const result=appInstallResults[stage.index];
@@ -2616,6 +2685,12 @@
   // техник сам скачивает и ставит через системный установщик. Ссылка ведёт
   // на github.com, поэтому открывается во внешнем браузере (см.
   // MainActivity.kt: shouldOverrideUrlLoading), а не внутри WebView.
+  // Список «Спасибо вам» для окна «Всё готово» — грузим заранее (интернет обычно есть на старте, а у
+  // магнитолы уже нет), последний удачный список хранит thanks.js.
+  function loadSupporters() {
+    try { Bridge.call("supporters_load", {}); } catch (e) { /* без списка окно просто без блока */ }
+  }
+
   function checkForUpdate() {
     try {
       Bridge.call("app_update_check", {});
@@ -3085,9 +3160,11 @@
         class: "stage-text", style: "color: var(--text-dim)",
         text: "Установка завершена. Если Magic SQD экономит тебе время — поддержи проект на Boosty, это реально помогает развитию.",
       }),
+      window.Thanks.block(),
       boostyLinksRow(),
       el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
     ]);
+    if (overlay.querySelector(".thanks")) overlay.querySelector(".modal-box").classList.add("has-thanks");
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -3220,7 +3297,9 @@
     window.events.on("qr_adb_write_result", onQrAdbWriteResult);
     window.events.on("qr_adb_password_result", onQrAdbPasswordResult);
     window.events.on("apk_library_result", onApkLibraryResult);
+    window.events.on("apk_download_done", onApkDownloadDone);
     window.events.on("update_check_result", onUpdateCheckResult);
+    window.events.on("supporters_result", (event) => { if (event.result && event.result.people) window.Thanks.set(event.result); });
     window.events.on("video_ready", onVideoReady);
 
     showScreen("picker");
@@ -3233,5 +3312,6 @@
     if (preferences.auto_sync) startSync(catalogWasEmpty);
     maybeShowWelcomeModal();
     checkForUpdate();
+    loadSupporters();
   });
 })();

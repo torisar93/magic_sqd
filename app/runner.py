@@ -47,7 +47,7 @@ class InstallRunner:
         self._cancel_flag.set()
 
     def start(self, model, device_serial, selected_apks, run_fn, own_dirs=None,
-              preferred_install_method: str = ""):
+              preferred_install_method: str = "", skip_sync: bool = False):
         """Запускает run_fn(ctx) в фоновом потоке — run_fn это функция
         конкретного ADB-этапа из stages.py модели (см. stage_wizard.py,
         единственный вызывающий). own_dirs — локальные папки СВОИХ файлов
@@ -56,14 +56,16 @@ class InstallRunner:
         файлов (adb/uart/telnet без вложений, actions). preferred_install_method
         — см. install_api.py:start_stage/StepSpec.apps_install_method в
         car_generator.py (только для "apps"-этапов без своего run — пусто у
-        всех остальных)."""
+        всех остальных). skip_sync — всё нужное уже скачано отдельно (см. install_api.py:prefetch_apks —
+        Wi-Fi ADB: компьютер к этому моменту уже в сети магнитолы БЕЗ интернета, повторная сверка с
+        сервером только ждала бы таймаут)."""
         if self.running:
             raise RuntimeError("Установка уже выполняется.")
 
         self._cancel_flag = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
-            args=(model, device_serial, selected_apks, run_fn, own_dirs or [], preferred_install_method),
+            args=(model, device_serial, selected_apks, run_fn, own_dirs or [], preferred_install_method, skip_sync),
             daemon=True,
         )
         self._thread.start()
@@ -72,9 +74,10 @@ class InstallRunner:
         if self._cancel_flag.is_set():
             raise InstallCancelled("Установка остановлена пользователем.")
 
-    def _run(self, model, device_serial, selected_apks, run_fn, own_dirs, preferred_install_method=""):
+    def _run(self, model, device_serial, selected_apks, run_fn, own_dirs, preferred_install_method="",
+             skip_sync=False):
         try:
-            if self.base_dir:
+            if self.base_dir and not skip_sync:
                 for local_dir in own_dirs:
                     sync_model_subfolder(self.base_dir, local_dir, log=self.on_log,
                                           check_cancelled=self._check_cancelled,
@@ -82,7 +85,7 @@ class InstallRunner:
                 ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apks,
                                         log=self.on_log, check_cancelled=self._check_cancelled,
                                         on_progress=self.on_sync_progress)
-                self._sync_resign_cert(model)
+                self.sync_resign_cert(model)
             ctx = InstallContext(
                 adb_path=self.adb_path,
                 device_serial=device_serial,
@@ -111,7 +114,7 @@ class InstallRunner:
             self.on_sync_progress(0, 0)
         self.on_finished(True, "Установка завершена успешно.")
 
-    def _sync_resign_cert(self, model) -> None:
+    def sync_resign_cert(self, model, check_cancelled=None) -> None:
         """Сертификат переподписи модели (files/resign_cert/{private.pk8,
         certificate.crt}, см. apk_signer.py) подтягиваем перед ЛЮБЫМ запуском
         установки. Раньше его не качало ничто, кроме ручной кнопки «Скачать»
@@ -125,7 +128,7 @@ class InstallRunner:
         а _maybe_resign скажет об этом отдельной строкой)."""
         try:
             sync_model_subfolder(self.base_dir, model.dir / "files" / "resign_cert",
-                                 log=self.on_log, check_cancelled=self._check_cancelled)
+                                 log=self.on_log, check_cancelled=check_cancelled or self._check_cancelled)
         except InstallCancelled:
             raise
         except Exception as exc:  # noqa: BLE001 - сеть/манифест не должны ронять установку

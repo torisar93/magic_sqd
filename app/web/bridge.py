@@ -138,6 +138,11 @@ class WebApi:
     def settings_set_debug_mode(self, enabled: bool) -> dict:
         return self._settings.set_debug_mode(enabled)
 
+    # -- «Спасибо вам» (окно «Готово!», см. supporters_client.py) -------------
+    def supporters_get(self) -> dict:
+        from ..supporters_client import fetch_supporters
+        return fetch_supporters(self.base_dir) or {}
+
     # -- update_api -----------------------------------------------------------
     def update_check(self) -> dict:
         return self._update.check()
@@ -183,8 +188,12 @@ class WebApi:
     def install_scan_wifi(self, port: int) -> list:
         return self._install.scan_wifi(port)
 
-    def install_start_stage(self, model_key: str, stage_index: int, device_serial, selected_apk_paths: list) -> dict:
-        return self._install.start_stage(model_key, stage_index, device_serial, selected_apk_paths)
+    def install_start_stage(self, model_key: str, stage_index: int, device_serial, selected_apk_paths: list,
+                            prefetched: bool = False) -> dict:
+        return self._install.start_stage(model_key, stage_index, device_serial, selected_apk_paths, prefetched)
+
+    def install_prefetch_apks(self, model_key: str, stage_index: int, selected_apk_paths: list) -> dict:
+        return self._install.prefetch_apks(model_key, stage_index, selected_apk_paths)
 
     def install_cancel_stage(self) -> dict:
         return self._install.cancel_stage()

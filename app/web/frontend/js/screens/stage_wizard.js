@@ -613,10 +613,12 @@
     // содержимым этапа — раньше был общей строкой внизу окна на весь
     // мастер, независимо от текущего этапа.
     let getDevice = () => null;
+    let transportCtl = null;
     if (TRANSPORT_STAGE_TYPES.has(stage.type)) {
       const transport = buildTransportBar(stage);
       contentEl.appendChild(transport.element);
       getDevice = transport.getDevice;
+      transportCtl = transport;
     }
 
     if ((stage.instruction_html || stage.description) && !["qr_adb", "usb"].includes(stage.type)) {
@@ -633,7 +635,7 @@
       usb: renderUsbStage, exe: renderExeStage, adb: renderAdbStage, uart: renderUartStage,
       telnet: renderTelnetStage, actions: renderActionsStage, qr_adb: renderQrAdbStage,
     };
-    (builders[stage.type] || (() => {}))(panel, stage, getDevice);
+    (builders[stage.type] || (() => {}))(panel, stage, getDevice, transportCtl);
     contentEl.appendChild(panel);
   }
 
@@ -685,6 +687,25 @@
     });
     portInput.value = stagePort != null ? String(stagePort) : "";
     const wifiConnectBtn = el("button", { text: "Подключить Wi-Fi" });
+    // Wi-Fi ADB при установке приложений: сначала скачиваем, потом подключаемся (у компьютера в сети
+    // магнитолы интернета обычно нет) — окно подключения открывается ИЗ запуска установки и возвращает
+    // адрес подключённой магнитолы ("ip:порт") либо null, если окно закрыли (см. buildStartStopButtons).
+    function askWifi(help) {
+      return new Promise((resolve) => {
+        let settled = false;
+        const settle = (value) => { if (!settled) { settled = true; resolve(value); } };
+        LabUI.connection({port:Number(portInput.value)||modelWifiPort, help,
+          host: wifiSerial ? wifiSerial.split(':')[0] : '',
+          scan:p=>window.pywebview.api.install_scan_wifi(p),
+          connect:async(ip,port)=>{
+            const result=await window.pywebview.api.install_wifi_connect(port,ip);
+            if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;settle(wifiSerial);}
+            else {wifiSerial=null;wifiStatus.textContent='Wi-Fi: не подключено';}
+            return result;
+          },
+          onClose:()=>settle(null)});
+      });
+    }
     async function doWifiConnect() {
       LabUI.connection({port:Number(portInput.value)||modelWifiPort,
         scan:p=>window.pywebview.api.install_scan_wifi(p),
@@ -701,6 +722,7 @@
 
     const connection = stage.type === "apps" ? (stage.apps_connection || "wired")
       : stage.type === "actions" ? (stage.actions_connection || "wired") : "wired";
+    let askMode = "wired"; // для connection === "ask": что выбрал техник на переключателе
     if (connection === "wired") {
       bar.appendChild(wiredRow);
       refreshDevices();
@@ -713,10 +735,12 @@
       const wifiBtn = el("button", { text: "Wi-Fi" });
       const body = el("div", { style: "margin-top: 8px" });
       function showWired() {
+        askMode = "wired";
         wiredBtn.className = "accent"; wifiBtn.className = "";
         clear(body); body.appendChild(wiredRow); refreshDevices();
       }
       function showWifi() {
+        askMode = "wifi";
         wifiBtn.className = "accent"; wiredBtn.className = "";
         clear(body); body.appendChild(wifiRow);
       }
@@ -729,7 +753,10 @@
       showWired();
     }
 
-    return { element: bar, getDevice: () => wifiSerial || deviceByLabel[select.value] || null };
+    return {
+      element: bar, getDevice: () => wifiSerial || deviceByLabel[select.value] || null,
+      mode: () => (connection === "ask" ? askMode : connection), askWifi,
+    };
   }
 
   function buildInstructionBlock(stage, fullPage) {
@@ -827,7 +854,7 @@
   }
 
   // -- apps ----------------------------------------------------------------
-  async function renderAppsStage(panel, stage, getDevice) {
+  async function renderAppsStage(panel, stage, getDevice, transport) {
     panel.classList.add("apps-panel", "apps08-inline");
     buildVariantPicker(panel, stage, stage.index);
     Object.keys(sectionCollapsed).forEach(key => { sectionCollapsed[key] = false; });
@@ -863,7 +890,7 @@
     // stages.py подставляет ctx.install_selected_apks() по умолчанию).
     // Устройство/Wi-Fi — уже выбраны в баре над этапом (см.
     // buildTransportBar/getDevice), здесь их не выбирают заново.
-    buildStartStopButtons(panel, stage, getDevice, { startLabel: "Начать установку" });
+    buildStartStopButtons(panel, stage, getDevice, { startLabel: "Начать установку", transport });
   }
 
   function createAppChooser(panel, stage, choose, copy, preview, host, ready = () => {}) {
@@ -1474,7 +1501,7 @@
   // (см. buildTransportBar/renderStagePage), сюда приходит готовым через
   // getDevice() — этот блок больше не строит свой собственный список
   // устройств (раньше дублировался в каждом типе этапа по отдельности).
-  function buildStartStopButtons(panel, stage, getDevice, { startLabel, requiresDevice = true } = {}) {
+  function buildStartStopButtons(panel, stage, getDevice, { startLabel, requiresDevice = true, transport = null } = {}) {
     const btnRow = el("div", { class: "stage-primary-actions" });
     const startBtn = el("button", { class: "accent", text: startLabel || "Начать этот этап" });
     if (runnerBusy) startBtn.disabled = true;
@@ -1494,13 +1521,17 @@
       if (runnerBusy) return;
       const selected = panel._appChooser ? panel._appChooser.paths() : selectedApkPaths();
       if(stage.type==="apps"&&!selected.length){window.notice("Отметьте приложения, которые нужно установить.",{title:"Выберите приложения"});return;}
-      const device = getDevice();
-      if (requiresDevice && !device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
+      // Wi-Fi ADB на этапе приложений: подключение НЕ требуется заранее — сначала скачиваем выбранное
+      // (пока у компьютера есть интернет), затем показываем окно подключения и только потом ставим.
+      const wifiFirst = stage.type === "apps" && !!transport && transport.mode() === "wifi";
+      let device = getDevice();
+      if (!wifiFirst && requiresDevice && !device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
       if (runnerBusy) return;
       startBtn.disabled = true;
       runnerBusy = true;
       navBackBtn.disabled=true; navNextBtn.disabled=true;
       const items=panel._appChooser ? panel._appChooser.entries() : [];
+      let stopped = false; // техник нажал «Остановить» в окне (до запуска самой установки)
       const runTitle = {
         apps: 'Установка приложений', adb: 'Выполнение команд на магнитоле',
         uart: 'Подключение через UART', telnet: 'Подключение по сети',
@@ -1508,8 +1539,13 @@
       openStageRun({
         title: runTitle, stageIndex: stage.index, items, cancellable: true,
         icon: stage.type === 'telnet' ? 'wifi' : 'settings',
-        detail: 'Ожидаем результат выполнения. Подробности появляются в логе.',
-        onCancel: () => window.pywebview.api.install_cancel_stage(),
+        detail: wifiFirst ? 'Сначала скачиваем приложения, затем предложим подключиться к Wi-Fi магнитолы.'
+          : 'Ожидаем результат выполнения. Подробности появляются в логе.',
+        onCancel: () => {
+          stopped = true;
+          window.pywebview.api.install_cancel_stage();
+          if (wifiFirst) document.querySelector('dialog.connection-dialog')?.close(); // ждём подключения — снимаем окно
+        },
         retry: () => document.querySelector('.stage-primary-actions>.accent')?.click(),
       });
       const failToStart = (message) => {
@@ -1518,7 +1554,20 @@
         finishRun({ success: false, message }, () => render());
       };
       try {
-        const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selected);
+        let prefetched = false;
+        if (wifiFirst) {
+          const pre = await window.pywebview.api.install_prefetch_apks(model.key, stage.index, selected);
+          if (!pre.ok) { failToStart(pre.error || "Не удалось скачать приложения."); return; }
+          device = stopped ? null : await transport.askWifi(
+            "Приложения скачаны — интернет больше не нужен. Подключите компьютер к Wi-Fi магнитолы и подключитесь по ADB.");
+          if (!device) {
+            failToStart(stopped ? "Установка остановлена пользователем."
+              : "Подключение отменено. Приложения уже скачаны — повторная установка будет быстрой.");
+            return;
+          }
+          prefetched = true;
+        }
+        const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selected, prefetched);
         if (result.ok) return;
         failToStart(result.error || "Не удалось запустить этап.");
       } catch (err) {

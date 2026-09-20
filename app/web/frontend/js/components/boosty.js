@@ -31,17 +31,35 @@
   }
 
   let welcomeDialog, welcomeLinksEl, welcomeCloseButton;
-  let completionDialog, completionLinksEl, completionCloseButton;
+  let completionDialog, completionLinksEl, completionCloseButton, completionThanksEl;
 
   function init() {
     welcomeDialog = document.getElementById("welcome-dialog");
     welcomeLinksEl = document.getElementById("welcome-boosty-links");
     completionDialog = document.getElementById("completion-dialog");
     completionLinksEl = document.getElementById("completion-boosty-links");
+    completionThanksEl = document.getElementById("completion-thanks");
     welcomeCloseButton = document.getElementById("welcome-dialog-close");
     completionCloseButton = document.getElementById("completion-dialog-close");
     welcomeCloseButton.addEventListener("click", () => welcomeDialog.close());
     completionCloseButton.addEventListener("click", () => completionDialog.close());
+    refreshSupporters();
+  }
+
+  // Список «Спасибо вам» (см. thanks.js) забираем заранее, при старте, а не в момент окна: к концу
+  // установки интернет может уже не понадобиться, но и мешать окну ждать сеть не должен.
+  async function refreshSupporters() {
+    try {
+      const data = await window.pywebview.api.supporters_get();
+      if (data && data.people) window.Thanks.set(data);
+    } catch (e) { /* без списка окно просто без блока */ }
+  }
+
+  function fillCompletionThanks() {
+    const block = window.Thanks.block();
+    completionThanksEl.replaceChildren();
+    if (block) completionThanksEl.appendChild(block);
+    completionDialog.classList.toggle("has-thanks", !!block);
   }
 
   // Раз в час максимум в рамках ОДНОГО запуска программы — та же логика,
@@ -68,8 +86,11 @@
   function showCompletionDialog() {
     completionLinksEl.innerHTML = "";
     completionLinksEl.appendChild(boostyLinksRow());
+    fillCompletionThanks();
     completionDialog.showModal();
     completionCloseButton.focus();
+    // Если при старте список не получили — пробуем ещё раз и дорисовываем, пока окно открыто.
+    if (!window.Thanks.get()) refreshSupporters().then(() => { if (completionDialog.open) fillCompletionThanks(); });
   }
 
   window.boostyDialogs = { init, maybeShowWelcomeDialog, showCompletionDialog };

@@ -63,6 +63,29 @@ def _parse_version(text: str) -> tuple:
     return tuple(parts) or (0,)
 
 
+def supporters_fetch(base_url: str) -> str:
+    """Список «Спасибо вам» (content/supporters.json, см. desktop app/supporters_client.py) — только
+    имена и цвет карточки. Любой сбой — {} (например, телефон в Wi-Fi магнитолы без интернета): окно
+    «Всё готово» тогда покажет последний сохранённый в приложении список или обойдётся без блока."""
+    try:
+        with urllib.request.urlopen(f"{base_url}/supporters.json", timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
+            json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return "{}"
+    people = []
+    if isinstance(data, dict) and isinstance(data.get("people"), list):
+        for item in data["people"][:500]:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()[:40]
+            if name:
+                people.append({"name": name, "kind": "sub" if item.get("kind") == "sub" else "don",
+                               "top": item.get("top") is True})
+        return json.dumps({"people": people}, ensure_ascii=False)
+    return "{}"
+
+
 def check_update(current_version: str) -> str:
     """Молча возвращает {"available": false} при любой сетевой ошибке или
     если релиз не несёт apk-ассет (например, между релизами перед вливанием
