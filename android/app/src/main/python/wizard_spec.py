@@ -140,15 +140,25 @@ def _apk_entry(item, base_dir: Path) -> dict:
     return {"path": str(base_dir / item), "name": "", "description": ""}
 
 
-def _variant_dicts(variant_data, base_dir: Path, step_type: str) -> list:
+def _variant_dicts(variant_data, base_dir: Path, step_type: str, apk_base_dir: Path | None = None) -> list:
+    """base_dir — корень usb_files/step_N (usb) или files/pack* (apps) для
+    самого набора файлов варианта. apk_base_dir — ОТДЕЛЬНЫЙ корень для
+    standard_apks/standard_apks_optional варианта usb-этапа (files/usb_pack_N
+    — другое дерево, чем usb_files/step_N, см. app/car_generator.py:
+    _write_model_files, ветка "usb" с вариантами) — для apps-этапа не нужен,
+    там пакет и так лежит в том же base_dir, что и остальное."""
     variants = []
     for v in variant_data or []:
         name = v.get("name", "")
         v_dir = base_dir / name
         if step_type == "usb":
+            apk_dir = (apk_base_dir / name) if apk_base_dir is not None else v_dir
             variants.append({
                 "name": name,
                 "usb_files": [str(v_dir / n) for n in v.get("usb_files", [])],
+                "standard_apks": [_apk_entry(n, apk_dir / "required") for n in v.get("standard_apks", [])],
+                "standard_apks_optional": [_apk_entry(n, apk_dir / "optional")
+                                            for n in v.get("standard_apks_optional", [])],
             })
         elif step_type == "apps":
             variants.append({
@@ -225,10 +235,25 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
 
         if step_type == "usb":
             usb_step_dir = usb_root / f"step_{i}"
+            # Раньше standard_apks/standard_apks_optional читались ТОЛЬКО для
+            # step_type == "apps" — usb-этап с этими списками (галочки, что
+            # записать на флешку и поставить самому через файловый менеджер,
+            # см. app/car_generator.py: StepSpec.standard_apks_optional у
+            # usb-этапов) всегда получал пустые списки, и техник видел только
+            # общую библиотеку apk/ вместо необязательных APK ИМЕННО этой
+            # модели (см. app.js: stageApkLists/renderApkTree). Desktop это
+            # уже умел (app/web/api/install_api.py: standard_apks не
+            # разбирает по типу этапа вовсе) — здесь было настоящее упущение,
+            # не просто разное поведение платформ.
+            usb_pack_dir = files_dir / f"usb_pack_{i}"
             if variant_data:
-                variants = _variant_dicts(variant_data, usb_step_dir, "usb")
+                variants = _variant_dicts(variant_data, usb_step_dir, "usb", apk_base_dir=usb_pack_dir)
             else:
                 usb_files = [str(usb_step_dir / name) for name in step_data.get("usb_files", [])]
+                standard_apks = [_apk_entry(item, usb_pack_dir / "required")
+                                  for item in step_data.get("standard_apks", [])]
+                standard_apks_optional = [_apk_entry(item, usb_pack_dir / "optional")
+                                            for item in step_data.get("standard_apks_optional", [])]
         elif step_type == "apps":
             apps_index += 1
             pack_dir = files_dir / ("pack" if apps_index == 1 else f"pack_{apps_index}")
