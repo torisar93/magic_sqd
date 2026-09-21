@@ -1516,10 +1516,15 @@
           if (!result.ok) throw new Error(result.error || 'Не удалось записать файл.');
           prepDrive = drive.letter; prepOne.dataset.state = 'done'; prepTwo.dataset.state = 'active';
           status(prepStatus, 'Файл записан. Подключите флешку к магнитоле и откройте раздел с QR-кодом.');
+          // Раньше вся процедура QR ADB была невидима в постоянном журнале
+          // сессии — жалобы «пароль неверный» нельзя было разобрать без
+          // доступа к самому компьютеру техника (см. getBtn.onclick ниже).
+          sessionHasActivity = true; log(`QR ADB: файл svengmode.flag записан на ${drive.letter}.`);
           run.finish({ success: true, message: 'Файл записан на флешку. Подключите её к магнитоле.' });
         } catch (err) {
           if (live()) {
             prepOne.dataset.state = 'active'; status(prepStatus, err.message || String(err), true);
+            sessionHasActivity = true; log(`QR ADB: не удалось записать svengmode.flag — ${err.message || err}`);
             run.finish({ success: false, message: err.message || String(err) });
           } else run.dispose();
         }
@@ -1545,10 +1550,12 @@
         writeDrive = drive.letter; one.dataset.state = 'done'; two.dataset.state = 'active';
         if (needsPrep) prepTwo.dataset.state = 'done';
         status(writeStatus, 'Файл записан. Теперь подключите эту флешку к магнитоле.');
+        sessionHasActivity = true; log(`QR ADB: файл svlog.flag записан на ${drive.letter}.`);
         run.finish({ success: true, message: 'Файл записан на флешку. Теперь подключите её к магнитоле.' });
       } catch (err) {
         if (live()) {
           one.dataset.state = 'active'; status(writeStatus, err.message || String(err), true);
+          sessionHasActivity = true; log(`QR ADB: не удалось записать svlog.flag — ${err.message || err}`);
           run.finish({ success: false, message: err.message || String(err) });
         } else run.dispose();
       }
@@ -1582,10 +1589,19 @@
         meta.textContent = `SN: ${result.sn} · ${result.logs_folder}/${result.zip_name}`;
         resultDrive = drive.letter; resultBox.hidden = false; three.dataset.state = 'done';
         two.dataset.state = 'done'; status(readStatus, 'Пароль готов. Введите его на экране магнитолы.');
+        // Единственное место, откуда видно, что реально попало в формулу
+        // (жалобы клиентов на неверный пароль, 2026-09-21) — код+SN+источник
+        // в постоянном журнале сессии, полная копия zip — на диске техника
+        // (result.debug_copy, см. app/qr_adb_password.py:save_debug_copy),
+        // пока не накоплена уверенность в 100% надёжности формулы.
+        sessionHasActivity = true;
+        log(`QR ADB: пароль получен — код ${result.code}, SN ${result.sn}, источник ${result.logs_folder}/${result.zip_name}` +
+          (result.debug_copy ? ', копия дампа сохранена.' : '.'));
         run.finish({ success: true, message: 'Пароль готов. Введите его на экране магнитолы.' });
       } catch (err) {
         if (live()) {
           status(readStatus, err.message || String(err), true);
+          sessionHasActivity = true; log(`QR ADB: не удалось получить пароль — ${err.message || err}`);
           run.finish({ success: false, message: err.message || String(err) });
         } else run.dispose();
       }

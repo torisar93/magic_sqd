@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 from ...qr_adb_password import QrAdbError, get_adb_password
+from ...usb_utils import drive_root_path
 
 _FLAG_FILENAME = "svlog.flag"
 # Только для моделей с qr_adb_engineering_menu=True (сейчас — Haval Jolion 2026, Desay
@@ -29,14 +30,15 @@ def _write_shared_flag(cars_dir: Path, filename: str, drive_letter: str) -> dict
                      "Проверить обновления) и попробуйте снова.",
         }
     try:
-        shutil.copyfile(src, Path(f"{drive_letter}\\{filename}"))
+        shutil.copyfile(src, drive_root_path(drive_letter) / filename)
     except OSError as exc:
         return {"ok": False, "error": f"Не удалось записать на флешку {drive_letter}: {exc}"}
     return {"ok": True}
 
 
 class QrAdbApi:
-    def __init__(self, cars_dir: Path):
+    def __init__(self, base_dir: Path, cars_dir: Path):
+        self.base_dir = Path(base_dir)
         self.cars_dir = Path(cars_dir)
 
     def write_prep_flag(self, drive_letter: str) -> dict:
@@ -55,8 +57,11 @@ class QrAdbApi:
         return _write_shared_flag(self.cars_dir, _FLAG_FILENAME, drive_letter)
 
     def get_password(self, drive_letter: str) -> dict:
+        # debug_dir: пока формула не подтверждена 100%-но надёжной (жалобы
+        # клиентов на неверный пароль, 2026-09-21) — сохраняем исходный
+        # bugreport-*.zip целиком, см. app/qr_adb_password.py:save_debug_copy.
         try:
-            result = get_adb_password(Path(f"{drive_letter}\\"))
+            result = get_adb_password(drive_root_path(drive_letter), debug_dir=self.base_dir / "qr_adb_debug")
         except QrAdbError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, **result}

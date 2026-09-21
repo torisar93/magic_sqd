@@ -1273,8 +1273,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 readQrAdbBugreportZip(UsbFlashSession.requireFs()).fold(
                     onSuccess = { bytes ->
                         val zipB64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        // debug_dir: пока формула не подтверждена 100%-но
+                        // надёжной (жалобы клиентов на неверный пароль,
+                        // 2026-09-21) — сохраняем исходный bugreport-zip
+                        // целиком, см. android/.../python/qr_adb_password.py:
+                        // _save_debug_copy (порт desktop save_debug_copy).
+                        val debugDir = File(context.filesDir, "qr_adb_debug").absolutePath
                         val resultJson = pyModule("qr_adb_password")
-                            .callAttr("get_password_from_zip_b64", zipB64).toString()
+                            .callAttr("get_password_from_zip_b64", zipB64, debugDir).toString()
                         JSONObject(resultJson)
                     },
                     onFailure = { e -> JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")) },
@@ -1282,6 +1288,17 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             }
         } catch (e: Exception) {
             JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
+        }
+        // Раньше вся эта попытка была невидима в постоянном журнале сессии —
+        // жалобы «пароль неверный» нельзя было разобрать без доступа к
+        // самому телефону техника. Логируем тем же каналом, что и остальные
+        // ADB-действия (см. pushAdbLog/app.js: onAdbLog — тот же вызов
+        // взводит sessionHasActivity и пишет в install_log_append).
+        if (event.optBoolean("ok", false)) {
+            val debugNote = if (event.isNull("debug_copy") || event.optString("debug_copy", "").isEmpty()) "" else ", копия дампа сохранена"
+            pushAdbLog("QR ADB: пароль получен — код ${event.optString("code")}, SN ${event.optString("sn")}$debugNote.")
+        } else {
+            pushAdbLog("QR ADB: не удалось получить пароль — ${event.optString("error", "неизвестная ошибка")}")
         }
         pushEvent(JSONObject().put("kind", "qr_adb_password_result").put("result", event))
     }

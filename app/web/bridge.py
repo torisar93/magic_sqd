@@ -57,7 +57,7 @@ class WebApi:
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
         self._usb = UsbApi(base_dir, self._scanner)
-        self._qr_adb = QrAdbApi(self.cars_dir)
+        self._qr_adb = QrAdbApi(base_dir, self.cars_dir)
         self._report = ReportApi(base_dir)
         self._install_log = InstallLogApi(base_dir)
         self._admin = AdminApi(base_dir, self.apk_dir)
