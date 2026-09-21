@@ -41,7 +41,26 @@
   // (ошибка до события pywebviewready) — тогда просто копим в очередь и
   // отправляем её целиком, как только мост появится.
   const pendingErrors = [];
+  // ResizeObserver — известное доброкачественное сообщение браузера (сам
+  // ResizeObserver не успел доставить уведомление в пределах кадра, ничего
+  // не сломано, см. спецификацию/WICG issue #38), но всплывает через
+  // window.onerror и в редком случае зацикливается на каждый кадр —
+  // реальный случай на Android-порте этого же кода (лог #462, 2026-09-21):
+  // 1285 одинаковых строк подряд, ни одной реальной строки установки. Не
+  // шлём вовсе.
+  const BENIGN_ERROR_PREFIX = "ResizeObserver loop";
+  // Общая страховка ПОВЕРХ фильтра выше — на случай, если зациклится что-то
+  // ДРУГОЕ, не ResizeObserver: не даём одной сессии затопить журнал
+  // тысячами одинаковых строк.
+  const MAX_ERRORS_PER_SESSION = 20;
+  let sentErrorCount = 0;
   function sendError(message, stack) {
+    if (String(message).startsWith(BENIGN_ERROR_PREFIX)) return;
+    if (sentErrorCount >= MAX_ERRORS_PER_SESSION) return;
+    sentErrorCount += 1;
+    if (sentErrorCount === MAX_ERRORS_PER_SESSION) {
+      message = `${message}\n(достигнут предел ${MAX_ERRORS_PER_SESSION} ошибок за сессию — дальнейшие подавляются)`;
+    }
     if (window.pywebview && window.pywebview.api && window.pywebview.api.client_log_error) {
       window.pywebview.api.client_log_error(message, stack || "").catch(() => {});
       // Если ошибка случилась прямо во время активной сессии установки (см.

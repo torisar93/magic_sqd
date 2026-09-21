@@ -45,7 +45,27 @@ window.Bridge = {
   // не оставляло вообще никакого следа, даже локально. bridge.js — самый
   // первый <script> в index.html, поэтому обработчик ставится максимально
   // рано.
+  // ResizeObserver — известное доброкачественное сообщение браузера (сам
+  // ResizeObserver не успел доставить уведомление в пределах кадра, ничего
+  // не сломано, см. спецификацию/WICG issue #38), но всплывает через
+  // window.onerror и в редком случае зацикливается на каждый кадр —
+  // реальный случай (лог #462, 2026-09-21): 1285 одинаковых строк подряд,
+  // ни одной реальной строки установки, до того, как что-либо успело
+  // произойти на этом экране. Не шлём вовсе.
+  const BENIGN_ERROR_PREFIX = "ResizeObserver loop";
+  // Общая страховка ПОВЕРХ фильтра выше — на случай, если зациклится что-то
+  // ДРУГОЕ, не ResizeObserver: не даём одной сессии затопить журнал
+  // (и js_errors.log на телефоне, и прочный журнал сессии) тысячами
+  // одинаковых строк.
+  const MAX_ERRORS_PER_SESSION = 20;
+  let sentErrorCount = 0;
   function sendError(message, stack) {
+    if (String(message).startsWith(BENIGN_ERROR_PREFIX)) return;
+    if (sentErrorCount >= MAX_ERRORS_PER_SESSION) return;
+    sentErrorCount += 1;
+    if (sentErrorCount === MAX_ERRORS_PER_SESSION) {
+      message = `${message}\n(достигнут предел ${MAX_ERRORS_PER_SESSION} ошибок за сессию — дальнейшие подавляются)`;
+    }
     if (window.AndroidBridge) {
       window.Bridge.call("client_log_error", { message, stack: stack || "" });
     }
