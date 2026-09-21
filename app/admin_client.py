@@ -276,6 +276,58 @@ def delete_cars_path(base_url: str, session_cookie: str, rel_path: str) -> None:
     _request(base_url, session_cookie, "DELETE", f"/admin/api/cars?path={quote(rel_path)}")
 
 
+def list_cars_path_recursive(base_url: str, session_cookie: str, rel_path: str) -> list[str]:
+    """Плоский список ВСЕХ файлов (рекурсивно, путь относительно rel_path,
+    разделитель '/') под content/cars/<rel_path> на сервере — см.
+    car_editor_api.py: после upload_model (льёт только слиянием) сверяет с
+    локальным списком файлов модели и убирает по отдельности только то,
+    чего больше нет локально (см. delete_cars_path выше), вместо удаления
+    ВСЕЙ папки модели ДО заливки — тот способ на любом сбое между "удалить"
+    и "залить заново" оставлял модель без файлов вовсе (реальный
+    инцидент — см. память проекта)."""
+    data = _request(base_url, session_cookie, "GET",
+                     f"/admin/api/cars/list_recursive?path={quote(rel_path)}")
+    return data.get("files", [])
+
+
+def compute_stale_files(local_files, server_files) -> list[str]:
+    """Файлы на сервере, которых больше нет в локальном наборе (пути
+    относительно модели, разделитель '/') — чистая функция без сети, ради
+    юнит-теста (см. cleanup_stale_model_files ниже за реальным
+    использованием)."""
+    return sorted(set(server_files) - set(local_files))
+
+
+def cleanup_stale_model_files(base_url: str, session_cookie: str, dest_rel: str,
+                               model_dir: Path, log=lambda m: None) -> None:
+    """Вызывать ПОСЛЕ успешного upload_model/upload_model_as (льют только
+    слиянием, см. их докстринги) — убирает ПООТДЕЛЬНОСТИ файлы, которые есть
+    на сервере под dest_rel, но которых больше нет в model_dir локально
+    (например APK, убранный из обязательных). Никогда не удаляет ничего ДО
+    заливки — именно так модель Haval Jolion 2026 однажды осталась на
+    сервере вовсе без файлов (реальный инцидент 2026-09-21: 502 от nginx
+    посреди старой последовательности "стереть всё -> залить заново" оставил
+    её без файлов). Любая ошибка здесь — предупреждение в лог, а не отказ
+    публикации: главное (новая версия модели) уже надёжно на сервере."""
+    try:
+        local_files = {
+            str(p.relative_to(model_dir)).replace("\\", "/")
+            for p in model_dir.rglob("*")
+            if p.is_file() and p.name != _LOCAL_EDIT_MARKER_FILENAME
+        }
+        server_files = list_cars_path_recursive(base_url, session_cookie, dest_rel)
+        stale = compute_stale_files(local_files, server_files)
+    except AdminClientError as exc:
+        log(f"Не удалось сверить список файлов на сервере для уборки лишнего: {exc}")
+        return
+    for rel in stale:
+        try:
+            delete_cars_path(base_url, session_cookie, f"{dest_rel}/{rel}")
+            log(f"Убрал неиспользуемый файл на сервере: {rel}")
+        except AdminClientError as exc:
+            log(f"Не удалось убрать неиспользуемый файл на сервере ({rel}): {exc}")
+
+
 # -- единый файловый менеджер (см. server/backend.py: GET/DELETE
 # /admin/api/browse, POST /admin/api/move) — то же самое, что list_cars_path/
 # delete_cars_path выше, но параметризовано по дереву (cars или apk) вместо

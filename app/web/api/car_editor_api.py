@@ -19,7 +19,8 @@ import webview
 
 from ..events import event_bridge
 from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cached_session,
-                              delete_cars_path, get_cached_session, login, set_cached_session, upload_model)
+                              cleanup_stale_model_files, delete_cars_path, get_cached_session,
+                              login, set_cached_session, upload_model)
 from ...admin_config import get_admin_base_url
 from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec,
                                StandardApkSpec, StepSpec, StepVariant, create_car, load_car_spec, update_car)
@@ -488,32 +489,34 @@ class CarEditorApi:
 
         if admin_base_url and admin_session_cookie:
             try:
-                # upload_model ниже льёт строго слиянием (см. server/
-                # backend.py: _handle_cars_delete — "upload_dir/upload_model
-                # никогда сами не удаляют лишнее с сервера") — файл, который
-                # только что убрали из спеки (например APK из обязательных),
-                # локально пропадает из архива, но на сервере молча
-                # остаётся лежать в старой версии модели и потом снова
-                # подмешивается в список установки (см. install_api.py:
-                # standard_apks — сливает локальную папку с манифестом
-                # сервера). Поэтому сначала стираем текущую опубликованную
-                # версию этой модели целиком, а затем заливаем актуальную —
-                # реальный баг: техник убрал APK из обязательных, сохранил,
-                # опубликовал, а этап установки продолжал его предлагать.
+                # ВАЖНО: сначала залить, потом (при необходимости) убрать лишнее — НИКОГДА
+                # наоборот. Раньше здесь сначала стиралась ВСЯ опубликованная версия модели
+                # (delete_cars_path(new_rel)), а уже потом заливалась актуальная — сделано это
+                # было потому, что upload_model ниже льёт строго слиянием (см. server/
+                # backend.py: _handle_cars_delete — "upload_dir/upload_model никогда сами не
+                # удаляют лишнее с сервера") и файл, убранный из спеки (например APK из
+                # обязательных), молча оставался лежать на сервере и снова подмешивался в
+                # установку (install_api.py: standard_apks сливает локальную папку с
+                # манифестом сервера). Но ЛЮБОЙ сбой между "удалить" и "залить заново" —
+                # обрыв сети, перезапуск/зависание backend, таймаут прокси (реальный
+                # инцидент, 2026-09-21: 502 от nginx посреди публикации Haval Jolion 2026
+                # оставил модель на сервере БЕЗ файлов вообще, включая те, что не менялись) —
+                # оставлял модель на сервере без единого файла. Теперь: залить (безопасно,
+                # чистое слияние) → сверить с тем, что реально на сервере (list_cars_path_
+                # recursive) → убрать ПООТДЕЛЬНОСТИ только то, чего больше нет локально. Если
+                # публикация вообще не удалась — не удалено ничего, модель на сервере не
+                # тронута.
                 new_rel = str(model_dir.relative_to(self.cars_dir)).replace("\\", "/")
-                try:
-                    delete_cars_path(admin_base_url, admin_session_cookie, new_rel)
-                except AdminClientError as exc:
-                    if "(404)" not in str(exc):
-                        raise
-                    # Модели ещё не было на сервере (первая публикация) —
-                    # нечего стирать, это ожидаемо, а не ошибка.
                 self._log("Упаковываю в архив...")
                 shared_names = {s.usb_shared_folder for s in spec.steps if s.usb_shared_folder}
                 extra_dirs = [self.cars_dir / "_shared" / name for name in shared_names]
                 upload_model(admin_base_url, admin_session_cookie, self.cars_dir, model_dir,
                              extra_dirs=extra_dirs, log=self._log, check_cancelled=self._check_cancelled)
                 self._log("Опубликовано на сервере.")
+                # Уборка лишнего (см. admin_client.py: cleanup_stale_model_files) — НЕ
+                # фатальна: главное (новая версия модели) уже надёжно на сервере.
+                cleanup_stale_model_files(admin_base_url, admin_session_cookie, new_rel,
+                                           model_dir, log=self._log)
                 # Локальная копия только что стала совпадать с сервером —
                 # маркер (если остался от прошлой несинхронизированной
                 # правки) больше не нужен (см. mark_local_edit ниже/

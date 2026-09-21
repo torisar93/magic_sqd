@@ -63,6 +63,24 @@ _ASSET_RE_WIN7 = re.compile(r"^MagicSQD_Setup_Win7_\d+\.\d+\.\d+\.exe$", re.IGNO
 # соответствующий .dmg подбирается по реальной архитектуре машины техника
 # (platform.machine() в __init__), не по одному фиксированному имени.
 _ASSET_RE_MAC_ARM64 = re.compile(r"^MagicSQD_\d+\.\d+\.\d+_arm64\.dmg$", re.IGNORECASE)
+
+
+def _mac_is_translated() -> bool:
+    """True — этот процесс x86_64, но физически исполняется на Apple Silicon через
+    Rosetta 2 (sysctl.proc_translated == "1"). На настоящем Intel Mac такого sysctl
+    либо нет, либо он "0" — тогда False, как и нужно. Реальный случай (2026-09-21):
+    клиент на MacBook Air M4 самообновлениями шёл на x86_64-сборку раз за разом —
+    platform.machine() для x86_64-сборки под Rosetta возвращает "x86_64", неотличимо
+    от настоящего Intel Mac, и программа никогда САМА не переходила на нативный
+    arm64 (см. __init__/_own_server_asset_key ниже)."""
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "sysctl.proc_translated"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip() == "1"
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 _ASSET_RE_MAC_X64 = re.compile(r"^MagicSQD_\d+\.\d+\.\d+_x86_64\.dmg$", re.IGNORECASE)
 OWN_SERVER_ASSET_NAME = "MagicSQD_Setup.exe"
 MAC_BUNDLE_ID = "ru.magicsqd.desktop"  # см. CFBundleIdentifier в magic_sqd_mac.spec
@@ -167,15 +185,18 @@ class UpdateApi:
         # нет, поэтому этот источник ниже пропускается. macOS — та же idea:
         # свой сервер зеркалирует только Windows x64, поэтому здесь тоже
         # только GitHub (см. _check_own_server), а нужный .dmg выбирается по
-        # архитектуре ЭТОГО процесса — platform.machine() отражает то, ПОД
-        # ЧЕМ он реально исполняется прямо сейчас (для x86_64-сборки,
-        # запущенной под Rosetta на Apple Silicon, вернёт именно "x86_64",
-        # а не архитектуру самого железа) — то есть даёт ровно тот .dmg,
-        # который совместим с уже установленной копией.
+        # архитектуре ЭТОГО процесса — НО platform.machine() сам по себе
+        # неотличим для "настоящего x86_64 Mac" и "x86_64-сборки под Rosetta
+        # на Apple Silicon" (в обоих случаях вернёт "x86_64"). Второй случай —
+        # реальный застрявший клиент (2026-09-21): once собранная x86_64-копия
+        # самообновлениями НИКОГДА не перейдёт на нативный arm64 без этой
+        # проверки — _mac_is_translated() их различает, self._mac_wants_x64
+        # True только для настоящего Intel Mac.
+        self._mac_wants_x64 = platform.machine() == "x86_64" and not _mac_is_translated()
         if is_win7:
             self._asset_re = _ASSET_RE_WIN7
         elif self.is_mac:
-            self._asset_re = _ASSET_RE_MAC_X64 if platform.machine() == "x86_64" else _ASSET_RE_MAC_ARM64
+            self._asset_re = _ASSET_RE_MAC_X64 if self._mac_wants_x64 else _ASSET_RE_MAC_ARM64
         else:
             self._asset_re = _ASSET_RE
         self._installing = False
@@ -196,11 +217,13 @@ class UpdateApi:
         return best
 
     def _own_server_asset_key(self) -> str:
-        """Ключ в version.json["assets"] для ЭТОЙ сборки (см. scripts/mirror_release.sh)."""
+        """Ключ в version.json["assets"] для ЭТОЙ сборки (см. scripts/mirror_release.sh).
+        self._mac_wants_x64 — см. __init__/_mac_is_translated (отличает настоящий Intel
+        Mac от x86_64-сборки под Rosetta на Apple Silicon)."""
         if self.is_win7:
             return "win7"
         if self.is_mac:
-            return "macos_x86_64" if platform.machine() == "x86_64" else "macos_arm64"
+            return "macos_x86_64" if self._mac_wants_x64 else "macos_arm64"
         return "windows"
 
     def _check_own_server(self) -> dict | None:

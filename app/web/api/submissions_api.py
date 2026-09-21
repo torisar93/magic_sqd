@@ -26,9 +26,9 @@ from pathlib import Path
 
 from ..events import event_bridge
 from ... import pending_submissions
-from ...admin_client import (AdminClientError, clear_cached_session, delete_cars_path, delete_submission,
-                              download_submission, get_cached_session, list_submissions,
-                              peek_submission, upload_model_as)
+from ...admin_client import (AdminClientError, clear_cached_session, cleanup_stale_model_files,
+                              delete_submission, download_submission, get_cached_session,
+                              list_submissions, peek_submission, upload_model_as)
 from ...admin_config import get_admin_base_url
 from ...scanner import ModelInfo
 
@@ -151,22 +151,22 @@ class SubmissionsApi:
     def _publish_worker(self, base_url, cookie, model: ModelInfo, key: str) -> None:
         try:
             self._log(f"Публикую {model.brand} / {model.name}...")
-            # upload_model_as ниже льёт строго слиянием и никогда сама не
-            # удаляет лишнее (см. тот же приём и полное обоснование в
-            # car_editor_api.py:_worker — если заявка правит уже
-            # опубликованную модель и что-то из неё убрала, старый файл
-            # иначе молча остался бы висеть на сервере). 404 (модели там
-            # ещё не было) — ожидаемо для действительно новой машины, не
-            # ошибка.
+            # ВАЖНО: сначала залить (upload_model_as льёт строго слиянием), потом убрать
+            # лишнее ПООТДЕЛЬНОСТИ — НИКОГДА наоборот. Раньше здесь сначала стиралась вся
+            # опубликованная версия (delete_cars_path(dest_rel)), а потом заливалась заявка —
+            # тот же приём и та же причина, что раньше был в car_editor_api.py (если заявка
+            # правит уже опубликованную модель и что-то из неё убрала, старый файл иначе молча
+            # остался бы висеть на сервере), но со ЖЕ уязвимостью: любой сбой между "удалить" и
+            # "залить заново" оставлял модель на сервере без файлов вовсе (реальный инцидент
+            # 2026-09-21, см. car_editor_api.py и память проекта). 404 при сверке (модели там
+            # ещё не было) — ожидаемо для действительно новой машины, не ошибка.
             dest_rel = f"{model.brand}/{model.name}/{model.modification}" if model.modification \
                 else f"{model.brand}/{model.name}"
-            try:
-                delete_cars_path(base_url, cookie, dest_rel)
-            except AdminClientError as exc:
-                if "(404)" not in str(exc):
-                    raise
             upload_model_as(base_url, cookie, self.cars_dir, model.dir,
                              model.brand, model.name, model.modification or "", log=self._log)
+            # Уборка лишнего (см. admin_client.py: cleanup_stale_model_files) — НЕ
+            # фатальна: главное (новая версия модели) уже надёжно на сервере.
+            cleanup_stale_model_files(base_url, cookie, dest_rel, model.dir, log=self._log)
             delete_submission(base_url, cookie, model.submission_name)
             pending_submissions.discard(self.base_dir, model.submission_name)
             self._scanner_api.unregister_pending(key)
