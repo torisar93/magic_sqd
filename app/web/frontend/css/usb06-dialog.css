@@ -27,6 +27,15 @@
 #usb-dialog .usb06-progress{grid-column:1/-1;height:6px;width:100%;margin:6px 0 0;overflow:hidden;border-radius:6px;background:#b6e7d918;position:relative}
 #usb-dialog .usb06-progress>span{position:absolute;inset:0 auto 0 0;width:38%;border-radius:inherit;background:linear-gradient(90deg,#85c8b7,#b8f4df);animation:usb06-write 1.65s ease-in-out infinite!important}
 #usb-dialog .usb06-progress[hidden]{display:none!important}
+/* Кольцо с процентом/очередью файлов (progress08.js) — то же самое, что
+   показывает установка приложений, встроенное в существующий блок
+   usb06-transfer вместо старой индетерминированной полосы, когда заранее
+   известен список файлов (см. usb_list_items/LabUI.busy в dialogs.js).
+   Полоса выше остаётся как есть для операций без такого списка
+   (форматирование) — ring и progress между собой взаимоисключающие. */
+#usb-dialog .usb06-ring{grid-column:1/-1;margin:10px 0 0}
+#usb-dialog .usb06-ring[hidden]{display:none!important}
+#usb-dialog .usb06-ring .progress08.run-status{padding:20px 0 0;width:100%}
 #usb-dialog .usb06-advanced,#usb-dialog .usb06-log-details{border:1px solid #bfdfd21f;border-radius:12px;background:linear-gradient(125deg,#bbdacf07,#a1c5cd03);overflow:hidden}
 #usb-dialog .usb06-advanced>summary,#usb-dialog .usb06-log-details>summary{min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-sizing:border-box;padding:11px 15px;font-size:13px;font-weight:500;color:#b6cbd0;cursor:pointer;list-style:none}
 #usb-dialog summary::-webkit-details-marker{display:none}

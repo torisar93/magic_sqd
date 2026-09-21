@@ -23,6 +23,7 @@ import ru.magicsqd.mobile.usb.NetworkScan
 import ru.magicsqd.mobile.usb.StageRunResult
 import ru.magicsqd.mobile.usb.UsbFlashSession
 import ru.magicsqd.mobile.usb.readQrAdbBugreportZip
+import ru.magicsqd.mobile.usb.scanUsbStageItems
 import ru.magicsqd.mobile.usb.writeQrAdbFlag
 import ru.magicsqd.mobile.usb.writeQrAdbPrepFlag
 import ru.magicsqd.mobile.usb.writeUsbStage
@@ -261,6 +262,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "usb_connect" -> { usbConnect(); "{}" }
                 "usb_disconnect" -> { UsbFlashSession.disconnect(); "{}" }
                 "usb_format" -> { usbFormat(args); "{}" }
+                "usb_list_items" -> usbListItems(args)
                 "usb_run_stage" -> { usbRunStage(args); "{}" }
                 "qr_adb_write_prep_flag" -> { qrAdbWritePrepFlag(); "{}" }
                 "qr_adb_write_flag" -> { qrAdbWriteFlag(); "{}" }
@@ -1139,6 +1141,29 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         }
     }
 
+    /** Список файлов, которые запишутся на флешку — вызывается ДО
+     * usb_run_stage, чтобы app.js успел показать очередь в кольце прогресса
+     * (openStageRun/LabUI.busy) раньше, чем начнётся сама запись. Быстрый,
+     * синхронный (только File.length() уже докачанных файлов — см.
+     * ensureApksDownloaded в usbRunStage ниже), ничего не запускает —
+     * аналог desktop UsbApi.list_items (app/web/api/usb_api.py). Разбор
+     * аргументов сознательно продублирован с usbRunStage — общей функции
+     * сборки sharedFolderDir/apksDest не заводили ради одной короткой пары
+     * строк, а не большого куска логики. */
+    private fun usbListItems(args: JSONObject): String {
+        val filesArr = args.getJSONArray("files")
+        val files = (0 until filesArr.length()).map { filesArr.getString(it) }
+        val sharedFolder = args.optString("sharedFolder", "")
+        val sharedFolderDir = if (sharedFolder.isNotBlank()) File(carsDir, "_shared/$sharedFolder") else null
+        val selectedArr = args.optJSONArray("selectedApks") ?: JSONArray()
+        val selectedApks = (0 until selectedArr.length()).map { selectedArr.getString(it) }
+        val items = JSONArray()
+        scanUsbStageItems(files, sharedFolderDir, selectedApks).forEach { item ->
+            items.put(JSONObject().put("name", item.name).put("path", item.path).put("size", item.size))
+        }
+        return JSONObject().put("ok", true).put("items", items).toString()
+    }
+
     /** Исполняет "usb"-этап: файлы модели (в корень флешки), опционально
      * общая папка cars/_shared/<sharedFolder>/ и выбранные техником
      * необязательные APK (в apksDest) — см. writeUsbStage. */
@@ -1162,7 +1187,16 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     // mobile_bridge.sync_payload).
                     ensureApksDownloaded(files + selectedApks)
                     if (sharedFolder.isNotBlank()) syncSharedFolder(sharedFolder)
-                    writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog)
+                    // "transfer" — та же фаза, что уже использует установка
+                    // приложений для байтов, переданных по проводу (см.
+                    // ApkOperationProgress) — для записи на флешку это
+                    // ближайший существующий аналог байтового прогресса
+                    // ВНУТРИ файла; отдельной фазы заводить не стали.
+                    writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog,
+                        onProgress = { path, bytesDone, bytesTotal, filesDone, filesTotal, state ->
+                            pushApkProgress(stageIndex, path, filesDone, filesTotal, state,
+                                ApkOperationProgress("transfer", bytesDone, bytesTotal))
+                        })
                 }
             } catch (e: Exception) {
                 StageRunResult.Failed((e.message ?: "неизвестная ошибка"))

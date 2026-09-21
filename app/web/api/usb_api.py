@@ -21,6 +21,42 @@ def _drive_to_dict(d) -> dict:
             "free_bytes": d.free_bytes, "display": d.display}
 
 
+def _scan_usb_items(base_dir: Path, model, stage: dict, stage_index: int, variant,
+                     selected_apk_paths: list[str]) -> list[dict]:
+    """Список файлов, которые в ЦЕЛОМ запишутся на флешку за этот запуск —
+    отражает РОВНО ТУ ЖЕ структуру, что сгенерированный usb_step_N(ctx)
+    фактически копирует (см. app/car_generator.py: _render_install_py,
+    ветка "usb" — usb_dir → выбранные APK → общая папка _shared, в этом же
+    порядке), но посчитан ЗАРАНЕЕ, до старта записи: технику нужно увидеть
+    список файлов и общий счётчик ДО первого события прогресса (см.
+    UsbApi.list_items). stage_index — 0-based позиция в load_stages(model),
+    совпадает с (i-1) генератора (оба перебирают spec.steps/STAGES в одном
+    и том же порядке, см. app/stage_runner.py:load_stages). Не гарантирует
+    точность для ручной правки install.py — это чисто визуальная сводка, не
+    влияет на саму запись (см. план)."""
+    items: list[dict] = []
+    usb_step_dir = model.dir / "usb_files" / f"step_{stage_index + 1}"
+    if variant:
+        usb_step_dir = usb_step_dir / str(variant)
+    if usb_step_dir.is_dir():
+        for path in sorted(usb_step_dir.rglob("*")):
+            if path.is_file():
+                items.append({"name": path.name, "path": str(path), "size": path.stat().st_size})
+    if stage.get("usb_copy_selected_apks"):
+        for raw in selected_apk_paths:
+            path = Path(raw)
+            if path.is_file():
+                items.append({"name": path.name, "path": str(path), "size": path.stat().st_size})
+    shared_folder = stage.get("usb_shared_folder")
+    if shared_folder:
+        shared_dir = base_dir / "cars" / "_shared" / shared_folder
+        if shared_dir.is_dir():
+            for path in sorted(shared_dir.rglob("*")):
+                if path.is_file():
+                    items.append({"name": path.name, "path": str(path), "size": path.stat().st_size})
+    return items
+
+
 class UsbApi:
     def __init__(self, base_dir, scanner_api):
         self.base_dir = base_dir
@@ -35,6 +71,20 @@ class UsbApi:
     def list_drives(self, include_all: bool = False) -> list[dict]:
         return [_drive_to_dict(d) for d in _list_drives(include_all, self.base_dir)]
 
+    def list_items(self, model_key: str, stage_index: int, variant, selected_apk_paths: list[str]) -> dict:
+        """Считает список файлов, которые запишутся на флешку — вызывается
+        ДО start(), чтобы фронтенд успел показать очередь в окне прогресса
+        (см. app/web/frontend/js/screens/dialogs.js) раньше, чем начнётся
+        сама запись. Быстрый, синхронный (только stat() файлов, уже
+        докачанных ранее содержимым модели — см. sync_model_files в
+        load_spec/_worker ниже), ничего не запускает."""
+        model = self._scanner_api.get_model(model_key)
+        if model is None:
+            return {"ok": False, "error": "unknown model key"}
+        stage = load_stages(model)[stage_index]
+        items = _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths)
+        return {"ok": True, "items": items}
+
     def start(self, model_key: str, stage_index: int, variant, selected_apk_paths: list[str],
               drive_letter: str, do_format: bool, filesystem: str) -> dict:
         if self._running:
@@ -47,7 +97,7 @@ class UsbApi:
         self._cancel_flag = threading.Event()
         self._thread = threading.Thread(
             target=self._worker,
-            args=(model, stage, variant, selected_apk_paths, drive_letter, do_format, filesystem),
+            args=(model, stage, stage_index, variant, selected_apk_paths, drive_letter, do_format, filesystem),
             daemon=True,
         )
         self._thread.start()
@@ -63,7 +113,7 @@ class UsbApi:
         if self._cancel_flag.is_set():
             raise InstallCancelled("Копирование остановлено пользователем.")
 
-    def _worker(self, model, stage, variant, selected_apk_paths, drive_letter, do_format, filesystem):
+    def _worker(self, model, stage, stage_index, variant, selected_apk_paths, drive_letter, do_format, filesystem):
         try:
             sync_model_files(self.base_dir, model, log=self._log,
                              check_cancelled=self._check_cancelled,
@@ -100,6 +150,12 @@ class UsbApi:
             else:
                 drive_root = Path(drive_letter)
 
+            # Пересчитываем список файлов (тот же, что list_items() уже
+            # отдал фронтенду до старта, см. её докстринг) — только чтобы
+            # узнать files_total к этому моменту; сами файлы к этому моменту
+            # уже докачаны шагами выше (sync_model_files/ensure_apks_downloaded/
+            # sync_shared_folder), так что список не должен разъехаться.
+            items = _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths)
             ctx = UsbContext(
                 drive_root=drive_root,
                 model_dir=model.dir,
@@ -108,6 +164,10 @@ class UsbApi:
                 cancel_flag=self._cancel_flag,
                 variant=variant,
                 shared_dir=self.base_dir / "cars" / "_shared",
+                on_progress=lambda path, bytes_done, bytes_total, files_done, files_total, state: (
+                    self._progress_apk(stage_index, path, files_done, files_total, state, bytes_done, bytes_total)
+                ),
+                files_total=len(items),
             )
             stage["run"](ctx)
         except InstallCancelled as exc:
@@ -128,6 +188,21 @@ class UsbApi:
                   files_total: int | None = None) -> None:
         event_bridge.push({"kind": "sync_progress", "done": done, "total": total,
                            "files_done": files_done, "files_total": files_total})
+
+    @staticmethod
+    def _progress_apk(stage_index: int, path: str, completed: int, total: int, state: str,
+                       bytes_done: int, bytes_total: int) -> None:
+        """Тот же формат события "apk_progress", что уже используют
+        установка приложений на Android (см. WebBridge.kt: pushApkProgress) и
+        общий UI-компонент app/web/frontend/js/progress08.js — переиспользуем
+        готовое кольцо с процентом и очередь файлов вместо изобретения
+        нового индикатора специально для записи на флешку (см. dialogs.js)."""
+        event_bridge.push({
+            "kind": "apk_progress", "stage_index": stage_index, "path": path,
+            "completed": completed, "total": total, "state": state,
+            "phase": "transfer", "determinate": bytes_total > 0,
+            "bytes_done": bytes_done, "bytes_total": bytes_total,
+        })
 
     def _finish(self, success: bool, message: str) -> None:
         self._progress(0, 0)

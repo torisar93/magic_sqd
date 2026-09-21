@@ -59,14 +59,60 @@ private const val WRITE_RETRY_DELAY_MS = 300L
 // ловится тут же ниже отдельно — этот класс исключений НЕ является его
 // подклассом, поэтому раньше падал с первой же попытки, вообще без ретрая.
 
+/** Файл в очереди записи — тот же {name, path, size}, что и desktop
+ * _scan_usb_items (app/web/api/usb_api.py), path — ЛОКАЛЬНЫЙ (исходный) путь,
+ * не путь назначения на флешке: именно им помечены строки очереди в
+ * progress08.js (LabUI.busy/LabUI.progress ищут по item.path/e.path), и им
+ * же должны совпадать события onProgress ниже. */
+data class UsbFileItem(val name: String, val path: String, val size: Long)
+
+/**
+ * Список файлов, которые ЦЕЛИКОМ будут записаны за один запуск "usb"-этапа —
+ * та же структура и порядок обхода, что и сама запись в writeUsbStage ниже
+ * (files -> общая папка _shared -> выбранные APK), но посчитанная ЗАРАНЕЕ,
+ * до старта записи (аналог desktop _scan_usb_items) — нужно показать
+ * технику очередь и общий счётчик файлов в кольце прогресса ДО первого
+ * события (см. WebBridge.kt: usbListItems).
+ */
+fun scanUsbStageItems(files: List<String>, sharedFolderDir: File?, selectedApkPaths: List<String>): List<UsbFileItem> {
+    val items = mutableListOf<UsbFileItem>()
+    for (path in files) {
+        val f = File(path)
+        if (f.isFile) items.add(UsbFileItem(f.name, f.path, f.length()))
+    }
+    if (sharedFolderDir != null && sharedFolderDir.exists()) {
+        sharedFolderDir.walkTopDown().filter { it.isFile }.forEach { f ->
+            items.add(UsbFileItem(f.name, f.path, f.length()))
+        }
+    }
+    for (path in selectedApkPaths) {
+        val f = File(path)
+        if (f.isFile) items.add(UsbFileItem(f.name, f.path, f.length()))
+    }
+    return items
+}
+
 /**
  * Пишет один локальный файл на смонтированную флешку по относительному
  * пути (создавая недостающие подпапки) — аналог desktop UsbContext.copy_file
  * (app/usb_context.py), но поверх штатного libaums UsbFile API (то же самое,
  * что уже использует writeAndVerifyTestFile в UsbFlashSpike.kt — ничего
  * самодельного, в отличие от форматирования).
+ *
+ * onProgress(path, bytesDone, bytesTotal, filesDone, filesTotal, state) —
+ * тот же набор параметров, что и у desktop UsbContext._on_progress: path —
+ * ЛОКАЛЬНЫЙ путь (localFile), не destRelativePath; state="running" на
+ * каждый чанк текущего файла (offset уже посчитан ниже для лога), "done"
+ * один раз по завершении файла целиком. filesDone/filesTotal — счётчик
+ * очереди целиком, общий на весь запуск writeUsbStage (см. её докстринг),
+ * поэтому передаются СНАРУЖИ, а не считаются здесь.
  */
-fun writeFileToUsb(fs: FileSystem, localFile: File, destRelativePath: String, log: (String) -> Unit) {
+fun writeFileToUsb(
+    fs: FileSystem, localFile: File, destRelativePath: String, log: (String) -> Unit,
+    filesDone: Int = 0, filesTotal: Int = 0,
+    onProgress: (path: String, bytesDone: Long, bytesTotal: Long, filesDone: Int, filesTotal: Int, state: String) -> Unit =
+        { _, _, _, _, _, _ -> },
+) {
     val segments = destRelativePath.split("/").filter { it.isNotEmpty() }
     require(segments.isNotEmpty()) { "Пустой путь назначения" }
 
@@ -94,6 +140,7 @@ fun writeFileToUsb(fs: FileSystem, localFile: File, destRelativePath: String, lo
                     if (read <= 0) break
                     target.write(offset, ByteBuffer.wrap(buffer, 0, read))
                     offset += read
+                    onProgress(localFile.path, offset, totalSize, filesDone, filesTotal, "running")
                     val mb = (offset / (1024 * 1024)).toInt()
                     if (mb != lastLoggedMb && totalSize > WRITE_CHUNK_SIZE) {
                         log("...записано ${mb}MB/${totalSize / 1024 / 1024}MB ($destRelativePath)")
@@ -102,6 +149,7 @@ fun writeFileToUsb(fs: FileSystem, localFile: File, destRelativePath: String, lo
                 }
             }
             target.close()
+            onProgress(localFile.path, offset, totalSize, filesDone + 1, filesTotal, "done")
             log("Записано: $destRelativePath ($offset байт)")
             return
         } catch (e: Exception) {
@@ -131,29 +179,39 @@ fun writeUsbStage(
     selectedApkPaths: List<String>,
     apksDestSubdir: String,
     log: (String) -> Unit,
+    onProgress: (path: String, bytesDone: Long, bytesTotal: Long, filesDone: Int, filesTotal: Int, state: String) -> Unit =
+        { _, _, _, _, _, _ -> },
 ): StageRunResult {
     val fs = try {
         UsbFlashSession.requireFs()
     } catch (e: Exception) {
         return StageRunResult.Failed(e.message ?: "Флешка не подключена")
     }
+    // Тот же список/порядок, что и сама запись ниже — только чтобы узнать
+    // filesTotal к этому моменту (аналог desktop _worker: пересчитывает
+    // _scan_usb_items ещё раз прямо перед созданием UsbContext).
+    val filesTotal = scanUsbStageItems(files, sharedFolderDir, selectedApkPaths).size
+    var filesDone = 0
     return try {
         for (path in files) {
             val f = File(path)
             if (!f.exists()) return StageRunResult.Failed("Файл не скачан: $path")
-            writeFileToUsb(fs, f, f.name, log)
+            writeFileToUsb(fs, f, f.name, log, filesDone, filesTotal, onProgress)
+            filesDone++
         }
         if (sharedFolderDir != null && sharedFolderDir.exists()) {
             sharedFolderDir.walkTopDown().filter { it.isFile }.forEach { f ->
                 val rel = f.relativeTo(sharedFolderDir).path.replace('\\', '/')
-                writeFileToUsb(fs, f, rel, log)
+                writeFileToUsb(fs, f, rel, log, filesDone, filesTotal, onProgress)
+                filesDone++
             }
         }
         for (path in selectedApkPaths) {
             val f = File(path)
             if (!f.exists()) return StageRunResult.Failed("Файл не скачан: $path")
             val dest = if (apksDestSubdir.isNotBlank()) "$apksDestSubdir/${f.name}" else f.name
-            writeFileToUsb(fs, f, dest, log)
+            writeFileToUsb(fs, f, dest, log, filesDone, filesTotal, onProgress)
+            filesDone++
         }
         StageRunResult.Success
     } catch (e: Exception) {

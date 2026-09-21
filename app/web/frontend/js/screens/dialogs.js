@@ -11,7 +11,7 @@
   // USB-флешка (открывается из js/screens/stage_wizard.js: renderUsbStage)
   // ==================================================================
   const usb = (() => {
-    let dialog, driveSelect, showAllCheckbox, driveHintEl, formatCheckbox, fsRadios, warningEl, progressEl, logEl, startBtn, stopBtn, closeBtn;
+    let dialog, driveSelect, showAllCheckbox, driveHintEl, formatCheckbox, fsRadios, warningEl, progressEl, ringEl, logEl, startBtn, stopBtn, closeBtn;
     let refreshBtn, statusEl, statusDetailEl, logDetails, advancedDetails;
     let drives = [];
     let opts = null;
@@ -28,6 +28,7 @@
       fsRadios = Array.from(document.querySelectorAll('input[name="usb-fs"]'));
       warningEl = document.getElementById("usb-warning");
       progressEl = document.getElementById("usb-progress");
+      ringEl = document.getElementById("usb06-ring");
       logEl = document.getElementById("usb-log");
       startBtn = document.getElementById("usb-start");
       stopBtn = document.getElementById("usb-stop");
@@ -108,10 +109,15 @@
       formatCheckbox.disabled = locked;
       fsRadios.forEach((radio) => { radio.disabled = locked || !formatCheckbox.checked; });
       closeBtn.disabled = running || preparing;
-      progressEl.hidden = !running;
-      progressEl.style.display = running ? "" : "none";
-      progressEl.classList.toggle("indeterminate", running);
-      progressEl.setAttribute("aria-busy", String(running));
+      // Кольцо с очередью файлов (см. onStart) заменяет собой старую
+      // индетерминированную полосу, когда заранее известен список файлов —
+      // если оно активно, полосу не показываем вовсе, чтобы не дублировать
+      // один и тот же смысл двумя разными индикаторами одновременно.
+      const ringActive = running && !ringEl.hidden;
+      progressEl.hidden = !running || ringActive;
+      progressEl.style.display = running && !ringActive ? "" : "none";
+      progressEl.classList.toggle("indeterminate", running && !ringActive);
+      progressEl.setAttribute("aria-busy", String(running && !ringActive));
       dialog.setAttribute("aria-busy", String(running || refreshing));
       startBtn.querySelector("span").textContent = preparing ? "Подтверждение…" : running ? "Идёт запись…" : "Записать на флешку";
       stopBtn.textContent = cancelRequested ? "Останавливаем…" : "Остановить";
@@ -198,8 +204,26 @@
           );
           if (!confirmed || revision !== runRevision || !dialog.open) return;
         }
+        // Список файлов заранее — как на установке приложений, чтобы окно
+        // прогресса сразу открылось с кольцом и очередью, а не пустым.
+        // Это чисто визуальная сводка (см. usb_api.py:_scan_usb_items):
+        // ошибка/пустой список не должны мешать самой записи — тогда просто
+        // остаёмся на старой индетерминированной полосе, как раньше.
+        let items = [];
+        try {
+          const itemsResult = await window.pywebview.api.usb_list_items(
+            launchOpts.modelKey, launchOpts.stageIndex, launchOpts.variant, launchOpts.selectedApkPaths
+          );
+          if (itemsResult?.ok && Array.isArray(itemsResult.items)) items = itemsResult.items;
+        } catch { /* см. комментарий выше — не блокируем запись из-за сводки */ }
+        if (revision !== runRevision || !dialog.open) return;
         running = true;
         preparing = false;
+        if (items.length) {
+          ringEl.dataset.stageIndex = String(launchOpts.stageIndex);
+          window.LabUI.busy(ringEl, "Запись на флешку", items);
+          ringEl.hidden = false;
+        }
         updateControls();
         setStatus("writing", "Записываем файлы на флешку", "Не отключайте накопитель. Время зависит от скорости флешки и размера файлов.");
         const result = await window.pywebview.api.usb_start(
@@ -211,6 +235,9 @@
       } catch (error) {
         if (revision !== runRevision || finishDelivered) return;
         running = false;
+        ringEl.hidden = true;
+        clear(ringEl);
+        delete ringEl.dataset.stageIndex;
         const message = error?.message || String(error);
         setStatus("error", "Запись не началась", message);
         log(message);
@@ -248,6 +275,12 @@
       finishDelivered = true;
       running = false;
       preparing = false;
+      // Кольцо — только на время самой записи; итог (успех/остановка/ошибка)
+      // показывает уже существующий баннер usb06-transfer ниже по коду,
+      // как и раньше без кольца — не дублируем один и тот же смысл дважды.
+      ringEl.hidden = true;
+      clear(ringEl);
+      delete ringEl.dataset.stageIndex;
       const wasCancelled = cancelRequested;
       const success = !!event.success && !wasCancelled;
       const onComplete = opts?.onFinished;
@@ -287,6 +320,9 @@
       finishDelivered = false;
       drives = [];
       populateDrives("");
+      ringEl.hidden = true;
+      clear(ringEl);
+      delete ringEl.dataset.stageIndex;
       showAllCheckbox.checked = false;
       formatCheckbox.checked = false;
       fsRadios.forEach((radio) => { radio.checked = radio.value === "FAT32"; });

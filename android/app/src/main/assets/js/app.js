@@ -2452,7 +2452,7 @@
     closeButton.focus({ preventScroll: true });
   }
 
-  function beginUsbOperation(kind, stage, card) {
+  function beginUsbOperation(kind, stage, card, items = []) {
     if (labInstallBusy) return false;
     if (!usbConnected) {
       usbStatusEl.textContent = "Сначала подключите флешку к телефону";
@@ -2471,6 +2471,12 @@
       title: { files: "Запись файлов на флешку", flag: "Запись файла на флешку", prep_flag: "Запись файла на флешку", password: "Получение пароля ADB" }[kind] || "Работа с флешкой",
       stageIndex: stage.index, icon: kind === "password" ? "key" : "usb",
       tag: kind === "files" ? "stage" : `qr-${kind}`,
+      // Список файлов — только у "files" (см. вызов ниже, usb_list_items);
+      // у flag/prep_flag/password список не считается, кольцо там простое,
+      // как и раньше (openStageRun сам трактует пустой items как "без
+      // очереди" — см. js/stage_run.js, идентичен desktop
+      // components/stage_run.js).
+      items,
       detail: kind === "password" ? "Читаем сохранённые данные с флешки…" : "Не отключайте флешку до завершения записи.",
       // После закрытия окна страница перерисована — кнопку действия ищем заново. Карточки qr_adb
       // с qr_adb_engineering_menu=true (см. car_generator.py) сдвинуты на 2 (доп. фаза "инженерное
@@ -2526,12 +2532,24 @@
     if (stage.usb_shared_folder) writeCard.append(el("p", { class: "usb-bundle-note" }, [usbStageIcon("file"), el("span", { text: "Комплект файлов для магнитолы" })]));
 
     const btn = usbStageButton(result?.success ? "Записать ещё раз" : "Записать файлы", "download", () => {
-      if (!beginUsbOperation("files", stage, writeCard)) return;
+      const selectedApks = stage.usb_copy_selected_apks ? Array.from(globalSelectedApks) : [];
+      const sharedFolder = stage.usb_shared_folder || "";
+      // Список файлов заранее — как на установке приложений, чтобы окно
+      // прогресса сразу открылось с кольцом и очередью (см. WebBridge.kt:
+      // usbListItems). Bridge.call синхронный (см. bridge.js) — ошибка или
+      // пустой список тут не должны мешать самой записи, тогда openStageRun
+      // просто получит пустой items, как и раньше.
+      let items = [];
+      try {
+        const itemsResult = Bridge.call("usb_list_items", { files, sharedFolder, selectedApks });
+        if (itemsResult?.ok && Array.isArray(itemsResult.items)) items = itemsResult.items;
+      } catch { /* см. комментарий выше */ }
+      if (!beginUsbOperation("files", stage, writeCard, items)) return;
       sendUsbOperation("usb_run_stage", {
         index: stage.index,
         files,
-        sharedFolder: stage.usb_shared_folder || "",
-        selectedApks: stage.usb_copy_selected_apks ? Array.from(globalSelectedApks) : [],
+        sharedFolder,
+        selectedApks,
         apksDest: stage.usb_apks_dest || "",
       }, stage);
     }, !result?.success);

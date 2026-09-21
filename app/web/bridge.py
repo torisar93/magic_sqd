@@ -245,6 +245,10 @@ class WebApi:
         return self._usb.start(model_key, stage_index, variant, selected_apk_paths,
                                 drive_letter, do_format, filesystem)
 
+    def usb_list_items(self, model_key: str, stage_index: int, variant,
+                       selected_apk_paths: list) -> dict:
+        return self._usb.list_items(model_key, stage_index, variant, selected_apk_paths)
+
     def usb_cancel(self) -> dict:
         return self._usb.cancel()
 
