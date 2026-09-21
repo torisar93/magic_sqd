@@ -104,6 +104,20 @@ class SignatureMismatchError(VersionDowngradeError):
     перебор, сработали и здесь; тексты для техника различаются."""
 
 
+class AppInstallFailed(RuntimeError):
+    """Одно конкретное приложение не встало УЖЕ ПОСЛЕ того, как способ установки
+    подтверждён рабочим на этой магнитоле (self._install_method залочен в
+    install_apk_auto). До v1.0.23 такой сбой ничем не отличался от любой другой
+    ошибки и улетал необработанным до самого runner.py — "Ошибка установки: ..."
+    рушила ВЕСЬ этап целиком, стирая уже успешно поставленные приложения (реальный
+    случай, 2026-09-20, Geely Atlas New/Monji, логи #390/#391: один и тот же
+    gnss-client-v2.10.1.apk не подтверждал успех диффом списка пакетов, хотя сам
+    dex-хелпер печатал "Success" — и это молча обрывало установку ещё ~10 уже
+    готовых приложений следом в списке). install_selected_apks ловит это
+    исключение и продолжает со следующим файлом — единичный сбой ОДНОГО apk не
+    должен стоить техникам всей остальной, уже сделанной работы."""
+
+
 _VERSION_DOWNGRADE_MARKER = "INSTALL_FAILED_VERSION_DOWNGRADE"
 _SIGNATURE_MISMATCH_MARKER = "INSTALL_FAILED_UPDATE_INCOMPATIBLE"
 
@@ -182,6 +196,12 @@ class InstallContext:
         # списков пакетов до/после — запасной вариант, если из самого APK
         # его прочитать не удалось (см. _after_app_installed).
         self._last_diff_package: str | None = None
+        # Приложения, пропущенные install_selected_apks из-за AppInstallFailed
+        # (способ уже залочен, но сработал не на всех apk) — runner.py читает
+        # этот список ПОСЛЕ run_fn(ctx), чтобы итоговое сообщение этапа честно
+        # упомянуло пропуски, а не просто отрапортовало "успешно", раз стадия
+        # в целом не упала (см. install_selected_apks/AppInstallFailed).
+        self.failed_apps: list[str] = []
 
     # --- служебное -------------------------------------------------
     def log(self, message):
@@ -293,8 +313,18 @@ class InstallContext:
         mock_target = self._mock_location_target()
         for apk in self.selected_apks:
             self._last_diff_package = None
-            self.install_apk_auto(apk, extra_args=extra_args)
+            try:
+                self.install_apk_auto(apk, extra_args=extra_args)
+            except AppInstallFailed as exc:
+                # Способ установки уже подтверждён рабочим на этой магнитоле —
+                # сбой именно этого apk не должен стоить техникам остальных,
+                # уже успешно установленных приложений (см. AppInstallFailed).
+                self.failed_apps.append(str(exc))
+                continue
             self._after_app_installed(apk, apk == mock_target)
+        if self.failed_apps:
+            self.log("Не установлено (пропущено, остальные приложения из списка "
+                      "установлены): " + "; ".join(self.failed_apps))
 
     def _mock_location_target(self) -> Path | None:
         """Приложение, которому после установки нужно выдать фиктивное
@@ -344,7 +374,17 @@ class InstallContext:
         медленные/ненадёжные способы на каждом файле. Если не сработал НИ
         ОДИН из трёх способов — останавливает установку (InstallCancelled) —
         плохой знак сразу для всего оставшегося списка, продолжать нет
-        смысла."""
+        смысла.
+
+        А вот если способ уже залочен (сработал на предыдущих файлах этого же
+        запуска) и падает именно СЕЙЧАС — плохой знак только для ЭТОГО apk, не
+        для всей магнитолы: реальный случай (2026-09-20, Geely Atlas New/Monji,
+        логи #390/#391) — 10 приложений уже стояли, а gnss-client-v2.10.1.apk не
+        подтвердил успех диффом списка пакетов (dex-хелпер при этом печатал
+        "Success") — раньше AdbError отсюда никто не ловил, и он улетал прямо в
+        runner.py, стирая весь этап целиком вместе с уже сделанной работой. Теперь
+        такой сбой поднимается как AppInstallFailed — install_selected_apks его
+        ловит и пропускает только этот файл, не роняя оставшийся список."""
         self.check_cancelled()
         path = self._maybe_resign(path)
         if self._install_method is not None:
@@ -352,6 +392,10 @@ class InstallContext:
                 self._install_with_method(self._install_method, path, extra_args)
             except VersionDowngradeError as exc:
                 raise InstallCancelled(self._rejection_message(path, exc))
+            except AdbError as exc:
+                label = _INSTALL_METHOD_LABELS[self._install_method]
+                self.log(f"  ↳ не сработало ({label}): {_short_reason(exc)}")
+                raise AppInstallFailed(f"{Path(path).name}: {_short_reason(exc, 150)}") from exc
             return
         errors = []
         order = range(len(_INSTALL_METHOD_LABELS))

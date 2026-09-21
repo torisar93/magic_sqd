@@ -368,9 +368,21 @@ class Adb:
                 stdin=subprocess.DEVNULL,
             )
         except FileNotFoundError as exc:
-            raise AdbError(
-                f"adb.exe не найден ({self.adb_path}). Положите platform-tools в папку tools/."
-            ) from exc
+            # Раньше текст был жёстко под Windows ("adb.exe"/"tools/") независимо
+            # от платформы — на macOS это не только неверная формулировка (там
+            # нет расширения .exe и видимой папки tools/ рядом с приложением,
+            # adb лежит внутри .app в Contents/Resources/tools_mac/, см.
+            # find_adb_path/platform_paths.bundled_tools_root), но и сбивало с
+            # толку при разборе реальных логов (клиент #399, 2026-09-20) — самих
+            # найденных здесь причин пропажи tools_mac у уже установленной копии
+            # не подтверждает, а на macOS чинить руками ("положите в tools/")
+            # тоже нечем, только переустановка.
+            if sys.platform == "win32":
+                message = f"adb.exe не найден ({self.adb_path}). Положите platform-tools в папку tools/."
+            else:
+                message = (f"adb не найден ({self.adb_path}). Переустановите программу — "
+                           "этот инструмент должен быть внутри неё.")
+            raise AdbError(message) from exc
         except subprocess.TimeoutExpired as exc:
             raise AdbError(f"Команда не ответила за {timeout} сек: {' '.join(cmd)}") from exc
 

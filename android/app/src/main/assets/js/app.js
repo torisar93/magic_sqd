@@ -1858,11 +1858,12 @@
             promptPackagePicker("Выберите приложение", packages, (pkg) => {
               if (!page.isConnected || labInstallBusy) return;
               try {
+                // Без своего log() здесь — AdbPermissions.kt (grantAllPermissions/
+                // setMockLocationApp) уже пишет ровно эту же строку первым делом
+                // сам; раньше она дублировалась (реальный случай в логе #408).
                 if (action.kind === "grant_permissions") {
-                  log(`Выдаю разрешения: ${pkg}`);
                   Bridge.call("actions_grant_permissions", { pkg });
                 } else {
-                  log(`Приложение для фиктивных местоположений: ${pkg}`);
                   Bridge.call("actions_mock_location", { pkg });
                 }
                 note.textContent='Запрос отправлен. Результат появится в логе.';

@@ -112,7 +112,18 @@ class InstallRunner:
             # (0, 0) скрывает прогресс-бар в логе после успеха, ошибки или
             # остановки — пользователь не остаётся с вечным индикатором.
             self.on_sync_progress(0, 0)
-        self.on_finished(True, "Установка завершена успешно.")
+        # ctx.failed_apps — apk, пропущенные install_selected_apks через
+        # AppInstallFailed (способ установки залочен, но не сработал именно на
+        # этом файле, см. install_context.py) — этап в целом НЕ упал, но
+        # итоговое сообщение должно честно сказать, что встало не всё, а не
+        # просто "успешно": иначе технику узнать об пропуске неоткуда, кроме
+        # как долистать полный лог до нужной строки.
+        failed_apps = getattr(ctx, "failed_apps", None)
+        if failed_apps:
+            self.on_finished(True, "Установка завершена, но не всё встало — пропущено: "
+                                    + "; ".join(failed_apps) + ". Остальные приложения установлены.")
+        else:
+            self.on_finished(True, "Установка завершена успешно.")
 
     def sync_resign_cert(self, model, check_cancelled=None) -> None:
         """Сертификат переподписи модели (files/resign_cert/{private.pk8,
