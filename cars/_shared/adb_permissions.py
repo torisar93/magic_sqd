@@ -282,6 +282,28 @@ def set_mock_location_app(ctx, package: str) -> None:
     ctx.log("Готово.")
 
 
+def launch_main_activity(ctx, package: str) -> None:
+    """Запускает главную activity приложения (как обычный тап по иконке в
+    лаунчере) — "monkey -p ... -c android.intent.category.LAUNCHER 1", тот
+    же приём, что уже используется после каждой автоматической установки
+    (см. install_context.py: install_apk_dex_shell и соседние методы) — сам
+    находит launcher-activity приложения, не требует знать её имя заранее.
+    Полезно проверить, что уже стоявшее (или только что установленное)
+    приложение вообще запускается, не листая иконки на самой магнитоле."""
+    ctx.log(f"Запускаю приложение: {package}")
+    ctx.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1", check=False)
+    ctx.log("Готово.")
+
+
+def uninstall_app(ctx, package: str) -> None:
+    """Удаляет приложение (pm uninstall) — в отличие от disable_app, СТИРАЕТ
+    его с магнитолы полностью. Для системных/предустановленных пакетов без
+    root обычно не сработает (тогда используйте disable_app)."""
+    ctx.log(f"Удаляю приложение: {package}")
+    ctx.shell(f"pm uninstall {package}", check=False)
+    ctx.log("Готово.")
+
+
 def disable_app(ctx, package: str) -> None:
     """Отключает приложение (--user 0 — на всех наблюдавшихся магнитолах
     единственный профиль, id 0) — для предустановленных программ, которые

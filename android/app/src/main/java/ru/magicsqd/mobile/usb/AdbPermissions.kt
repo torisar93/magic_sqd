@@ -202,6 +202,29 @@ object AdbPermissions {
         log("Готово.")
     }
 
+    /** Запускает главную activity приложения (как обычный тап по иконке в
+     * лаунчере) — портовая копия cars/_shared/adb_permissions.py:
+     * launch_main_activity ("monkey -c android.intent.category.LAUNCHER" —
+     * тот же приём, что уже используется после каждой автоматической
+     * установки, см. AdbInstall.kt — сам находит launcher-activity, не
+     * требует знать её имя заранее). */
+    fun launchMainActivity(pkg: String, log: (String) -> Unit) {
+        log("Запускаю приложение: $pkg")
+        AdbSession.shell("monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)
+        log("Готово.")
+    }
+
+    /** Удаляет приложение (pm uninstall) — портовая копия
+     * cars/_shared/adb_permissions.py:uninstall_app. В отличие от
+     * disable_app (которого на Android пока нет вовсе) стирает APK
+     * полностью; для системных/предустановленных пакетов без root обычно
+     * не сработает. */
+    fun uninstallApp(pkg: String, log: (String) -> Unit) {
+        log("Удаляю приложение: $pkg")
+        AdbSession.shell("pm uninstall $pkg", log)
+        log("Готово.")
+    }
+
     // Когда пакету в последний раз выдавали разрешения — чтобы автовыдача после
     // установки (InstallEngine) не дублировала инлайн-выдачу способов localinstall/
     // dex_shell (AdbInstall.kt), которые выдают ДО первого запуска приложения.

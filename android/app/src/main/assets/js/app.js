@@ -1845,20 +1845,32 @@
     if (connectionModeFor(stage) === "wifi") prefetchStageFiles(stage, (stage.actions || []).flatMap((a) => a.files || []));
     page.classList.add("flow-stage");
     (stage.actions || []).forEach((action, actionIndex) => {
-      const supported = !action.kind || ["command", "grant_permissions", "mock_location"].includes(action.kind);
+      const PACKAGE_PICKER_ACTIONS = {
+        // bridgeMethod — см. WebBridge.kt; thirdPartyOnly=false — полный
+        // список (как disable_app/enable_app на десктопе — обычно нужны как
+        // раз предустановленные системные приложения).
+        grant_permissions: { bridgeMethod: "actions_grant_permissions", thirdPartyOnly: true },
+        mock_location: { bridgeMethod: "actions_mock_location", thirdPartyOnly: true },
+        launch_activity: { bridgeMethod: "actions_launch_activity", thirdPartyOnly: true },
+        uninstall_app: { bridgeMethod: "actions_uninstall_app", thirdPartyOnly: false },
+      };
+      const supported = !action.kind || ["command", ...Object.keys(PACKAGE_PICKER_ACTIONS)].includes(action.kind);
       const card = flowCard(action.label || action.kind || "Действие", supported ? "" : "Доступно только в версии для Windows.", action.kind === "grant_permissions" ? "shield" : action.kind === "mock_location" ? "location" : "terminal");
       card.classList.add('flow-action-card');
       const btn = usbStageButton("Выполнить", "play", () => {}, supported);
       btn.disabled = !supported;
       btn.addEventListener("click", () => {
         if (labInstallBusy) return;
-        // grant_permissions/mock_location — техник выбирает установленное
-        // приложение (ask_choice на desktop), дальше AdbPermissions.kt (см.
-        // WebBridge.kt: actionsGrantPermissions/actionsMockLocation, портовая
-        // копия cars/_shared/adb_permissions.py). disable_app/enable_app пока
-        // не портированы — остаются с явным "не поддерживается" ниже, вместо
-        // того чтобы молча выполнить 0 команд как "успех".
-        if (action.kind === "grant_permissions" || action.kind === "mock_location") {
+        // grant_permissions/mock_location/launch_activity/uninstall_app —
+        // техник выбирает установленное приложение (ask_choice на десктопе),
+        // дальше AdbPermissions.kt (см. WebBridge.kt: actionsGrantPermissions/
+        // actionsMockLocation/actionsLaunchActivity/actionsUninstallApp,
+        // портовая копия cars/_shared/adb_permissions.py). disable_app/
+        // enable_app пока не портированы — остаются с явным "не
+        // поддерживается" ниже, вместо того чтобы молча выполнить 0 команд
+        // как "успех".
+        const pickerAction = PACKAGE_PICKER_ACTIONS[action.kind];
+        if (pickerAction) {
           if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
           log("Получаю список приложений...");
           card.querySelector('.flow-action-note')?.remove();
@@ -1872,19 +1884,15 @@
             promptPackagePicker("Выберите приложение", packages, (pkg) => {
               if (!page.isConnected || labInstallBusy) return;
               try {
-                // Без своего log() здесь — AdbPermissions.kt (grantAllPermissions/
-                // setMockLocationApp) уже пишет ровно эту же строку первым делом
-                // сам; раньше она дублировалась (реальный случай в логе #408).
-                if (action.kind === "grant_permissions") {
-                  Bridge.call("actions_grant_permissions", { pkg });
-                } else {
-                  Bridge.call("actions_mock_location", { pkg });
-                }
+                // Без своего log() здесь — AdbPermissions.kt уже пишет ровно
+                // эту же строку первым делом сам; раньше дублировалась
+                // (реальный случай в логе #408).
+                Bridge.call(pickerAction.bridgeMethod, { pkg });
                 note.textContent='Запрос отправлен. Результат появится в логе.';
               } catch(error) {note.textContent=error.message||'Не удалось выполнить действие.';log(note.textContent);}
             });
           };
-          try { Bridge.call("actions_list_packages", { thirdPartyOnly: true }); }
+          try { Bridge.call("actions_list_packages", { thirdPartyOnly: pickerAction.thirdPartyOnly }); }
           catch(error){pendingPackagesCallback=null;btn.disabled=false;note.textContent=error.message||'Не удалось получить список приложений.';log(note.textContent);}
           return;
         }

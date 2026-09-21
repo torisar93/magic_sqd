@@ -97,6 +97,14 @@ class ActionSpec:
     # cars/_shared/adb_permissions.py.disable_app/enable_app — pm
     # disable-user/pm enable. Для мешающих предустановленных приложений
     # (конкурирующая навигация, голосовой ассистент и т.п.).
+    # "launch_activity" — выбор из сторонних (third_party_only=True, как
+    # grant_permissions/mock_location — обычно только что установленное
+    # приложение), дальше adb_permissions.py.launch_main_activity ("monkey
+    # -c android.intent.category.LAUNCHER" — сам находит launcher-activity).
+    # "uninstall_app" — выбор из ПОЛНОГО списка (как disable_app/enable_app),
+    # дальше adb_permissions.py.uninstall_app (pm uninstall) — в отличие от
+    # disable_app стирает приложение полностью, для системных пакетов без
+    # root обычно не сработает.
     kind: str = "command"
     commands: list[str] = field(default_factory=list)
     # Файлы, прикреплённые к ЭТОМУ действию — на них ссылаются #push/
@@ -1238,12 +1246,14 @@ def _render_install_py(spec: NewCarSpec) -> str:
     if any(step.type == "telnet" for step in spec.steps):
         lines.append("from telnet_adb import enable_adb_via_telnet  # noqa: E402")
     _ACTION_KINDS_NEEDING_ADB_PERMISSIONS = (
-        "grant_permissions", "mock_location", "disable_app", "enable_app")
+        "grant_permissions", "mock_location", "disable_app", "enable_app",
+        "launch_activity", "uninstall_app")
     if any(step.type == "actions" and a.kind in _ACTION_KINDS_NEEDING_ADB_PERMISSIONS
            for step in spec.steps for a in step.actions):
         lines.append(
             "from adb_permissions import disable_app, enable_app, grant_all_permissions, "
-            "list_installed_packages, set_mock_location_app  # noqa: E402"
+            "launch_main_activity, list_installed_packages, set_mock_location_app, "
+            "uninstall_app  # noqa: E402"
         )
 
     for i, step in enumerate(spec.steps, start=1):
@@ -1280,6 +1290,16 @@ def _render_install_py(spec: NewCarSpec) -> str:
                     lines.append(
                         f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
                     lines.append("    enable_app(ctx, package)")
+                elif action.kind == "launch_activity":
+                    lines.append("    packages = list_installed_packages(ctx)")
+                    lines.append(
+                        f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
+                    lines.append("    launch_main_activity(ctx, package)")
+                elif action.kind == "uninstall_app":
+                    lines.append("    packages = list_installed_packages(ctx, third_party_only=False)")
+                    lines.append(
+                        f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
+                    lines.append("    uninstall_app(ctx, package)")
                 else:
                     lines += _render_command_body(action.commands, f"actions_{i}_{j}")
         elif step.type == "usb":
