@@ -121,6 +121,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // вернёт ok:false, и JS просто ничего не покажет).
         authSyncMyCars()
         startHeartbeat()
+        startInstallLogRecovery()
     }
 
     /** Пульс раз в PING_INTERVAL_MS, пока процесс жив: client_id, версия, platform=android. Раньше Android
@@ -211,6 +212,37 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                         args.getString("brand"), args.getString("model"), args.optString("modification", ""),
                         args.getBoolean("success"), args.getString("log"),
                     )
+                    "{}"
+                }
+                // Прочный журнал сессии на диске (см. InstallLogQueue.kt) —
+                // переживает и обрыв сети (Wi-Fi ADB — телефон подключён к
+                // магнитоле, без интернета), и вылет процесса. session_start
+                // зовётся из app.js:openWizard() на каждое открытие модели;
+                // append — на каждую строку, которую видит техник в панели.
+                "install_log_session_start" -> {
+                    InstallLogQueue.startSession(
+                        context.filesDir, args.optString("brand", ""), args.optString("model", ""),
+                        args.optString("modification", ""),
+                    )
+                    "{}"
+                }
+                "install_log_append" -> {
+                    // Синхронно, прямо здесь — НЕ в фоновом потоке: порядок
+                    // вызовов из JS гарантирован только пока это так (см.
+                    // InstallLogQueue.kt докстринг про однопоточность JS и
+                    // синхронность Bridge.call()).
+                    InstallLogQueue.appendCurrent(
+                        context.filesDir, args.optString("line", ""), args.optBoolean("activity", false),
+                    )
+                    "{}"
+                }
+                // Необработанные JS-ошибки (см. bridge.js: window.onerror/
+                // unhandledrejection) — на Android такого перехвата не было
+                // вообще, поэтому падение на чистом JS (не дошедшее до
+                // нативного Kotlin-кода) сегодня не оставляет никакого следа,
+                // даже локально.
+                "client_log_error" -> {
+                    clientLogError(args.optString("message", ""), args.optString("stack", ""))
                     "{}"
                 }
                 "auth_status" -> authStatus().toString()
@@ -668,20 +700,74 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * /install_log) — вызывается из app.js по завершении/уходу из мастера,
      * только если лог не пустой (была реальная активность). Best-effort,
      * фоновым потоком — ошибка сети тут не должна ничего показывать
-     * технику, поэтому результат никуда не пробрасывается событием. */
+     * технику, поэтому результат никуда не пробрасывается событием.
+     *
+     * Запечатываем в прочную очередь на диске (см. InstallLogQueue.kt)
+     * ДО попытки отправки — сбой сети (Wi-Fi ADB — телефон подключён к
+     * магнитоле, без интернета) или вылет процесса после этого момента
+     * больше не теряет лог целиком, только откладывает его до следующего
+     * запуска (см. init{}/startInstallLogRecovery). drainQueue, а не
+     * попытка отправить только эту одну запись — заодно опустошает и то,
+     * что накопилось раньше, даром: этот поток и так фоновый. */
     private fun installLogSend(brand: String, model: String, modification: String,
                                 success: Boolean, logText: String) {
+        InstallLogQueue.finalizeToQueue(context.filesDir, "android", brand, model, modification, success, logText)
         Thread {
-            try {
-                pyModule("install_log_bridge").callAttr(
-                    "send_install_log", brand, model, modification, success, logText,
-                    getOrCreateClientId(), INSTALL_LOG_URL, CHAT_KEY,
-                )
-            } catch (_: Exception) {
-                // best-effort — сетевая ошибка тут не критична, следующая
-                // попытка установки пришлёт свой лог независимо от этой.
-            }
+            InstallLogQueue.drainQueue(context.filesDir, ::sendInstallLogViaChaquopy)
         }.start()
+    }
+
+    /** Сама отправка одной записи (см. InstallLogQueue.kt — принимает эту
+     * функцию как параметр, чтобы не знать про Chaquopy вообще) — тонкая
+     * обёртка над install_log_bridge.send_install_log, платформа внутри него
+     * жёстко "android" (первый параметр здесь просто для единообразия сигнатуры
+     * с desktop-версией, install_log_bridge его не принимает — не нужен). */
+    private fun sendInstallLogViaChaquopy(platform: String, brand: String, model: String, modification: String,
+                                           success: Boolean, logText: String): String {
+        return try {
+            pyModule("install_log_bridge").callAttr(
+                "send_install_log", brand, model, modification, success, logText,
+                getOrCreateClientId(), INSTALL_LOG_URL, CHAT_KEY,
+            ).toString()
+        } catch (_: Exception) {
+            "{\"ok\":false}"
+        }
+    }
+
+    /** Необработанные JS-ошибки (см. bridge.js) — пишем в локальный
+     * js_errors.log ВСЕГДА (не только при активной сессии установки — как и
+     * на desktop, см. app/web/bridge.py:client_log_error), и ДОПОЛНИТЕЛЬНО, с
+     * явным маркером, в прочный журнал ТЕКУЩЕЙ сессии, если она сейчас есть
+     * (см. InstallLogQueue.appendCurrent) — иначе падение на чистом JS прямо
+     * во время установки осталось бы только в локальном файле, недоступном
+     * обычному технику, вместо того чтобы уйти на сервер вместе с остальным
+     * логом сессии. Если сессии сейчас нет — appendCurrent создаст файл без
+     * meta, который просто тихо уберётся следующим startSession/recoverStaleCurrent
+     * (см. их докстринги) — ничего не отправится, но и не сломается. */
+    private fun clientLogError(message: String, stack: String) {
+        try {
+            val file = java.io.File(context.filesDir, "js_errors.log")
+            val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+            file.appendText("$timestamp $message\n")
+            if (stack.isNotEmpty()) file.appendText("$stack\n")
+            file.appendText("---\n")
+        } catch (_: Exception) {
+        }
+        InstallLogQueue.appendCurrent(
+            context.filesDir,
+            "${InstallLogQueue.CRASH_MARKER}\n$message" + (if (stack.isNotEmpty()) "\n$stack" else ""),
+            true,
+        )
+    }
+
+    /** Вызывается ОДИН раз при старте (см. init{}) — если прошлый запуск не
+     * дошёл до штатного installLogSend (вылет процесса/принудительное
+     * закрытие) или не смог отправить лог (офлайн), досылаем/дозапоминаем его
+     * именно сейчас. Фоновым daemon-потоком — не должно задерживать запуск. */
+    private fun startInstallLogRecovery() {
+        Thread {
+            InstallLogQueue.recoverAndDrainAtStartup(context.filesDir, "android", ::sendInstallLogViaChaquopy)
+        }.apply { isDaemon = true; name = "magicsqd-install-log-recovery" }.start()
     }
 
     /** Обращение («Сообщить о проблеме»): brand/model пустые — к работе приложения в целом. Результат уходит

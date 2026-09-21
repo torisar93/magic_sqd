@@ -25,6 +25,7 @@ from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
 from ..adb_utils import find_adb_path
+from ..pending_install_logs import append_current, finalize_to_queue, recover_stale_current, send_one, send_queue
 from ..ping_client import get_or_create_client_id
 from ..version import APP_VERSION
 
@@ -85,6 +86,19 @@ class WebApi:
         self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
         self._update = UpdateApi(base_dir, is_win7=is_win7)
         self._chat = ChatApi(base_dir, self.adb_path, self._auth)
+        # Прочный журнал сессий (см. app/pending_install_logs.py) — если
+        # прошлый запуск не дошёл до штатного завершения (вылет/принудительное
+        # закрытие) или не смог отправить лог (офлайн — например Wi-Fi ADB,
+        # см. install_log_send ниже), досылаем/дозапоминаем его именно сейчас,
+        # при следующем старте. Фоновым daemon-потоком — не должно задерживать
+        # появление окна, а недренированная сетевая попытка (до 30 с на
+        # запись) не должна держать процесс живым после закрытия окна.
+        threading.Thread(target=self._recover_pending_install_logs, daemon=True).start()
+
+    def _recover_pending_install_logs(self) -> None:
+        platform = self._install_log_platform()
+        recover_stale_current(self.base_dir, platform)
+        send_queue(self.base_dir, self._install_log, self.auth_email)
 
     # -- метаданные окна ------------------------------------------------
     def app_get_info(self) -> dict:
@@ -268,8 +282,18 @@ class WebApi:
             return "macos"
         return "windows"
 
+    def install_log_append(self, token: str, line: str, has_activity: bool = False) -> None:
+        """Дозаписывает одну строку в прочный журнал сессии на диске (см.
+        app/pending_install_logs.py) — зовётся из stage_wizard.js на КАЖДУЮ
+        строку, которую видит техник (и бэкендовые, и JS-собственные — этот
+        путь единственный, где строки собираются целиком, в отличие от
+        _on_log/_session_log_lines, которые видят только бэкендовые). Не
+        должно ничего показывать технику при сбое — как и остальная
+        best-effort телеметрия здесь."""
+        append_current(self.base_dir, token, line, bool(has_activity))
+
     def install_log_send(self, brand: str, model: str, modification: str,
-                          success: bool, log_text: str) -> None:
+                          success: bool, log_text: str, token: str = "") -> None:
         # Фоновым потоком и без возврата результата в JS (тот и не ждёт
         # промис, см. stage_wizard.js: flushSessionLog) — сеть может занять
         # время, а это должно происходить незаметно, не задерживая ничего в
@@ -281,13 +305,22 @@ class WebApi:
         # flush_abandoned_install_log) была бы хуже, чем редкая потеря одной
         # попытки при обрыве сети (best-effort телеметрия).
         self._install.mark_install_log_sent()
+        # Запечатываем в очередь ДО попытки отправки (см.
+        # pending_install_logs.finalize_to_queue) — сбой сети/процесса после
+        # этого момента больше не теряет лог целиком, только откладывает его
+        # до следующего запуска (см. WebApi.__init__: _recover_pending_install_logs).
+        finalize_to_queue(self.base_dir, token, platform, brand, model, modification,
+                           success, log_text)
+        # send_queue, а не send_one — заодно опустошает и то, что накопилось
+        # раньше (например прошлые попытки без интернета, Wi-Fi ADB), даром:
+        # этот поток и так фоновый и никого не задерживает.
         threading.Thread(
-            target=self._install_log.send,
+            target=send_queue,
             # self.auth_email — живое значение НА МОМЕНТ отправки (обновляется
             # при входе/выходе, см. auth_login/auth_logout выше), не то, что
             # было при старте программы. None, если техник не залогинен —
             # анонимные логи по-прежнему работают как раньше.
-            args=(platform, brand, model, modification, success, log_text, self.auth_email),
+            args=(self.base_dir, self._install_log, self.auth_email),
             daemon=True,
         ).start()
 
@@ -296,13 +329,19 @@ class WebApi:
         JS успела сама отправить лог сессии (см. install_log_send выше) —
         зовётся из main_web.py/main_web_win7.py в finally-блоке при закрытии
         окна. Молча ничего не делает, если сессии в процессе не было, или
-        JS уже её отправила."""
+        JS уже её отправила. Синхронно (как и раньше) — окно и так ждёт
+        завершения этого шага перед закрытием, но теперь только ОДНУ попытку
+        отправки именно этой записи (send_one), а не всю накопленную очередь
+        (send_queue) — иначе закрытие окна могло бы растянуться на несколько
+        таймаутов подряд, если очередь успела накопиться."""
         pending = self._install.pending_session_log()
         if pending is None:
             return
         platform = self._install_log_platform()
-        self._install_log.send(platform, pending["brand"], pending["model"],
-                                pending["modification"], False, pending["log_text"], self.auth_email)
+        path = finalize_to_queue(self.base_dir, pending.get("token") or "", platform,
+                                  pending["brand"], pending["model"], pending["modification"],
+                                  False, pending["log_text"])
+        send_one(self.base_dir, path, self._install_log, self.auth_email)
 
     # -- admin_api ------------------------------------------------------
     def admin_get_info(self) -> dict:

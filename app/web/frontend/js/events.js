@@ -44,6 +44,18 @@
   function sendError(message, stack) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.client_log_error) {
       window.pywebview.api.client_log_error(message, stack || "").catch(() => {});
+      // Если ошибка случилась прямо во время активной сессии установки (см.
+      // stage_wizard.js: window.__installLogSessionToken) — дописываем её и в
+      // прочный журнал ЭТОЙ сессии (app/pending_install_logs.py), с явным
+      // маркером: иначе падение на чистом JS осталось бы только в локальном
+      // js_errors.log, недоступном обычному технику, вместо того чтобы уйти
+      // на сервер вместе с остальным логом сессии.
+      const token = window.__installLogSessionToken;
+      if (token && window.pywebview.api.install_log_append) {
+        window.pywebview.api.install_log_append(
+          token, `=== НЕОБРАБОТАННАЯ ОШИБКА JS: ${message} ===${stack ? "\n" + stack : ""}`, true,
+        ).catch(() => {});
+      }
     } else {
       pendingErrors.push([message, stack || ""]);
     }

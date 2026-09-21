@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -35,9 +36,39 @@ class MainActivity : AppCompatActivity() {
     // (флаш лога установки при сворачивании/закрытии).
     private lateinit var webView: WebView
 
+    /** Перехватывает необработанные исключения ЛЮБОГО потока (JVM-глобальная
+     * настройка, а не только для этого потока/Activity) — раньше такого не
+     * было вовсе: реальный вылет приложения не оставлял никакого следа даже
+     * локально, не то что на сервере (см. WebBridge.kt: clientLogError — та
+     * же идея для необработанных JS-ошибок). Дописывает маркер + полный
+     * стек-трейс в прочный журнал ТЕКУЩЕЙ сессии (см. InstallLogQueue.kt) —
+     * если сессии сейчас нет, запись тихо уберётся следующим
+     * startSession/recoverStaleCurrent, ничего не сломается (см. их
+     * докстринги) — затем передаёт управление ПРЕЖНЕМУ обработчику: не
+     * подавляет штатное поведение ОС ("приложение остановлено" и т.п.),
+     * только успевает записать лог раньше, чем процесс исчезнет. Первой
+     * строкой в onCreate — максимально рано, до создания WebView и всего
+     * остального. */
+    private fun installCrashHandler() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                InstallLogQueue.appendCurrent(
+                    filesDir,
+                    "${InstallLogQueue.CRASH_MARKER}\n${Log.getStackTraceString(throwable)}",
+                    true,
+                )
+            } catch (_: Exception) {
+                // второй сбой здесь не должен помешать штатной обработке ниже
+            }
+            previous?.uncaughtException(thread, throwable)
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled") // локальный ассет, не произвольные сайты — безопасно
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        installCrashHandler()
         // Явно, а не полагаясь только на неявный edge-to-edge от targetSdk 35 —
         // на некоторых OEM-прошивках (MIUI/HyperOS и т.п.) неявное поведение
         // применяется через раз, из-за чего контент оказывался НЕ на весь

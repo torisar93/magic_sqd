@@ -116,6 +116,12 @@
 
   function log(text) {
     sessionLog.push(text);
+    // Дозапись в прочный журнал сессии на диске (см. WebBridge.kt/
+    // InstallLogQueue.kt) — переживает и обрыв сети (Wi-Fi ADB — телефон
+    // подключён к магнитоле, без интернета), и вылет процесса. Синхронный
+    // вызов (Bridge.call блокирует JS-поток до возврата из Kotlin), но это
+    // всего лишь один open/write/close — дешевле, чем кажется.
+    Bridge.call("install_log_append", { line: text, activity: sessionHasActivity });
     const level = classifyLogLevel(text);
     const line = el("div", { class: `log-line log-line-${level}` });
     line.innerHTML = highlightKeywords(text);
@@ -928,6 +934,14 @@
     sessionLog = [];
     sessionHasActivity = false;
     sessionSent = false;
+    // Новая сессия прочного журнала на диске (см. InstallLogQueue.kt) — model
+    // уже присвоена вызывающим кодом (см. selectModel выше: сначала
+    // scanner_select_model, потом openWizard()). Старая сессия (если была
+    // активность) к этому моменту уже должна была уйти через install_log_send
+    // (flushSessionLog(false) в том же вызывающем коде, ДО openWizard()).
+    Bridge.call("install_log_session_start", {
+      brand: model.brand, model: model.display_label || model.name, modification: model.modification || "",
+    });
     historyStack.length = 0;
     currentIndex = 0;
     stages = [];

@@ -38,4 +38,32 @@ window.Bridge = {
   };
 
   window.events = { on };
+
+  // Глобальный перехват необработанных ошибок — портировано с desktop
+  // (app/web/frontend/js/events.js), на Android такого не было вовсе: до
+  // этой правки падение на чистом JS (не дошедшее до нативного Kotlin-кода)
+  // не оставляло вообще никакого следа, даже локально. bridge.js — самый
+  // первый <script> в index.html, поэтому обработчик ставится максимально
+  // рано.
+  function sendError(message, stack) {
+    if (window.AndroidBridge) {
+      window.Bridge.call("client_log_error", { message, stack: stack || "" });
+    }
+  }
+  window.addEventListener("error", (e) => {
+    // Ошибки ЗАГРУЗКИ ресурса всплывают только в фазе capture, на самом
+    // элементе (см. MDN: GlobalEventHandlers/error) — без capture:true этот
+    // обработчик ловил бы только настоящие JS runtime-ошибки.
+    if (e.target && e.target !== window) {
+      const el = e.target;
+      sendError(`resource load failed: <${el.tagName}> ${el.src || el.href || ""}`, "");
+      return;
+    }
+    sendError(String(e.message || e.error || "unknown error"), e.error && e.error.stack || "");
+  }, true);
+  window.addEventListener("unhandledrejection", (e) => {
+    const reason = e.reason;
+    sendError("unhandledrejection: " + String(reason && reason.message || reason),
+      reason && reason.stack || "");
+  });
 })();

@@ -23,6 +23,7 @@ from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_de
 from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
                              sync_model_subfolder, sync_shared_folder)
 from ...install_context import InstallCancelled
+from ...pending_install_logs import start_session as start_pending_log_session
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir_with_remote
 from ...stage_runner import (StageDefinitionError, UnknownStageTypeError, load_model_wifi, load_stages,
@@ -116,6 +117,13 @@ class InstallApi:
         self._session_log_lines: list[str] = []
         self._session_meta: dict | None = None
         self._session_flushed = True
+        # Токен текущей сессии для прочного журнала на диске (см.
+        # app/pending_install_logs.py) — нужен и здесь, не только в
+        # возвращаемом из load_stages() словаре, чтобы аварийная отправка при
+        # закрытии окна (см. pending_session_log/flush_abandoned_install_log)
+        # могла запечатать именно ЭТУ сессию, а не молча разойтись с ней по
+        # токену из-за гонки потоков pywebview (см. докстринг модуля).
+        self._session_log_token: str | None = None
 
     # ------------------------------------------------------------------
     def _get_manifest(self) -> dict | None:
@@ -143,6 +151,15 @@ class InstallApi:
         self._session_meta = {"brand": model.brand, "model": model.name,
                                "modification": model.modification or ""}
         self._session_flushed = True  # ничего слать не нужно, пока не появится реальная активность
+        # Прочный журнал сессии на диске (см. app/pending_install_logs.py) —
+        # переживает и обрыв сети, и вылет процесса, независимо от
+        # _session_log_lines выше (тот остаётся как есть, это отдельный,
+        # более надёжный уровень). Токен уходит в JS с этим же ответом —
+        # stage_wizard.js передаёт его обратно на каждый install_log_append/
+        # install_log_send этой сессии.
+        session_log_token = start_pending_log_session(
+            self.base_dir, model.brand, model.name, model.modification or "")
+        self._session_log_token = session_log_token
         if not model.stages_script:
             return {"stages": []}
         try:
@@ -207,6 +224,10 @@ class InstallApi:
             # Wi-Fi-модель (см. load_model_wifi): JS докачивает файлы adb/actions-этапов ЗАРАНЕЕ, при показе
             # этапа, пока у компьютера ещё есть интернет (см. prefetch_stage).
             "wifi": bool(model_wifi),
+            # См. pending_install_logs.py — stage_wizard.js кладёт это в
+            # sessionToken и передаёт обратно на install_log_append/
+            # install_log_send этой же сессии.
+            "install_log_token": session_log_token,
             **({"write_permission_warning": True} if write_permission_error else {}),
         }
 
@@ -1046,7 +1067,8 @@ class InstallApi:
         строки и есть содержательная часть лога."""
         if self._session_flushed or not self._session_log_lines:
             return None
-        return {**(self._session_meta or {}), "log_text": "\n".join(self._session_log_lines)}
+        return {**(self._session_meta or {}), "log_text": "\n".join(self._session_log_lines),
+                "token": self._session_log_token}
 
     def _on_sync_progress(self, done: int, total: int, files_done: int | None = None,
                           files_total: int | None = None) -> None:

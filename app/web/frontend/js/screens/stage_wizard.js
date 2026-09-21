@@ -95,10 +95,18 @@
   let sessionLog = [];
   let sessionHasActivity = false;
   let sessionSent = false;
+  // Токен текущей сессии (см. open() — приходит из install_load_stages) для
+  // прочного журнала на диске (app/pending_install_logs.py): install_log_append
+  // на каждую строку лога, install_log_send с этим же токеном при завершении.
+  let sessionToken = "";
 
   function log(message) {
     sessionLog.push(message);
     logFn(`[${model.display_label}] ${message}`);
+    // Дозапись на диск (см. app/web/bridge.py: install_log_append) — переживает
+    // и обрыв сети, и вылет процесса; не ждём промис (best-effort, как и
+    // остальная телеметрия здесь).
+    window.pywebview.api.install_log_append(sessionToken, message, sessionHasActivity).catch(() => {});
   }
 
   // success=true — все этапы пройдены (см. advanceAfter); false — техник
@@ -110,7 +118,7 @@
     sessionSent = true;
     window.pywebview.api.install_log_send(
       model.brand || "", model.display_label || model.name || "", model.modification || "",
-      success, sessionLog.join("\n"),
+      success, sessionLog.join("\n"), sessionToken,
     );
   }
 
@@ -375,19 +383,6 @@
     sessionHasActivity = false;
     sessionSent = false;
     model = selectedModel;
-    // Диагностическая шапка лога (см. app.js: window.appInfo) — версия и
-    // сборка программы должны быть видны прямо в присланном логе установки,
-    // а не только в самой программе технику: разбор без этого начинается с
-    // вопроса "а какая у него вообще версия" (реальный случай, Volga C50).
-    // log(), не событие "install_log" — не должно само по себе взводить
-    // sessionHasActivity (см. её докстring выше), иначе КАЖДОЕ открытие
-    // модели снова стало бы "реальной активностью", ту же ошибку недавно
-    // уже чинили (v0.9.7).
-    if (window.appInfo) {
-      const build = window.appInfo.is_win7 ? "Win7/x86" : "x64";
-      const warn = window.appInfo.under_program_files ? " · ВНИМАНИЕ: установлено в Program Files" : "";
-      log(`Magic SQD v${window.appInfo.app_version} (${build}) · client=${window.appInfo.client_id}${warn}`);
-    }
     activeCommand = null; commandResults.clear();
     done.clear();
     historyStack.length = 0;
@@ -403,6 +398,30 @@
     failedStages.clear();
 
     const result = await window.pywebview.api.install_load_stages(model.key);
+    // Токен прочного журнала сессии на диске (см. app/pending_install_logs.py,
+    // install_api.py:load_stages) — ДО версии-шапки ниже, а не после: append_current
+    // на несовпадающий/пустой токен молча ничего не пишет (защита от гонки
+    // потоков pywebview, см. докстринг pending_install_logs.py), так что шапка
+    // без свежего токена просто пропала бы из прочного журнала.
+    sessionToken = result.install_log_token || "";
+    // Даёт events.js прочно дописать в этот же журнал JS-ошибку, если она
+    // случится прямо во время установки (см. events.js) — иначе падение на
+    // чистом JS осталось бы только в локальном js_errors.log, а не ушло бы
+    // на сервер вместе с остальным логом сессии.
+    window.__installLogSessionToken = sessionToken;
+    // Диагностическая шапка лога (см. app.js: window.appInfo) — версия и
+    // сборка программы должны быть видны прямо в присланном логе установки,
+    // а не только в самой программе технику: разбор без этого начинается с
+    // вопроса "а какая у него вообще версия" (реальный случай, Volga C50).
+    // log(), не событие "install_log" — не должно само по себе взводить
+    // sessionHasActivity (см. её докстring выше), иначе КАЖДОЕ открытие
+    // модели снова стало бы "реальной активностью", ту же ошибку недавно
+    // уже чинили (v0.9.7).
+    if (window.appInfo) {
+      const build = window.appInfo.is_win7 ? "Win7/x86" : "x64";
+      const warn = window.appInfo.under_program_files ? " · ВНИМАНИЕ: установлено в Program Files" : "";
+      log(`Magic SQD v${window.appInfo.app_version} (${build}) · client=${window.appInfo.client_id}${warn}`);
+    }
     if (result.error) {
       loadError = result.error;
       loadErrorNeedsUpdate = Boolean(result.needs_update);
