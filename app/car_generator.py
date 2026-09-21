@@ -935,7 +935,15 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     for root in (files_dir, usb_root):
         if not root.exists():
             continue
-        for path in root.rglob("*"):
+        # list(...) — СНАЧАЛА собираем весь список файлов, ПОТОМ удаляем.
+        # Раньше unlink() шёл прямо во время того же rglob(), который его же
+        # обходит — изменение содержимого папки (исчезновение файла) прямо
+        # во время его перебора не гарантирует, что все записи будут
+        # посещены (известная особенность обхода директорий в Python/ОС,
+        # см. также обсуждение ниже — комментарий про "не воспроизвёл
+        # детерминированно" был именно об этом классе гонки). materialize
+        # списка до начала удаления убирает саму возможность такой гонки.
+        for path in list(root.rglob("*")):
             if path.is_file() and path.resolve() not in keep_paths:
                 path.unlink()
         # Дополнительная страховка сверх общей очистки выше — только внутри
@@ -950,7 +958,7 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
         # перенос между required/optional за одно сохранение оставил его
         # на старом месте — на практике не воспроизвёл детерминированно,
         # но цена проверки нулевая, а инвариант стоит держать безусловно).
-        for json_path in root.rglob("*.json"):
+        for json_path in list(root.rglob("*.json")):
             if (json_path.is_file() and json_path.parent.name in ("required", "optional")
                     and not json_path.with_suffix(".apk").exists()):
                 json_path.unlink()
