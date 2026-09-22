@@ -22,9 +22,11 @@ Inno Setup и одинаково понимают эти флаги.
 
 macOS: если программа запущена из собственного .app и в его папку можно
 писать — обновляется сама (_worker_mac: скачать .dmg, проверить, положить
-новый .app рядом и подменить после закрытия, данные пользователя внутри
-Contents/MacOS переносятся, при сбое — откат); иначе открывается .dmg в
-браузере, как раньше."""
+новый .app рядом и подменить после закрытия; при сбое — откат); иначе
+открывается .dmg в браузере, как раньше. Данные пользователя живут вне
+бандла (~/Library/Application Support/MagicSQD/, см. main_web.py:
+get_base_dir) — подмена самого .app их не касается вообще, кроме разового
+переноса при переходе со старой версии (см. _MAC_SWAP_SCRIPT)."""
 from __future__ import annotations
 import concurrent.futures
 import json
@@ -127,44 +129,57 @@ def can_replace_bundle(bundle: Path) -> bool:
 
 
 # Ждёт выхода программы, подменяет бандл и запускает новый. Отдельный процесс
-# (sh) — наш живёт ровно до закрытия окна. Данные пользователя (cars/, apk/,
-# сохранённый вход, client_id, логи…) лежат ВНУТРИ старого бандла, в
-# Contents/MacOS/ рядом с исполняемым файлом (см. main_web.py:get_base_dir), —
-# при простой подмене они пропали бы, поэтому переносим всё, кроме самого
-# исполняемого файла, в новый бандл (mv в пределах одного тома — мгновенно, без
-# копирования гигабайт скачанного контента). Любой сбой — откат на старую версию.
+# (sh) — наш живёт ровно до закрытия окна.
+#
+# ДО этой правки данные пользователя (cars/, apk/, сохранённый вход,
+# client_id, логи…) жили ВНУТРИ бандла, в Contents/MacOS/ рядом с
+# исполняемым файлом (см. main_web.py:get_base_dir) — при простой подмене
+# они пропали бы, поэтому скрипт переносил всё, кроме самого исполняемого
+# файла, В НОВЫЙ бандл. Именно это и было источником реального бага (см.
+# project_macos_app_damaged_signing_bug/докстринг get_base_dir выше по
+# коду): перенос данных ВНУТРЬ только что скачанного и только что
+# проверенного codesign'ом (--verify --deep --strict, см. _worker_mac выше)
+# бандла немедленно ломал его печать заново, хотя строчкой выше мы её
+# специально проверяли — Gatekeeper потом сильнее ограничивал программу
+# именно при обычном запуске через Finder/Dock (реальный случай: ADB
+# переставал видеть USB-устройство).
+#
+# Теперь данные живут вне бандла (~/Library/Application Support/MagicSQD/,
+# см. main_web.py:get_base_dir) — подмена стала настоящей заменой папки
+# целиком, без единого файла, добавленного ВНУТРЬ нового бандла после
+# проверки подписи. DATA_DIR ниже — на случай перехода со старой версии,
+# где данные ещё лежали в старом бандле: переносим их ОДИН РАЗ в новое
+# место (не в новый бандл), только если оно ещё пустое. На каждой
+# СЛЕДУЮЩЕЙ подмене (когда данные уже там, где нужно) этот блок — no-op.
 _MAC_SWAP_SCRIPT = r"""#!/bin/sh
-PID="$1"; APP="$2"; NEW="$3"; BAK="$APP.old-update"
-echo "$(date) swap: pid=$PID app=$APP new=$NEW"
+PID="$1"; APP="$2"; NEW="$3"; DATA_DIR="$4"; BAK="$APP.old-update"
+echo "$(date) swap: pid=$PID app=$APP new=$NEW data=$DATA_DIR"
 i=0
 while kill -0 "$PID" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 0.5; i=$((i+1)); done
 if kill -0 "$PID" 2>/dev/null; then echo "программа не закрылась — отмена"; rm -rf "$NEW"; exit 1; fi
-rollback() {
-  echo "откат: $1"
-  if [ -d "$BAK" ]; then
-    for item in "$NEW"/Contents/MacOS/* "$NEW"/Contents/MacOS/.[!.]*; do
-      [ -e "$item" ] || [ -L "$item" ] || continue
-      name=$(basename "$item")
-      [ "$name" = "__EXE__" ] && continue
-      [ -e "$BAK/Contents/MacOS/$name" ] || mv "$item" "$BAK/Contents/MacOS/$name"
-    done
-    rm -rf "$APP"
-    mv "$BAK" "$APP"
-  fi
+
+if [ -d "$APP/Contents/MacOS" ] && [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
+  mkdir -p "$DATA_DIR"
+  for item in "$APP"/Contents/MacOS/* "$APP"/Contents/MacOS/.[!.]*; do
+    [ -e "$item" ] || [ -L "$item" ] || continue
+    name=$(basename "$item")
+    [ "$name" = "__EXE__" ] && continue
+    [ -e "$DATA_DIR/$name" ] && continue
+    mv "$item" "$DATA_DIR/$name" 2>/dev/null
+  done
+  echo "$(date) swap: старые данные перенесены в $DATA_DIR"
+fi
+
+rm -rf "$BAK"
+mv "$APP" "$BAK" || { echo "не удалось убрать старую версию"; rm -rf "$NEW"; open "$APP"; exit 1; }
+if ! mv "$NEW" "$APP"; then
+  echo "откат: подмена бандла не удалась"
+  rm -rf "$APP"
+  mv "$BAK" "$APP"
   rm -rf "$NEW"
   open "$APP"
   exit 1
-}
-rm -rf "$BAK"
-mv "$APP" "$BAK" || { echo "не удалось убрать старую версию"; rm -rf "$NEW"; open "$APP"; exit 1; }
-for item in "$BAK"/Contents/MacOS/* "$BAK"/Contents/MacOS/.[!.]*; do
-  [ -e "$item" ] || [ -L "$item" ] || continue
-  name=$(basename "$item")
-  [ "$name" = "__EXE__" ] && continue
-  [ -e "$NEW/Contents/MacOS/$name" ] && continue
-  mv "$item" "$NEW/Contents/MacOS/$name" || rollback "перенос $name"
-done
-mv "$NEW" "$APP" || rollback "подмена бандла"
+fi
 open "$APP"
 rm -rf "$BAK"
 echo "$(date) swap: готово"
@@ -387,8 +402,13 @@ class UpdateApi:
             script_path.chmod(0o755)
             self._log("Обновление готово. Программа сейчас перезапустится...")
             with open(log_path, "ab") as log_file:
+                # self.base_dir — ТЕКУЩЕЕ (уже работающее по новой схеме, см.
+                # main_web.py:get_base_dir) место для данных пользователя;
+                # скрипту нужно только на случай перехода со старой версии,
+                # где данные ещё лежали в старом бандле (см. docstring скрипта).
                 subprocess.Popen(
-                    ["/bin/sh", str(script_path), str(pid or os.getpid()), str(bundle), str(staging)],
+                    ["/bin/sh", str(script_path), str(pid or os.getpid()), str(bundle), str(staging),
+                     str(self.base_dir)],
                     stdin=subprocess.DEVNULL, stdout=log_file, stderr=log_file,
                     start_new_session=True, close_fds=True,
                 )
