@@ -181,11 +181,37 @@ def _start_debug_uploader(base_dir: Path, client_id: str, log_path: Path, log_li
 
 
 def get_base_dir() -> Path:
-    """Папка рядом с magic_sqd.exe (или со скриптом при запуске из исходников)
-    — где лежат cars/apk/tools/assets и куда пишутся логи. Пользователь
-    кладёт/правит их вручную прямо здесь, поэтому это ВСЕГДА папка exe, а не
-    _internal (см. get_frontend_dir — там наоборот)."""
+    """Папка, где лежат cars/apk/assets и куда пишутся логи/JSON-файлы
+    состояния. Пользователь кладёт/правит их вручную прямо здесь (на Windows
+    и при запуске из исходников — это ВСЕГДА папка exe/скрипта, а не
+    _internal, см. get_frontend_dir — там наоборот).
+
+    ИСКЛЮЧЕНИЕ — macOS, реальный собранный .app (не запуск из исходников):
+    "рядом с exe" там означает Contents/MacOS/ — то есть ВНУТРИ подписанного
+    бандла. Любая запись туда ПОСЛЕ сборки (а cars/apk синкаются с сервера
+    буквально на первом же запуске, и продолжают дозаписываться при каждом
+    следующем) ломает печать (codesign --verify --deep --strict: "a sealed
+    resource is missing or invalid", реальный случай — подтверждено на живой
+    установленной копии, множество "file added" внутри cars/apk).
+    Gatekeeper после этого сильнее ограничивает приложение именно при
+    обычном запуске через Finder/Dock (реальный случай: ADB переставал
+    видеть подключённое по USB устройство ИМЕННО при таком запуске, но не
+    при запуске из Терминала через `open` — тот исторически не так строго
+    проверяет подпись, как полноценный LaunchServices-запуск). Тот же класс
+    бага, что и "app is damaged" в v1.0.2 (см. platform_paths.py:
+    bundled_tools_root — tools_mac перенесён в Contents/Resources/), только
+    вторая половина: там был неподвижный бандленный инструмент (один раз
+    на сборке), здесь — постоянно дозаписываемые пользовательские данные (на
+    каждом запуске). Внутри подписанного бандла им оставаться нельзя в
+    принципе — под изменяемые данные приложения на macOS есть отдельное,
+    предназначенное для этого место, вне бандла: ~/Library/Application
+    Support/. Печать после этого никогда не портится, т.к. сам .app на диске
+    больше не меняется после установки. Первый запуск после обновления
+    существующей установки перекачает cars/apk заново (contents_sync и так
+    рассчитан на "докачать то, чего не хватает" — не новая возможность)."""
     if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "MagicSQD"
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
 
@@ -195,11 +221,27 @@ def get_frontend_dir(base_dir: Path) -> Path:
     в onedir-сборке PyInstaller 6+ лежат в _internal/ рядом с
     exe, НЕ прямо рядом с ним (в отличие от cars/apk/tools/assets — эти
     пользователь трогает руками, поэтому им обязательно быть прямо у exe).
-    sys._MEIPASS — официальный способ PyInstaller найти данные бандла
-    независимо от onedir/onefile; при запуске из исходников такого атрибута
-    нет, тогда просто используем base_dir, как раньше."""
-    meipass = getattr(sys, "_MEIPASS", None)
-    root = Path(meipass) if meipass else base_dir
+    При запуске из исходников (sys.frozen нет) — просто base_dir, как раньше.
+
+    На Windows sys._MEIPASS — официальный способ PyInstaller найти данные
+    бандла (_internal/ рядом с exe), и здесь он используется как раньше.
+
+    На macOS — НЕ через sys._MEIPASS (см. app/platform_paths.py:
+    bundled_tools_root, тот же самый найденный баг 2026-09-22 и то же
+    объяснение — для актуального PyInstaller это Contents/Frameworks/, а не
+    Contents/Resources/, где реально лежат datas=). Здесь это работало
+    только по случайности: PyInstaller сам кладёт в Frameworks/ символические
+    ссылки почти на всё, что собрал (app/, certifi/, base_library.zip —
+    см. `ls -la Contents/Frameworks/` у собранного .app), включая app/, так
+    что app/web/frontend через эту ссылку находился — но это деталь
+    реализации текущей версии PyInstaller, а не гарантия. Считаем путь
+    напрямую от sys.executable, как и в bundled_tools_root — не зависит от
+    того, чту именно PyInstaller решит считать _MEIPASS."""
+    if sys.platform == "darwin" and getattr(sys, "frozen", False):
+        root = Path(sys.executable).resolve().parent.parent / "Resources"
+    else:
+        meipass = getattr(sys, "_MEIPASS", None)
+        root = Path(meipass) if meipass else base_dir
     return root / "app" / "web" / "frontend"
 
 
