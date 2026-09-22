@@ -125,11 +125,18 @@ fun writeFileToUsb(
 
     var lastError: Exception? = null
     for (attempt in 1..WRITE_RETRY_ATTEMPTS) {
-        // Свежий createFile на каждой попытке — предыдущая могла оставить
-        // на флешке частично записанный (битый) файл того же имени.
-        dir.search(fileName)?.let { it.delete() }
-        val target = dir.createFile(fileName)
         try {
+            // Свежий createFile на каждой попытке — предыдущая могла оставить
+            // на флешке частично записанный (битый) файл того же имени.
+            // РАНЬШЕ эти два вызова стояли ВНЕ try (см. ниже) — если шина ещё
+            // не восстановилась после провала предыдущей попытки, delete()/
+            // createFile() сами бросали то же MAX_RECOVERY_ATTEMPTS
+            // Exceeded, но уже НЕ через catch блока ниже, а прямо наружу из
+            // функции — весь retry молча обрывался после попытки 1, хотя лог
+            // перед этим обещал "(попытка 1/5)" (реальный случай, install_logs
+            // #501 — 211МБ файл, ни одной строки "попытка 2/5" не появилось).
+            dir.search(fileName)?.let { it.delete() }
+            val target = dir.createFile(fileName)
             val totalSize = localFile.length()
             val buffer = ByteArray(WRITE_CHUNK_SIZE)
             var offset = 0L
