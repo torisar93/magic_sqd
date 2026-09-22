@@ -36,6 +36,10 @@ _ADB_REMOUNT_RE = re.compile(r"^#remount\s*$", re.IGNORECASE)
 _ADB_PUSH_RE = re.compile(r"^#push\s+(\S+)\s+(.+)$", re.IGNORECASE)
 _ADB_INSTALL_RE = re.compile(r"^#install\s+(\S+)\s*$", re.IGNORECASE)
 _ADB_INSTALL_STREAM_RE = re.compile(r"^#install_stream\s+(\S+)\s*$", re.IGNORECASE)
+# "#log <команда>" — см. app/car_generator.py: _ADB_LOG_RE (тот же порт, что
+# и остальные маркеры выше) — "shell" молчит на успехе (см. InstallEngine.kt:
+# "shell" -> AdbShellResult.Output -> {}), "shell_log" явно пишет вывод в лог.
+_ADB_LOG_RE = re.compile(r"^#log\s+(.+)$", re.IGNORECASE)
 
 _DEV = r"(?:\s+-s\s+\S+)?"
 _RAW_ADB_ROOT_RE = re.compile(rf"^adb{_DEV}\s+root\s*$", re.IGNORECASE)
@@ -83,6 +87,8 @@ def parse_adb_line(line: str) -> dict:
         return {"kind": "install", "file": _adb_basename(m.group(1))}
     if m := _ADB_INSTALL_STREAM_RE.match(line):
         return {"kind": "install_stream", "file": _adb_basename(m.group(1))}
+    if m := _ADB_LOG_RE.match(line):
+        return {"kind": "shell_log", "command": m.group(1).strip()}
 
     if _RAW_ADB_ROOT_RE.match(line):
         return {"kind": "root"}

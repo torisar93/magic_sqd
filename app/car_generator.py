@@ -82,7 +82,12 @@ class ActionSpec:
     label: str = ""
     # "command" — commands ниже (тот же мини-DSL, что и у "adb"-этапа, см.
     # _parse_adb_line/_render_command_body, но без прикреплённых файлов —
-    # #push/#install тут не поддерживаются). "grant_permissions" —
+    # #push/#install тут не поддерживаются). Обычная строка/"сырая" adb-
+    # команда выполняется МОЛЧА (успех не попадает в лог — см. комментарий
+    # у _ADB_LOG_RE); "#log <команда>" — та же команда, но с явным выводом в
+    # лог (для диагностических кнопок, которые технику нужно просто нажать и
+    # отправить результат, см. cars/Haval/"Jolion 2026 test").
+    # "grant_permissions" —
     # список приложений магнитолы предлагается выбрать во время установки
     # (ctx.ask_choice), дальше cars/_shared/adb_permissions.py.
     # grant_all_permissions сам выдаёт все обычные и специальные разрешения
@@ -1094,6 +1099,17 @@ _ADB_INSTALL_RE = re.compile(r"^#install\s+(\S+)\s*$", re.IGNORECASE)
 # всегда точный размер конкретного файла на ЕГО машине, поэтому просто
 # отбрасываем их и берём размер на месте, актуальный для текущего файла.
 _ADB_INSTALL_STREAM_RE = re.compile(r"^#install_stream\s+(\S+)\s*$", re.IGNORECASE)
+# "#log <команда>" — та же adb shell команда, что и обычная строка без
+# маркера, но вывод (stdout+stderr) явно попадает в лог установки (см.
+# InstallContext.shell_log) — обычный "shell" (см. ниже) намеренно молчит на
+# успехе (см. adb_utils.py: Adb.run — стена текста на длинных цепочках
+# рутинных команд, тот же выбор и в Android InstallEngine.kt: "shell" ->
+# AdbShellResult.Output -> {}). Для диагностических кнопок ("actions"-этап,
+# например снятие getprop/settings/dumpsys одной кнопкой техником — см.
+# cars/Haval/"Jolion 2026 test") нужен именно сырой вывод в лог, который
+# техник потом отправит через "Сообщить о проблеме", поэтому отдельный маркер,
+# а не финальный fallback.
+_ADB_LOG_RE = re.compile(r"^#log\s+(.+)$", re.IGNORECASE)
 
 # "Сырые" строки прямо из .bat/.sh — необязательный "-s <serial>" после adb
 # (техник мог скопировать команду вместе с указанием устройства).
@@ -1159,6 +1175,8 @@ def _parse_adb_line(line: str) -> tuple[str, object]:
         return "install", _adb_basename(m.group(1))
     if m := _ADB_INSTALL_STREAM_RE.match(line):
         return "install_stream", _adb_basename(m.group(1))
+    if m := _ADB_LOG_RE.match(line):
+        return "shell_log", m.group(1).strip()
 
     # "Сырые" строки прямо из .bat/.sh автора набора (см. пояснение выше).
     if _RAW_ADB_ROOT_RE.match(line):
@@ -1228,6 +1246,12 @@ def _render_command_body(commands: list[str], files_rel_prefix: str) -> list[str
         elif kind == "install_stream":
             rel = f"{files_rel_prefix}/{payload}"
             lines.append(f"    ctx.install_apk_stream(ctx.file({rel!r}))")
+        elif kind == "shell_log":
+            if "{ask}" in payload:
+                lines.append(
+                    f"    ctx.shell_log({payload!r}.replace('{{ask}}', str(_ask)))")
+            else:
+                lines.append(f"    ctx.shell_log({payload!r})")
         else:
             if "{ask}" in payload:
                 lines.append(
