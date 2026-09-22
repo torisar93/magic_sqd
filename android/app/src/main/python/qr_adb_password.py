@@ -21,6 +21,11 @@ _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 _SALT_RE = re.compile(r"salt\s*=\s*\[([^\]]*)\]")
 _PASSWORD_RE = re.compile(r"password\s*=\s*\[([^\]]*)\]")
+# Запасной вариант без квадратных скобок — см. app/qr_adb_password.py
+# (desktop) за полным объяснением; 1:1 с эталонным скриптом поставщика
+# (deploy/QR.py из release-бандла MonGuard).
+_SALT_FALLBACK_RE = re.compile(r"salt\s*=\s*([^\n]+)")
+_PASSWORD_FALLBACK_RE = re.compile(r"password\s*=\s*([^\n]+)")
 # См. app/qr_adb_password.py (desktop) — пробел перед "sn" (не \b-граница)
 # плюс последнее найденное совпадение, 1:1 с эталонным скриптом поставщика
 # (deploy/QR.py из release-бандла MonGuard) — иначе в реальном bugreport-*.txt
@@ -53,7 +58,12 @@ def _encode_alphanumeric(data: bytes) -> str:
 
 
 def _parse_int_list(raw: str) -> bytes:
-    values = literal_eval(f"[{raw}]")
+    """См. app/qr_adb_password.py (desktop) — raw может уже включать
+    квадратные скобки целиком, если сработал запасной _SALT_FALLBACK_RE/
+    _PASSWORD_FALLBACK_RE, не оборачиваем повторно в этом случае."""
+    raw = raw.strip()
+    literal = raw if raw.startswith("[") and raw.endswith("]") else f"[{raw}]"
+    values = literal_eval(literal)
     if not isinstance(values, list) or not all(isinstance(v, int) for v in values):
         raise ValueError("salt/password должны быть списком чисел")
     return bytes(b & 0xFF for b in values)
@@ -104,8 +114,8 @@ def get_password_from_zip_b64(zip_b64: str, debug_dir: str = "") -> str:
                 return json.dumps({"ok": False, "error": "Внутри bugreport-zip нет .txt файлов", "debug_copy": debug_copy})
             for name in txt_names:
                 content = zf.read(name).decode("utf-8", errors="ignore")
-                salt_matches = _SALT_RE.findall(content)
-                password_matches = _PASSWORD_RE.findall(content)
+                salt_matches = _SALT_RE.findall(content) or _SALT_FALLBACK_RE.findall(content)
+                password_matches = _PASSWORD_RE.findall(content) or _PASSWORD_FALLBACK_RE.findall(content)
                 sn_matches = _SN_RE.findall(content)
                 if salt_matches and password_matches and sn_matches:
                     salt = _parse_int_list(salt_matches[-1])

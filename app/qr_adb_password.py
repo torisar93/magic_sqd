@@ -44,6 +44,15 @@ _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 _SALT_RE = re.compile(r"salt\s*=\s*\[([^\]]*)\]")
 _PASSWORD_RE = re.compile(r"password\s*=\s*\[([^\]]*)\]")
+# Запасной вариант БЕЗ квадратных скобок, если основной ничего не нашёл —
+# 1:1 с эталонным скриптом поставщика платформы (deploy/QR.py из
+# release-бандла MonGuard, сверено заново 2026-09-22 после жалобы на
+# неверный пароль): там тоже сначала пробуют вариант со скобками, и только
+# если он не сработал — берут "всё до конца строки" без них. Раньше здесь
+# был только вариант со скобками — на прошивках, где поле напечатано иначе,
+# разбор просто не находил ничего (см. _extract_fields/_parse_int_list).
+_SALT_FALLBACK_RE = re.compile(r"salt\s*=\s*([^\n]+)")
+_PASSWORD_FALLBACK_RE = re.compile(r"password\s*=\s*([^\n]+)")
 # Реальный bugreport-*.txt — это полный дамп logcat, десятки мегабайт, где
 # "sn=" (без пробела перед ним, например DrFusionService печатает
 # "...[DR]\tsn=<счётчик>,time=..." через TAB) встречается тысячи раз в не
@@ -95,8 +104,16 @@ def find_bugreport_zip(logs_folder: Path) -> Path | None:
 
 
 def _parse_int_list(raw: str) -> list[int]:
+    """raw — либо просто "1, 2, 3" (из основного, со скобками, паттерна —
+    сами скобки в захваченную группу не входят), либо, если сработал
+    запасной _SALT_FALLBACK_RE/_PASSWORD_FALLBACK_RE, МОЖЕТ уже включать
+    квадратные скобки целиком ("[1, 2, 3]") — та же развилка, что и в
+    эталонном скрипте поставщика (deploy/QR.py), не оборачиваем повторно,
+    если скобки уже есть."""
+    raw = raw.strip()
+    literal = raw if raw.startswith("[") and raw.endswith("]") else f"[{raw}]"
     try:
-        values = literal_eval(f"[{raw}]")
+        values = literal_eval(literal)
     except (ValueError, SyntaxError) as exc:
         raise QrAdbError(f"Не удалось разобрать числовой список: {exc}") from exc
     if not isinstance(values, list) or not all(isinstance(v, int) for v in values):
@@ -119,8 +136,8 @@ def _extract_fields(zip_path: Path) -> tuple[bytes, bytes, str]:
             content = zf.read(name).decode("utf-8", errors="ignore")
             # findall(...)[-1] (последнее совпадение), не первое встречное —
             # 1:1 с эталонным скриптом поставщика (см. комментарий у _SN_RE).
-            salt_matches = _SALT_RE.findall(content)
-            password_matches = _PASSWORD_RE.findall(content)
+            salt_matches = _SALT_RE.findall(content) or _SALT_FALLBACK_RE.findall(content)
+            password_matches = _PASSWORD_RE.findall(content) or _PASSWORD_FALLBACK_RE.findall(content)
             sn_matches = _SN_RE.findall(content)
             if salt_matches and password_matches and sn_matches:
                 salt = bytes(b & 0xFF for b in _parse_int_list(salt_matches[-1]))

@@ -6,7 +6,10 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from ...qr_adb_password import QrAdbError, get_adb_password
+from ...ping_client import get_or_create_client_id
+from ...qr_adb_debug_client import QrAdbDebugUploadError, upload_debug_copy
+from ...qr_adb_password import QrAdbError, find_bugreport_zip, find_latest_logs_folder, get_adb_password
+from ...submit_config import get_submit_config
 from ...usb_utils import drive_root_path
 
 _FLAG_FILENAME = "svlog.flag"
@@ -37,9 +40,10 @@ def _write_shared_flag(cars_dir: Path, filename: str, drive_letter: str) -> dict
 
 
 class QrAdbApi:
-    def __init__(self, base_dir: Path, cars_dir: Path):
+    def __init__(self, base_dir: Path, cars_dir: Path, platform: str = ""):
         self.base_dir = Path(base_dir)
         self.cars_dir = Path(cars_dir)
+        self.platform = platform
 
     def write_prep_flag(self, drive_letter: str) -> dict:
         """Доп. шаг ПЕРЕД write_flag — только для qr_adb_engineering_menu=True (см.
@@ -57,11 +61,34 @@ class QrAdbApi:
         return _write_shared_flag(self.cars_dir, _FLAG_FILENAME, drive_letter)
 
     def get_password(self, drive_letter: str) -> dict:
-        # debug_dir: пока формула не подтверждена 100%-но надёжной (жалобы
-        # клиентов на неверный пароль, 2026-09-21) — сохраняем исходный
-        # bugreport-*.zip целиком, см. app/qr_adb_password.py:save_debug_copy.
+        # Пока формула не подтверждена 100%-но надёжной (жалобы клиентов на
+        # неверный пароль, 2026-09-21, 2026-09-22) — сохраняем исходный
+        # bugreport-*.zip целиком. С 2026-09-22 — СНАЧАЛА пробуем отправить
+        # его на сервер (см. app/qr_adb_debug_client.py) целиком, чтобы
+        # разработчик видел все присылаемые коды централизованно и технику
+        # не нужно было ничего пересылать руками; локальное сохранение (см.
+        # app/qr_adb_password.py:save_debug_copy) — только запасной путь,
+        # если отправка не удалась (нет submit.json, нет сети и т.п.), чтобы
+        # диагностика в любом случае не терялась. Временная возможность —
+        # уберётся, когда накопится несколько точно успешных установок.
+        drive_root = drive_root_path(drive_letter)
+        debug_dir = None
         try:
-            result = get_adb_password(drive_root_path(drive_letter), debug_dir=self.base_dir / "qr_adb_debug")
+            logs_folder = find_latest_logs_folder(drive_root)
+            zip_path = find_bugreport_zip(logs_folder) if logs_folder else None
+            config = get_submit_config(self.base_dir) if zip_path else None
+            if zip_path and config:
+                upload_debug_copy(
+                    config, get_or_create_client_id(self.base_dir), self.platform,
+                    logs_folder.name, zip_path.read_bytes(),
+                )
+            elif zip_path:
+                debug_dir = self.base_dir / "qr_adb_debug"  # submit.json не настроен — сразу локально
+        except (QrAdbDebugUploadError, OSError):
+            debug_dir = self.base_dir / "qr_adb_debug"  # отправка не удалась — локальный запасной путь
+
+        try:
+            result = get_adb_password(drive_root, debug_dir=debug_dir)
         except QrAdbError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, **result}
