@@ -298,10 +298,21 @@ def launch_main_activity(ctx, package: str) -> None:
 def uninstall_app(ctx, package: str) -> None:
     """Удаляет приложение (pm uninstall) — в отличие от disable_app, СТИРАЕТ
     его с магнитолы полностью. Для системных/предустановленных пакетов без
-    root обычно не сработает (тогда используйте disable_app)."""
+    root обычно не сработает (тогда используйте disable_app) — раньше
+    здесь безусловно писалось "Готово." независимо от того, что реально
+    ответило устройство (реальный случай, лог #536: техник попробовал
+    "pm uninstall android" — ядро системы, заведомо защищено от удаления —
+    и всё равно увидел "Готово.", хотя pm команду отклонила). Настоящий
+    результат смотрим в тексте, как выводит сама pm ("Success"/"Failure
+    [...]") — тот же приём, что и install_context.py:_check_pm_install_result
+    на десктопе."""
     ctx.log(f"Удаляю приложение: {package}")
-    ctx.shell(f"pm uninstall {package}", check=False)
-    ctx.log("Готово.")
+    result = ctx.shell(f"pm uninstall {package}", check=False)
+    text = ((result.stdout or "") + (result.stderr or "")).strip()
+    if "success" in text.lower() and "failure" not in text.lower():
+        ctx.log("Готово.")
+    else:
+        ctx.log(f"Не удалось удалить: {text or 'устройство не ответило'}")
 
 
 def disable_app(ctx, package: str) -> None:

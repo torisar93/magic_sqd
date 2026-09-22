@@ -218,11 +218,23 @@ object AdbPermissions {
      * cars/_shared/adb_permissions.py:uninstall_app. В отличие от
      * disable_app (которого на Android пока нет вовсе) стирает APK
      * полностью; для системных/предустановленных пакетов без root обычно
-     * не сработает. */
+     * не сработает — раньше здесь безусловно писалось "Готово." независимо
+     * от реального ответа устройства (см. лог #536: "pm uninstall android"
+     * — ядро системы, заведомо защищено — тоже отчиталось "Готово.", хотя
+     * pm его отклонила). Настоящий результат — по тексту ("Success"/
+     * "Failure [...]"), тот же приём, что и на десктопе. */
     fun uninstallApp(pkg: String, log: (String) -> Unit) {
         log("Удаляю приложение: $pkg")
-        AdbSession.shell("pm uninstall $pkg", log)
-        log("Готово.")
+        val text = when (val r = AdbSession.shell("pm uninstall $pkg", log)) {
+            is AdbShellResult.Output -> r.text
+            is AdbShellResult.Rejected -> "Команда отклонена устройством: ${r.reason}"
+            is AdbShellResult.Failed -> r.reason
+        }
+        if (text.contains("success", ignoreCase = true) && !text.contains("failure", ignoreCase = true)) {
+            log("Готово.")
+        } else {
+            log("Не удалось удалить: ${text.ifBlank { "устройство не ответило" }}")
+        }
     }
 
     // Когда пакету в последний раз выдавали разрешения — чтобы автовыдача после
