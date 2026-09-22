@@ -264,6 +264,23 @@ class InstallContext:
         self.check_cancelled()
         return self._adb.shell(command, **kwargs)
 
+    def shell_log(self, command, **kwargs):
+        """Как shell(), но явно пишет в лог и саму команду, и её вывод
+        (stdout+stderr). Обычный shell() из "#"-команд мини-DSL (см.
+        car_generator.py:_render_command_body) вызывается с check=False и
+        результат нигде не оседает — осознанный выбор против "стены текста"
+        на длинных цепочках рутинных команд (см. adb_utils.py: Adb.run).
+        Для диагностических кнопок ("actions"-этап, техник просто нажимает
+        и потом отправляет лог целиком через "Сообщить о проблеме") нужен
+        именно сырой вывод — маркер "#log <команда>" в мини-DSL рендерит
+        вызов именно этого метода, а не shell()."""
+        self.log(f"$ {command}")
+        kwargs.setdefault("check", False)
+        result = self.shell(command, **kwargs)
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        self.log(output if output else "(пусто)")
+        return result
+
     def install_apk(self, path, reinstall=True, extra_args=None, timeout=180):
         self.check_cancelled()
         self.log(f"Установка APK: {Path(path).name}")

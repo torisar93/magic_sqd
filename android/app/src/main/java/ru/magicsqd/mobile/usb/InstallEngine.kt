@@ -165,6 +165,23 @@ class InstallEngine(
                     }
                 }
 
+                // "#log <команда>" (см. wizard_spec.py:parse_adb_line,
+                // app/car_generator.py:_ADB_LOG_RE) — та же shell-команда,
+                // что и "shell" выше, но ВЫВОД сознательно попадает в лог:
+                // для диагностических кнопок ("actions"-этап), где технику
+                // нужно просто нажать и отправить лог целиком (см.
+                // InstallContext.shell_log на десктопе, тот же порт).
+                "shell_log" -> {
+                    var command = cmd.getString("command")
+                    if (lastAsk != null) command = command.replace("{ask}", lastAsk)
+                    log("$ $command")
+                    when (val r = AdbSession.shell(command, log)) {
+                        is AdbShellResult.Output -> log(r.text.ifBlank { "(пусто)" })
+                        is AdbShellResult.Rejected -> log("Команда отклонена устройством: $command (${r.reason})")
+                        is AdbShellResult.Failed -> return StageRunResult.Failed("'$command': ${r.reason}")
+                    }
+                }
+
                 else -> log("Неизвестный тип команды в _wizard_spec.json: ${cmd.getString("kind")}")
             }
         }
