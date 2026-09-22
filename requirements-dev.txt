@@ -1,3 +1,9 @@
 # Только для тестов (tests/) — в сборку не попадает. Сами тесты не тянут pywebview/pyinstaller:
 # проверяемые модули (app/content_sync.py, app/runner.py, app/web/api/*.py, ...) импортируются без них.
+# Исключение — certifi: main_web.py импортирует его на уровне модуля (см. main_web.py:22,
+# фикс "certificate has expired" на машинах с неактуальными корневыми сертификатами), а
+# tests/test_mac_data_dir.py делает `import main_web` — тот же класс дыры в CI, что уже
+# был с usb_utils.py на Linux (см. память проекта), просто раньше ни один тест не доходил
+# до этого импорта. Версия зафиксирована==как в requirements.txt.
 pytest==9.1.1
+certifi==2026.7.22
