@@ -159,6 +159,68 @@ def test_qr_adb_api_write_flag_reaches_real_mount_path_on_macos(tmp_path, monkey
     assert (drive / "svlog.flag").read_text() == "trigger-content"
 
 
+# --- сверка с эталонным скриптом поставщика (deploy/QR.py, MonGuard) -------
+#
+# 2026-09-22: жалоба клиента "неправильно генерируется пароль" — заново
+# сверено с deploy/QR.py и deploy/QR_mac.py из свежего релизного бандла
+# MonGuard (1.8.1). Сам HKDF-алгоритм (hkdf_extract/hkdf_expand/кодирование
+# в alphanumeric) оказался идентичен побайтово — см. золотой тест ниже,
+# посчитанный РЕАЛЬНЫМ запуском их QR.py, не переписан по памяти. Найдено
+# одно настоящее отличие: у них ЕСТЬ запасной regex без квадратных скобок,
+# если основной (со скобками) ничего не нашёл — у нас раньше не было
+# (см. _SALT_FALLBACK_RE/_PASSWORD_FALLBACK_RE в app/qr_adb_password.py).
+
+def test_compute_auth_code_matches_monguard_reference_script():
+    """Золотой тест: salt/password/sn ниже прогнаны через настоящий
+    deploy/QR.py (release_1.8.1_20342_monguard_app) — результат "dOjtwQ"
+    получен ИХ кодом, не пересчитан вручную. Если кто-то случайно поменяет
+    порядок аргументов hkdf_extract/hkdf_expand или байт счётчика — тест
+    упадёт."""
+    salt = bytes(range(16))
+    password = bytes(range(16, 32))
+    assert qap.compute_auth_code(salt, password, "GOLDEN-SN-42") == "dOjtwQ"
+
+
+def test_extract_fields_falls_back_to_unbracketed_salt_and_password(tmp_path):
+    """Реальное отличие от эталонного скрипта, найденное 2026-09-22: на
+    части прошивок salt/password в логе могут быть напечатаны БЕЗ квадратных
+    скобок — раньше наш разбор в этом случае просто ничего не находил."""
+    zip_path = tmp_path / "bugreport-1.zip"
+    content = (
+        "...шум логката...\n"
+        "salt = 1, 2, 3, 4\n"
+        "password = 5, 6, 7, 8\n"
+        "09-21 12:00:00.000  1234  1234 I QRCodeDialog: sn=NOBRACKETS1\n"
+    )
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("bugreport-dump.txt", content)
+
+    salt, password, sn = qap._extract_fields(zip_path)
+
+    assert salt == bytes([1, 2, 3, 4])
+    assert password == bytes([5, 6, 7, 8])
+    assert sn == "NOBRACKETS1"
+
+
+def test_extract_fields_prefers_bracketed_pattern_when_both_present(tmp_path):
+    """Основной (со скобками) паттерн должен побеждать всегда, когда сам
+    находит совпадение — запасной вариант только на крайний случай, как и в
+    эталонном скрипте (там та же проверка "if not salt_matches: ...")."""
+    zip_path = tmp_path / "bugreport-1.zip"
+    content = (
+        "salt = [9, 9, 9] ...\n"
+        "password = [8, 8, 8] ...\n"
+        "09-21 12:00:00.000  1234  1234 I QRCodeDialog: sn=BRACKETED1\n"
+    )
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("bugreport-dump.txt", content)
+
+    salt, password, sn = qap._extract_fields(zip_path)
+
+    assert salt == bytes([9, 9, 9])
+    assert password == bytes([8, 8, 8])
+
+
 def test_qr_adb_api_get_password_reaches_real_mount_path_on_macos(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     from app.web.api import qr_adb_api
