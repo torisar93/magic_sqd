@@ -23,8 +23,14 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 echo "== $TAG: скачиваю ассеты релиза"
-gh release download "$TAG" -p 'MagicSQD_*' -D "$WORK" --clobber
-gh release view "$TAG" --json assets --jq '.assets[]|.name+" "+.digest' | sed 's/ sha256:/ /' > "$WORK/digests.txt"
+# Ассеты — по id релиза, а не по тегу: у только что опубликованного v1.0.32 GitHub больше получаса отдавал
+# по тегу (gh release view/download) и в списке /releases пустой assets, хотя по id и по прямым ссылкам
+# все файлы уже были на месте.
+REL_ID=$(gh api "repos/{owner}/{repo}/releases/tags/$TAG" --jq .id)
+gh api "repos/{owner}/{repo}/releases/$REL_ID" \
+  --jq '.assets[]|select(.name|startswith("MagicSQD_"))|.name+" "+.digest+" "+.browser_download_url' \
+  | sed 's/ sha256:/ /' > "$WORK/digests.txt"
+while read -r name _ url; do curl -fsSL -o "$WORK/$name" "$url"; done < "$WORK/digests.txt"
 
 # ключ в version.json → шаблон имени в релизе → стабильное имя на зеркале
 declare -a MAP=(
@@ -49,7 +55,7 @@ for entry in "${MAP[@]}"; do
 done
 [ ${#UPLOAD[@]} -gt 0 ] || { echo "нечего зеркалить"; exit 1; }
 
-CHANGELOG=$(gh release view "$TAG" --json body --jq '.body')
+CHANGELOG=$(gh api "repos/{owner}/{repo}/releases/$REL_ID" --jq '.body')
 python3 - "$WORK/version.json" "$TAG" "$CHANGELOG" "{${ASSETS_JSON%, }}" "{${SHA_JSON%, }}" <<'PY'
 import json, sys
 path, tag, changelog, assets, sha = sys.argv[1:]
