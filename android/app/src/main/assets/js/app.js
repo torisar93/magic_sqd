@@ -1321,8 +1321,9 @@
     labInstallBusy=false;
     const r = event.result || {};
     const flashBlock = usbOperation && usbOperation.kind === "files" ? usbOperation.block : null;
+    const stoppedByUser = !r.success && Boolean(r.cancelled || r.canceled || appInstallOperation?.cancelRequested);
     if (appInstallOperation) {
-      appInstallResults[event.index] = { ...r, cancelled: !r.success && Boolean(r.cancelled || r.canceled || appInstallOperation.cancelRequested) };
+      appInstallResults[event.index] = { ...r, cancelled: stoppedByUser };
       appInstallOperation = null;
     }
     screenWizard.classList.remove('is-installing-apps');
@@ -1330,7 +1331,9 @@
       stageExecutionResults[event.index] = { ...r, actionIndex: stageOperation.actionIndex };
       stageOperation = null;
     }
-    log(r.success ? "Этап выполнен успешно." : `Этап завершился с ошибкой: ${r.reason || "?"}`);
+    log(r.success ? "Этап выполнен успешно."
+      : stoppedByUser ? "Этап остановлен пользователем."
+      : `Этап завершился с ошибкой: ${r.reason || "?"}`);
     const finishedStage = stages.find(item => item.index === event.index);
     if (finishedStage && finishedStage.type !== "actions") {
       if (r.success) failedStages.delete(event.index);
