@@ -7,7 +7,7 @@
 ; content_sync.py), поэтому Program Files (только с admin) сюда не подходит.
 
 #define MyAppName "Magic SQD"
-#define MyAppVersion "1.0.34"
+#define MyAppVersion "1.0.35"
 #define MyAppPublisher "Magic SQD"
 #define MyAppExeName "magic_sqd.exe"
 
