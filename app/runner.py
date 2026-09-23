@@ -8,7 +8,7 @@ from .install_context import InstallContext, InstallCancelled
 
 class InstallRunner:
     def __init__(self, adb_path, on_log, on_finished, base_dir=None, ask_input_fn=None,
-                 on_sync_progress=None, on_apk_download_progress=None):
+                 on_sync_progress=None, on_apk_download_progress=None, on_apk_install_progress=None):
         """
         on_log(str) вызывается из фонового потока при каждой строке лога.
         on_finished(success: bool, message: str) вызывается по завершении.
@@ -32,6 +32,9 @@ class InstallRunner:
         on_apk_download_progress(путь, скачано, всего) — байты текущего
         докачиваемого APK (см. content_sync.ensure_apks_downloaded:
         on_file_progress) — для кольца окна установки.
+        on_apk_install_progress(путь, готово, всего, состояние, фаза) — установка
+        каждого выбранного APK (см. InstallContext.install_selected_apks) — для
+        очереди того же окна.
         """
         self.adb_path = adb_path
         self.on_log = on_log
@@ -42,6 +45,7 @@ class InstallRunner:
         # done/total) — заглушка на 2 роняла любой запуск без своего обработчика.
         self.on_sync_progress = on_sync_progress or (lambda done, total, *args: None)
         self.on_apk_download_progress = on_apk_download_progress or (lambda path, done, total: None)
+        self.on_apk_install_progress = on_apk_install_progress
         self._thread = None
         self._cancel_flag = threading.Event()
 
@@ -103,6 +107,7 @@ class InstallRunner:
                 ask_input_fn=self.ask_input_fn,
                 shared_dir=(self.base_dir / "cars" / "_shared") if self.base_dir else None,
                 preferred_install_method=preferred_install_method,
+                on_apk_progress=self.on_apk_install_progress,
             )
             run_fn(ctx)
         except InstallCancelled as exc:

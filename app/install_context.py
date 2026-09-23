@@ -154,7 +154,10 @@ def _short_reason(exc, limit: int = 300) -> str:
 class InstallContext:
     def __init__(self, adb_path, device_serial, model_dir: Path, selected_apks,
                  log_fn, cancel_flag, ask_input_fn=None, shared_dir: Path | None = None,
-                 preferred_install_method: str = ""):
+                 preferred_install_method: str = "", on_apk_progress=None):
+        # on_apk_progress(путь, готово, всего, "running"/"done"/"error", фаза|None) — ход установки
+        # каждого выбранного APK для очереди окна установки (см. install_selected_apks).
+        self._on_apk_progress = on_apk_progress or (lambda path, completed, total, state, phase: None)
         self.model_dir = Path(model_dir)
         self.files_dir = self.model_dir / "files"
         # cars/_shared/ — общие для МНОГИХ моделей файлы (не только Python-
@@ -328,8 +331,14 @@ class InstallContext:
         if conflict:
             raise InstallCancelled(conflict)
         mock_target = self._mock_location_target()
-        for apk in self.selected_apks:
+        # Очередь окна установки (progress08.js) — та же последовательность, что шлёт Android
+        # (InstallEngine.installApksWithProgress): «устанавливается» (готово = index) → «готово»
+        # (index + 1) или «ошибка». Раньше десктоп слал только скачивание, и после него окно так и
+        # оставалось на «Скачивание приложений» с «Готово 0 из N» (жалоба владельца, 2026-09-23).
+        total = len(self.selected_apks)
+        for index, apk in enumerate(self.selected_apks):
             self._last_diff_package = None
+            self._on_apk_progress(str(apk), index, total, "running", "install")
             try:
                 self.install_apk_auto(apk, extra_args=extra_args)
             except AppInstallFailed as exc:
@@ -337,7 +346,15 @@ class InstallContext:
                 # сбой именно этого apk не должен стоить техникам остальных,
                 # уже успешно установленных приложений (см. AppInstallFailed).
                 self.failed_apps.append(str(exc))
+                self._on_apk_progress(str(apk), index, total, "error", None)
                 continue
+            except BaseException:
+                # Стоп, ни один способ не подошёл и т.п. — этап заканчивается, строка не должна
+                # остаться на «Установка…».
+                self._on_apk_progress(str(apk), index, total, "error", None)
+                raise
+            # Приложение уже стоит; разрешения ниже установку не срывают (см. _after_app_installed).
+            self._on_apk_progress(str(apk), index + 1, total, "done", None)
             self._after_app_installed(apk, apk == mock_target)
         if self.failed_apps:
             self.log("Не установлено (пропущено, остальные приложения из списка "
