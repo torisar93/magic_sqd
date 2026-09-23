@@ -61,17 +61,6 @@ _result_cache: dict[tuple, tuple[float, "str | None"]] = {}  # (путь, size, 
 _MAX_RESULT_CACHE_ENTRIES = 2000  # за одну сессию программы столько разных APK не смотрят — простая защита от роста
 
 
-def _base_dir() -> Path:
-    """Папка рядом с exe/скриптом — та же, что main_web.py:get_base_dir(),
-    но не импортируем main_web напрямую: у него есть побочные эффекты при
-    самом импорте (переключение SSL-контекста по умолчанию — см. верх
-    main_web.py), а этот модуль должен оставаться лёгким и безопасным для
-    импорта где угодно."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
-
-
 def _find_aapt(base_dir: Path) -> str | None:
     """В отличие от find_adb_path (app/adb_utils.py) НЕ откатываемся на
     голое имя из PATH — на технической машине aapt туда в принципе не
@@ -187,16 +176,25 @@ def _extract_local(path: Path, base_dir: Path) -> str | None:
     return None
 
 
-def apk_icon(path: str) -> "str | None":
+def apk_icon(path: str, base_dir: Path) -> "str | None":
     """См. app/web/bridge.py:WebApi.scanner_apk_icon. path — тот же
     абсолютный путь, что ApkInfo.path отдаёт наружу как строку (см.
     app/web/api/scanner_api.py:apk_to_dict) — для remote_only записей файл
     может ещё не существовать на диске, тогда остаётся только серверный
     путь. Возвращает URL (готовая серверная иконка), data:-изображение
-    (локальное извлечение) или None (нет иконки нигде/любая ошибка)."""
+    (локальное извлечение) или None (нет иконки нигде/любая ошибка).
+
+    base_dir — папка данных программы (WebApi.base_dir, т.е.
+    main_web.get_base_dir()): от неё считается ключ поля "apk_icons"
+    манифеста ("apk/…", "cars/…"). Раньше модуль вычислял её сам, своей
+    копией старого правила «папка рядом с exe» — а на macOS с v1.0.30 cars/
+    и apk/ живут в ~/Library/Application Support/MagicSQD, копия же
+    указывала в Contents/MacOS/ собранного .app: ни один APK не оказывался
+    «внутри» неё, серверная иконка не находилась никогда (жалоба владельца
+    2026-09-23 — в списках приложений на macOS одни заглушки). См.
+    tests/test_apk_icons_base_dir.py."""
     try:
         apk_path = Path(path)
-        base_dir = _base_dir()
         try:
             stat = apk_path.stat()
             cache_key = (str(apk_path), stat.st_size, stat.st_mtime_ns)

@@ -1741,11 +1741,32 @@ dialog#instruction-editor-dialog::backdrop {
   padding-inline: 10px;
 }
 
+/* Марка/модель/модификация + статус одной строкой, «Что нового» — одна
+   строка, растущая при наборе (см. graph_wizard.js: renderHeader). Раньше
+   шапка на macOS (окно ~816 px по высоте) занимала ~330 px, и графу с
+   панелью узла оставалось ~240 px (жалоба владельца, 2026-09-23). */
 .car-header-grid {
   display: grid;
-  grid-template-columns: auto 1fr auto 1fr auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.35fr);
   gap: 4px 8px;
   align-items: center;
+  margin-bottom: 10px;
+}
+
+#graph-wizard-header .car-header-grid > input,
+#graph-wizard-header .car-header-grid > select {
+  margin: 0;
+}
+
+#graph-wizard-header .changelog-field {
+  margin: 0;
+}
+
+#graph-wizard-header .changelog-field textarea {
+  min-height: 44px;
+  max-height: 140px;
+  resize: none;
+  margin: 0;
 }
 
 .spoiler-header {

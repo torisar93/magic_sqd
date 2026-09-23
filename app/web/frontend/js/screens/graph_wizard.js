@@ -327,12 +327,35 @@
     modificationInput.value = modification;
     modificationInput.addEventListener("input", () => { modification = modificationInput.value; });
 
+    // Статус — цветная метка у марки/модели в списке техника (см.
+    // app/scanner.py: MODEL_STATUSES/model_status_color). В отличие от
+    // changelog ниже — держащееся значение, не разовая заметка: остаётся,
+    // пока сюда же не поменяют. "Недавно обновлено" тут не выбор — она
+    // сама на несколько часов перекрашивает ЛЮБОЙ статус сразу после
+    // сохранения, поэтому в списке только те статусы, которые техник должен
+    // осознанно выбрать. В одной строке с марка/модель/модификация, без
+    // пояснения под списком (оно теперь подсказкой на подписи) — по просьбе
+    // владельца 2026-09-23: на macOS (окно ~816 px по высоте) шапка съедала
+    // почти всю высоту, графу с панелью узла оставалось ~240 px.
+    const statusSelect = el("select", {}, [
+      el("option", { value: "ok", text: "🟢 Актуально", selected: status === "ok" ? "" : null }),
+      el("option", { value: "needs_review", text: "🟡 Требует обновления (черновик/не проверено)", selected: status === "needs_review" ? "" : null }),
+      el("option", { value: "broken", text: "🔴 Способ не работает", selected: status === "broken" ? "" : null }),
+    ]);
+    statusSelect.addEventListener("change", () => { status = statusSelect.value; });
+
     grid.appendChild(el("span", { class: "field-label", text: "Марка" }));
     grid.appendChild(brandInput);
     grid.appendChild(el("span", { class: "field-label", text: "Модель" }));
     grid.appendChild(modelInput);
     grid.appendChild(el("span", { class: "field-label", text: "Модификация" }));
     grid.appendChild(modificationInput);
+    grid.appendChild(el("span", {
+      class: "field-label", text: "Статус",
+      title: "Метка в списке машин. Сразу после сохранения она на несколько часов станет синей "
+        + "(«недавно обновлено») независимо от выбора, потом сама вернётся к нему.",
+    }));
+    grid.appendChild(statusSelect);
     headerEl.appendChild(grid);
     headerEl.appendChild(brandList);
 
@@ -347,40 +370,25 @@
     // с легаси "adb" не теряют уже сохранённые spec.wifi/wifi_port, их
     // просто больше нельзя редактировать через эту форму.
 
-    const changelogField = el("div", { class: "field", style: "margin-top: 8px" });
+    // Одна строка по умолчанию, растёт по мере набора (до ~5 строк) — пустое
+    // поле раньше занимало 100 px высоты редактора (min-height у dialog textarea).
+    const changelogField = el("div", { class: "field changelog-field" });
     changelogField.appendChild(el("span", {
       class: "field-label", text: "Что нового в этом сохранении (необязательно, увидят техники)",
     }));
     const changelogInput = el("textarea", {
-      rows: "2", placeholder: "Например: поправили баг с автоподключением Wi-Fi",
+      rows: "1", placeholder: "Например: поправили баг с автоподключением Wi-Fi",
     });
     changelogInput.value = changelog;
-    changelogInput.addEventListener("input", () => { changelog = changelogInput.value; });
+    const fitChangelog = () => {
+      changelogInput.style.height = "";
+      if (changelogInput.scrollHeight > changelogInput.clientHeight) {
+        changelogInput.style.height = `${changelogInput.scrollHeight + 2}px`;
+      }
+    };
+    changelogInput.addEventListener("input", () => { changelog = changelogInput.value; fitChangelog(); });
     changelogField.appendChild(changelogInput);
     headerEl.appendChild(changelogField);
-
-    // Статус — цветная метка у марки/модели в списке техника (см.
-    // app/scanner.py: MODEL_STATUSES/model_status_color). В отличие от
-    // changelog выше — держащееся значение, не разовая заметка: остаётся,
-    // пока сюда же не поменяют. "Недавно обновлено" тут не выбор — она
-    // сама на несколько часов перекрашивает ЛЮБОЙ статус сразу после
-    // сохранения (см. renderStatusHint ниже), поэтому в списке только те
-    // статусы, которые техник должен осознанно выбрать.
-    const statusField = el("div", { class: "field", style: "margin-top: 8px" });
-    statusField.appendChild(el("span", { class: "field-label", text: "Статус (метка в списке машин)" }));
-    const statusSelect = el("select", {}, [
-      el("option", { value: "ok", text: "🟢 Актуально", selected: status === "ok" ? "" : null }),
-      el("option", { value: "needs_review", text: "🟡 Требует обновления (черновик/не проверено)", selected: status === "needs_review" ? "" : null }),
-      el("option", { value: "broken", text: "🔴 Способ не работает", selected: status === "broken" ? "" : null }),
-    ]);
-    statusSelect.addEventListener("change", () => { status = statusSelect.value; });
-    statusField.appendChild(statusSelect);
-    statusField.appendChild(el("p", {
-      class: "app-desc", style: "margin-top: 4px",
-      text: "Сразу после сохранения метка на несколько часов станет синей (\"недавно обновлено\") "
-        + "независимо от выбора выше, потом сама вернётся к нему.",
-    }));
-    headerEl.appendChild(statusField);
   }
 
   // ------------------------------------------------------------------
