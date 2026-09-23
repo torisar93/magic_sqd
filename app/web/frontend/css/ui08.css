@@ -79,6 +79,15 @@ button>span:not(.ui-icon) { align-self:center; }
 }
 .apps08-inline .apps-tree { width:100%; max-width:none; }
 .apps08-inline .apps-section:last-child { margin-bottom:0; }
+/* Этап «Приложения» с вкладками (js/apps_tabs.js, css/apps_tabs.css): поиск + «Свой APK» одной
+   строкой, приложения плитками в сетке, «Начать установку» — в нижней панели над навигацией. */
+.apps-tabs-stage .apps-tabs-tools { display:flex; gap:10px; align-items:stretch; align-self:stretch; }
+.apps-tabs-stage .apps-tabs-tools>.apps08-search { flex:1; width:auto; max-width:none; margin:0; }
+/* «+ Свой APK» — обычная кнопка программы (фон, рамка, перелив — общие), вровень с поиском по высоте. */
+.apps-tabs-stage .apps-tabs-tools>.app-personal-apk-add { flex:0 0 auto; width:auto; height:48px; min-height:48px; margin:0; padding:0 18px; white-space:nowrap; }
+.apps-tabs-stage .apps-tab-list .app-row { margin:0; min-height:60px; padding:9px 12px!important; border-radius:12px; background-color:#1a252b; }
+.wizard>.apps-dock { padding:12px clamp(24px,5vw,90px); min-height:72px; }
+.wizard>.apps-dock>button.accent { flex:0 0 auto; min-width:230px; height:48px; margin:0; }
 @media(max-width:1050px) {
   .app-shell.catalog-home #left-panel { padding-inline:22px; }
   .app-shell.catalog-home .model-workspace { grid-template-columns:280px minmax(0,1fr); gap:20px; }

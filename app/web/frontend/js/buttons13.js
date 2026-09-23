@@ -4,7 +4,9 @@
   if(window[installed]) return;
   window[installed]=true;
   const selector='button:not(.cat-brand),[role="button"]:not(.cat-brand),a.catalog-link,a.catalog-topbar-link,a.accent';
-  const stableSelector='.apps-section-header,.app-personal-apk-add,.model-list>.cat-card';
+  // .apps-tab — вкладки этапа «Приложения»: плотный ряд «таблеток», наклон/подъём уводил их рамку
+  // за свои края (владелец, 2026-09-23); перелив остаётся, как у строк списков.
+  const stableSelector='.apps-section-header,.app-personal-apk-add,.model-list>.cat-card,.apps-tab';
   const pointer=matchMedia('(hover:hover) and (pointer:fine)');
   const motion=matchMedia('(prefers-reduced-motion:reduce)');
   const reduced=()=>motion.matches||document.documentElement.matches('.reduce-motion,.low-perf');

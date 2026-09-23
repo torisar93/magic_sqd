@@ -886,6 +886,9 @@
   let stageOperation = null;
   let stageExecutionResults = {};
   let appsSelection = {}; // stage.index -> {variant, optionalChecked: Set<path>}
+  // Открытая вкладка этапа «Приложения» (apps_tabs.js) по индексу этапа — переживает
+  // перерисовку списка, сбрасывается при смене модели (как на ПК: stage_wizard.js).
+  let appsActiveTabs = {};
   // Список необязательных APK, отмеченных техником на ЛЮБОМ "apps"-этапе —
   // общий на всю установку (аналог desktop ctx.selected_apks), т.к.
   // "usb"-этап с usb_copy_selected_apks просто копирует то, что отметили
@@ -946,6 +949,7 @@
     currentIndex = 0;
     stages = [];
     appsSelection = {};
+    appsActiveTabs = {};
     appsConnectionChoice = {};
     globalSelectedApks = new Set();
     inlineAppsSession = null;
@@ -1341,7 +1345,7 @@
         if(r.success&&stage.type==='apps'){
           advanceAfter(currentIndex);
           if(stage.next==null){
-            document.querySelector('.stage-primary-actions')?.remove();clear(wizardContentEl);
+            document.querySelector('.stage-primary-actions')?.remove();document.querySelector('.apps-dock')?.remove();clear(wizardContentEl);
             wizardContentEl.append(el('div',{class:'stage-page'},[el('h2',{text:'Установка завершена'}),el('p',{class:'stage-text',text:'Все выбранные приложения установлены.'})]));
             wizardNextBtn.style.display='';wizardNextBtn.textContent='К моделям';nextAction=()=>showScreen('picker');
           }
@@ -1664,6 +1668,7 @@
     if (adbBarEl.parentElement !== screenWizard) screenWizard.insertBefore(adbBarEl, wizardContentEl);
     clear(wizardContentEl);
     document.querySelector('.stage-primary-actions')?.remove();
+    document.querySelector('.apps-dock')?.remove();
     if (!stages.length) {
       wizardContentEl.appendChild(el("p", { class: "stage-text", text: "Для этой модели нет заданных этапов установки." }));
       renderNav();
@@ -2118,38 +2123,61 @@
     empty.hidden = query === '' || [...body.querySelectorAll('.app-choice')].some(row => !row.hidden);
   }
 
-  function appendInlineAppSelection(parent, stage, page) {
+  // Этап «Приложения»: вкладки вместо длинного списка (общий с ПК js/apps_tabs.js), «Выбрано» —
+  // значками в нижней панели (summary, см. renderAppsStage; владелец, 2026-09-23). Строки и
+  // галочки — прежние из renderApkTree: вкладки их только раскладывают.
+  function appendInlineAppSelection(parent, stage, page, summary) {
     const sel = selectionFor(stage);
-    const draft = { stage, page, selected: new Set(globalSelectedApks), previousPaths: new Set(globalSelectedApks), personal: personalApks.slice(), variant: sel.variant, expanded: new Map() };
+    const draft = { stage, page, selected: new Set(globalSelectedApks), previousPaths: new Set(globalSelectedApks), personal: personalApks.slice(), variant: sel.variant, tabs: null };
     const required = new Set(stageApkLists(stage, sel).required.map(apk => apk.path));
-    const count = el('p', { class:'apps-inline-count', role:'status' });
     const search = el('input', {type:'search', class:'apps-picker-search', placeholder:'Поиск приложений', 'aria-label':'Поиск приложений', autocomplete:'off'});
+    const tools = el('div',{class:'apps-picker-search-wrap apps-inline-search apps-tabs-tools'},[search]);
     const body = el('div', {class:'apps-picker-body apps-inline-body'});
-    const empty = el('p', {class:'apps-picker-empty', text:'Ничего не найдено. Попробуйте другое название.', hidden:''});
     draft.updateCount = () => {
       if (labInstallBusy) return;
       applyAppSelection(stage, draft);
-      count.textContent = `Выбрано: ${new Set([...required,...draft.selected]).size}`;
       body.querySelectorAll('.app-choice').forEach(row => {
         const input = row.querySelector('input');
         input.checked = required.has(row.dataset.apkPath) || draft.selected.has(row.dataset.apkPath);
       });
+      if (summary) window.AppTabs.summary(summary, selectedAppsForStage(stage).entries, 'icons');
+      draft.tabs?.refresh();
     };
     draft.render = () => {
       if (labInstallBusy) return;
       const scroll = wizardContentEl.scrollTop;
-      body.querySelectorAll('details').forEach(node => draft.expanded.set(node.querySelector('summary')?.textContent,node.open));
       clear(body);
       renderApkTree(body, stage, sel, draft);
-      body.querySelectorAll('details').forEach(node => { node.open = draft.expanded.get(node.querySelector('summary')?.textContent) ?? !node.classList.contains('apps-section-required'); });
-      body.append(empty);
-      draft.updateCount();filterAppRows(body,search,empty);
+      tools.querySelector('.app-personal-apk-add')?.remove();
+      const addApk = body.querySelector('.app-personal-apk-add');
+      if (addApk) { addApk.textContent = '+ Свой APK'; tools.append(addApk); }
+      draft.tabs = window.AppTabs.mount(body, appTabGroups(body), {
+        listTag: 'ul', listClass: 'stage-apps-list', search, active: appsActiveTabs[stage.index],
+        onActiveChange: key => { appsActiveTabs[stage.index] = key; },
+      });
+      draft.updateCount();
       wizardContentEl.scrollTop = scroll;
     };
-    search.addEventListener('input',()=>filterAppRows(body,search,empty));
-    parent.append(el('div',{class:'apps-inline-heading'},[count]),el('div',{class:'apps-picker-search-wrap apps-inline-search'},[search]),body);
+    search.addEventListener('input', () => draft.tabs?.apply(search.value));
+    parent.append(tools, body);
     inlineAppsSession = draft;
     draft.render();
+  }
+
+  // Разделы renderApkTree → вкладки: приложения модели, свои APK, выбранные на других этапах,
+  // категории общей библиотеки. Строки переезжают как есть — со своими галочками и «i».
+  function appTabGroups(body) {
+    const rowsIn = (...nodes) => nodes.flatMap(node => node ? [...node.querySelectorAll('li.app-choice')] : []);
+    const groups = [
+      { key: 'model', label: 'Для этой модели', rows: rowsIn(body.querySelector('.apps-section-required'), body.querySelector('.apps-section-optional')) },
+      { key: 'personal', label: 'Свои APK', rows: rowsIn(body.querySelector('.apps-section-personal')) },
+      { key: 'previous', label: 'Из других этапов', rows: rowsIn(body.querySelector('.apps-section-previous')) },
+    ];
+    body.querySelectorAll('details.apk-category').forEach(details => {
+      const label = details.querySelector(':scope > summary')?.textContent || 'Без категории';
+      groups.push({ key: `extra:${label}`, label, rows: rowsIn(details) });
+    });
+    return groups;
   }
 
   function openAppSelection(stage) {
@@ -2248,7 +2276,12 @@
     const sel = selectionFor(stage);
     renderVariantPicker(page, stage, sel);
     const card = el('section',{class:'apps-inline-card'});
-    appendInlineAppSelection(card, stage, page);
+    // Нижняя панель между прокруткой этапа и строкой лога: «Выбрано» значками + «Начать
+    // установку» — видно всегда, как бы длинно ни прокрутили (владелец, 2026-09-23). Вне
+    // wizard-content — render() убирает её сам.
+    const summary = el('p', { class: 'apps-dock-summary' });
+    const dock = el('div', { class: 'apps-dock' }, [summary]);
+    appendInlineAppSelection(card, stage, page, summary);
     const btn = usbStageButton('Начать установку', 'play', () => {}, true);
     btn.classList.add('apps-install-start');
     btn.addEventListener("click", () => {
@@ -2300,7 +2333,8 @@
         else install(false);
       } catch(error) { wifiInstallFlow = null; onAdbStageResult({index:stage.index,result:{success:false,reason:error.message||String(error)}}); }
     });
-    card.insertBefore(btn, card.querySelector('.apps-inline-search'));
+    dock.append(btn);
+    wizardContentEl.after(dock);
     const result=appInstallResults[stage.index];
     if(result&&!result.success){
       const message=el('div',{class:'apps-install-result',role:'status','data-state':result.cancelled?'cancelled':'error'},[usbStageIcon(result.cancelled?'stop':'report'),el('span',{text:result.cancelled?'Установка остановлена.':result.reason||'Не удалось установить приложения.'})]);
@@ -2715,12 +2749,11 @@
     const page = el("div", { class: "stage-page", "data-stage-type": stage.type, "data-stage-index":stage.index });
     page.appendChild(el("div", { class: "stage-chip", text: stage.type === "apps" ? "Приложения" : stage.title || stage.type || "" }));
     if (stage.description && !['actions', 'instruction'].includes(stage.type)) {
-      const description = el("div", { class: "stage-text", text: stage.description });
-      if (stage.type === "apps") {
-        page.appendChild(el("details", { class: "lab-stage-help" }, [
-          el("summary", { text: "Инструкция к этапу" }), description,
-        ]));
-      } else page.appendChild(description);
+      // «Приложения»: пояснение — подзаголовок под названием, не сворачиваемый блок (владелец,
+      // 2026-09-23; тот же вид, что на ПК). Раньше блок «Инструкция к этапу» здесь был вовсе
+      // скрыт стилями (.lab-stage-help{display:none}).
+      if (stage.type === "apps") page.appendChild(el("p", { class: "stage-subtitle", text: stage.description }));
+      else page.appendChild(el("div", { class: "stage-text", text: stage.description }));
     }
     if (["adb", "actions"].includes(stage.type)) page.append(adbBarEl);
 

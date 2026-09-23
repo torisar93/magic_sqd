@@ -43,6 +43,9 @@
   // открыть другую) не должен перетереть уже открытую.
   let loadingStatusEl = null, loadingFillEl = null;
   let openGeneration = 0;
+  // Открытая вкладка этапа «Приложения» (apps_tabs.js) по индексу этапа — переживает
+  // перерисовку этапа (например, после «+ Свой APK»), сбрасывается при смене модели.
+  let appsActiveTab = {};
   const done = new Set();
   let chosenVariants = {};
   let appSelection = {};
@@ -401,6 +404,7 @@
     historyStack.length = 0;
     chosenVariants = {};
     appSelection = {};
+    appsActiveTab = {};
     personalApks = [];
     hasIntro = model.no_instruction;
     loadError = null;
@@ -714,7 +718,12 @@
     }
 
     if ((stage.instruction_html || stage.description) && !["qr_adb", "usb"].includes(stage.type)) {
-      if(stage.type==='apps'){
+      // «Приложения»: пояснение к этапу — подзаголовок под названием, не сворачиваемый блок
+      // (владелец, 2026-09-23). У всех apps-этапов это короткий текст; HTML-инструкция, если
+      // когда-нибудь появится, остаётся раскрываемой — её в строку не уложить.
+      if(stage.type==='apps'&&!stage.instruction_html){
+        contentEl.appendChild(el('p',{class:'stage-subtitle',text:stage.description}));
+      }else if(stage.type==='apps'){
         const help=el('details',{class:'lab-stage-help'},[el('summary',{text:'Инструкция к этапу'}),buildInstructionBlock(stage,false)]);contentEl.appendChild(help);
       }else contentEl.appendChild(buildInstructionBlock(stage, false));
     }
@@ -946,35 +955,39 @@
   }
 
   // -- apps ----------------------------------------------------------------
+  // Вкладки вместо длинного списка и «Начать установку» в нижней панели, которую видно всегда
+  // (владелец, 2026-09-23; раскладка — общий с Android js/apps_tabs.js). Строки и галочки —
+  // прежние из buildAppsTree: вкладки их только раскладывают, выбор и установка не менялись.
   async function renderAppsStage(panel, stage, getDevice, transport) {
-    panel.classList.add("apps-panel", "apps08-inline");
+    panel.classList.add("apps-panel", "apps08-inline", "apps-tabs-stage");
     buildVariantPicker(panel, stage, stage.index);
     Object.keys(sectionCollapsed).forEach(key => { sectionCollapsed[key] = false; });
     const choose = UsbUI.button('apps07-choose', 'Выбрать приложения', 'apps');
-    const copy = el('p', {class:'apps08-total',text:'Загружаем список приложений…'});
+    const copy = el('p', {class:'apps08-total apps-dock-summary',text:'Загружаем список приложений…'});
     const preview = el('div', {class:'apps07-preview'});
     const search = el('input', {type:'search',placeholder:'Найти приложение','aria-label':'Поиск приложений'});
-    const toolbar = el('div', {class:'apps08-toolbar'}, [copy]);
     const searchBox = el('label',{class:'apps07-search apps08-search'},[UsbUI.icon('search'),search]);
-    const body = el('div',{class:'apps07-body apps08-body'});
-    panel.append(toolbar, searchBox, body);
+    const tools = el('div', {class:'apps-tabs-tools'}, [searchBox]);
+    const body = el('div',{class:'apps07-body apps08-body'},[el('p',{class:'apps07-status',text:'Загружаем список приложений…'})]);
+    panel.append(tools, body);
     const chooser = createAppChooser(panel, stage, choose, copy, preview, panel);
-    if (!await chooser.load() || !panel.isConnected) return;
-    body.replaceChildren(chooser.tree);
-    body.querySelectorAll('.apps-section-body').forEach(section => section.classList.remove('collapsed'));
-    body.querySelectorAll('.apps-section-header').forEach(header => { header.setAttribute('aria-expanded','true');header.firstChild.replaceWith(UsbUI.icon('down')); });
-    body.addEventListener('change', () => chooser.update());
-    search.addEventListener('input', () => {
-      const query = search.value.trim().toLocaleLowerCase('ru');
-      body.querySelectorAll('.app-row').forEach(row => row.hidden = !!query && !row.textContent.toLocaleLowerCase('ru').includes(query));
-      [...body.querySelectorAll('.apps-section')].reverse().forEach(section => {
-        section.hidden = !!query && ![...section.querySelectorAll('.app-row')].some(row => !row.hidden);
-        const content = section.querySelector(':scope>.apps-section-body');
-        if (!content) return;
-        if (query) { if (!content.hasAttribute('data-search-collapsed')) content.dataset.searchCollapsed=String(content.classList.contains('collapsed'));content.classList.remove('collapsed'); }
-        else if (content.hasAttribute('data-search-collapsed')) {content.classList.toggle('collapsed',content.dataset.searchCollapsed==='true');delete content.dataset.searchCollapsed;}
-      });
+    let tabs = null;
+    const baseUpdate = chooser.update.bind(chooser);
+    chooser.update = () => { baseUpdate(); window.AppTabs.summary(copy, chooser.entries(), 'names'); tabs?.refresh(); };
+    if (!await chooser.load()) {
+      if (panel.isConnected) body.replaceChildren(copy); // «Не удалось загрузить…» — кнопка повтора ниже (createAppChooser)
+      return;
+    }
+    if (!panel.isConnected) return;
+    const addApk = chooser.tree.querySelector('.app-personal-apk-add');
+    if (addApk) { addApk.textContent = '+ Свой APK'; tools.append(addApk); }
+    tabs = window.AppTabs.mount(chooser.tree, appTabGroups(chooser.tree), {
+      active: appsActiveTab[stage.index], search,
+      onActiveChange: key => { appsActiveTab[stage.index] = key; },
     });
+    body.replaceChildren(chooser.tree);
+    body.addEventListener('change', () => chooser.update());
+    search.addEventListener('input', () => tabs.apply(search.value));
     // Раньше этап apps был только выбором галочек, а установку делал
     // отдельный следующий "adb"-этап — теперь ставит сам, тем же блоком
     // "Начать/Стоп", что и adb-этап (см. buildStartStopButtons ниже и
@@ -982,7 +995,28 @@
     // stages.py подставляет ctx.install_selected_apks() по умолчанию).
     // Устройство/Wi-Fi — уже выбраны в баре над этапом (см.
     // buildTransportBar/getDevice), здесь их не выбирают заново.
-    buildStartStopButtons(panel, stage, getDevice, { startLabel: "Начать установку", transport });
+    buildStartStopButtons(panel, stage, getDevice, { startLabel: "Начать установку", transport, summary: copy });
+    chooser.update();
+  }
+
+  // Разделы дерева buildAppsTree → вкладки: приложения модели, свои APK, категории общей
+  // библиотеки (в том же порядке, что были разделы). Строки переезжают как есть — со своими
+  // галочками и обработчиками; внутри chooser.tree они и остаются (его читает entries()).
+  function appTabGroups(tree) {
+    const sections = new Map([...tree.querySelectorAll('.apps-section')].map(section => [section.dataset.sectionKey, section]));
+    const rowsOf = key => {
+      const body = sections.get(key)?.querySelector(':scope > .apps-section-body');
+      return body ? [...body.children].filter(node => node.classList.contains('app-row')) : [];
+    };
+    const groups = [
+      { key: 'model', label: 'Для этой модели', rows: [...rowsOf('standard-required'), ...rowsOf('standard-optional')] },
+      { key: 'personal', label: 'Свои APK', rows: rowsOf('personal') },
+    ];
+    for (const [key, section] of sections) {
+      if (!key?.startsWith('extra:')) continue;
+      groups.push({ key, label: section.querySelector(':scope > .apps-section-header span')?.textContent || key.slice(6), rows: rowsOf(key) });
+    }
+    return groups;
   }
 
   function createAppChooser(panel, stage, choose, copy, preview, host, ready = () => {}) {
@@ -1212,7 +1246,7 @@
     sectionCollapsed[key]=collapsed;
     const sectionKind = required ? " apps-section-required"
       : key === "standard-optional" ? " apps-section-optional" : "";
-    const wrap = el("section", { class: `apps-section${sectionKind}` });
+    const wrap = el("section", { class: `apps-section${sectionKind}`, "data-section-key": key });
     const header = el("button", { class: "apps-section-header", type:"button", "aria-expanded":String(!collapsed) }, [
       UsbUI.icon(collapsed ? 'chevron' : 'down'),
       el("span", { text: title }),
@@ -1286,7 +1320,11 @@
         if (!session || (!session.closed && activeAppPicker === session)) appSelection[file.path] = true;
       }
       if (session && !session.closed) await session.reload();
-      else if (!session) render();
+      else if (!session) {
+        // Этап «Приложения»: после добавления сразу показываем вкладку «Свои APK» с новым файлом.
+        if (stages[currentIndex]?.type === 'apps') appsActiveTab[stages[currentIndex].index] = 'personal';
+        render();
+      }
     } catch (error) {
       const message = `Не удалось выбрать APK: ${error.message || error}`;
       log(message);
@@ -1697,14 +1735,19 @@
   // (см. buildTransportBar/renderStagePage), сюда приходит готовым через
   // getDevice() — этот блок больше не строит свой собственный список
   // устройств (раньше дублировался в каждом типе этапа по отдельности).
-  function buildStartStopButtons(panel, stage, getDevice, { startLabel, requiresDevice = true, transport = null } = {}) {
+  function buildStartStopButtons(panel, stage, getDevice, { startLabel, requiresDevice = true, transport = null, summary = null } = {}) {
     const btnRow = el("div", { class: "stage-primary-actions" });
     const startBtn = el("button", { class: "accent", text: startLabel || "Начать этот этап" });
     if (runnerBusy) startBtn.disabled = true;
     btnRow.appendChild(startBtn);
     panel.appendChild(btnRow);
     if (stage.type === 'apps') {
-      panel.querySelector('.apps08-toolbar').append(btnRow);
+      // Нижняя панель между прокруткой этапа и навигацией — «Начать установку» видно всегда,
+      // как бы длинно ни прокрутили список (владелец, 2026-09-23). Убирается вместе с
+      // .stage-primary-actions при перерисовке (render).
+      btnRow.classList.add('apps-dock');
+      if (summary) btnRow.prepend(summary);
+      contentEl.after(btnRow);
     }
     // Раньше (для uart/telnet/adb/actions) кнопка запуска подменяла собой
     // "Далее" в навигации (скрывала её и переезжала на её место) — техник

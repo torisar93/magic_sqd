@@ -7,9 +7,12 @@ const { read, slice, assert, run, sleep } = require("./_util");
 async function scenario(code, { mode, prefetch, askWifi, device = null, confirm = true }) {
   const calls = [], runs = [], finishes = [];
   let handler = null;
-  const btn = { addEventListener: (ev, h) => { handler = h; }, disabled: false, appendChild() {} };
+  const btn = { addEventListener: (ev, h) => { handler = h; }, disabled: false, appendChild() {}, prepend() {}, classList: { add() {} } };
+  const docked = [];
   const ctx = {
     el: () => btn, runnerBusy: false, navBackBtn: {}, navNextBtn: {}, model: { key: "M" }, prefetchedStages: new Set(),
+    contentEl: { after: (node) => docked.push(node) }, // «Начать установку» — в нижней панели под этапом
+
     selectedApkPaths: () => ["/a.apk"], log() {}, render() {},
     openStageRun: (o) => { runs.push(o); },
     finishRun: (o) => finishes.push(o),
@@ -27,7 +30,7 @@ async function scenario(code, { mode, prefetch, askWifi, device = null, confirm 
   run(code + "\nthis.__f = buildStartStopButtons;", ctx);
   ctx.__f(panel, { type: "apps", index: 2 }, () => device, { startLabel: "Начать установку", transport: { mode: () => mode, askWifi } });
   await handler();
-  return { calls, runs, finishes };
+  return { calls, runs, finishes, docked };
 }
 
 module.exports = async function () {
@@ -39,6 +42,7 @@ module.exports = async function () {
   assert(names.join() === "prefetch,start", "Wi-Fi: сначала скачивание, потом запуск, без вопроса про устройство: " + names);
   assert(r.calls[1][3] === "192.168.43.1:5555" && r.calls[1][5] === true, "start с адресом из окна и prefetched=true");
   assert(/скачиваем приложения/.test(r.runs[0].detail), "окно установки объясняет порядок");
+  assert(r.docked.length === 1, "«Начать установку» — в нижней панели под этапом");
 
   r = await scenario(code, { mode: "wifi", prefetch: { ok: false, error: "Не удалось скачать: a.apk" }, askWifi: async () => { throw new Error("не должно вызываться"); } });
   assert(r.calls.map((c) => c[0]).join() === "prefetch" && r.finishes[0].success === false && /a\.apk/.test(r.finishes[0].message), "ошибка скачивания останавливает запуск");
