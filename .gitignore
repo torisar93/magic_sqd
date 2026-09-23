@@ -129,6 +129,14 @@ rustore.json
 # app/ping_client.py) — генерируется программой сама при первом запуске
 client_id.txt
 
+# Состояние конкретной установки при запуске из исходников (в собранной
+# программе — рядом с exe / в ~/Library/Application Support на macOS):
+# прочный журнал логов установки (app/pending_install_logs.py), копии
+# дампов QR ADB, переподписанные APK (app/install_context.py: _maybe_resign)
+pending_install_logs/
+qr_adb_debug/
+resign_cache/
+
 # Какие ревизии моделей техник уже видел (см. app/update_tracker.py,
 # сводка "Что нового" при старте) — состояние конкретной установки, не
 # часть репозитория

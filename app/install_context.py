@@ -492,7 +492,15 @@ class InstallContext:
                          "(сертификата files/resign_cert нет).")
             return path
         base_dir = self.shared_dir.parent.parent
-        out_path = path.with_name(f"{path.stem}_resigned{path.suffix}")
+        # Своя папка вне cars/ и apk/, а не <имя>_resigned.apk рядом с
+        # исходником: оттуда копию при следующем запуске этапа подхватывал
+        # список обязательных APK (scanner.scan_apk_dir сканирует папку) —
+        # тот же пакет, другая подпись, этап падал на проверке дубликатов
+        # (install_logs #589). Имя то же — в логе и на устройстве без
+        # "_resigned". Под base_dir, а не в системном temp: путь с не-ASCII
+        # именем пользователя Windows (%TEMP%) не всегда переваривают adb/java.
+        out_path = base_dir / "resign_cache" / path.name
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         self.log(f"Переподписываю {path.name} сертификатом магнитолы (обязательно для этой модели)...")
         try:
             resign_apk(base_dir, path, cert_dir, out_path)

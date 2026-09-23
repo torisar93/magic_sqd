@@ -278,6 +278,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "actions_mock_location" -> { actionsMockLocation(args.getString("pkg")); "{}" }
                 "actions_launch_activity" -> { actionsLaunchActivity(args.getString("pkg")); "{}" }
                 "actions_uninstall_app" -> { actionsUninstallApp(args.getString("pkg")); "{}" }
+                "actions_disable_app" -> { actionsDisableApp(args.getString("pkg")); "{}" }
+                "actions_enable_app" -> { actionsEnableApp(args.getString("pkg")); "{}" }
                 "pick_personal_apks" -> { pickPersonalApks(); "{}" }
                 // Видео-кнопка нав-бара мастера (см. app.js: playStageVideo) —
                 // тот же общий "докачай, чего нет" хелпер, что и перед
@@ -1336,6 +1338,16 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     private fun actionsUninstallApp(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
         AdbPermissions.uninstallApp(pkg, ::pushAdbLog)
+    }
+
+    private fun actionsDisableApp(pkg: String) = runExclusive(::onBusy) {
+        if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        AdbPermissions.disableApp(pkg, ::pushAdbLog)
+    }
+
+    private fun actionsEnableApp(pkg: String) = runExclusive(::onBusy) {
+        if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        AdbPermissions.enableApp(pkg, ::pushAdbLog)
     }
 
     /** "Добавить свой APK..." на apps/usb-этапах (см. app.js: renderApkTree) —

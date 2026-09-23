@@ -223,7 +223,20 @@
     pendingSubmissionName = editModel ? editModel.submission_name : null;
 
     if (isEditing) {
-      const spec = await window.pywebview.api.car_load_spec(editModel.key);
+      // car_load_spec сначала докачивает ВСЕ файлы модели (см.
+      // car_editor_api.py: _sync_own_files) — на машине, где модель ещё не
+      // качалась, это минуты без единого признака жизни: выглядело так,
+      // будто «Изменить» не работает (macOS, 2026-09-23).
+      const busy = window.busyDialog("Открываем редактор", "Проверяем файлы модели…");
+      const onSyncProgress = (event) => busy.progress(event.done, event.total, event.files_done, event.files_total);
+      window.events.on("editor_sync_progress", onSyncProgress);
+      let spec;
+      try {
+        spec = await window.pywebview.api.car_load_spec(editModel.key);
+      } finally {
+        window.events.off("editor_sync_progress", onSyncProgress);
+        busy.close();
+      }
       if (spec.error) {
         await window.notice(spec.error, { title: "Визуальный редактор", danger: true });
         return;

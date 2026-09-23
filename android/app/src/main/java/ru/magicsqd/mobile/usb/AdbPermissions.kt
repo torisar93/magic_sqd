@@ -237,6 +237,33 @@ object AdbPermissions {
         }
     }
 
+    /** Отключить/включить приложение — то же, что desktop cars/_shared/
+     * adb_permissions.py: disable_app/enable_app (до 2026-09-23 на Android
+     * этих кнопок не было вовсе — «Доступно только в версии для Windows»).
+     * Об успехе pm сообщает строкой «Package <пакет> new state: ...». */
+    fun disableApp(pkg: String, log: (String) -> Unit) {
+        log("Отключаю приложение: $pkg")
+        setEnabledState("pm disable-user --user 0 $pkg", "отключить", log)
+    }
+
+    fun enableApp(pkg: String, log: (String) -> Unit) {
+        log("Включаю приложение: $pkg")
+        setEnabledState("pm enable $pkg", "включить", log)
+    }
+
+    private fun setEnabledState(command: String, failVerb: String, log: (String) -> Unit) {
+        val text = when (val r = AdbSession.shell(command, log)) {
+            is AdbShellResult.Output -> r.text
+            is AdbShellResult.Rejected -> "Команда отклонена устройством: ${r.reason}"
+            is AdbShellResult.Failed -> r.reason
+        }
+        if (text.contains("new state", ignoreCase = true)) {
+            log("Готово.")
+        } else {
+            log("Не удалось $failVerb: ${text.ifBlank { "устройство не ответило" }}")
+        }
+    }
+
     // Когда пакету в последний раз выдавали разрешения — чтобы автовыдача после
     // установки (InstallEngine) не дублировала инлайн-выдачу способов localinstall/
     // dex_shell (AdbInstall.kt), которые выдают ДО первого запуска приложения.

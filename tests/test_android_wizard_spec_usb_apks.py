@@ -63,16 +63,61 @@ def test_usb_step_without_variants_resolves_standard_apks_optional(tmp_path, wiz
 
 
 def test_usb_step_without_variants_resolves_standard_apks_required_too(tmp_path, wizard_spec):
+    # «Обязательных» больше нет (2026-09-23) — старая запись не теряется, а
+    # показывается обычной галочкой (путь по-прежнему в required/, где файл
+    # лежит у ещё не перенесённой модели).
     model_dir = tmp_path / "model"
     _write_spec(model_dir, [_usb_step(standard_apks=["mandatory.apk"])])
 
     result = wizard_spec.load_wizard_spec(model_dir)
     step = result["steps"][0]
 
-    assert step["standard_apks"] == [{
+    assert step["standard_apks"] == []
+    assert step["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "usb_pack_1" / "required" / "mandatory.apk"),
         "name": "", "description": "",
     }]
+
+
+def _apps_step(**overrides) -> dict:
+    step = {"type": "apps", "title": "Приложения", "standard_apks": [], "standard_apks_optional": [],
+            "variants": [], "apps_connection": "wired"}
+    step.update(overrides)
+    return step
+
+
+def test_apps_required_apks_become_regular_checkboxes(tmp_path, wizard_spec):
+    model_dir = tmp_path / "model"
+    _write_spec(model_dir, [_apps_step(
+        standard_apks=[{"filename": "ginputbridge.apk", "name": "GInputBridge", "description": ""}],
+        standard_apks_optional=["climator.apk"])])
+
+    step = wizard_spec.load_wizard_spec(model_dir)["steps"][0]
+
+    assert step["standard_apks"] == []
+    assert [Path(e["path"]).name for e in step["standard_apks_optional"]] == ["ginputbridge.apk", "climator.apk"]
+    assert step["standard_apks_optional"][0]["name"] == "GInputBridge"
+
+
+def test_same_file_in_required_and_optional_is_listed_once(tmp_path, wizard_spec):
+    model_dir = tmp_path / "model"
+    _write_spec(model_dir, [_apps_step(standard_apks=["x.apk"], standard_apks_optional=["x.apk"])])
+
+    step = wizard_spec.load_wizard_spec(model_dir)["steps"][0]
+
+    assert [e["path"] for e in step["standard_apks_optional"]] == [
+        str(model_dir / "files" / "pack" / "optional" / "x.apk")]
+
+
+def test_variant_required_apks_become_regular_checkboxes(tmp_path, wizard_spec):
+    model_dir = tmp_path / "model"
+    _write_spec(model_dir, [_apps_step(variants=[
+        {"name": "Full", "standard_apks": ["a.apk"], "standard_apks_optional": ["b.apk"]}])])
+
+    variant = wizard_spec.load_wizard_spec(model_dir)["steps"][0]["variants"][0]
+
+    assert variant["standard_apks"] == []
+    assert [Path(e["path"]).name for e in variant["standard_apks_optional"]] == ["a.apk", "b.apk"]
 
 
 def test_usb_step_old_bug_regression_empty_when_no_apks_configured(tmp_path, wizard_spec):

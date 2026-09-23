@@ -109,6 +109,45 @@ def test_recover_stale_current_with_no_session_at_all(tmp_path):
     assert not pil.list_queue(tmp_path)
 
 
+def test_seal_abandoned_current_with_activity_queues_without_crash_marker(tmp_path):
+    # Штатное закрытие окна посреди сессии, где всё логировал JS (QR ADB —
+    # как install_logs #471): это НЕ вылет, маркера быть не должно.
+    token = pil.start_session(tmp_path, "Haval", "Jolion", "2026")
+    pil.append_current(tmp_path, token, "QR ADB: файл svlog.flag записан на E:.", True)
+    path = pil.seal_abandoned_current(tmp_path, "windows")
+    assert path is not None and path.exists()
+    entry = json.loads(path.read_text(encoding="utf-8"))
+    assert entry["success"] is False
+    assert pil.STALE_MARKER not in entry["log_text"]
+    assert entry["log_text"] == "QR ADB: файл svlog.flag записан на E:.\n"
+    assert (entry["brand"], entry["model"], entry["modification"]) == ("Haval", "Jolion", "2026")
+    assert not (tmp_path / "pending_install_logs" / "_current.log").exists()
+    # Следующий запуск больше не находит, что «восстанавливать как вылет».
+    pil.recover_stale_current(tmp_path, "windows")
+    assert pil.list_queue(tmp_path) == [path]
+
+
+def test_seal_abandoned_current_without_activity_discards(tmp_path):
+    token = pil.start_session(tmp_path, "Geely", "Atlas New", "Monji")
+    pil.append_current(tmp_path, token, "просто открыл модель", False)
+    assert pil.seal_abandoned_current(tmp_path, "macos") is None
+    assert not pil.list_queue(tmp_path)
+    assert not (tmp_path / "pending_install_logs" / "_current.meta.json").exists()
+
+
+def test_seal_abandoned_current_after_js_already_sent_is_noop(tmp_path):
+    token = pil.start_session(tmp_path, "Geely", "Atlas New", "Monji")
+    pil.append_current(tmp_path, token, "Установлено: X.apk", True)
+    pil.finalize_to_queue(tmp_path, token, "windows", "Geely", "Atlas New", "Monji", True)
+    assert pil.seal_abandoned_current(tmp_path, "windows") is None
+    assert len(pil.list_queue(tmp_path)) == 1  # не задвоилось
+
+
+def test_seal_abandoned_current_with_no_session_at_all(tmp_path):
+    assert pil.seal_abandoned_current(tmp_path, "macos") is None
+    assert not pil.list_queue(tmp_path)
+
+
 def test_send_one_deletes_on_success(tmp_path):
     token = pil.start_session(tmp_path, "Geely", "Atlas New", "Monji")
     pil.append_current(tmp_path, token, "строка", True)

@@ -139,8 +139,52 @@
     return new Promise((resolve) => { resolveFn = resolve; });
   }
 
+  // «Идёт работа» без кнопок — для долгого ожидания, которое само закончится
+  // (см. graph_wizard.js: open — докачка файлов модели перед редактором).
+  // Свой <dialog>, не общий с notice(): ошибка ожидания показывается notice()
+  // сразу после close() — один элемент на оба случая мешал бы друг другу.
+  // Esc не закрывает: пропадёт только индикатор, само ожидание продолжится.
+  let busyEl, busyTitleEl, busyMessageEl, busyProgressEl;
+
+  function busyDialog(title, message) {
+    if (!busyEl) {
+      busyEl = document.createElement("dialog");
+      busyEl.id = "app-busy";
+      busyEl.innerHTML = `
+        <h2 id="app-busy-title"></h2>
+        <p id="app-busy-message"></p>
+        <progress id="app-busy-progress" max="100" style="width: 100%"></progress>
+      `;
+      document.body.appendChild(busyEl);
+      busyTitleEl = busyEl.querySelector("#app-busy-title");
+      busyMessageEl = busyEl.querySelector("#app-busy-message");
+      busyProgressEl = busyEl.querySelector("#app-busy-progress");
+      busyEl.addEventListener("cancel", (event) => event.preventDefault());
+    }
+    busyTitleEl.textContent = title;
+    busyMessageEl.textContent = message;
+    busyProgressEl.removeAttribute("value");  // неопределённый, пока нет чисел
+    if (!busyEl.open) busyEl.showModal();
+    return {
+      // Те же числа, что у sync_progress (content_sync.sync_tree: on_progress).
+      progress(done, total, filesDone, filesTotal) {
+        if (!(total > 0)) return;
+        const percent = Math.min(100, Math.round((done / total) * 100));
+        busyProgressEl.value = percent;
+        const suffix = Number.isFinite(filesDone) && Number.isFinite(filesTotal)
+          ? ` · ${filesDone} из ${filesTotal} файлов`
+          : "";
+        busyMessageEl.textContent = `${percent}% скачано${suffix}`;
+      },
+      close() {
+        if (busyEl.open) busyEl.close();
+      },
+    };
+  }
+
   window.notice = notice;
   window.confirmDialog = confirmDialog;
   window.promptDialog = promptDialog;
   window.selectDialog = selectDialog;
+  window.busyDialog = busyDialog;
 })();

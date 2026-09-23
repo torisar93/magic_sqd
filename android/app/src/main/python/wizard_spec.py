@@ -130,6 +130,17 @@ def _apk_filename(item) -> str:
     return item["filename"] if isinstance(item, dict) else item
 
 
+def _merge_required_into_optional(required: list, optional: list) -> list:
+    """«Обязательных» приложений больше нет (решение владельца, 2026-09-23,
+    см. app/car_generator.py: load_car_spec) — есть общий каталог и каталог
+    модели, галочки техник ставит сам. Если спека ещё со standard_apks
+    (модель не перенесена на сервере или старая локальная копия), они
+    показываются обычными галочками вместе с необязательными; одноимённый
+    файл из optional/ побеждает."""
+    optional_names = {Path(entry["path"]).name for entry in optional}
+    return [entry for entry in required if Path(entry["path"]).name not in optional_names] + list(optional)
+
+
 def _apk_entry(item, base_dir: Path) -> dict:
     """Как _apk_filename, но возвращает {"path","name","description"} целиком
     — раньше "красивые" имя/описание из редактора здесь просто отбрасывались
@@ -162,16 +173,18 @@ def _variant_dicts(variant_data, base_dir: Path, step_type: str, apk_base_dir: P
             variants.append({
                 "name": name,
                 "usb_files": [str(v_dir / n) for n in v.get("usb_files", [])],
-                "standard_apks": [_apk_entry(n, apk_dir / "required") for n in v.get("standard_apks", [])],
-                "standard_apks_optional": [_apk_entry(n, apk_dir / "optional")
-                                            for n in v.get("standard_apks_optional", [])],
+                "standard_apks": [],
+                "standard_apks_optional": _merge_required_into_optional(
+                    [_apk_entry(n, apk_dir / "required") for n in v.get("standard_apks", [])],
+                    [_apk_entry(n, apk_dir / "optional") for n in v.get("standard_apks_optional", [])]),
             })
         elif step_type == "apps":
             variants.append({
                 "name": name,
-                "standard_apks": [_apk_entry(n, v_dir / "required") for n in v.get("standard_apks", [])],
-                "standard_apks_optional": [_apk_entry(n, v_dir / "optional")
-                                            for n in v.get("standard_apks_optional", [])],
+                "standard_apks": [],
+                "standard_apks_optional": _merge_required_into_optional(
+                    [_apk_entry(n, v_dir / "required") for n in v.get("standard_apks", [])],
+                    [_apk_entry(n, v_dir / "optional") for n in v.get("standard_apks_optional", [])]),
             })
     return variants
 
@@ -346,8 +359,8 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             ),
             "adb_install_selected_apks": step_data.get("adb_install_selected_apks", False),
             "adb_files": adb_files,
-            "standard_apks": standard_apks,
-            "standard_apks_optional": standard_apks_optional,
+            "standard_apks": [],
+            "standard_apks_optional": _merge_required_into_optional(standard_apks, standard_apks_optional),
             # "wired"/"wifi"/"ask" — только для type == "apps" (см.
             # car_generator.py: StepSpec.apps_connection). Если поля нет
             # вовсе (этап сохранён до его появления) — берём "wifi" для

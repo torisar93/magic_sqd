@@ -97,6 +97,8 @@ class InstallApi:
             adb_path, self._on_log, self._on_finished,
             base_dir=base_dir, ask_input_fn=input_broker.request,
             on_sync_progress=self._on_sync_progress,
+            on_apk_download_progress=lambda path, done, total: self._push_apk_download(
+                self._pending_stage_index, path, done, total),
         )
         self._pending_stage_index: int | None = None
         # Остановка предварительной докачки (prefetch_apks) — у самого InstallRunner флаг создаётся только
@@ -374,12 +376,18 @@ class InstallApi:
                                 log=self._on_log_passive, manifest=manifest,
                                 on_progress=self._on_sync_progress)
         self._on_sync_progress(0, 0)
-        return {
-            "required": [apk_to_dict(apk) for apk in
-                         scan_apk_dir_with_remote(required_dir, remote_items(required_dir))],
-            "optional": [apk_to_dict(apk) for apk in
-                         scan_apk_dir_with_remote(optional_dir, remote_items(optional_dir))],
-        }
+        # «Обязательных» больше нет (решение владельца, 2026-09-23; см.
+        # car_generator.load_car_spec) — всё из required/ (ещё не перенесённая
+        # на сервере модель или старая локальная копия у техника, которую
+        # prune_model_stale_files уберёт только при полной докачке модели)
+        # показываем обычными галочками вместе с необязательными. Одноимённый
+        # файл из optional/ побеждает — иначе одно приложение шло бы двумя строками.
+        required = scan_apk_dir_with_remote(required_dir, remote_items(required_dir))
+        optional = scan_apk_dir_with_remote(optional_dir, remote_items(optional_dir))
+        optional_names = {apk.path.name for apk in optional}
+        merged = [apk for apk in required if apk.path.name not in optional_names] + optional
+        merged.sort(key=lambda apk: apk.name.lower())
+        return {"required": [], "optional": [apk_to_dict(apk) for apk in merged]}
 
     # ------------------------------------------------------------------
     def list_devices(self) -> list[dict]:
@@ -806,7 +814,9 @@ class InstallApi:
         self._on_log("Wi-Fi ADB: сначала скачиваю приложения — пока есть интернет, потом подключимся к магнитоле.")
         try:
             ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apk_paths, log=self._on_log,
-                                   check_cancelled=check_cancelled, on_progress=self._on_sync_progress)
+                                   check_cancelled=check_cancelled, on_progress=self._on_sync_progress,
+                                   on_file_progress=lambda path, done, total: self._push_apk_download(
+                                       stage_index, path, done, total))
             self._runner.sync_resign_cert(model, check_cancelled=check_cancelled)
         except InstallCancelled as exc:
             return {"ok": False, "cancelled": True, "error": str(exc)}
@@ -1069,6 +1079,22 @@ class InstallApi:
             return None
         return {**(self._session_meta or {}), "log_text": "\n".join(self._session_log_lines),
                 "token": self._session_log_token}
+
+    @staticmethod
+    def _push_apk_download(stage_index: int | None, path: str, done: int, total: int) -> None:
+        """Скачивание одного APK перед установкой — в кольцо окна «Установка
+        приложений» (progress08.js: LabUI.progress, фаза download), тем же
+        событием apk_progress, что шлёт Android (WebBridge.kt: pushApkProgress).
+        Раньше десктоп слал только общий sync_progress — он рисуется строкой в
+        свёрнутом логе, а кольцо всё скачивание стояло на «Подготавливаем
+        файлы» (жалоба владельца, 2026-09-23)."""
+        if stage_index is None:
+            return
+        event_bridge.push({
+            "kind": "apk_progress", "stage_index": stage_index, "path": path,
+            "state": "running", "phase": "download", "determinate": total > 0,
+            "bytes_done": done, "bytes_total": total,
+        })
 
     def _on_sync_progress(self, done: int, total: int, files_done: int | None = None,
                           files_total: int | None = None) -> None:

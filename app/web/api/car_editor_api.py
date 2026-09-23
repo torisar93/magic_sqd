@@ -222,9 +222,19 @@ class CarEditorApi:
         доводить до этой ошибки, докачав файлы заранее. sync_model_files сам
         уважает mark_local_edit (не трогает модель с неопубликованной
         локальной правкой) и молча ничего не делает без server.json/сети —
-        не должно мешать редактированию в офлайне или уже скачанной модели."""
+        не должно мешать редактированию в офлайне или уже скачанной модели.
+
+        Прогресс — событием editor_sync_progress (graph_wizard.js: open
+        показывает его в окне «Открываем редактор», пока ждёт этот вызов): на машине,
+        где модель ещё не качалась (у всех моделей разом — на macOS после
+        переезда данных в Application Support, v1.0.30), это десятки МБ, а
+        без индикатора выглядело так, будто «Изменить» просто не работает
+        (жалоба владельца, 2026-09-23, Geely Preface Обычная)."""
+        def on_progress(done, total, files_done=None, files_total=None):
+            event_bridge.push({"kind": "editor_sync_progress", "done": done, "total": total,
+                               "files_done": files_done, "files_total": files_total})
         try:
-            sync_model_files(self.base_dir, model)
+            sync_model_files(self.base_dir, model, on_progress=on_progress)
         except Exception:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
             pass
 

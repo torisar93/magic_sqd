@@ -524,24 +524,36 @@
       }));
     }
 
+    // «Обязательных» APK больше нет (решение владельца, 2026-09-23): есть
+    // общий каталог и каталог модели, галочки техник ставит сам. Бэкенд уже
+    // сливает старые standard_apks в standard_apks_optional при загрузке
+    // (car_generator.py: load_car_spec) — здесь то же самое на всякий случай,
+    // чтобы ни один APK не потерялся из виду.
+    function foldRequiredApks(holder) {
+      if (holder.standard_apks && holder.standard_apks.length) {
+        const names = new Set((holder.standard_apks_optional || []).map((apk) => apk.name));  // имя файла
+        holder.standard_apks_optional = [
+          ...holder.standard_apks.filter((apk) => !names.has(apk.name)),
+          ...(holder.standard_apks_optional || []),
+        ];
+      }
+      holder.standard_apks = [];
+    }
+
     function renderAppsFields(step) {
       renderConnectionRow(step, "apps_connection", "apps_wifi_port");
       renderInstallMethodRow(step);
 
+      foldRequiredApks(step);
+      step.variants.forEach(foldRequiredApks);
       renderVariantToggle(step, "standard_apks", "APK всех вариантов будут потеряны.");
       if (step.variants.length) {
         renderVariantSelector(step);
-        renderVariantFileList(step, "standard_apks", "apk", "Обязательные APK варианта «{name}»");
-        renderVariantFileList(step, "standard_apks_optional", "apk", "Необязательные APK варианта «{name}» (техник выбирает сам)");
+        renderVariantFileList(step, "standard_apks_optional", "apk", "Приложения варианта «{name}» (техник сам отмечает галочками)");
       } else {
         container.appendChild(el("span", {
           class: "field-label",
-          text: "Обязательные APK (ставятся всегда, без чекбокса и права отключить)",
-        }));
-        container.appendChild(buildApkList(step.standard_apks, () => rerender()));
-        container.appendChild(el("span", {
-          class: "field-label", style: "margin-top: 8px",
-          text: "Необязательные APK (техник выбирает сам при установке)",
+          text: "Приложения модели (техник сам отмечает галочками при установке)",
         }));
         container.appendChild(buildApkList(step.standard_apks_optional, () => rerender()));
       }

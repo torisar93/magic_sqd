@@ -25,7 +25,9 @@ from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
 from ..adb_utils import find_adb_path
-from ..pending_install_logs import append_current, finalize_to_queue, recover_stale_current, send_one, send_queue
+from ..pending_install_logs import (
+    append_current, finalize_to_queue, recover_stale_current, seal_abandoned_session, send_one, send_queue,
+)
 from ..ping_client import get_or_create_client_id
 from ..version import APP_VERSION
 
@@ -94,6 +96,11 @@ class WebApi:
         # появление окна, а недренированная сетевая попытка (до 30 с на
         # запись) не должна держать процесс живым после закрытия окна.
         threading.Thread(target=self._recover_pending_install_logs, daemon=True).start()
+        # См. seal_abandoned_install_log — при закрытии программы её может
+        # позвать и хук выхода macOS (main_web.py: _install_macos_quit_cleanup),
+        # и finally-блок после webview.start(); запечатываем один раз.
+        self._abandoned_log_sealed = False
+        self._abandoned_log_path: Path | None = None
 
     def _recover_pending_install_logs(self) -> None:
         platform = self._install_log_platform()
@@ -328,23 +335,39 @@ class WebApi:
             daemon=True,
         ).start()
 
+    def seal_abandoned_install_log(self) -> Path | None:
+        """Запечатывает в очередь на диске (см. app/pending_install_logs.py)
+        сессию, которую JS не успела отправить сама (см. install_log_send
+        выше), — БЕЗ сети, только локальные файлы: это зовёт и хук выхода
+        macOS прямо на главном потоке Cocoa, где сетевой таймаут заморозил бы
+        окно (техник по Wi-Fi ADB магнитолы обычно как раз без интернета).
+        Идемпотентно — второй вызов возвращает то же, что первый.
+
+        Источник — сначала бэкендовый буфер строк (как и раньше); если он
+        пуст — прочный журнал на диске: этапы, где активность логирует только
+        JS (QR ADB, запись флешки), бэкендовый буфер не видит вовсе, и раньше
+        такие сессии молча оставались в _current.* до следующего запуска —
+        а тот слал их как вылет («Предыдущий запуск не завершился штатно»),
+        хотя закрытие было штатным (install_logs #471, #589 — Windows)."""
+        if self._abandoned_log_sealed:
+            return self._abandoned_log_path
+        self._abandoned_log_sealed = True
+        self._abandoned_log_path = seal_abandoned_session(
+            self.base_dir, self._install_log_platform(), self._install.pending_session_log())
+        return self._abandoned_log_path
+
     def flush_abandoned_install_log(self) -> None:
         """Аварийный запасной путь на случай, если окно закрыли раньше, чем
         JS успела сама отправить лог сессии (см. install_log_send выше) —
         зовётся из main_web.py/main_web_win7.py в finally-блоке при закрытии
         окна. Молча ничего не делает, если сессии в процессе не было, или
-        JS уже её отправила. Синхронно (как и раньше) — окно и так ждёт
-        завершения этого шага перед закрытием, но теперь только ОДНУ попытку
-        отправки именно этой записи (send_one), а не всю накопленную очередь
-        (send_queue) — иначе закрытие окна могло бы растянуться на несколько
-        таймаутов подряд, если очередь успела накопиться."""
-        pending = self._install.pending_session_log()
-        if pending is None:
-            return
-        platform = self._install_log_platform()
-        path = finalize_to_queue(self.base_dir, pending.get("token") or "", platform,
-                                  pending["brand"], pending["model"], pending["modification"],
-                                  False, pending["log_text"])
+        JS уже её отправила. Синхронно (как и раньше) — окно к этому моменту
+        уже закрыто, но теперь только ОДНУ попытку отправки именно этой
+        записи (send_one), а не всю накопленную очередь (send_queue) — иначе
+        закрытие могло бы растянуться на несколько таймаутов подряд, если
+        очередь успела накопиться. Не отправилось — уйдёт при следующем
+        запуске вместе с остальной очередью (send_queue в __init__)."""
+        path = self.seal_abandoned_install_log()
         send_one(self.base_dir, path, self._install_log, self.auth_email)
 
     # -- admin_api ------------------------------------------------------

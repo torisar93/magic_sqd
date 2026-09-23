@@ -535,6 +535,15 @@ def _parse_apk_entry(item, base_dir: Path) -> StandardApkSpec:
                             name=item.get("name", ""), description=item.get("description", ""))
 
 
+def _merge_required_into_optional(required: list[StandardApkSpec],
+                                  optional: list[StandardApkSpec]) -> list[StandardApkSpec]:
+    """Бывшие обязательные — первыми (как стояли в списке); файл с тем же
+    именем, уже лежащий в необязательных, побеждает (в одной папке optional/
+    двух одноимённых файлов быть не может)."""
+    optional_names = {apk.path.name for apk in optional}
+    return [apk for apk in required if apk.path.name not in optional_names] + list(optional)
+
+
 def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "") -> NewCarSpec | None:
     """Загружает _wizard_spec.json модели (если она была создана этим
     мастером) — для повторного открытия в редакторе. Пути в StepSpec
@@ -637,6 +646,18 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             )
             for j, a in enumerate(step_data.get("actions", []), start=1)
         ]
+        # «Обязательных» приложений больше нет (решение владельца, 2026-09-23):
+        # есть общий каталог и каталог модели, галочки техник ставит сам.
+        # Старая спека с standard_apks при любом пересохранении переезжает в
+        # standard_apks_optional — _write_model_files сам перенесёт файлы из
+        # required/ в optional/ (перенос между ними за одно сохранение он уже
+        # умеет, см. там же про сирот в required/optional).
+        standard_apks_optional = _merge_required_into_optional(standard_apks, standard_apks_optional)
+        standard_apks = []
+        for variant in variants:
+            variant.standard_apks_optional = _merge_required_into_optional(
+                variant.standard_apks, variant.standard_apks_optional)
+            variant.standard_apks = []
         steps.append(StepSpec(
             type=step_type,
             title=step_data.get("title", ""),

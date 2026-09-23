@@ -12,9 +12,11 @@ recover_stale_current). Использует app/web/api/install_log_api.py:Inst
   каждую строку лога, которую видит техник (тем же путём идут и JS-only
   строки, и переданные из Python через событие install_log — см. докстринг
   append_current).
-- app/web/bridge.py: install_log_send()/flush_abandoned_install_log() —
-  finalize_to_queue() перед попыткой отправки; WebApi.__init__ — фоновым
-  потоком recover_stale_current() + send_queue() при каждом старте программы.
+- app/web/bridge.py: install_log_send() — finalize_to_queue() перед попыткой
+  отправки; seal_abandoned_install_log()/flush_abandoned_install_log() при
+  закрытии программы — seal_abandoned_session();
+  WebApi.__init__ — фоновым потоком recover_stale_current() + send_queue() при
+  каждом старте программы.
 
 Важно про pywebview (см. .venv/lib/python3.11/site-packages/webview/util.py:
 js_bridge_call) — КАЖДЫЙ вызов window.pywebview.api.X(...) из JS диспетчерится
@@ -182,6 +184,31 @@ def finalize_to_queue(base_dir, token: str, platform: str, brand: str, model: st
         return path
 
 
+def _seal_current(base_dir: Path, platform: str, marker: str | None) -> Path | None:
+    """Общая часть recover_stale_current/seal_abandoned_current: запечатать
+    _current.* ЛЮБОЙ сессии, какой бы токен у неё ни был (оба вызываются,
+    когда никакой новой сессии уже не будет — старт программы или её
+    закрытие). С маркером активности — в очередь с success=False (marker,
+    если задан, первой строкой); без — просто убрать, слать нечего."""
+    meta = _read_current_meta(base_dir)
+    if not meta:
+        _clear_current(base_dir)
+        return None
+    if not _current_activity_path(base_dir).exists():
+        _clear_current(base_dir)
+        return None
+    try:
+        log_text = _current_log_path(base_dir).read_text(encoding="utf-8")
+    except OSError:
+        log_text = ""
+    if marker:
+        log_text = f"{marker}\n{log_text}"
+    path = _write_queue_entry(base_dir, platform, meta.get("brand", ""), meta.get("model", ""),
+                              meta.get("modification", ""), False, log_text)
+    _clear_current(base_dir)
+    return path
+
+
 def recover_stale_current(base_dir, platform: str) -> None:
     """Вызывается ОДИН раз при старте программы, до открытия любой модели —
     если _current.* пережил прошлый запуск, значит та сессия не дошла до
@@ -191,24 +218,41 @@ def recover_stale_current(base_dir, platform: str) -> None:
     success=False и текстовым маркером в начале лога; без маркера — была
     просто открыта модель или просмотрена инструкция, слать нечего, как и
     сегодня."""
-    base_dir = Path(base_dir)
     with _LOCK:
-        meta = _read_current_meta(base_dir)
-        if not meta:
-            _clear_current(base_dir)
-            return
-        has_activity = _current_activity_path(base_dir).exists()
-        if not has_activity:
-            _clear_current(base_dir)
-            return
-        try:
-            log_text = _current_log_path(base_dir).read_text(encoding="utf-8")
-        except OSError:
-            log_text = ""
-        log_text = f"{STALE_MARKER}\n{log_text}"
-        _write_queue_entry(base_dir, platform, meta.get("brand", ""), meta.get("model", ""),
-                            meta.get("modification", ""), False, log_text)
-        _clear_current(base_dir)
+        _seal_current(Path(base_dir), platform, STALE_MARKER)
+
+
+def seal_abandoned_current(base_dir, platform: str) -> Path | None:
+    """Штатное закрытие программы посреди сессии, которую JS не успела
+    отправить сама (см. app/web/bridge.py:seal_abandoned_install_log) —
+    то же, что recover_stale_current, но БЕЗ маркера вылета: программа
+    закрылась нормально, это не сбой. Раньше такую сессию при закрытии
+    видел только бэкендовый буфер строк (InstallApi.pending_session_log) —
+    этапы, где всю активность логирует JS (QR ADB, запись флешки, отказ по
+    дубликату пакета до первой бэкендовой строки), он не видел вовсе, их
+    _current.* оставался на диске, и следующий запуск честно, но ошибочно
+    слал их как «Предыдущий запуск не завершился штатно» (install_logs
+    #471, #589 — Windows, 2026-09). Возвращает путь к записи очереди (None
+    — не было ни сессии, ни реальной активности)."""
+    with _LOCK:
+        return _seal_current(Path(base_dir), platform, None)
+
+
+def seal_abandoned_session(base_dir, platform: str, pending: dict | None) -> Path | None:
+    """Всё, что нужно запечатать при закрытии программы посреди сессии (см.
+    app/web/bridge.py:seal_abandoned_install_log) — только локальные файлы,
+    без сети. pending — бэкендовый буфер строк (InstallApi.
+    pending_session_log(), None — бэкенд ничего не логировал): он, как и
+    раньше, первый; если его нет или токен уже не совпал — прочный журнал
+    на диске (seal_abandoned_current)."""
+    path = None
+    if pending is not None:
+        path = finalize_to_queue(base_dir, pending.get("token") or "", platform,
+                                 pending["brand"], pending["model"], pending["modification"],
+                                 False, pending["log_text"])
+    if path is None:
+        path = seal_abandoned_current(base_dir, platform)
+    return path
 
 
 def list_queue(base_dir) -> list[Path]:
