@@ -6,6 +6,47 @@ import json
 import urllib.error
 import urllib.request
 
+# Тело запроса к /chat — не больше 256 КБ на сервере; за долгую сессию набегало больше (лог #675:
+# 401 КБ, Android 1.0.33). Та же логика, что в desktop app/chat_client.py: build_chat_body —
+# UTF-8 вместо \uXXXX, при переполнении выпадают старые реплики, потом старые строки лога.
+CHAT_BODY_MAX_BYTES = 200 * 1024
+CHAT_LAST_TURN_MAX_CHARS = 20000
+
+
+def _clip_middle(text, limit):
+    if len(text) <= limit:
+        return text
+    head = limit * 6 // 10
+    tail = limit - head
+    return f"{text[:head]}\n… [обрезано {len(text) - limit} симв.] …\n{text[len(text) - tail:]}"
+
+
+def build_chat_body(history, recent_log, extra, max_bytes=CHAT_BODY_MAX_BYTES):
+    history = list(history)
+    recent_log = list(recent_log)
+
+    def encode():
+        # "replace": JS режет строки посреди суррогатной пары (clipChatText) — без него
+        # половинка эмодзи роняла бы отправку UnicodeEncodeError.
+        return json.dumps({"history": history, "recent_log": recent_log, **extra},
+                          ensure_ascii=False).encode("utf-8", "replace")
+
+    body = encode()
+    while len(body) > max_bytes and len(history) > 1:
+        history.pop(0)
+        body = encode()
+    while len(body) > max_bytes and recent_log:
+        recent_log.pop(0)
+        body = encode()
+    if len(body) > max_bytes and history:
+        last = dict(history[-1])
+        for key in ("content", "output", "command"):
+            if key in last:
+                last[key] = _clip_middle(str(last[key]), CHAT_LAST_TURN_MAX_CHARS)
+        history[-1] = last
+        body = encode()
+    return body
+
 
 def send_chat_turn(history_json: str, recent_log_json: str, chat_url: str, chat_key: str,
                     provider: str = "") -> str:
@@ -22,10 +63,7 @@ def send_chat_turn(history_json: str, recent_log_json: str, chat_url: str, chat_
     except (json.JSONDecodeError, UnicodeDecodeError):
         return json.dumps({"ok": False, "error": "некорректный запрос"})
 
-    body = json.dumps({
-        "history": history, "recent_log": recent_log, "client_id": "",
-        "provider": provider or None,
-    }).encode("utf-8")
+    body = build_chat_body(history, recent_log, {"client_id": "", "provider": provider or None})
     request = urllib.request.Request(
         chat_url, data=body, method="POST",
         headers={"X-Submit-Key": chat_key, "Content-Type": "application/json"})

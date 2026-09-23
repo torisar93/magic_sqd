@@ -34,7 +34,12 @@ class ApkDownloadProgress(private val emit: (String, Long, Long) -> Unit,
                           private val cancelled: () -> Boolean) {
     fun update(path: String, done: Long, total: Long) = emit(path, done, total)
     fun checkCancelled() {
-        if (cancelled()) error("Очередь остановлена пользователем")
+        if (cancelled()) error(CANCELLED_MESSAGE)
+    }
+    fun isCancelled(): Boolean = cancelled()
+
+    companion object {
+        const val CANCELLED_MESSAGE = "Очередь остановлена пользователем"
     }
 }
 
@@ -599,8 +604,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "ensure_apks_downloaded", apkDir, carsDir, BASE_URL, pathsArr.toString(), progress
             ).toString()
         } catch (e: Exception) {
-            if (progress != null) throw e
-            return
+            if (progress == null) return
+            // Отмена приходит из Python (check_cancelled → progress.checkCancelled()) завёрнутой
+            // Chaquopy в PyException, и в лог этапа попадало «java.lang.IllegalStateException:
+            // Очередь остановлена…» (лог #584) — отдаём тот же текст без имени Java-класса.
+            if (progress.isCancelled()) throw IllegalStateException(ApkDownloadProgress.CANCELLED_MESSAGE)
+            throw e
         }
         val result = JSONObject(resultJson)
         val logLines = result.optJSONArray("log") ?: JSONArray()

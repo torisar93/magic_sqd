@@ -59,6 +59,33 @@ private const val WRITE_RETRY_DELAY_MS = 300L
 // ловится тут же ниже отдельно — этот класс исключений НЕ является его
 // подклассом, поэтому раньше падал с первой же попытки, вообще без ретрая.
 
+// Разбор логов 2026-09-23 (#577/#578): если все попытки не помогли, техник видел
+// голый английский текст libaums («newLimit > capacity: (1037 > 1024)», «MAX_
+// RECOVERY_ATTEMPTS Exceeded … please reattach device») и не знал, что делать.
+// Баг ClusterChain (см. выше) зависит от раскладки кластеров на конкретной
+// флешке — на свежеотформатированной пустой FAT32 запись проходит.
+private const val LIBAUMS_CLUSTER_BUG = "newLimit > capacity"
+private const val LIBAUMS_RECOVERY_FAILED = "MAX_RECOVERY_ATTEMPTS"
+private const val FORMAT_HINT = "отформатируйте флешку («Параметры флешки» → «Форматировать флешку») и запишите файлы заново"
+
+/** Все попытки записи файла не удались — текст уже для техника (см. usbWriteFailureMessage). */
+class UsbWriteFailedException(message: String, cause: Exception) : IOException(message, cause)
+
+/** Что делать технику после WRITE_RETRY_ATTEMPTS неудачных попыток; исходная ошибка
+ * libaums — в скобках, для разбора логов. errors — ошибки всех попыток по порядку. */
+internal fun usbWriteFailureMessage(fileName: String, errors: List<Exception>): String {
+    val messages = errors.map { it.message.orEmpty() }
+    val last = messages.lastOrNull { it.isNotBlank() } ?: "неизвестная ошибка"
+    return when {
+        messages.any { LIBAUMS_CLUSTER_BUG in it } ->
+            "Не удалось записать $fileName: сбой файловой системы флешки — $FORMAT_HINT. ($last)"
+        messages.any { LIBAUMS_RECOVERY_FAILED in it } ->
+            "Не удалось записать $fileName: флешка перестала отвечать. Выньте и снова вставьте флешку " +
+                "(и OTG-переходник) и повторите запись; если не помогло — $FORMAT_HINT или возьмите другую флешку. ($last)"
+        else -> "Не удалось записать $fileName: $last"
+    }
+}
+
 /** Файл в очереди записи — тот же {name, path, size}, что и desktop
  * _scan_usb_items (app/web/api/usb_api.py), path — ЛОКАЛЬНЫЙ (исходный) путь,
  * не путь назначения на флешке: именно им помечены строки очереди в
@@ -123,7 +150,7 @@ fun writeFileToUsb(
     }
     val fileName = segments.last()
 
-    var lastError: Exception? = null
+    val errors = mutableListOf<Exception>()
     for (attempt in 1..WRITE_RETRY_ATTEMPTS) {
         try {
             // Свежий createFile на каждой попытке — предыдущая могла оставить
@@ -161,7 +188,7 @@ fun writeFileToUsb(
             return
         } catch (e: Exception) {
             if (e !is IOException && e !is IllegalArgumentException) throw e
-            lastError = e
+            errors.add(e)
             if (attempt < WRITE_RETRY_ATTEMPTS) {
                 log("Сбой записи $destRelativePath (попытка $attempt/$WRITE_RETRY_ATTEMPTS): " +
                     "${e.message}. Повторяю...")
@@ -169,7 +196,7 @@ fun writeFileToUsb(
             }
         }
     }
-    throw lastError!!
+    throw UsbWriteFailedException(usbWriteFailureMessage(fileName, errors), errors.last())
 }
 
 /**
@@ -221,6 +248,8 @@ fun writeUsbStage(
             filesDone++
         }
         StageRunResult.Success
+    } catch (e: UsbWriteFailedException) {
+        StageRunResult.Failed(e.message.orEmpty())
     } catch (e: Exception) {
         StageRunResult.Failed("${e.javaClass.simpleName}: ${e.message}")
     }

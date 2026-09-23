@@ -108,7 +108,8 @@ def upload_dir(base_url: str, session_cookie: str, target: str, source_dir: Path
 
 
 def upload_model(base_url: str, session_cookie: str, cars_dir: Path, model_dir: Path,
-                  extra_dirs=(), log=lambda m: None, check_cancelled=lambda: None) -> int:
+                  extra_dirs=(), log=lambda m: None, check_cancelled=lambda: None,
+                  on_progress=None) -> int:
     """Заливает ОДНУ модель (model_dir — cars_dir/<Марка>/<Модель>/... или
     .../<Модификация>/), а не весь cars/ — для автоматической выгрузки сразу
     по кнопке "Создать"/"Сохранить" в мастере (см. add_car_dialog.py), без
@@ -143,7 +144,7 @@ def upload_model(base_url: str, session_cookie: str, cars_dir: Path, model_dir: 
             raise AdminClientError(f"Не удалось собрать архив: {exc}") from exc
         return archive_path
 
-    return _build_and_send(base_url, session_cookie, "cars", build_archive, log, check_cancelled)
+    return _build_and_send(base_url, session_cookie, "cars", build_archive, log, check_cancelled, on_progress)
 
 
 def upload_model_as(base_url: str, session_cookie: str, cars_dir: Path, model_dir: Path,
@@ -180,10 +181,11 @@ def upload_model_as(base_url: str, session_cookie: str, cars_dir: Path, model_di
 
 
 def _build_and_send(base_url: str, session_cookie: str, target: str, build_archive,
-                     log, check_cancelled) -> int:
+                     log, check_cancelled, on_progress=None) -> int:
     """Общая часть upload_dir/upload_model — build_archive(tmp_dir) -> Path
     собирает .zip самостоятельно (по-разному для целой папки и для одной
-    модели), дальше отправка одинаковая."""
+    модели), дальше отправка одинаковая. on_progress(sent, total) — байты
+    архива, уже ушедшие на сервер (модель с APK — десятки МБ, это минуты)."""
     with tempfile.TemporaryDirectory() as tmp:
         archive_path = build_archive(Path(tmp))
 
@@ -200,6 +202,7 @@ def _build_and_send(base_url: str, session_cookie: str, target: str, build_archi
             conn.putheader("Content-Type", "application/zip")
             conn.endheaders()
 
+            sent = 0
             with open(archive_path, "rb") as f:
                 while True:
                     check_cancelled()
@@ -207,6 +210,9 @@ def _build_and_send(base_url: str, session_cookie: str, target: str, build_archi
                     if not chunk:
                         break
                     conn.send(chunk)
+                    sent += len(chunk)
+                    if on_progress:
+                        on_progress(sent, size)
 
             response = conn.getresponse()
             raw = response.read()

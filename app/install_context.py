@@ -143,6 +143,25 @@ def _check_pm_install_result(result) -> None:
         raise AdbError(text or "pm install не подтвердил успех (пустой вывод)")
 
 
+# Ошибки adb, после которых перебирать остальные способы установки бессмысленно:
+# магнитолы нет (не подключена, отвалилась посреди установки) или она не разрешила
+# отладку. Раньше перебор шёл до конца — 8 способов подряд с одной и той же
+# «no devices/emulators found» / «device '…' not found» (install_logs #648, #557).
+_DEVICE_UNAUTHORIZED_RE = re.compile(r"\bdevice unauthorized\b", re.IGNORECASE)
+_DEVICE_GONE_RE = re.compile(r"no devices/emulators found|device '[^']*' not found|device not found|device offline",
+                             re.IGNORECASE)
+
+
+def _device_unavailable_message(text: str) -> str | None:
+    if _DEVICE_UNAUTHORIZED_RE.search(text):
+        return ("Магнитола не разрешила отладку по USB — подтвердите запрос «Разрешить отладку» на её экране "
+                "и запустите установку заново.")
+    if _DEVICE_GONE_RE.search(text):
+        return ("Магнитола не подключена или отключилась во время установки — проверьте кабель (или Wi-Fi-"
+                "подключение) и запустите установку заново.")
+    return None
+
+
 def _short_reason(exc, limit: int = 300) -> str:
     """Причина отказа одной строкой для лога: без переводов строк, не длиннее limit.
     Сообщение AdbError начинается с длинной команды (полный путь к adb, файлы),
@@ -327,6 +346,15 @@ class InstallContext:
         return None
 
     def install_selected_apks(self, extra_args=None):
+        # Не скачалось (нет интернета) — сразу и понятно, ДО магнитолы: раньше каждый такой
+        # файл проходил все 8 способов установки с «cannot stat …: No such file» (install_logs
+        # #570). Android в этом случае так же останавливается («Файл не скачан»).
+        missing = [apk.name for apk in dict.fromkeys(self.selected_apks) if not apk.is_file()]
+        if missing:
+            raise InstallCancelled(
+                "Не скачаны приложения: " + ", ".join(missing) + " — без них установка невозможна. "
+                "Проверьте интернет (компьютер не должен быть подключён к Wi-Fi магнитолы без интернета) "
+                "и запустите установку заново.")
         conflict = self._duplicate_package_conflict()
         if conflict:
             raise InstallCancelled(conflict)
@@ -429,6 +457,10 @@ class InstallContext:
             except AdbError as exc:
                 label = _INSTALL_METHOD_LABELS[self._install_method]
                 self.log(f"  ↳ не сработало ({label}): {_short_reason(exc)}")
+                # Магнитола отвалилась — остальные приложения списка тоже не встанут.
+                gone = _device_unavailable_message(str(exc))
+                if gone:
+                    raise InstallCancelled(gone) from exc
                 raise AppInstallFailed(f"{Path(path).name}: {_short_reason(exc, 150)}") from exc
             return
         errors = []
@@ -454,6 +486,11 @@ class InstallContext:
                 # техник закрыл программу раньше (так и вышло в реальных логах —
                 # 7 «Установка APK…» подряд и ни одной причины).
                 self.log(f"  ↳ не сработало ({_INSTALL_METHOD_LABELS[method]}): {_short_reason(exc)}")
+                # Причина не в способе, а в том, что магнитолы нет — остальные способы
+                # упрутся в то же самое (см. _device_unavailable_message).
+                gone = _device_unavailable_message(str(exc))
+                if gone:
+                    raise InstallCancelled(gone) from exc
                 continue
             self._install_method = method
             if method > 0:
