@@ -883,6 +883,8 @@
   let qrAdbResult = null;
   let usbOperation = null;
   let usbStageResults = {};
+  // Этап «Флешка» из блоков (см. renderFlashBlocksStage): stage.index -> {номер блока -> итог}.
+  let flashBlockResults = {};
   let stageOperation = null;
   let stageExecutionResults = {};
   let appsSelection = {}; // stage.index -> {variant, optionalChecked: Set<path>}
@@ -969,6 +971,7 @@
     qrAdbResult = null;
     usbOperation = null;
     usbStageResults = {};
+    flashBlockResults = {};
     stageOperation = null;
     stageExecutionResults = {};
     modelWifi = false;
@@ -1317,6 +1320,7 @@
     if (appInstallOperation && appInstallOperation.index !== event.index) return;
     labInstallBusy=false;
     const r = event.result || {};
+    const flashBlock = usbOperation && usbOperation.kind === "files" ? usbOperation.block : null;
     if (appInstallOperation) {
       appInstallResults[event.index] = { ...r, cancelled: !r.success && Boolean(r.cancelled || r.canceled || appInstallOperation.cancelRequested) };
       appInstallOperation = null;
@@ -1338,7 +1342,11 @@
     const afterClose = () => {
       if (stages[currentIndex] && stages[currentIndex].index === event.index) {
         const stage=stages[currentIndex];
-        if (stage.type === "usb") {
+        if (flashBlock != null) {
+          (flashBlockResults[stage.index] || (flashBlockResults[stage.index] = {}))[flashBlock] =
+            r.success ? { ok: true } : { ok: false, error: r.reason || "Не удалось записать файлы. Проверьте подключение и повторите запись." };
+          usbOperation = null;
+        } else if (stage.type === "usb") {
           usbStageResults[stage.index] = r;
           usbOperation = null;
         }
@@ -1350,7 +1358,7 @@
             wizardNextBtn.style.display='';wizardNextBtn.textContent='К моделям';nextAction=()=>showScreen('picker');
           }
         }else render();
-        if(!r.success && !["apps", "usb", "adb", "actions", "telnet"].includes(stage.type))showLabNotice('Не удалось завершить этап',r.reason||'Откройте лог для подробностей.',true);
+        if(!r.success && flashBlock == null && !["apps", "usb", "adb", "actions", "telnet"].includes(stage.type))showLabNotice('Не удалось завершить этап',r.reason||'Откройте лог для подробностей.',true);
       }
     };
     finishRun({
@@ -2253,8 +2261,9 @@
     const selection = selectedAppsForStage(stage);
     const card = el("section", { class: "app-selection-card" });
     const copy = el("div", { class: "app-selection-copy" });
-    if (stage.type === "usb") copy.append(el("h3", { text: "Приложения" }));
-    copy.append(el("p", { class: "app-selection-total", text: selection.entries.length ? `Выбрано: ${selection.entries.length}` : "Выберите приложения для " + (stage.type === "usb" ? "записи" : "установки") }));
+    const onFlash = USB_STAGE_TYPES.has(stage.type);
+    if (onFlash) copy.append(el("h3", { text: "Приложения" }));
+    copy.append(el("p", { class: "app-selection-total", text: selection.entries.length ? `Выбрано: ${selection.entries.length}` : "Выберите приложения для " + (onFlash ? "записи" : "установки") }));
     if (selection.required.length) copy.append(el("span", { class: "app-selection-required", text: `Обязательных: ${selection.required.length}` }));
     card.append(copy);
     if (selection.entries.length) {
@@ -2384,10 +2393,13 @@
   function prepareUsbStage(page, stage) {
     page.classList.add("usb-stage");
     page.dataset.connected = String(usbConnected);
-    page.querySelector(".stage-chip").textContent = "Подготовка флешки";
+    // Этап «Флешка» из блоков — своё название (его задаёт владелец), как и на ПК.
+    const flash = !!(stage.flash_blocks && stage.flash_blocks.length);
+    page.querySelector(".stage-chip").textContent = flash ? stage.title || "Подготовка флешки" : "Подготовка флешки";
     page.querySelectorAll(":scope > .stage-text").forEach(node => node.remove());
     const intro = el("p", { class: "usb-stage-intro" });
-    if (stage.type === "qr_adb" && stage.qr_adb_engineering_menu) intro.append(
+    if (flash) intro.textContent = stage.description || "Выполните шаги по порядку — от первого к последнему.";
+    else if (stage.type === "qr_adb" && stage.qr_adb_engineering_menu) intro.append(
       el("span", { class: "usb-intro-full", text: "Сначала откройте инженерное меню магнитолы, затем запишите файл и получите пароль для ADB." }),
       el("span", { class: "usb-intro-compact", text: "Сначала инженерное меню, потом файл и пароль." }),
     );
@@ -2420,12 +2432,12 @@
     ]));
   }
 
-  function openUsbInstructions(stage) {
+  function openUsbInstructions(stage, heading = "Шаги на магнитоле") {
     const overlay = el("div", { class: "modal-overlay dismissible usb-instruction-overlay" });
     const close = () => { closePhotoLightbox(); overlay.remove(); };
     const closeButton = usbStageButton("Закрыть", "close", close);
     const box = el("section", { class: "modal-box usb-instruction-dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": "usb-instruction-title" });
-    const title = el("h2", { id: "usb-instruction-title", text: "Шаги на магнитоле" });
+    const title = el("h2", { id: "usb-instruction-title", text: heading });
     box.append(el("header", { class: "usb-instruction-heading" }, [usbStageIcon("book"), title, closeButton]));
     const content = el("div", { class: "usb-instruction-content" });
     if (stage.description) content.append(el("p", { class: "stage-text", text: stage.description }));
@@ -2486,7 +2498,8 @@
     closeButton.focus({ preventScroll: true });
   }
 
-  function beginUsbOperation(kind, stage, card, items = []) {
+  // block — номер блока этапа «Флешка» (renderFlashBlocksStage), итог уходит в flashBlockResults.
+  function beginUsbOperation(kind, stage, card, items = [], block = null) {
     if (labInstallBusy) return false;
     if (!usbConnected) {
       usbStatusEl.textContent = "Сначала подключите флешку к телефону";
@@ -2494,7 +2507,7 @@
       usbBarEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
       return false;
     }
-    usbOperation = { kind, index: stage.index };
+    usbOperation = { kind, index: stage.index, block };
     labInstallBusy = true;
     renderNav();
     document.querySelectorAll(".usb-stage button, .usb-stage select, .usb-stage input").forEach(button => { button.disabled = true; });
@@ -2518,6 +2531,7 @@
       // сдвигаются на prepOffset.
       retry: () => {
         const cards = [...document.querySelectorAll(".usb-stage > .usb-step-card")];
+        if (block != null) { cards[block]?.querySelector(":scope > .usb-step-action")?.click(); return; }
         const prepOffset = (stage.type === "qr_adb" && stage.qr_adb_engineering_menu) ? 2 : 0;
         const idx = kind === "password" ? 2 + prepOffset : kind === "prep_flag" ? 0 : kind === "flag" ? prepOffset : 0;
         cards[idx]?.querySelector(":scope > .usb-step-action")?.click();
@@ -2670,8 +2684,23 @@
     appendUsbOptions(page);
   }
 
+  // Итог операции блока этапа «Флешка» (флаг/пароль): тот же result, что у прежнего
+  // qr_adb-этапа, только в flashBlockResults по номеру блока.
+  function finishFlashBlockOperation(result, message, tag) {
+    const { index, block } = usbOperation;
+    usbOperation = null;
+    labInstallBusy = false;
+    (flashBlockResults[index] || (flashBlockResults[index] = {}))[block] = result;
+    finishRun({ success: !!result.ok, message }, () => { if (stages[currentIndex] && stages[currentIndex].index === index) render(); }, tag);
+  }
+
   function onQrAdbPrepWriteResult(event) {
     if (!usbOperation || usbOperation.kind !== "prep_flag") return;
+    if (usbOperation.block != null) {
+      const result = event.result || { ok: false, error: "неизвестная ошибка" };
+      finishFlashBlockOperation(result, result.ok ? "Файл записан. Подключите флешку к магнитоле." : (result.error || "Не удалось записать файл."), "qr-prep_flag");
+      return;
+    }
     usbOperation = null;
     labInstallBusy = false;
     qrAdbPrepStatus = event.result || { ok: false, error: "неизвестная ошибка" };
@@ -2683,6 +2712,11 @@
 
   function onQrAdbWriteResult(event) {
     if (!usbOperation || usbOperation.kind !== "flag") return;
+    if (usbOperation.block != null) {
+      const result = event.result || { ok: false, error: "неизвестная ошибка" };
+      finishFlashBlockOperation(result, result.ok ? "Файл записан. Теперь вставьте эту флешку в магнитолу." : (result.error || "Не удалось записать файл."), "qr-flag");
+      return;
+    }
     usbOperation = null;
     labInstallBusy = false;
     qrAdbWriteStatus = event.result || { ok: false, error: "неизвестная ошибка" };
@@ -2694,6 +2728,11 @@
 
   function onQrAdbPasswordResult(event) {
     if (!usbOperation || usbOperation.kind !== "password") return;
+    if (usbOperation.block != null) {
+      const result = event.result || { ok: false, error: "неизвестная ошибка" };
+      finishFlashBlockOperation(result, result.ok ? "Пароль получен. Введите его на экране магнитолы." : (result.error || "Не удалось получить пароль."), "qr-password");
+      return;
+    }
     usbOperation = null;
     labInstallBusy = false;
     qrAdbResult = event.result || { ok: false, error: "неизвестная ошибка" };
@@ -2701,6 +2740,109 @@
       success: !!qrAdbResult.ok,
       message: qrAdbResult.ok ? "Пароль получен. Введите его на экране магнитолы." : (qrAdbResult.error || "Не удалось получить пароль."),
     }, () => { if (stages[currentIndex] && stages[currentIndex].type === "qr_adb") render(); }, "qr-password");
+  }
+
+  // Этап «Флешка» из блоков (app/car_generator.py: FlashBlockSpec) — порт desktop
+  // stage_wizard.js: renderFlashBlocksStage: по карточке на блок в том порядке, в
+  // каком владелец собрал их в редакторе. Запись — тот же usb_run_stage, что у прежнего
+  // usb-этапа, но со списком файлов ЭТОГО блока (svengmode.flag/svlog.flag — обычные
+  // файлы блока); пароль — qr_adb_get_password, как у прежнего qr_adb. Инструкция без
+  // написанного HTML — одна строка без кнопки. Итоги — flashBlockResults по номеру блока.
+  function flashFilesDescription(block) {
+    const names = (block.files || []).map(basename);
+    const parts = [];
+    if (names.length) parts.push(names.length <= 3 ? names.join(", ") : `файлы этапа (${names.length})`);
+    if (block.copy_selected_apks) parts.push("выбранные приложения");
+    if (block.shared_folder) parts.push("комплект файлов для магнитолы");
+    return parts.length ? `На флешку будет записано: ${parts.join(", ")}.` : "В этом блоке пока нет файлов для записи.";
+  }
+
+  // Блок пройден: записан, пароль получен, инструкция открыта — или это инструкция одной
+  // строкой (без кнопки), а какой-то блок после неё уже сделан (как на ПК: flashBlockDone).
+  function flashCardState(stage, k) {
+    const results = flashBlockResults[stage.index] || {};
+    const blocks = stage.flash_blocks;
+    const done = i => !!(results[i] && results[i].ok)
+      || (blocks[i].kind === "instruction" && blocks.some((_, j) => j > i && results[j] && results[j].ok));
+    if (done(k)) return "done";
+    if (results[k] && results[k].error) return "error";
+    return k === blocks.findIndex((_, i) => !done(i)) ? "active" : "idle";
+  }
+
+  function syncFlashCardStates(stage) {
+    document.querySelectorAll(".usb-stage > .usb-step-card").forEach((card, k) => {
+      const state = flashCardState(stage, k);
+      card.dataset.state = state;
+      const number = card.querySelector(".usb-step-number");
+      if (number) number.textContent = state === "done" ? "✓" : String(k + 1);
+    });
+  }
+
+  function renderFlashBlocksStage(page, stage) {
+    prepareUsbStage(page, stage);
+    const results = flashBlockResults[stage.index] || (flashBlockResults[stage.index] = {});
+    let appsShown = false;
+    stage.flash_blocks.forEach((block, k) => {
+      const result = results[k];
+      const state = flashCardState(stage, k);
+      let card;
+      if (block.kind === "instruction") {
+        // Без написанной инструкции кнопки нет — короткое действие видно прямо в строке (владелец).
+        card = usbStepCard(k + 1, block.title || "Выполните шаги на магнитоле",
+          block.instruction_html ? "Откройте инструкцию и выполните шаги на магнитоле." : "", "car", state);
+        if (block.instruction_html) {
+          card.append(usbStageButton("Открыть инструкцию", "book", () => {
+            openUsbInstructions({ instruction_html: block.instruction_html }, block.title || "Шаги на магнитоле");
+            results[k] = { ok: true };
+            syncFlashCardStates(stage);
+          }));
+        } else {
+          card.classList.add("usb-step-line");
+          card.querySelector(".usb-step-copy > p").remove();
+        }
+      } else if (block.kind === "password") {
+        card = usbStepCard(k + 1, block.title || "Получите пароль ADB",
+          "После надписи «QNX OK» верните флешку в телефон, нажмите «Переподключить» и получите пароль.", "key", state);
+        card.append(usbStageButton("Получить пароль", "key", () => {
+          if (!beginUsbOperation("password", stage, card, [], k)) return;
+          sendUsbOperation("qr_adb_get_password", {}, stage);
+        }, state === "active"));
+        if (result && result.ok) {
+          card.append(el("div", { class: "usb-password-result", role: "status" }, [
+            el("span", { text: "Пароль ADB" }), el("output", { class: "qr-adb-code", text: result.code }),
+            el("small", { text: `SN: ${result.sn || "?"}` }),
+          ]));
+        } else if (result && result.error) {
+          card.append(el("p", { class: "usb-step-feedback", role: "status", text: result.error }));
+        }
+      } else {
+        card = usbStepCard(k + 1, block.title || "Запишите файлы на флешку", flashFilesDescription(block), "file", state);
+        const files = block.files || [];
+        if (files.length > 3) {
+          const names = el("ul");
+          files.forEach(file => names.append(el("li", { text: basename(file) })));
+          card.append(el("details", { class: "usb-file-list" }, [el("summary", { text: `Файлы для записи · ${files.length}` }), names]));
+        }
+        // Выбор приложений один на этап (общий globalSelectedApks) — у первого такого блока.
+        if (block.copy_selected_apks && !appsShown) { appendAppSelection(card, stage); appsShown = true; }
+        card.append(usbStageButton(result && result.ok ? "Записать ещё раз" : "Записать на флешку", "download", () => {
+          const selectedApks = block.copy_selected_apks ? Array.from(globalSelectedApks) : [];
+          const sharedFolder = block.shared_folder || "";
+          // Список файлов заранее — как у прежнего usb-этапа (renderUsbStage).
+          let items = [];
+          try {
+            const itemsResult = Bridge.call("usb_list_items", { files, sharedFolder, selectedApks });
+            if (itemsResult && itemsResult.ok && Array.isArray(itemsResult.items)) items = itemsResult.items;
+          } catch { /* сводка не должна мешать самой записи */ }
+          if (!beginUsbOperation("files", stage, card, items, k)) return;
+          sendUsbOperation("usb_run_stage", { index: stage.index, files, sharedFolder, selectedApks, apksDest: block.apks_dest || "" }, stage);
+        }, state === "active"));
+        if (result) card.append(el("p", { class: "usb-step-feedback", role: "status", text: result.ok ? "Записано. Можно извлечь флешку." : result.error }));
+      }
+      card.dataset.block = block.kind;
+      page.append(card);
+    });
+    appendUsbOptions(page);
   }
 
   // "telnet"-этап: включает ADB-отладку на магнитоле удалённо (см.
@@ -2836,6 +2978,8 @@
       renderAppsStage(page, stage);
     } else if (stage.type === "actions") {
       renderActionsStage(page, stage);
+    } else if (stage.flash_blocks && stage.flash_blocks.length) {
+      renderFlashBlocksStage(page, stage);
     } else if (stage.type === "usb") {
       renderUsbStage(page, stage);
     } else if (stage.type === "qr_adb") {

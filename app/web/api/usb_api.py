@@ -12,13 +12,48 @@ from ..events import event_bridge
 from ...content_sync import ensure_apks_downloaded, sync_model_files, sync_shared_folder
 from ...install_context import InstallCancelled
 from ...stage_runner import load_stages
-from ...usb_context import UsbContext
+from ...usb_context import UsbContext, write_flash_files
 from ...usb_utils import list_drives as _list_drives, format_drive, UsbSafetyError
 
 
 def _drive_to_dict(d) -> dict:
     return {"letter": d.letter, "label": d.label, "total_bytes": d.total_bytes,
             "free_bytes": d.free_bytes, "display": d.display}
+
+
+def _file_items(path: Path) -> list[dict]:
+    if path.is_dir():
+        paths = sorted(p for p in path.rglob("*") if p.is_file())
+    else:
+        paths = [path] if path.is_file() else []
+    return [{"name": p.name, "path": str(p), "size": p.stat().st_size} for p in paths]
+
+
+def _flash_write_block(stage: dict, block_index) -> dict | None:
+    """Блок «Запись на флешку» этапа «Флешка» (см. car_generator.py:
+    FlashBlockSpec) по номеру из JS; None — запись всего этапа по-старому
+    (stage["run"])."""
+    if block_index is None:
+        return None
+    blocks = stage.get("flash_blocks") or []
+    block = blocks[block_index] if isinstance(block_index, int) and 0 <= block_index < len(blocks) else None
+    if not block or block.get("kind") != "write":
+        raise ValueError("Этот блок этапа не записывает файлы — обновите модель и повторите.")
+    return block
+
+
+def _scan_flash_block_items(base_dir: Path, block: dict, selected_apk_paths: list[str]) -> list[dict]:
+    """Как _scan_usb_items, но для одного блока — в том же порядке, в каком его
+    записывает usb_context.write_flash_files."""
+    items: list[dict] = []
+    for raw in block.get("files") or []:
+        items += _file_items(Path(raw))
+    if block.get("copy_selected_apks"):
+        for raw in selected_apk_paths:
+            items += _file_items(Path(raw))
+    if block.get("shared_folder"):
+        items += _file_items(base_dir / "cars" / "_shared" / block["shared_folder"])
+    return items
 
 
 def _scan_usb_items(base_dir: Path, model, stage: dict, stage_index: int, variant,
@@ -71,33 +106,45 @@ class UsbApi:
     def list_drives(self, include_all: bool = False) -> list[dict]:
         return [_drive_to_dict(d) for d in _list_drives(include_all, self.base_dir)]
 
-    def list_items(self, model_key: str, stage_index: int, variant, selected_apk_paths: list[str]) -> dict:
+    def list_items(self, model_key: str, stage_index: int, variant, selected_apk_paths: list[str],
+                   block: int | None = None) -> dict:
         """Считает список файлов, которые запишутся на флешку — вызывается
         ДО start(), чтобы фронтенд успел показать очередь в окне прогресса
         (см. app/web/frontend/js/screens/dialogs.js) раньше, чем начнётся
         сама запись. Быстрый, синхронный (только stat() файлов, уже
         докачанных ранее содержимым модели — см. sync_model_files в
-        load_spec/_worker ниже), ничего не запускает."""
+        load_spec/_worker ниже), ничего не запускает. block — номер блока
+        записи этапа «Флешка» (0-based), None — весь этап по-старому."""
         model = self._scanner_api.get_model(model_key)
         if model is None:
             return {"ok": False, "error": "unknown model key"}
         stage = load_stages(model)[stage_index]
-        items = _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths)
+        try:
+            flash_block = _flash_write_block(stage, block)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        items = (_scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths) if flash_block
+                 else _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths))
         return {"ok": True, "items": items}
 
     def start(self, model_key: str, stage_index: int, variant, selected_apk_paths: list[str],
-              drive_letter: str, do_format: bool, filesystem: str) -> dict:
+              drive_letter: str, do_format: bool, filesystem: str, block: int | None = None) -> dict:
         if self._running:
             return {"ok": False, "error": "Копирование уже выполняется."}
         model = self._scanner_api.get_model(model_key)
         if model is None:
             return {"ok": False, "error": "unknown model key"}
         stage = load_stages(model)[stage_index]
+        try:
+            flash_block = _flash_write_block(stage, block)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
 
         self._cancel_flag = threading.Event()
         self._thread = threading.Thread(
             target=self._worker,
-            args=(model, stage, stage_index, variant, selected_apk_paths, drive_letter, do_format, filesystem),
+            args=(model, stage, stage_index, variant, selected_apk_paths, drive_letter, do_format, filesystem,
+                  flash_block),
             daemon=True,
         )
         self._thread.start()
@@ -113,7 +160,8 @@ class UsbApi:
         if self._cancel_flag.is_set():
             raise InstallCancelled("Копирование остановлено пользователем.")
 
-    def _worker(self, model, stage, stage_index, variant, selected_apk_paths, drive_letter, do_format, filesystem):
+    def _worker(self, model, stage, stage_index, variant, selected_apk_paths, drive_letter, do_format, filesystem,
+                flash_block: dict | None = None):
         try:
             sync_model_files(self.base_dir, model, log=self._log,
                              check_cancelled=self._check_cancelled,
@@ -121,8 +169,9 @@ class UsbApi:
             ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apk_paths,
                                     log=self._log, check_cancelled=self._check_cancelled,
                                     on_progress=self._progress)
-            if stage.get("usb_shared_folder"):
-                sync_shared_folder(self.base_dir, stage["usb_shared_folder"],
+            shared_folder = flash_block.get("shared_folder") if flash_block else stage.get("usb_shared_folder")
+            if shared_folder:
+                sync_shared_folder(self.base_dir, shared_folder,
                                     log=self._log, check_cancelled=self._check_cancelled,
                                     on_progress=self._progress)
 
@@ -155,7 +204,8 @@ class UsbApi:
             # узнать files_total к этому моменту; сами файлы к этому моменту
             # уже докачаны шагами выше (sync_model_files/ensure_apks_downloaded/
             # sync_shared_folder), так что список не должен разъехаться.
-            items = _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths)
+            items = (_scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths) if flash_block
+                     else _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths))
             ctx = UsbContext(
                 drive_root=drive_root,
                 model_dir=model.dir,
@@ -169,7 +219,10 @@ class UsbApi:
                 ),
                 files_total=len(items),
             )
-            stage["run"](ctx)
+            if flash_block:
+                write_flash_files(ctx, flash_block)
+            else:
+                stage["run"](ctx)
         except InstallCancelled as exc:
             self._finish(False, str(exc))
             return

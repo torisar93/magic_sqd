@@ -22,8 +22,9 @@ from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cache
                               cleanup_stale_model_files, delete_cars_path, get_cached_session,
                               login, set_cached_session, upload_model)
 from ...admin_config import get_admin_base_url
-from ...car_generator import (INVALID_NAME_CHARS, ActionSpec, CarGenerationError, NewCarSpec,
-                               StandardApkSpec, StepSpec, StepVariant, create_car, load_car_spec, update_car)
+from ...car_generator import (FLASH_BLOCK_ID_RE, FLASH_STEP_TYPES, INVALID_NAME_CHARS, ActionSpec,
+                               CarGenerationError, FlashBlockSpec, NewCarSpec, StandardApkSpec, StepSpec,
+                               StepVariant, convert_legacy_flash_step, create_car, load_car_spec, update_car)
 from ...content_sync import (clear_local_edit_marker, fetch_manifest, get_base_url, mark_local_edit,
                               sync_model_files, sync_model_subfolder)
 from ...instruction_html import default_blocks, render_document, validate_video_file
@@ -67,6 +68,21 @@ def _variant_to_dict(v: StepVariant) -> dict:
             "standard_apks_optional": _apk_entries_to_dicts(v.standard_apks_optional)}
 
 
+def _flash_block_to_dict(block: FlashBlockSpec) -> dict:
+    return {"id": block.id, "kind": block.kind, "title": block.title,
+            "instruction_blocks": block.instruction_blocks,
+            "files": _files_to_dicts(block.files), "copy_selected_apks": block.copy_selected_apks,
+            "apks_dest": block.apks_dest, "shared_folder": block.shared_folder}
+
+
+def _flash_block_from_dict(data: dict) -> FlashBlockSpec:
+    return FlashBlockSpec(kind=data.get("kind", "write"), title=data.get("title", ""), id=data.get("id", ""),
+                          instruction_blocks=data.get("instruction_blocks") or [],
+                          files=_files_from_dicts(data.get("files")),
+                          copy_selected_apks=bool(data.get("copy_selected_apks", False)),
+                          apks_dest=data.get("apks_dest", ""), shared_folder=data.get("shared_folder", ""))
+
+
 def _step_to_dict(step: StepSpec) -> dict:
     return {
         "type": step.type, "title": step.title, "description": step.description,
@@ -75,6 +91,11 @@ def _step_to_dict(step: StepSpec) -> dict:
         "usb_copy_selected_apks": step.usb_copy_selected_apks,
         "usb_apks_dest": step.usb_apks_dest,
         "usb_shared_folder": step.usb_shared_folder,
+        # Раньше не передавался вовсе — галочка «инженерное меню» в редакторе
+        # молча сбрасывалась при каждом сохранении. Теперь у этапа «Флешка» её
+        # заменяет блок записи svengmode.flag, поле — для этапов с вариантами.
+        "qr_adb_engineering_menu": step.qr_adb_engineering_menu,
+        "flash_blocks": [_flash_block_to_dict(b) for b in step.flash_blocks],
         "commands": step.commands,
         "adb_install_selected_apks": step.adb_install_selected_apks,
         "adb_files": _files_to_dicts(step.adb_files),
@@ -131,6 +152,8 @@ def _step_from_dict(data: dict) -> StepSpec:
         usb_copy_selected_apks=data.get("usb_copy_selected_apks", False),
         usb_apks_dest=data.get("usb_apks_dest", ""),
         usb_shared_folder=data.get("usb_shared_folder", ""),
+        qr_adb_engineering_menu=bool(data.get("qr_adb_engineering_menu", False)),
+        flash_blocks=[_flash_block_from_dict(b) for b in (data.get("flash_blocks") or [])],
         commands=data.get("commands") or [],
         adb_install_selected_apks=data.get("adb_install_selected_apks", False),
         adb_files=_files_from_dicts(data.get("adb_files")),
@@ -187,8 +210,19 @@ class CarEditorApi:
             raw = json.loads(spec_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
-        steps = raw.get("steps", [])
-        if not any(s.get("type") == "instruction" for s in steps):
+        # Инструкции этапов «Инструкция», прежние инструкции этапов флешки/QR
+        # (при открытии они переезжают в блоки — см. load_spec, пустой файл там
+        # значил бы потерю инструкции) и инструкции блоков этапа «Флешка».
+        instr_dirs = []
+        for i, step_data in enumerate(raw.get("steps", []), start=1):
+            if step_data.get("type") == "instruction" or (
+                    step_data.get("type") in FLASH_STEP_TYPES and not step_data.get("flash_blocks")):
+                instr_dirs.append(model_dir / "files" / f"instruction_{i}")
+            for block in step_data.get("flash_blocks") or []:
+                block_id = str(block.get("id") or "")
+                if block.get("kind") == "instruction" and FLASH_BLOCK_ID_RE.fullmatch(block_id):
+                    instr_dirs.append(model_dir / "files" / f"flash_{block_id}")
+        if not instr_dirs:
             return
         base_url = get_base_url(self.base_dir)
         if not base_url:
@@ -197,10 +231,7 @@ class CarEditorApi:
             manifest = fetch_manifest(base_url)
         except Exception:  # noqa: BLE001 - сбой сети не должен мешать открыть уже скачанное
             return
-        for i, step_data in enumerate(steps, start=1):
-            if step_data.get("type") != "instruction":
-                continue
-            instr_dir = model_dir / "files" / f"instruction_{i}"
+        for instr_dir in instr_dirs:
             try:
                 sync_model_subfolder(self.base_dir, instr_dir, manifest=manifest)
             except Exception:  # noqa: BLE001 - см. докстринг выше
@@ -251,6 +282,11 @@ class CarEditorApi:
                 "_wizard_spec.json) — редактирование через мастер недоступно, "
                 "правьте install.py/stages.py вручную."
             )}
+        # «USB-флешка» и «Пароль ADB по QR-коду» в редакторе — один этап из
+        # блоков: прежний этап сразу раскладывается в блоки с тем же содержимым,
+        # что техник видел раньше (зашитые шаги становятся обычной инструкцией).
+        for step in spec.steps:
+            convert_legacy_flash_step(step, self.cars_dir / "_shared")
         return {
             "brand": spec.brand, "model": spec.model, "modification": spec.modification,
             "wifi": spec.wifi, "wifi_port": spec.wifi_port, "status": spec.status,

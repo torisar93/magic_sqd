@@ -219,6 +219,43 @@ def _rewrite_instruction_images(html: str, instr_dir: Path, files_root: Path) ->
     return _VIDEO_HREF_RE.sub(lambda m: f"{m.group(1)}{base}{m.group(2)}{m.group(3)}", html)
 
 
+# Этап «Флешка» из блоков (см. app/car_generator.py: FlashBlockSpec) — id блока =
+# имя папки его инструкции files/flash_<id>/ (8 hex-символов, иначе не читаем).
+_FLASH_BLOCK_ID_RE = re.compile(r"[0-9a-f]{8}")
+
+
+def _flash_blocks(raw_blocks, files_dir: Path, usb_step_dir: Path, files_root: Path | None) -> list:
+    """Блоки этапа «Флешка» для app.js: renderFlashBlocksStage — инструкции уже
+    прочитаны (картинки переписаны на appassets, как у этапа «Инструкция»),
+    файлы блока записи — абсолютными путями (их пишет тот же usb_run_stage, что и
+    прежний usb-этап, только списком файлов этого блока)."""
+    blocks = []
+    for raw in raw_blocks:
+        kind = raw.get("kind", "write")
+        block = {"kind": kind, "title": raw.get("title", "")}
+        if kind == "instruction":
+            html = ""
+            block_id = str(raw.get("id") or "")
+            if _FLASH_BLOCK_ID_RE.fullmatch(block_id):
+                instr_dir = files_dir / f"flash_{block_id}"
+                try:
+                    html = (instr_dir / "instruction.html").read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    html = ""
+                if html and files_root is not None:
+                    html = _rewrite_instruction_images(html, instr_dir, files_root)
+            block["instruction_html"] = html
+        elif kind == "write":
+            block.update({
+                "files": [str(usb_step_dir / name) for name in raw.get("files", [])],
+                "copy_selected_apks": bool(raw.get("copy_selected_apks", False)),
+                "apks_dest": raw.get("apks_dest", ""),
+                "shared_folder": raw.get("shared_folder", ""),
+            })
+        blocks.append(block)
+    return blocks
+
+
 def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
     """cars/<...>/<модель>/_wizard_spec.json -> нормализованный список этапов
     (список dict'ов, JSON-совместимо) с УЖЕ РАЗРЕШЁННЫМИ путями к файлам
@@ -251,8 +288,11 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
         standard_apks_optional: list = []
         exe_file = None
         variants: list = []
+        raw_flash_blocks = (step_data.get("flash_blocks") or []) if step_type in ("usb", "qr_adb") else []
 
-        if step_type == "usb":
+        # Этап «Флешка» с блоками может быть сохранён и как "qr_adb" — его файлы
+        # и приложения лежат там же, где у "usb" (см. app/car_generator.py).
+        if step_type == "usb" or raw_flash_blocks:
             usb_step_dir = usb_root / f"step_{i}"
             # Раньше standard_apks/standard_apks_optional читались ТОЛЬКО для
             # step_type == "apps" — usb-этап с этими списками (галочки, что
@@ -394,6 +434,7 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             # отдельным файлом-триггером перед обычным svlog.flag (см. app.js:
             # renderQrAdbStage, qr_adb_password.py).
             "qr_adb_engineering_menu": step_data.get("qr_adb_engineering_menu", False),
+            "flash_blocks": _flash_blocks(raw_flash_blocks, files_dir, usb_root / f"step_{i}", files_root),
             "exe_file": exe_file,
             "video_file": video_file,
             "video_url": video_url,

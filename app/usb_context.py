@@ -155,3 +155,26 @@ class UsbContext:
         self._files_done += 1
         size = target.stat().st_size
         self._on_progress(str(target), size, size, self._files_done, self._files_total, "done")
+
+
+def write_flash_files(ctx: UsbContext, block: dict) -> None:
+    """Блок «Запись на флешку» этапа «Флешка» (см. car_generator.py:
+    FlashBlockSpec/_render_flash_blocks_entry) — то же, что
+    сгенерированный usb_step_N целого этапа (файлы в корень флешки, выбранные
+    приложения, общий набор из _shared/), но только то, что отмечено в ЭТОМ
+    блоке: у этапа их может быть несколько, на разные флешки. На Android то же
+    делает WebBridge.kt: usbRunStage по списку файлов блока."""
+    for raw in block.get("files") or []:
+        path = Path(raw)
+        if path.is_dir():
+            ctx.copy_dir(path, path.name)
+        elif path.is_file():
+            ctx.copy_file(path, path.name)
+        else:
+            raise FileNotFoundError(f"Файл «{path.name}» не найден среди файлов модели — "
+                                    "проверьте интернет и повторите запись.")
+    if block.get("copy_selected_apks") and ctx.selected_apks:
+        ctx.copy_selected_apks(block.get("apks_dest", ""))
+    shared_folder = block.get("shared_folder")
+    if shared_folder and ctx.shared_dir is not None and (ctx.shared_dir / shared_folder).is_dir():
+        ctx.copy_dir(ctx.shared_dir / shared_folder, "")

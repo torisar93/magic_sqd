@@ -49,6 +49,8 @@
   const done = new Set();
   let chosenVariants = {};
   let appSelection = {};
+  // Этап «Флешка» из блоков: что уже записано/получено (см. renderFlashBlocksStage).
+  let flashBlockState = {};
   const sectionCollapsed = {};
   // Свои APK, добавленные пользователем прямо на этапе (см. buildAppsTree/
   // pickPersonalApks ниже) — произвольные файлы с диска, а не из apk/, живут
@@ -404,6 +406,7 @@
     historyStack.length = 0;
     chosenVariants = {};
     appSelection = {};
+    flashBlockState = {};
     appsActiveTab = {};
     personalApks = [];
     hasIntro = model.no_instruction;
@@ -698,7 +701,10 @@
   }
 
   function renderStagePage(stage) {
-    contentEl.appendChild(el('h1',{class:'workflow-title',text:stage.type==='apps'?'Приложения':['usb','qr_adb'].includes(stage.type)?'Подготовка флешки':stage.title||TYPE_LABELS[stage.type]||'Инструкция'}));
+    // Этап «Флешка» из блоков — своё название (его задаёт владелец), прежние usb/qr_adb — общее.
+    const heading = stage.type === 'apps' ? 'Приложения' : stage.flash_blocks?.length ? stage.title || 'Подготовка флешки'
+      : ['usb', 'qr_adb'].includes(stage.type) ? 'Подготовка флешки' : stage.title || TYPE_LABELS[stage.type] || 'Инструкция';
+    contentEl.appendChild(el('h1',{class:'workflow-title',text:heading}));
     if (stage.type === "instruction") {
       contentEl.appendChild(buildInstructionBlock(stage, true));
       return;
@@ -736,7 +742,8 @@
       usb: renderUsbStage, exe: renderExeStage, adb: renderAdbStage, uart: renderUartStage,
       telnet: renderTelnetStage, actions: renderActionsStage, qr_adb: renderQrAdbStage,
     };
-    (builders[stage.type] || (() => {}))(panel, stage, getDevice, transportCtl);
+    const builder = stage.flash_blocks?.length ? renderFlashBlocksStage : builders[stage.type];
+    (builder || (() => {}))(panel, stage, getDevice, transportCtl);
     contentEl.appendChild(panel);
   }
 
@@ -1704,6 +1711,203 @@
       catch (_) { window.notice(codeEl.textContent, {title:'Пароль ADB'}); }
     };
     refreshDrives();
+  }
+
+  // -- этап «Флешка» из блоков (app/car_generator.py: FlashBlockSpec) ----------
+  // Владелец собирает этап в редакторе из блоков в любом порядке и количестве:
+  // «Инструкция» (строка-действие и, если написан, HTML по кнопке), «Запись на
+  // флешку» (выбранные файлы/папки — в том числе svengmode.flag/svlog.flag — и по
+  // галочке приложения), «Получить пароль». Здесь — по карточке на блок в том же
+  // порядке; запись — тем же окном usbDialog, что у прежнего usb-этапа (только файлы
+  // блока), пароль — как у прежнего qr_adb. Android — то же: app.js renderFlashBlocksStage.
+  // Что уже сделано — flashBlockState[stage.index], переживает перерисовку этапа и
+  // «Назад»/«Далее», сбрасывается при смене модели.
+  function flashFilesDescription(block) {
+    const names = block.file_names || [];
+    const parts = [];
+    if (names.length) parts.push(names.length <= 3 ? names.join(', ') : `файлы этапа (${names.length})`);
+    if (block.copy_selected_apks) parts.push('выбранные приложения');
+    if (block.shared_folder) parts.push('комплект файлов для магнитолы');
+    return parts.length ? `На флешку будет записано: ${parts.join(', ')}.` : 'В этом блоке пока нет файлов для записи.';
+  }
+
+  // Та же полоса выбора флешки, что у прежнего этапа "qr_adb" (renderQrAdbStage) —
+  // только для блока пароля: он читает флешку, уже вставленную обратно. Файлы блоков
+  // записи пишет usbDialog со своим выбором (выбранная здесь флешка подставляется сразу).
+  function buildFlashDriveStrip(panel, live) {
+    const select = el('select', {id:'usb06-drive', 'aria-label':'USB-накопитель'});
+    const refreshBtn = UsbUI.button('usb06-refresh', '', 'refresh');
+    refreshBtn.className = 'usb06-refresh'; refreshBtn.title = 'Обновить список накопителей';
+    refreshBtn.setAttribute('aria-label', 'Обновить список накопителей');
+    const showAll = el('input', {type:'checkbox', id:'usb06-show-all'});
+    const statusEl = el('p', {class:'usb06-step-status', role:'status', 'aria-live':'polite'});
+    panel.append(
+      el('div', {class:'usb06-drive-strip'}, [UsbUI.icon('usb'), el('label', {for:'usb06-drive', text:'USB-накопитель'}), select, refreshBtn]),
+      el('details', {class:'usb06-drive-options'}, [
+        el('summary', {text:'Нужной флешки нет в списке?'}),
+        el('label', {}, [showAll, document.createTextNode('Показать все локальные диски')]),
+        el('p', {text:'Системный диск и диск программы исключены. Проверьте выбранный накопитель перед записью.'}),
+      ]),
+      statusEl);
+    let drives = [], request = 0;
+    const setStatus = (text, error = false) => { statusEl.textContent = text; statusEl.dataset.error = String(error); };
+    async function refresh() {
+      const id = ++request;
+      const previous = select.value;
+      refreshBtn.disabled = true;
+      try {
+        const result = await window.pywebview.api.usb_list_drives(showAll.checked);
+        if (!live() || id !== request) return false;
+        drives = Array.isArray(result) ? result : [];
+        select.replaceChildren(el('option', {value:'', text:drives.length ? 'Выберите USB-накопитель' : 'Подключите USB-накопитель'}));
+        for (const d of drives) select.append(el('option', {value:d.letter, text:d.display}));
+        select.value = drives.some(d => d.letter === previous) ? previous : '';
+        setStatus(previous && !select.value ? 'Выбранная флешка отключена. Подключите её и обновите список.' : '');
+        return true;
+      } catch (err) {
+        if (live() && id === request) {
+          drives = []; select.replaceChildren(el('option', {value:'', text:'Не удалось прочитать список'}));
+          setStatus(err.message || String(err), true);
+        }
+        return false;
+      } finally { if (id === request) refreshBtn.disabled = false; }
+    }
+    select.onchange = () => setStatus('');
+    refreshBtn.onclick = () => refresh();
+    showAll.onchange = () => refresh();
+    refresh();
+    return {current: () => drives.find(d => d.letter === select.value), refresh, setStatus, focus: () => select.focus()};
+  }
+
+  // Блок пройден: записан, пароль получен, инструкция открыта — или это инструкция одной
+  // строкой (без кнопки), а какой-то блок после неё уже сделан.
+  function flashBlockDone(blocks, state, k) {
+    return !!state.done[k] || (blocks[k].kind === 'instruction' && blocks.some((_, j) => j > k && state.done[j]));
+  }
+
+  function renderFlashBlocksStage(panel, stage) {
+    const blocks = stage.flash_blocks;
+    const state = flashBlockState[stage.index] || (flashBlockState[stage.index] = {done: {}, password: null});
+    UsbUI.heading(panel, stage.description || 'Выполните шаги по порядку — от первого к последнему.');
+    const revision = renderRevision;
+    const live = () => renderRevision === revision;
+    const drive = blocks.some(b => b.kind === 'password') ? buildFlashDriveStrip(panel, live) : null;
+    const cards = [];
+    const syncStates = () => {
+      const done = blocks.map((_, k) => flashBlockDone(blocks, state, k));
+      const active = done.indexOf(false);
+      cards.forEach((card, k) => { card.dataset.state = done[k] ? 'done' : k === active ? 'active' : ''; });
+    };
+    const markDone = k => { state.done[k] = true; if (live()) syncStates(); };
+    const setBusy = value => {
+      runnerBusy = value;
+      if (live()) { navNextBtn.disabled = runnerBusy; navBackBtn.disabled = runnerBusy || !historyStack.length; }
+    };
+    const setStatus = (node, text, error = false) => { node.textContent = text; node.dataset.error = String(error); };
+    let chooser = null;
+    const appsWriteButtons = [];
+
+    blocks.forEach((block, k) => {
+      let card;
+      if (block.kind === 'instruction') {
+        // Без написанной инструкции кнопки нет — короткое действие видно прямо в строке (владелец).
+        const open = block.instruction_html ? UsbUI.button('', 'Открыть инструкцию', 'book') : null;
+        card = UsbUI.step(k + 1, 'car', block.title || 'Выполните шаги на магнитоле',
+          open ? 'Откройте инструкцию и выполните шаги на магнитоле.' : '', open);
+        if (open) {
+          open.onclick = () => {
+            UsbUI.instruction(block.title || 'Шаги на магнитоле', buildInstructionBlock({instruction_html: block.instruction_html, title: block.title}, false));
+            markDone(k);
+          };
+        } else {
+          card.classList.add('usb06-step-line');
+          card.querySelector('.usb06-step-copy > p').remove();
+        }
+      } else if (block.kind === 'password') {
+        const getBtn = UsbUI.button('', 'Получить пароль', 'key');
+        const status = el('p', {class:'usb06-step-status', role:'status', 'aria-live':'polite'});
+        const resultBox = el('div', {class:'usb06-result'}); resultBox.hidden = true;
+        const codeEl = el('div', {class:'usb06-code', 'aria-label':'Пароль ADB'});
+        const copyBtn = UsbUI.button('', 'Скопировать', 'copy');
+        const meta = el('p');
+        resultBox.append(codeEl, copyBtn, meta);
+        card = UsbUI.step(k + 1, 'key', block.title || 'Получите пароль ADB',
+          'После надписи «QNX OK» подключите флешку к компьютеру — пароль посчитается из сохранённых логов.', getBtn);
+        card.append(status, resultBox);
+        const showPassword = result => {
+          codeEl.textContent = result.code; meta.textContent = `SN: ${result.sn} · ${result.logs_folder}/${result.zip_name}`;
+          resultBox.hidden = false;
+        };
+        if (state.password) showPassword(state.password);
+        getBtn.onclick = async () => {
+          if (runnerBusy || !live()) return;
+          setBusy(true); resultBox.hidden = true; card.dataset.state = 'busy'; setStatus(status, '');
+          const run = window.StageRun.open({title:'Получение пароля ADB', icon:'key', detail:'Читаем сохранённые логи с флешки.', retry: () => getBtn.click()});
+          try {
+            // Флешку только что вернули из магнитолы — список накопителей перечитываем.
+            if (!await drive.refresh()) { if (live()) run.finish({success:false, message:'Не удалось прочитать список накопителей.'}); else run.dispose(); return; }
+            const d = drive.current();
+            if (!d) { setStatus(status, 'Подключите флешку и выберите её в списке.', true); run.finish({success:false, message:'Подключите флешку и выберите её в списке.'}); return; }
+            const result = await window.pywebview.api.qr_adb_get_password(d.letter);
+            if (!live()) { run.dispose(); return; }
+            if (!result.ok) throw new Error(result.error || 'Не удалось получить пароль.');
+            state.password = result; showPassword(result);
+            setStatus(status, 'Пароль готов. Введите его на экране магнитолы.');
+            // См. renderQrAdbStage — единственное место, откуда видно, что попало в формулу.
+            sessionHasActivity = true;
+            log(`QR ADB: пароль получен — код ${result.code}, SN ${result.sn}, источник ${result.logs_folder}/${result.zip_name}` +
+              (result.debug_copy ? ', копия дампа сохранена.' : '.'));
+            run.finish({success:true, message:'Пароль готов. Введите его на экране магнитолы.'});
+            markDone(k);
+          } catch (err) {
+            if (live()) {
+              setStatus(status, err.message || String(err), true);
+              sessionHasActivity = true; log(`QR ADB: не удалось получить пароль — ${err.message || err}`);
+              run.finish({success:false, message:err.message || String(err)});
+            } else run.dispose();
+          } finally { setBusy(false); if (live()) syncStates(); }
+        };
+        copyBtn.onclick = async () => {
+          try { await navigator.clipboard.writeText(codeEl.textContent); copyBtn.lastChild.textContent = 'Скопировано'; setTimeout(() => { copyBtn.lastChild.textContent = 'Скопировать'; }, 1500); }
+          catch (_) { window.notice(codeEl.textContent, {title:'Пароль ADB'}); }
+        };
+      } else {
+        const writeBtn = UsbUI.button('', 'Записать на флешку', 'download', true);
+        card = UsbUI.step(k + 1, 'file', block.title || 'Запишите файлы на флешку', flashFilesDescription(block), writeBtn);
+        if (block.copy_selected_apks) {
+          // Выбор приложений один на этап (общий appSelection) — кнопка у первого такого блока.
+          if (!chooser) {
+            const choose = UsbUI.button('', 'Выбрать приложения', 'apps');
+            const count = el('span', {class:'usb06-apps-count', text:'Загружаем список приложений…'});
+            const preview = el('div', {class:'apps07-preview'});
+            card.append(el('div', {class:'usb06-step-apps'}, [choose, count]), preview);
+            chooser = createAppChooser(panel, stage, choose, count, preview, card,
+              loaded => appsWriteButtons.forEach(button => { button.disabled = !loaded; }));
+          }
+          appsWriteButtons.push(writeBtn); writeBtn.disabled = true;
+        }
+        const what = [...(block.file_names || []), ...(block.copy_selected_apks ? ['выбранные приложения'] : [])].join(', ') || 'файлы этапа';
+        writeBtn.onclick = () => {
+          if (runnerBusy) return;
+          window.usbDialog.open({
+            modelKey: model.key, stageIndex: stage.index, variant: null, block: k, drive: drive?.current()?.letter,
+            selectedApkPaths: block.copy_selected_apks ? chooser.paths() : [],
+            titleSuffix: `${model.display_label} — ${block.title || stage.title}`,
+            onFinished: success => {
+              // Как у прежнего QR-этапа: что и когда записали — в журнале сессии (разбор жалоб).
+              sessionHasActivity = true;
+              log(success ? `Флешка: записано — ${what}.` : `Флешка: запись не удалась — ${what}.`);
+              if (success) markDone(k);
+            },
+          });
+        };
+      }
+      card.dataset.block = block.kind;
+      cards.push(card);
+      panel.append(card);
+    });
+    syncStates();
+    if (chooser) chooser.load();
   }
 
   // -- exe --------------------------------------------------------------

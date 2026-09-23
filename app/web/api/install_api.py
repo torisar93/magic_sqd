@@ -205,8 +205,14 @@ class InstallApi:
         write_permission_error = False
         try:
             for stage in stages:
+                # Инструкции блоков этапа «Флешка» (files/flash_<id>/) — тоже сразу:
+                # их HTML уходит в JS вместе с этапом (см. _stage_to_dict).
+                instructions = [block["instruction"] for block in stage.get("flash_blocks") or []
+                                if block.get("instruction")]
                 if stage["type"] == "instruction" and stage.get("instruction"):
-                    instr_dir = (model.dir / stage["instruction"]).parent
+                    instructions.append(stage["instruction"])
+                for rel in instructions:
+                    instr_dir = (model.dir / rel).parent
                     try:
                         sync_model_subfolder(self.base_dir, instr_dir, log=self._on_log_passive,
                                               manifest=manifest, on_progress=self._on_sync_progress)
@@ -323,7 +329,27 @@ class InstallApi:
             "video_exists": video_exists,
             "actions": [{"label": a.get("label", ""), "kind": a.get("kind", "command")}
                         for a in (stage.get("actions") or [])],
+            "flash_blocks": [self._flash_block_to_dict(model, block) for block in stage.get("flash_blocks") or []],
         }
+
+    @staticmethod
+    def _flash_block_to_dict(model, block: dict) -> dict:
+        """Блок этапа «Флешка» (см. car_generator.py: FlashBlockSpec) для
+        stage_wizard.js: renderFlashBlocksStage — только описание; запись блока
+        идёт по его номеру (usb_start/usb_list_items с block), пути в JS не нужны."""
+        data = {"kind": block.get("kind", "write"), "title": block.get("title", "")}
+        if data["kind"] == "instruction":
+            html_path = model.dir / block["instruction"] if block.get("instruction") else None
+            data["instruction_html"] = (
+                _resolve_video_hrefs(_inline_relative_images(html_path.read_text(encoding="utf-8"),
+                                                             html_path.parent), html_path.parent)
+                if html_path is not None and html_path.is_file() else None)
+        elif data["kind"] == "write":
+            data["file_names"] = [Path(p).name for p in block.get("files") or []]
+            data["copy_selected_apks"] = bool(block.get("copy_selected_apks"))
+            data["apks_dest"] = block.get("apks_dest", "")
+            data["shared_folder"] = block.get("shared_folder", "")
+        return data
 
     # ------------------------------------------------------------------
     _EMPTY_STANDARD_APKS = {"required": [], "optional": []}

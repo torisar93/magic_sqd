@@ -41,16 +41,19 @@
   // ниже (не этот словарь) знает про "adb" отдельно — там нужно уметь
   // отображать уже существующие старые узлы этого типа, если они
   // встретятся при открытии старой модели.
+  // "usb" — этап «Флешка» из блоков (запись файлов/флагов, инструкции, пароль ADB
+  // по QR-коду в любом порядке, см. car_step_fields.js: renderFlashFields). Бывший
+  // отдельный "Пароль ADB по QR-коду" (qr_adb) — тот же этап: новым узлом не
+  // предлагается, уже существующий показывается как «Флешка».
   const STEP_TYPE_LABELS = {
-    usb: "USB-флешка", manual: "Ручной шаг", apps: "Установка приложений",
+    usb: "Флешка", manual: "Ручной шаг", apps: "Установка приложений",
     exe: "Готовый установщик (.exe)", check: "Проверка/выбор", instruction: "Инструкция",
     uart: "UART-команды", telnet: "Telnet (IPv6)", actions: "ADB-команды",
-    qr_adb: "Пароль ADB по QR-коду",
   };
   // Показ уже существующего узла типа "adb" (если такой встретится при
   // открытии старой, ещё не мигрированной модели) — не в STEP_TYPE_LABELS
   // выше, чтобы не предлагать его как ВЫБОР для нового узла.
-  const LEGACY_STEP_TYPE_LABELS = { ...STEP_TYPE_LABELS, adb: "ADB-команды (устар.)" };
+  const LEGACY_STEP_TYPE_LABELS = { ...STEP_TYPE_LABELS, adb: "ADB-команды (устар.)", qr_adb: "Флешка" };
 
   const MIN_ZOOM = 0.4;
   const MAX_ZOOM = 2;
@@ -102,6 +105,12 @@
     return {
       type, title: "", description: "", instruction_blocks: [],
       usb_files: [], usb_copy_selected_apks: false, usb_apks_dest: "", usb_shared_folder: "",
+      qr_adb_engineering_menu: false,
+      // Новая «Флешка» сразу с одним блоком записи — остальное владелец добавит сам.
+      flash_blocks: type === "usb" ? [{
+        id: "", kind: "write", title: "", instruction_blocks: [], files: [],
+        copy_selected_apks: false, apks_dest: "", shared_folder: "",
+      }] : [],
       commands: [], adb_install_selected_apks: false, adb_files: [],
       standard_apks: [], standard_apks_optional: [], apps_connection: "wired", apps_install_method: "",
       actions_connection: "wired",

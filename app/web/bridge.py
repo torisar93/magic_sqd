@@ -247,14 +247,16 @@ class WebApi:
     def usb_list_drives(self, include_all: bool = False) -> list:
         return self._usb.list_drives(include_all)
 
+    # block — номер блока записи этапа «Флешка» (см. usb_api._flash_write_block),
+    # None — весь этап по-старому.
     def usb_start(self, model_key: str, stage_index: int, variant, selected_apk_paths: list,
-                  drive_letter: str, do_format: bool, filesystem: str) -> dict:
+                  drive_letter: str, do_format: bool, filesystem: str, block=None) -> dict:
         return self._usb.start(model_key, stage_index, variant, selected_apk_paths,
-                                drive_letter, do_format, filesystem)
+                                drive_letter, do_format, filesystem, block)
 
     def usb_list_items(self, model_key: str, stage_index: int, variant,
-                       selected_apk_paths: list) -> dict:
-        return self._usb.list_items(model_key, stage_index, variant, selected_apk_paths)
+                       selected_apk_paths: list, block=None) -> dict:
+        return self._usb.list_items(model_key, stage_index, variant, selected_apk_paths, block)
 
     def usb_cancel(self) -> dict:
         return self._usb.cancel()

@@ -22,6 +22,7 @@
 .usb-step-card[data-state=done]{border-color:#91cfb846}
 .usb-step-card[data-state=error]{border-color:#f4a8996b;background:linear-gradient(135deg,#5e424336,#20303677)}
 .usb-step-heading{display:grid;grid-template-columns:32px 24px minmax(0,1fr);align-items:start;gap:11px}
+.usb-step-line>.usb-step-heading{align-items:center}.usb-step-line .usb-step-copy h3{margin:0}
 .usb-step-number{display:grid;place-items:center;width:32px;height:32px;background:linear-gradient(145deg,#62747d8c,#303f4977);border:1px solid #d8eff629;border-radius:50%;color:#e0ebee;font-size:19px;line-height:1;font-weight:600;box-shadow:inset 0 1px 0 #fff2}
 .usb-step-card[data-state=active] .usb-step-number,.usb-step-card[data-state=running] .usb-step-number,.usb-step-card[data-state=done] .usb-step-number{background:linear-gradient(140deg,#c1fbe7,#8bd2c2);border-color:#dbfff27a;color:#164336}
 .usb-step-heading>.ui-icon{width:24px;height:30px;margin-top:2px;align-self:start;color:#e7f2f3}

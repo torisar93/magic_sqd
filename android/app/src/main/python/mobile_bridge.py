@@ -306,8 +306,13 @@ def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
 
     files_dir = model_dir / "files"
     for i, step_data in enumerate(raw.get("steps", []), start=1):
-        if step_data.get("type") == "instruction":
-            instr_dir = files_dir / f"instruction_{i}"
+        instr_dirs = [files_dir / f"instruction_{i}"] if step_data.get("type") == "instruction" else []
+        # Инструкции блоков этапа «Флешка» (files/flash_<id>/, см. wizard_spec._flash_blocks).
+        for block in step_data.get("flash_blocks") or []:
+            block_id = str(block.get("id") or "")
+            if block.get("kind") == "instruction" and re.fullmatch(r"[0-9a-f]{8}", block_id):
+                instr_dirs.append(files_dir / f"flash_{block_id}")
+        for instr_dir in instr_dirs:
             downloaded += sync_model_subfolder(base_url, cars_path, instr_dir, log=log,
                                                 on_progress=_progress_cb("model"), manifest=manifest)
 
