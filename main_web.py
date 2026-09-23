@@ -540,6 +540,56 @@ def _ensure_renderer(base_dir: Path, title: str, force_qt: bool = False) -> dict
     return {"gui": "qt"}
 
 
+_MACOS_QUIT_OBSERVER = None  # ссылка на наблюдателя — см. _install_macos_quit_cleanup
+
+
+def _install_macos_quit_cleanup(cleanup) -> None:
+    """macOS: выход через Cmd+Q, «Завершить» в Dock/меню или выход из системы
+    идёт через [NSApp terminate:] (так же устроен и пункт Quit в меню
+    pywebview — webview/platforms/cocoa.py), а после него Cocoa сама зовёт
+    exit(): webview.start() НЕ возвращается, и ни finally-блок в run(), ни
+    даже atexit-обработчики Python не выполняются (проверено, см.
+    tests/test_macos_quit_cleanup.py). Из-за этого незакрытая сессия
+    установки оставалась в pending_install_logs/_current.* и следующий
+    запуск слал её как вылет («Предыдущий запуск не завершился штатно» — 4
+    из 5 macOS-логов на 2026-09-22, ни одного настоящего вылета), а adb-
+    сервер из бандла продолжал висеть после выхода. Красный крестик окна
+    по-прежнему идёт через app.stop_ → webview.start() возвращается →
+    finally, этот хук там не срабатывает.
+
+    NSApplicationWillTerminateNotification — единственное, что Cocoa зовёт
+    синхронно ДО exit(), и только когда выход уже точно решён (в отличие от
+    window.events.closing у pywebview — тот срабатывает ещё до возможной
+    отмены закрытия).
+
+    После уборки — сразу os._exit(0), не давая Cocoa дойти до своего exit():
+    тот запускает C-atexit очистку OpenSSL (OPENSSL_cleanup), которая
+    освобождает общее состояние библиотеки прямо из-под ещё живых HTTPS-
+    потоков (докачка файлов модели, сеть в фоне) — отчёт о сбое 2026-09-23:
+    главный поток завис в provider_store_free на блокировке, поток,
+    создававший SSLContext, упал SIGSEGV. Воспроизводится стабильно (см.
+    tests/test_macos_quit_cleanup.py); Python-финализации на этом пути и так
+    нет, а недокачанное (.part) докачается при следующем запуске."""
+    global _MACOS_QUIT_OBSERVER
+    try:
+        import AppKit
+        import Foundation
+    except ImportError:
+        _log_step("PyObjC недоступен — уборка при выходе через Cmd+Q не установлена")
+        return
+
+    def on_will_terminate(_notification) -> None:
+        try:
+            cleanup()
+        except Exception as exc:  # noqa: BLE001 — выход не должен сорваться из-за уборки
+            _log_step(f"уборка при выходе упала: {exc!r}")
+        finally:
+            os._exit(0)
+
+    _MACOS_QUIT_OBSERVER = Foundation.NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+        AppKit.NSApplicationWillTerminateNotification, None, None, on_will_terminate)
+
+
 def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     """log_prefix/title остались параметрами с прошлых времён отдельной
     admin-сборки (main.py/admin_main.py у tkinter-версии, потом
@@ -618,6 +668,22 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     _log_step(f"starting local http server on port {http_port} and waiting for it to be ready")
     _start_local_http_server_ready(str(frontend_dir / "index.html"), http_port)
 
+    if sys.platform == "darwin":
+        def _quit_cleanup() -> None:
+            # То же, что finally ниже, кроме сетевых шагов: здесь главный
+            # поток Cocoa и окно ещё на экране — сетевой таймаут (техник по
+            # Wi-Fi ADB обычно без интернета) заморозил бы выход. Запечатанная
+            # сессия уйдёт при следующем запуске (send_queue в WebApi.__init__).
+            _log_step("NSApplicationWillTerminate (Cmd+Q/Dock) — finally не выполнится, убираем здесь")
+            shutil.rmtree(webview2_storage, ignore_errors=True)
+            from app.adb_utils import kill_server
+            kill_server(api.adb_path)
+            _log_step("kill_server() done")
+            api.seal_abandoned_install_log()
+            _log_step("seal_abandoned_install_log() done")
+
+        _install_macos_quit_cleanup(_quit_cleanup)
+
     _log_step("webview.start()")
     try:
         webview.start(
@@ -663,6 +729,16 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
         if debug_upload_once is not None:
             debug_upload_once()
             _log_step("debug_upload_once() done")
+    if sys.platform == "darwin":
+        # Окно уже закрыто и всё нужное выше сделано — обычный выход Python
+        # ждал бы ещё не-daemon потоки (докачка файлов модели могла идти
+        # минутами невидимо, с иконкой в Dock), а потом прошёл бы через ту
+        # же C-atexit очистку OpenSSL, что роняла процесс при Cmd+Q (см.
+        # _install_macos_quit_cleanup). Только при нормальном возврате
+        # webview.start(): исключение выше по-прежнему доходит до
+        # _run_with_crash_log.
+        _log_step("os._exit(0)")
+        os._exit(0)
 
 
 def _run_with_crash_log(admin_mode: bool, log_prefix: str, title: str) -> None:

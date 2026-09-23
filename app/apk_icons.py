@@ -53,6 +53,7 @@ _MIME_BY_SUFFIX = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jp
 _ICON_REL_RE = re.compile(r"icons/[0-9a-f]{64}\.png")  # см. docs: "Клиенты принимают только icons/[0-9a-f]{64}.png ... Не принимать произвольный URL из манифеста"
 
 _lock = threading.Lock()
+_manifest_fetch_lock = threading.Lock()  # один запрос manifest.json на всех — см. _fetch_apk_icons
 _manifest_cache: dict = {}
 _manifest_cache_at = 0.0
 _manifest_cache_base_url: str | None = None
@@ -90,26 +91,38 @@ def _fetch_apk_icons(base_url: str) -> dict:
     "files") — здесь отдельный, отдельно кэшируемый мини-клиент только для
     поля "apk_icons": вызывается на каждый APK в списке, чаще, чем обычная
     синхронизация при старте, поэтому свой TTL и без похода в content_sync
-    (там этого поля вовсе нет)."""
+    (там этого поля вовсе нет).
+
+    Качает ОДИН поток, остальные ждут его и берут готовое из кэша: список
+    приложений просит иконку для каждого APK почти одновременно, а pywebview
+    выполняет каждый вызов моста в своём потоке — раньше при пустом кэше все
+    они разом качали один и тот же manifest.json (отчёт о сбое на macOS,
+    2026-09-23: 194 потока висели в чтении HTTPS, выход через Cmd+Q уронил
+    процесс на очистке OpenSSL). См. tests/test_apk_icons_single_flight.py."""
     global _manifest_cache, _manifest_cache_at, _manifest_cache_base_url
-    now = time.monotonic()
     with _lock:
-        if _manifest_cache_base_url == base_url and now - _manifest_cache_at < _MANIFEST_TTL_SECONDS:
+        if _manifest_cache_base_url == base_url and time.monotonic() - _manifest_cache_at < _MANIFEST_TTL_SECONDS:
             return _manifest_cache
-    icons: dict = {}
-    try:
-        with urllib.request.urlopen(f"{base_url}/manifest.json", timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        candidate = data.get("apk_icons")
-        if isinstance(candidate, dict):
-            icons = candidate
-    except (urllib.error.URLError, ValueError, OSError):
-        icons = {}
-    with _lock:
-        _manifest_cache = icons
-        _manifest_cache_at = now
-        _manifest_cache_base_url = base_url
-    return icons
+    with _manifest_fetch_lock:
+        now = time.monotonic()
+        with _lock:
+            # Пока ждали _manifest_fetch_lock, его мог уже скачать другой поток.
+            if _manifest_cache_base_url == base_url and now - _manifest_cache_at < _MANIFEST_TTL_SECONDS:
+                return _manifest_cache
+        icons: dict = {}
+        try:
+            with urllib.request.urlopen(f"{base_url}/manifest.json", timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            candidate = data.get("apk_icons")
+            if isinstance(candidate, dict):
+                icons = candidate
+        except (urllib.error.URLError, ValueError, OSError):
+            icons = {}
+        with _lock:
+            _manifest_cache = icons
+            _manifest_cache_at = now
+            _manifest_cache_base_url = base_url
+        return icons
 
 
 def _relative_to_base(path: Path, base_dir: Path) -> str | None:
