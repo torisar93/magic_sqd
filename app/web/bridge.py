@@ -274,11 +274,14 @@ class WebApi:
 
     # -- report_api ------------------------------------------------------
     def report_get_info(self) -> dict:
-        return self._report.get_info()
+        return self._report.get_info(account_email=self.auth_email)
 
-    def report_send(self, brand: str, model: str, reason: str, description: str) -> dict:
+    def report_send(self, brand: str, model: str, reason: str, description: str, email: str = "") -> dict:
         # brand/model пустые — обращение к работе программы в целом (кнопка есть и на главной).
-        return self._report.send(brand, model, reason, description, platform=self._install_log_platform())
+        # Вошедшему в аккаунт ответ придёт на почту аккаунта (сессия — серверу), иначе — на email.
+        return self._report.send(brand, model, reason, description, platform=self._install_log_platform(),
+                                 email=email, session_cookie=self._auth.user_cookie or "",
+                                 account_email=self.auth_email or "")
 
     # -- install_log_api --------------------------------------------------
     def _install_log_platform(self) -> str:
@@ -420,6 +423,7 @@ class WebApi:
             if result.get("is_admin"):
                 self.admin_mode = True
                 self._settings.admin_mode = True
+            self._sync.resync_catalog()  # скрытые модели групп техника (см. SyncApi.resync_catalog)
         return result
 
     def auth_logout(self) -> dict:
@@ -429,6 +433,7 @@ class WebApi:
             self.auth_subscriber = False
             self.admin_mode = False
             self._settings.admin_mode = False
+            self._sync.resync_catalog()
         return result
 
     def auth_refresh_subscriber(self) -> dict:
@@ -505,8 +510,11 @@ class WebApi:
     def car_admin_login(self, base_url: str, username: str, password: str) -> dict:
         return self._car_editor.admin_login(base_url, username, password)
 
-    def car_save(self, spec_data: dict, edit_model_key) -> dict:
-        return self._car_editor.save(spec_data, edit_model_key, self.admin_mode)
+    def car_get_access(self, edit_model_key) -> dict:
+        return self._car_editor.get_access(edit_model_key, self.admin_mode)
+
+    def car_save(self, spec_data: dict, edit_model_key, access: dict | None = None) -> dict:
+        return self._car_editor.save(spec_data, edit_model_key, self.admin_mode, access)
 
     def car_cancel_save(self) -> dict:
         return self._car_editor.cancel_save()

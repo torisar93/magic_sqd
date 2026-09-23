@@ -12,9 +12,29 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 _DOWNLOAD_WORKERS = 16
+
+# Скрытые (тестовые) модели — группы пользователей (server/user_groups.py): вошедший в аккаунт
+# техник присылает cookie сессии со всеми запросами к каталогу, и сервер отдаёт ему модели его
+# групп. Ставит WebBridge.kt (applyCatalogSession) при запуске, входе и выходе; cookie уходит
+# только на сервер аккаунтов (host). То же, что desktop app/content_sync.py.
+_auth_cookie = None
+_auth_host = None
+
+
+def set_auth_cookie(cookie, host=None) -> None:
+    global _auth_cookie, _auth_host
+    _auth_cookie, _auth_host = (cookie, host) if cookie and host else (None, None)
+
+
+def open_url(url: str, timeout: float):
+    """urlopen для запросов к каталогу — с cookie сессии техника, если он вошёл."""
+    request = urllib.request.Request(url)
+    if _auth_cookie and urlparse(url).hostname == _auth_host:
+        request.add_header("Cookie", _auth_cookie)
+    return urllib.request.urlopen(request, timeout=timeout)
 
 
 class ContentSyncError(RuntimeError):
@@ -31,7 +51,7 @@ def fetch_manifest(base_url: str):
     """content/manifest.json — {"<путь>": {"size": int, "mtime": float}, ...}
     -> {"<путь>": {"size": int, "mtime": float}}."""
     try:
-        with urllib.request.urlopen(f"{base_url}/manifest.json", timeout=30) as resp:
+        with open_url(f"{base_url}/manifest.json", timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
         return None
@@ -84,7 +104,7 @@ def download_file(base_url: str, remote_path: str, dest: Path, chunk_size: int =
     tmp_dest = dest.with_name(dest.name + ".part")
     try:
         check_cancelled()
-        with urllib.request.urlopen(url, timeout=60) as resp, open(tmp_dest, "wb") as f:
+        with open_url(url, timeout=60) as resp, open(tmp_dest, "wb") as f:
             expected = resp.headers.get("Content-Length")
             expected = int(expected) if expected is not None and expected.isdigit() else None
             received = 0

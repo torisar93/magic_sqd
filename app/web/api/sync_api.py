@@ -36,6 +36,7 @@ class SyncApi:
         self.apk_dir = apk_dir
         self._scanner_api = scanner_api
         self._heartbeat_started = False
+        self._resync_lock = threading.Lock()
 
     @staticmethod
     def _log(message) -> None:
@@ -125,6 +126,32 @@ class SyncApi:
 
         self._start_heartbeat()
         return {"changes": changes}
+
+    def resync_catalog(self) -> None:
+        """Вход/выход из аккаунта — каталог заново, в фоне: скрытые (тестовые) модели
+        групп техника появляются после входа и убираются после выхода (см.
+        content_sync.set_auth_cookie, prune_removed_models). По окончании —
+        событие catalog_resynced, каталог на экране перечитывается (app.js)."""
+        threading.Thread(target=self._resync_catalog_worker, daemon=True).start()
+
+    def _resync_catalog_worker(self) -> None:
+        base_url = get_base_url(self.base_dir)
+        if not base_url:
+            return
+        with self._resync_lock:
+            try:
+                manifest = fetch_manifest(base_url)
+                if manifest is None:
+                    return  # нет сети — каталог обновится при следующем запуске
+                sync_scripts(self.base_dir, self.cars_dir, log=self._log, manifest=manifest,
+                             on_progress=self._on_sync_progress)
+                prune_removed_models(self.base_dir, self.cars_dir, manifest, log=self._log)
+            except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать вход в аккаунт
+                self._log(f"Не удалось обновить каталог моделей: {exc}")
+                return
+            finally:
+                self._on_sync_progress(0, 0)
+        event_bridge.push({"kind": "catalog_resynced"})
 
     def _remove_demo_car(self) -> None:
         """cars/Demo/ (демо-модель для примера) убрана из продукта насовсем

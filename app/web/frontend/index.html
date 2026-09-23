@@ -173,6 +173,12 @@
       <span class="field-label">Описание (необязательно)</span>
       <textarea id="report-description"></textarea>
     </div>
+    <div class="field" id="report-email-field">
+      <span class="field-label">Почта для ответа (необязательно)</span>
+      <input type="email" id="report-email" style="width: 100%" placeholder="name@example.com" autocomplete="email" maxlength="254">
+      <div class="report-email-hint">Без почты мы увидим обращение, но ответить не сможем.</div>
+    </div>
+    <div class="field report-email-hint" id="report-account-note" hidden></div>
     <div id="report-status" style="color: var(--text-dim); font-size: 12px"></div>
     <div class="dialog-actions">
       <button id="report-cancel">Отмена</button>
@@ -340,6 +346,10 @@
       </div>
     </div>
     <div class="dialog-actions">
+      <label class="editor-access" id="graph-wizard-access" hidden>
+        <span class="field-label">Кто видит</span>
+        <select id="graph-wizard-access-select"></select>
+      </label>
       <button id="graph-wizard-reject" class="danger" style="display: none">Отклонить заявку</button>
       <button id="graph-wizard-publish" class="accent" style="display: none">Опубликовать</button>
       <button id="graph-wizard-save" class="accent">Создать</button>

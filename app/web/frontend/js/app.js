@@ -552,6 +552,9 @@ window.addEventListener("pywebviewready", async () => {
   window.events.on("auth_sync_finished", (event) => {
     if (event.success && event.models && event.models.length) window.mainPicker.reload();
   });
+  // Вход/выход из аккаунта: каталог скачан заново — с тестовыми моделями групп техника
+  // или уже без них (см. app/web/api/sync_api.py: resync_catalog).
+  window.events.on("catalog_resynced", () => window.mainPicker.reload());
   window.events.on("sync_progress", (event) => window.mainPicker.setStartupProgress(
     event.done, event.total, event.files_done, event.files_total,
   ));

@@ -9,6 +9,7 @@ cookie одним ответом)."""
 from __future__ import annotations
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 from ..events import event_bridge
 from ... import pending_submissions
@@ -18,6 +19,7 @@ from ...auth_client import AuthClientError, change_password as _change_password,
     forgot_password as _forgot_password, login as _login, logout as _logout, me as _me, \
     my_cars as _my_cars, register as _register
 from ...auth_config import clear_saved_session, load_saved_session, save_saved_session
+from ...content_sync import set_auth_cookie
 from ...scanner import ModelInfo
 from ...submit_config import get_submit_config
 
@@ -43,6 +45,13 @@ class AuthApi:
     def _auth_base_url(self) -> str | None:
         config = get_submit_config(self.base_dir)
         return config.auth_base_url if config else None
+
+    def _set_session(self, email: str | None, user_cookie: str | None) -> None:
+        """Сессия техника — и для каталога: вошедшему сервер отдаёт скрытые модели его
+        групп (см. content_sync.set_auth_cookie, server/user_groups.py)."""
+        self._email, self._user_cookie = email, user_cookie
+        base_url = self._auth_base_url()
+        set_auth_cookie(user_cookie, urlparse(base_url).hostname if base_url else None)
 
     def _apply_admin_cookie(self, admin_cookie: str | None) -> None:
         admin_base = get_admin_base_url(self.base_dir)
@@ -78,7 +87,7 @@ class AuthApi:
             result = _login(base_url, email, password)
         except AuthClientError as exc:
             return {"ok": False, "error": str(exc)}
-        self._email, self._user_cookie = result["email"], result["user_cookie"]
+        self._set_session(result["email"], result["user_cookie"])
         self._apply_admin_cookie(result["admin_cookie"])
         if remember:
             save_saved_session(self.base_dir, result["email"], result["user_cookie"], result["admin_cookie"])
@@ -93,7 +102,7 @@ class AuthApi:
                 _logout(base_url, self._user_cookie)
             except AuthClientError:
                 pass  # сессия и так истекла/недоступна — на клиенте всё равно чистим
-        self._email = self._user_cookie = None
+        self._set_session(None, None)
         self._apply_admin_cookie(None)
         clear_saved_session(self.base_dir)
         return {"ok": True}
@@ -112,7 +121,7 @@ class AuthApi:
         # на новую, которую сервер тут же выписал (см. auth_client.
         # change_password), иначе следующий же запрос (например,
         # sync_my_cars) получил бы 401 сразу после успешной смены пароля.
-        self._user_cookie = new_cookie
+        self._set_session(self._email, new_cookie)
         admin_base = get_admin_base_url(self.base_dir)
         admin_cookie = get_cached_session(admin_base) if admin_base else None
         save_saved_session(self.base_dir, self._email, new_cookie, admin_cookie)
@@ -154,7 +163,7 @@ class AuthApi:
             clear_saved_session(self.base_dir)
             self._apply_admin_cookie(None)
             return {"ok": False}
-        self._email, self._user_cookie = info["email"], saved["user_cookie"]
+        self._set_session(info["email"], saved["user_cookie"])
         self.sync_my_cars()
         return {"ok": True, "email": info["email"], "is_admin": info["is_admin"],
                 "subscriber": info.get("subscriber", False)}

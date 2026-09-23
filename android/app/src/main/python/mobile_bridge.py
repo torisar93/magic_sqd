@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
-                           prune_removed_models)
+                           prune_removed_models, set_auth_cookie as _set_auth_cookie)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version
 from wizard_spec import load_wizard_spec
 from apk_library import list_apks as _list_apks, ensure_apks_downloaded as _ensure_apks_downloaded
@@ -158,6 +158,13 @@ def _check_update_github(current_version: str):
         "changelog": str(latest.get("body") or "").strip(),
         "download_url": apk_asset["browser_download_url"],
     }
+
+
+def set_auth_cookie(cookie: str, host: str) -> str:
+    """Сессия техника для каталога (скрытые модели его групп) — см. content_sync.set_auth_cookie.
+    Пустая строка — не вошёл."""
+    _set_auth_cookie(cookie or None, host or None)
+    return "{}"
 
 
 def sync_cars(cars_dir: str, base_url: str) -> str:

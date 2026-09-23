@@ -16,9 +16,12 @@ class ReportError(RuntimeError):
 
 
 def send_report(brand: str, model: str, reason: str, description: str, config: SubmitConfig,
-                app_version: str = "", platform: str = "", client_id: str = "") -> None:
+                app_version: str = "", platform: str = "", client_id: str = "",
+                email: str = "", session_cookie: str = "") -> None:
     """brand/model пустые — обращение к работе программы в целом (кнопка доступна и на главной).
-    app_version/platform/client_id — чтобы в админке было видно, на какой сборке проблема."""
+    app_version/platform/client_id — чтобы в админке было видно, на какой сборке проблема.
+    email — почта для ответа от того, кто не вошёл в аккаунт; session_cookie — вошедший:
+    сервер ответит на почту аккаунта (из сессии), вписанная тогда не нужна."""
     body = json.dumps({
         "brand": brand,
         "model": model,
@@ -27,16 +30,15 @@ def send_report(brand: str, model: str, reason: str, description: str, config: S
         "app_version": app_version,
         "platform": platform,
         "client_id": client_id,
+        "email": email,
     }).encode("utf-8")
-    request = urllib.request.Request(
-        config.report_url,
-        data=body,
-        method="POST",
-        headers={
-            "X-Submit-Key": config.submit_key,
-            "Content-Type": "application/json",
-        },
-    )
+    headers = {
+        "X-Submit-Key": config.submit_key,
+        "Content-Type": "application/json",
+    }
+    if session_cookie:
+        headers["Cookie"] = session_cookie
+    request = urllib.request.Request(config.report_url, data=body, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))

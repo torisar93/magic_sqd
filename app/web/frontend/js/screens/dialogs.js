@@ -349,8 +349,12 @@
   // Сообщить о проблеме (открывается из js/app.js по кнопке report-btn)
   // ==================================================================
   const report = (() => {
-    let dialog, reasonSelect, descriptionEl, statusEl, sendBtn;
+    let dialog, reasonSelect, descriptionEl, statusEl, sendBtn, emailField, emailEl, accountNote;
     let currentModel = null;
+    // Ответ на обращение приходит письмом: вошедшему — на почту аккаунта (сервер берёт её из
+    // сессии), остальным — на почту из поля (необязательного; программа её запоминает).
+    let accountEmail = "";
+    const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
     // Обращение может быть и к конкретной модели, и к работе программы в целом (кнопка доступна и на
     // главной, где модель не выбрана): на главной — только «общие» причины.
     const MODEL_REASONS = [
@@ -378,6 +382,9 @@
       descriptionEl = document.getElementById("report-description");
       statusEl = document.getElementById("report-status");
       sendBtn = document.getElementById("report-send");
+      emailField = document.getElementById("report-email-field");
+      emailEl = document.getElementById("report-email");
+      accountNote = document.getElementById("report-account-note");
 
       sendBtn.addEventListener("click", onSend);
       document.getElementById("report-cancel").addEventListener("click", () => dialog.close());
@@ -401,6 +408,11 @@
         reasonSelect.value = APP_REASONS[0];
       }
       descriptionEl.value = "";
+      accountEmail = info.account_email || "";
+      emailField.hidden = Boolean(accountEmail);
+      emailEl.value = accountEmail ? "" : (info.saved_email || "");
+      accountNote.hidden = !accountEmail;
+      accountNote.textContent = accountEmail ? `Если понадобится ответ, он придёт на почту вашего аккаунта: ${accountEmail}` : "";
       statusEl.textContent = "";
       sendBtn.disabled = false;
       dialog.showModal();
@@ -409,10 +421,15 @@
     async function onSend() {
       const reportModelName = currentModel
         ? (currentModel.modification ? `${currentModel.name} — ${currentModel.modification}` : currentModel.name) : "";
+      const email = accountEmail ? "" : emailEl.value.trim();
+      if (email && !EMAIL_RE.test(email)) {
+        statusEl.textContent = "Проверьте почту для ответа — похоже, в ней ошибка.";
+        return;
+      }
       sendBtn.disabled = true;
       statusEl.textContent = "Отправка...";
       const result = await window.pywebview.api.report_send(
-        currentModel ? currentModel.brand : "", reportModelName, reasonSelect.value, descriptionEl.value.trim()
+        currentModel ? currentModel.brand : "", reportModelName, reasonSelect.value, descriptionEl.value.trim(), email
       );
       if (result.ok) {
         await window.notice(result.message);

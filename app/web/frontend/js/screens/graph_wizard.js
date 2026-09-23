@@ -82,6 +82,11 @@
   // Окно «Сохранение модели» (components/modal.js: busyDialog) — от «Сохранить» до
   // car_save_finished: этапы и процент отправки на сервер, итог — отдельным окном.
   let saveBusy = null;
+  // «Кто видит» (скрытые модели для групп пользователей, см. server/user_groups.py) — выбор
+  // у кнопки сохранения, только у администратора. accessInitial — что было при открытии:
+  // не меняли — car_save получает null, и доступ модели на сервере не трогается.
+  let accessInitial = null;
+  let accessMultiGroups = [];
 
   let panX = 40, panY = 40, zoom = 1;
   let panState = null;
@@ -318,6 +323,54 @@
     dialog.showModal();
     renderCanvas();
     renderProperties();
+    loadAccessControl();
+  }
+
+  async function loadAccessControl() {
+    const box = document.getElementById("graph-wizard-access");
+    const select = document.getElementById("graph-wizard-access-select");
+    box.hidden = true;
+    accessInitial = null;
+    if (isPendingModel) return;
+    let info = null;
+    try {
+      info = await window.pywebview.api.car_get_access(isEditing ? editModelKey : null);
+    } catch (_) { /* нет связи с сервером — выбор просто не показываем */ }
+    if (!info || !info.available) return;
+    const groups = info.all_groups || [];
+    const groupName = (id) => (groups.find((g) => g.id === id) || { name: `#${id}` }).name;
+    const options = [["all", "Все"], ["admins", "Только администраторы"],
+      ...groups.map((g) => [`group:${g.id}`, `Группа «${g.name}»`])];
+    let current = "all";
+    if (info.restricted) {
+      const ids = info.groups || [];
+      if (!ids.length) current = "admins";
+      else if (ids.length === 1) current = `group:${ids[0]}`;
+      else {
+        current = "multi";
+        accessMultiGroups = ids;
+        options.push(["multi", `Группы: ${ids.map(groupName).join(", ")}`]);
+      }
+    }
+    // selected — атрибутом (а не select.value): прокси списков на macOS (select-polyfill.js)
+    // перерисовывает подпись по изменению разметки.
+    select.replaceChildren(...options.map(([value, text]) => el("option", {
+      value, text, selected: value === current ? "" : null })));
+    accessInitial = current;
+    box.title = "Скрытую модель видят только администраторы и участники выбранной группы "
+      + "(им нужно войти в аккаунт в программе). Группы — в веб-админке.";
+    box.hidden = false;
+  }
+
+  function accessChoice() {
+    const box = document.getElementById("graph-wizard-access");
+    if (box.hidden || accessInitial === null) return null;
+    const value = document.getElementById("graph-wizard-access-select").value;
+    if (value === accessInitial) return null;
+    if (value === "all") return { restricted: false, groups: [] };
+    if (value === "admins") return { restricted: true, groups: [] };
+    if (value === "multi") return { restricted: true, groups: accessMultiGroups };
+    return { restricted: true, groups: [Number(value.slice("group:".length))] };
   }
 
   // Шаги без сохранённой позиции (0/0 — и вновь созданные, и шаги,
@@ -919,7 +972,7 @@
     }
 
     const label = modification ? `${brand} / ${model} — ${modification}` : `${brand} / ${model}`;
-    const result = await window.pywebview.api.car_save(specToJson(), editModelKey);
+    const result = await window.pywebview.api.car_save(specToJson(), editModelKey, accessChoice());
     if (!result.ok) {
       await window.notice(result.error, { title: "Сохранение", danger: true });
       return;

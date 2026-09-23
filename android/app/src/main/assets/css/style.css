@@ -741,6 +741,7 @@ button.danger {
   font-size: max(13px, calc(var(--otg-w) * 0.037)); }
 .otg-bottom button.accent { flex: 1.5; }
 .modal-box input[type="text"],
+.modal-box input[type="email"],
 .modal-box input[type="password"] {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -1370,6 +1371,9 @@ html, body { background: var(--bg); }
 /* Окно «Сообщить о проблеме» (см. app.js: showReportModal) */
 .report-modal textarea { min-height: 110px; resize: vertical; color: var(--text); font-size: 15px; }
 .report-modal select { color: var(--text); font-size: 15px; }
+.report-email-field { display: flex; flex-direction: column; gap: 6px; }
+.report-email-field input { width: 100%; box-sizing: border-box; }
+.report-email-note { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 
 /* Плавающая кнопка «Видео к этапу» (см. app.js: updateVideoButton) — над нижней панелью мастера, справа.
    Есть видео — есть кнопка. Во время установки приложений прячется вместе с нижней панелью. */
