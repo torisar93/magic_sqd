@@ -17,11 +17,21 @@
 // (position:relative) — сам wrap встаёт в DOM ровно туда, где раньше был
 // select, и остаётся ЕДИНСТВЕННЫМ flex/grid-элементом в исходной строке
 // (два отдельных соседних узла сломали бы соседние колонки/кнопки в
-// .adb-console-row/.usb06-drive-strip). Список вариантов — position:
-// absolute относительно ЭТОГО wrap (top:100%), никакого position:fixed и
-// вычисления координат от viewport: то же самое внутри открытого <dialog>
-// ломалось в WebKit — top layer диалога не даёт зафиксированному потомку
-// показаться поверх, независимо от z-index.
+// .adb-console-row/.usb06-drive-strip).
+//
+// Список вариантов — popover="manual" (WebKit 17+): открытый, он лежит в
+// top layer над любым <dialog>, и его не режут ни overflow диалога, ни
+// прокручиваемые панели — как родной ::picker(select) на Windows. Раньше
+// он был position:absolute внутри wrap, и в любом всплывающем окне
+// (overflow:auto у dialog) показывалась только часть списка до нижней
+// кромки окна — «Выберите приложение» у кнопок «Выдать разрешения»/
+// «Запустить приложение»: полторы строки из сотни (жалоба владельца,
+// 2026-09-23). position:fixed без top layer тут не помогал: backdrop-filter
+// у dialog делает его containing block и для fixed-потомков, а узел,
+// вынесенный в body, модальный диалог перекрывает и делает inert.
+// Координаты считаются от триггера при открытии; прокрутка/ресайз
+// закрывают список, как родной. Без Popover API (WebKit 16 и старше) —
+// прежнее поведение (position:absolute, .csel-above).
 (() => {
   let nativeSupported;
   if (window.Select08) {
@@ -35,18 +45,69 @@
   }
   if (nativeSupported) return;
 
+  const topLayer = typeof HTMLElement !== 'undefined' && 'popover' in HTMLElement.prototype;
+  const GAP = 4;
+  const EDGE = 8;
+
+  function hidePopup(popup) {
+    popup.hidden = true;
+    if (topLayer && popup.matches(':popover-open')) popup.hidePopover();
+    popup.previousElementSibling?.classList.remove('csel-open');
+  }
+
   function closeAllExcept(exceptPopup) {
+    let closed = false;
     document.querySelectorAll('.csel-popup:not([hidden])').forEach((popup) => {
       if (popup === exceptPopup) return;
-      popup.hidden = true;
-      popup.previousElementSibling?.classList.remove('csel-open');
+      hidePopup(popup);
+      closed = true;
     });
+    return closed;
   }
   document.addEventListener('mousedown', (e) => {
     if (e.target.closest('.csel-trigger, .csel-popup')) return;
     closeAllExcept(null);
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllExcept(null); });
+  document.addEventListener('keydown', (e) => {
+    // Esc закрывает только открытый список, а не заодно и окно под ним.
+    if (e.key === 'Escape' && closeAllExcept(null)) e.preventDefault();
+  });
+  if (topLayer) {
+    // Список в top layer не едет вместе с триггером — прокрутка окна/панели,
+    // в которой лежит ЕГО триггер, и ресайз закрывают его. Чужая прокрутка
+    // (самого списка, автопрокрутка лога в окне этапа под ним) — нет. Закрытие
+    // диалога — тоже закрывает: иначе список остался бы висеть поверх пустого места.
+    document.addEventListener('scroll', (e) => {
+      document.querySelectorAll('.csel-popup:not([hidden])').forEach((popup) => {
+        const trigger = popup.previousElementSibling;
+        if (e.target === document || (e.target instanceof Node && trigger && e.target.contains(trigger))) hidePopup(popup);
+      });
+    }, true);
+    window.addEventListener('resize', () => closeAllExcept(null));
+    document.addEventListener('close', () => closeAllExcept(null), true);
+  }
+
+  // Под триггером, если хватает места; иначе туда, где его больше, и не выше
+  // этого места — чтобы список целиком оставался в окне.
+  function placeTopLayer(trigger, popup) {
+    const rect = trigger.getBoundingClientRect();
+    popup.style.left = `${Math.max(EDGE, rect.left)}px`;
+    popup.style.width = `${Math.min(rect.width, window.innerWidth - 2 * EDGE)}px`;
+    popup.style.top = `${rect.bottom + GAP}px`;
+    popup.style.bottom = '';
+    popup.style.maxHeight = '';
+    const height = popup.getBoundingClientRect().height;
+    const roomBelow = window.innerHeight - rect.bottom - GAP - EDGE;
+    const roomAbove = rect.top - GAP - EDGE;
+    if (height <= roomBelow) return;
+    if (roomAbove > roomBelow) {
+      popup.style.top = '';
+      popup.style.bottom = `${window.innerHeight - rect.top + GAP}px`;
+      if (height > roomAbove) popup.style.maxHeight = `${roomAbove}px`;
+    } else {
+      popup.style.maxHeight = `${roomBelow}px`;
+    }
+  }
 
   function currentLabel(select) {
     const opt = select.selectedOptions && select.selectedOptions[0];
@@ -80,8 +141,7 @@
         if (trigger) trigger.querySelector('.csel-label').textContent = currentLabel(select);
         select.dispatchEvent(new Event('input', { bubbles: true }));
         select.dispatchEvent(new Event('change', { bubbles: true }));
-        popup.hidden = true;
-        trigger?.classList.remove('csel-open');
+        hidePopup(popup);
       });
       popup.appendChild(b);
     }
@@ -90,7 +150,7 @@
   function sync(select, wrap, trigger, popup) {
     const hidden = select.hidden || getComputedStyle(select).display === 'none';
     wrap.style.display = hidden ? 'none' : '';
-    if (hidden) popup.hidden = true;
+    if (hidden && !popup.hidden) hidePopup(popup);
     trigger.disabled = select.disabled;
     trigger.querySelector('.csel-label').textContent = currentLabel(select);
     if (!popup.hidden) renderOptions(select, popup);
@@ -121,7 +181,8 @@
     trigger.appendChild(chevron);
 
     const popup = document.createElement('div');
-    popup.className = 'csel-popup';
+    popup.className = topLayer ? 'csel-popup csel-top-layer' : 'csel-popup';
+    if (topLayer) popup.popover = 'manual';
     popup.hidden = true;
 
     wrap.append(trigger, popup);
@@ -131,10 +192,21 @@
       if (trigger.disabled) return;
       const willOpen = popup.hidden;
       closeAllExcept(willOpen ? popup : null);
-      popup.hidden = !willOpen;
-      trigger.classList.toggle('csel-open', willOpen);
-      if (willOpen) {
-        renderOptions(select, popup);
+      if (!willOpen) {
+        hidePopup(popup);
+        return;
+      }
+      popup.hidden = false;
+      trigger.classList.add('csel-open');
+      renderOptions(select, popup);
+      if (topLayer) {
+        popup.showPopover();
+        placeTopLayer(trigger, popup);
+        // Выбранный вариант — в видимой части длинного списка. Не scrollIntoView:
+        // тот может прокрутить и окно под списком, а это его закрывает.
+        const selected = popup.querySelector('.csel-selected');
+        if (selected) popup.scrollTop = selected.offsetTop - (popup.clientHeight - selected.offsetHeight) / 2;
+      } else {
         // Триггер у нижней панели (например выбор ADB-устройства в логе)
         // может стоять у самого низа окна — попап, всегда открывающийся
         // вниз (top:100%), там обрезается краем окна (реальный найденный

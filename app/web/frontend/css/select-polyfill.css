@@ -41,8 +41,13 @@ select.csel-native-hidden { position:absolute!important; left:0!important; top:0
    баг) — .csel-above переключает привязку на верх триггера (см.
    select-polyfill.js: решение принимается по реальному свободному месту). */
 .csel-popup.csel-above { top:auto; bottom:calc(100% + 4px); }
+/* Список в top layer (popover="manual", см. select-polyfill.js) — поверх
+   любого dialog, не обрезается его краем; top/left/width/bottom ставит
+   скрипт от триггера. Высота — как у родного ::picker(select) на Windows
+   (ui08.css). */
+.csel-popup.csel-top-layer { position:fixed; inset:auto; margin:0; max-height:min(360px,55vh); }
 .csel-option {
-  display:flex; align-items:center; gap:10px; width:100%; min-height:44px;
+  display:flex; align-items:center; justify-content:flex-start; gap:10px; width:100%; min-height:44px;
   padding:10px 12px; margin:2px 0; border:1px solid transparent; border-radius:8px;
   white-space:normal; overflow-wrap:anywhere; cursor:pointer; text-align:left;
   background:transparent; color:inherit; font:inherit;

@@ -189,7 +189,7 @@ class WebApi:
         # программы вместе с остальным WebApi. См. app/apk_icons.py и
         # docs "Получение иконки APK" в UI-transfer пакете.
         from ..apk_icons import apk_icon
-        return apk_icon(path)
+        return apk_icon(path, self.base_dir)
 
     # -- install_api ------------------------------------------------------
     def install_load_stages(self, model_key: str) -> dict:

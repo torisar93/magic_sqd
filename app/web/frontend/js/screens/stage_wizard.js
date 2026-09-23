@@ -37,6 +37,12 @@
   let writePermissionWarningShown = false;
   let hasIntro = false;
   let currentIndex = 0;
+  // Модель ещё открывается (см. showModelLoading): строка/полоса, куда
+  // updateSyncProgress пишет «N из M файлов», и номер открытия — поздний
+  // ответ install_load_stages ПРЕДЫДУЩЕЙ модели (техник успел уйти и
+  // открыть другую) не должен перетереть уже открытую.
+  let loadingStatusEl = null, loadingFillEl = null;
+  let openGeneration = 0;
   const done = new Set();
   let chosenVariants = {};
   let appSelection = {};
@@ -151,6 +157,13 @@
     const bar = document.getElementById("main-progress");
     const fill = document.getElementById("main-progress-fill");
     const label = document.getElementById("main-progress-label");
+    if (loadingStatusEl && total > 0) {
+      const loaded = Math.min(100, Math.round((done / total) * 100));
+      loadingStatusEl.textContent = `Скачиваем файлы модели: ${loaded}%` + (
+        Number.isFinite(filesDone) && Number.isFinite(filesTotal) ? ` · ${filesDone} из ${filesTotal} файлов` : "");
+      loadingFillEl.parentElement.hidden = false;
+      loadingFillEl.style.width = `${Math.max(4, loaded)}%`;
+    }
     if (total <= 0) {
       bar.style.display = "none";
       label.style.display = "none";
@@ -397,7 +410,19 @@
     installCompletedShown = false;
     failedStages.clear();
 
-    const result = await window.pywebview.api.install_load_stages(model.key);
+    // Пока install_load_stages докачивает инструкции новой модели (на macOS
+    // после переезда данных в Application Support — у каждой модели впервые,
+    // это секунды), на экране висел этап ПРЕДЫДУЩЕЙ модели, а прогресс уходил
+    // только строкой в свёрнутый лог (жалоба владельца, 2026-09-23).
+    const generation = ++openGeneration;
+    showModelLoading();
+    let result;
+    try {
+      result = await window.pywebview.api.install_load_stages(model.key);
+    } catch (error) {
+      result = { error: `Не удалось открыть модель: ${error?.message || error}` };
+    }
+    if (generation !== openGeneration) return; // пока грузилась, техник открыл другую модель
     // Токен прочного журнала сессии на диске (см. app/pending_install_logs.py,
     // install_api.py:load_stages) — ДО версии-шапки ниже, а не после: append_current
     // на несовпадающий/пустой токен молча ничего не пишет (защита от гонки
@@ -430,7 +455,8 @@
       modelWifiPort = result.wifi_port || 5555;
       modelWifi = !!result.wifi;
       prefetchedStages.clear();
-      await initAppSelectionDefaults();
+      await initAppSelectionDefaults(generation);
+      if (generation !== openGeneration) return;
       if (result.write_permission_warning && !writePermissionWarningShown) {
         writePermissionWarningShown = true;
         window.notice(
@@ -454,13 +480,39 @@
     // уже делает такой сброс при обычной навигации внутри одной модели —
     // здесь то же самое нужно при смене самой модели.
     nextAction = () => advanceAfter(currentIndex);
+    loadingStatusEl = loadingFillEl = null;
     render();
   }
 
-  async function initAppSelectionDefaults() {
+  // Вместо этапа предыдущей модели — сразу, до первого ответа моста.
+  function showModelLoading() {
+    renderRevision++;
+    contentEl.classList.remove('installing-apps');
+    contentEl.parentElement.classList.remove('installing-apps');
+    clear(contentEl);
+    document.querySelector('.stage-primary-actions')?.remove();
+    contentEl.dataset.stageType = 'loading';
+    loadingStatusEl = el('span', { class: 'model-loading-status', text: 'Проверяем этапы и инструкции…' });
+    loadingFillEl = el('div');
+    const track = el('div', { class: 'model-loading-track' }, [loadingFillEl]);
+    track.hidden = true; // появится с первым скачиваемым файлом — если качать нечего, открытие занимает мгновение
+    contentEl.appendChild(el('div', { class: 'model-loading', role: 'status' }, [
+      el('span', { class: 'model-loading-spinner', 'aria-hidden': 'true' }),
+      el('strong', { text: 'Загружаем модель' }),
+      loadingStatusEl,
+      track,
+    ]));
+    navNextBtn.style.display = 'none';
+    navBackBtn.hidden = true;
+    navVideoBtn.style.display = 'none';
+    navLabelEl.textContent = '';
+  }
+
+  async function initAppSelectionDefaults(generation) {
     for (const stage of stages) {
       if (stage.type !== "apps") continue;
       const standard = await window.pywebview.api.install_standard_apks(model.key, stage.index, null);
+      if (generation !== openGeneration) return;
       // required — не чекбокс вовсе (см. buildAppRow), но appSelection всё
       // равно держит их как true — этим же словарём собирается финальный
       // список APK на установку (см. selectedApkPaths), не отдельным путём.
@@ -469,7 +521,9 @@
         if (!(apk.path in appSelection)) appSelection[apk.path] = false;
       }
     }
-    for (const apk of await sharedApks()) {
+    const shared = await sharedApks();
+    if (generation !== openGeneration) return;
+    for (const apk of shared) {
       if (!(apk.path in appSelection)) appSelection[apk.path] = false;
     }
   }
