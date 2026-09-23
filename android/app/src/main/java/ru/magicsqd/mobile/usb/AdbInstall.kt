@@ -1,6 +1,8 @@
 package ru.magicsqd.mobile.usb
 
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -38,6 +40,33 @@ sealed class AdbPushResult {
 }
 
 /**
+ * Что заливать на устройство. Файл с диска читается кусками прямо во время передачи — в памяти
+ * одновременно не больше одного DATA-пакета, и размер файла роли не играет (APK бывают по 500 МБ
+ * и больше). Раньше APK читался в память целиком (readBytes) — и на 166-мегабайтном MonjaroMOD
+ * программа падала с OutOfMemoryError при лимите памяти приложения 256 МБ (логи #449, #660).
+ * Массив — для небольших вещей (хелперы установки).
+ */
+class PushSource private constructor(val size: Long, private val opener: () -> InputStream) {
+    fun open(): InputStream = opener()
+
+    companion object {
+        fun of(file: File): PushSource = PushSource(file.length()) { file.inputStream().buffered(1 shl 16) }
+        fun of(bytes: ByteArray): PushSource = PushSource(bytes.size.toLong()) { bytes.inputStream() }
+    }
+}
+
+/** Читает до buffer.size байт — меньше только в конце данных: DATA-пакеты того же размера, что и раньше. */
+private fun readChunk(input: InputStream, buffer: ByteArray): Int {
+    var filled = 0
+    while (filled < buffer.size) {
+        val n = input.read(buffer, filled, buffer.size - filled)
+        if (n < 0) break
+        filled += n
+    }
+    return filled
+}
+
+/**
  * sync-push произвольных байт в remotePath (протокол SYNC: SEND, затем DATA
  * несколько раз, DONE, OKAY-или-FAIL — отдельный под-протокол поверх уже
  * открытого ADB-потока "sync:", НЕ то же самое, что shell). Общая часть
@@ -49,6 +78,13 @@ sealed class AdbPushResult {
 fun syncPushBytes(
     transport: AdbTransport,
     bytes: ByteArray,
+    remotePath: String,
+    log: (String) -> Unit,
+): AdbPushResult = syncPush(transport, PushSource.of(bytes), remotePath, log)
+
+fun syncPush(
+    transport: AdbTransport,
+    source: PushSource,
     remotePath: String,
     log: (String) -> Unit,
 ): AdbPushResult {
@@ -68,7 +104,7 @@ fun syncPushBytes(
     val remoteId = openResp.arg0
     var streamClosed = false
     try {
-    log("sync-поток открыт (remoteId=$remoteId), пушу $remotePath (${bytes.size} байт)...")
+    log("sync-поток открыт (remoteId=$remoteId), пушу $remotePath (${source.size} байт)...")
 
     val SYNC_WRITE_TIMEOUT_MS = 20000
 
@@ -107,23 +143,31 @@ fun syncPushBytes(
     sendReq.put("SEND".toByteArray(Charsets.US_ASCII)).putInt(header.length).put(header.toByteArray(Charsets.US_ASCII))
     if (!appendSyncPacket(sendReq.array())) return AdbPushResult.Failed("Не подтверждён SEND-заголовок")
 
-    var offset = 0
-    var lastLoggedMb = -1
-    while (offset < bytes.size) {
-        AdbInstallProgress.checkCancelled()
-        val chunkLen = minOf(MAX_CHUNK, bytes.size - offset)
-        val chunk = ByteBuffer.allocate(8 + chunkLen).order(ByteOrder.LITTLE_ENDIAN)
-        chunk.put("DATA".toByteArray(Charsets.US_ASCII)).putInt(chunkLen).put(bytes, offset, chunkLen)
-        pendingPayloadBytes += chunkLen
-        if (!appendSyncPacket(chunk.array())) return AdbPushResult.Failed("Обрыв передачи данных на offset=$offset/${bytes.size}")
-        offset += chunkLen
-        val mb = offset / (1024 * 1024)
-        if (mb != lastLoggedMb) { // логируем прогресс раз в мегабайт — с 16КБ-чанками их сотни
-            log("...передано ${mb}MB/${bytes.size / 1024 / 1024}MB")
-            lastLoggedMb = mb
+    var offset = 0L
+    var lastLoggedMb = -1L
+    val totalMb = source.size / (1024 * 1024)
+    val buffer = ByteArray(MAX_CHUNK)
+    source.open().use { input ->
+        while (true) {
+            AdbInstallProgress.checkCancelled()
+            val chunkLen = readChunk(input, buffer)
+            if (chunkLen <= 0) break
+            val chunk = ByteBuffer.allocate(8 + chunkLen).order(ByteOrder.LITTLE_ENDIAN)
+            chunk.put("DATA".toByteArray(Charsets.US_ASCII)).putInt(chunkLen).put(buffer, 0, chunkLen)
+            pendingPayloadBytes += chunkLen
+            if (!appendSyncPacket(chunk.array())) return AdbPushResult.Failed("Обрыв передачи данных на offset=$offset/${source.size}")
+            offset += chunkLen
+            val mb = offset / (1024 * 1024)
+            if (mb != lastLoggedMb) { // логируем прогресс раз в мегабайт — с 16КБ-чанками их сотни
+                log("...передано ${mb}MB/${totalMb}MB")
+                lastLoggedMb = mb
+            }
         }
     }
-    log("Данные переданы (${bytes.size} байт), финализирую (DONE) — ЕЩЁ НЕ КОНЕЦ, не отключай провод...")
+    if (offset != source.size) {
+        return AdbPushResult.Failed("Прочитано $offset из ${source.size} байт — файл изменился или повреждён во время передачи")
+    }
+    log("Данные переданы (${source.size} байт), финализирую (DONE) — ЕЩЁ НЕ КОНЕЦ, не отключай провод...")
 
     val mtime = (System.currentTimeMillis() / 1000).toInt()
     val doneReq = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
@@ -166,11 +210,11 @@ fun syncPushBytes(
  * Возвращает Failed, если заливать надо было и не вышло.
  */
 private fun stageApkIfNeeded(
-    transport: AdbTransport, apkBytes: ByteArray, remotePath: String, prePushed: Boolean, log: (String) -> Unit,
+    transport: AdbTransport, apk: PushSource, remotePath: String, prePushed: Boolean, log: (String) -> Unit,
 ): AdbInstallResult.Failed? {
     if (prePushed) return null
-    AdbInstallProgress.beginTransfer(apkBytes.size.toLong())
-    return when (val pushResult = syncPushBytes(transport, apkBytes, remotePath, log)) {
+    AdbInstallProgress.beginTransfer(apk.size)
+    return when (val pushResult = syncPush(transport, apk, remotePath, log)) {
         is AdbPushResult.Failed -> AdbInstallResult.Failed(pushResult.reason)
         AdbPushResult.Success -> null
     }
@@ -178,12 +222,12 @@ private fun stageApkIfNeeded(
 
 fun installApkOverAdb(
     transport: AdbTransport,
-    apkBytes: ByteArray,
+    apk: PushSource,
     remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
     log: (String) -> Unit,
     prePushed: Boolean = false,
 ): AdbInstallResult {
-    stageApkIfNeeded(transport, apkBytes, remotePath, prePushed, log)?.let { return it }
+    stageApkIfNeeded(transport, apk, remotePath, prePushed, log)?.let { return it }
     log("Файл записан на устройство. Запускаю pm install -r $remotePath ...")
     AdbInstallProgress.installing()
 
@@ -219,12 +263,12 @@ fun installApkOverAdb(
  */
 fun installApkHavalRevivedOverAdb(
     transport: AdbTransport,
-    apkBytes: ByteArray,
+    apk: PushSource,
     remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
     log: (String) -> Unit,
     prePushed: Boolean = false,
 ): AdbInstallResult {
-    stageApkIfNeeded(transport, apkBytes, remotePath, prePushed, log)?.let { return it }
+    stageApkIfNeeded(transport, apk, remotePath, prePushed, log)?.let { return it }
     log("Файл записан на устройство. Запускаю pm install -r -g -t -d --install-reason 64 $remotePath ...")
     AdbInstallProgress.installing()
 
@@ -260,12 +304,12 @@ fun installApkHavalRevivedOverAdb(
  */
 fun installApkSpoofedOverAdb(
     transport: AdbTransport,
-    apkBytes: ByteArray,
+    apk: PushSource,
     remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
     log: (String) -> Unit,
     prePushed: Boolean = false,
 ): AdbInstallResult {
-    stageApkIfNeeded(transport, apkBytes, remotePath, prePushed, log)?.let { return it }
+    stageApkIfNeeded(transport, apk, remotePath, prePushed, log)?.let { return it }
     log("Файл записан на устройство. Запускаю pm install -i (подмена установщика) $remotePath ...")
     AdbInstallProgress.installing()
 
@@ -305,17 +349,17 @@ fun installApkSpoofedOverAdb(
  */
 fun installApkStreamOverAdb(
     transport: AdbTransport,
-    apkBytes: ByteArray,
+    apk: PushSource,
     remotePath: String = "/data/local/tmp/magicsqd_push_${System.currentTimeMillis()}.apk",
     log: (String) -> Unit,
     prePushed: Boolean = false,
 ): AdbInstallResult {
-    stageApkIfNeeded(transport, apkBytes, remotePath, prePushed, log)?.let { return it }
-    log("Файл записан на устройство. Запускаю pm install -S ${apkBytes.size} (поток) ...")
+    stageApkIfNeeded(transport, apk, remotePath, prePushed, log)?.let { return it }
+    log("Файл записан на устройство. Запускаю pm install -S ${apk.size} (поток) ...")
     AdbInstallProgress.installing()
 
     val installResult = runAdbShellCommand(
-        transport, "cat $remotePath | pm install -S ${apkBytes.size}", log, timeoutMs = 120000
+        transport, "cat $remotePath | pm install -S ${apk.size}", log, timeoutMs = 120000
     )
     val pmOutput = when (installResult) {
         is AdbShellResult.Output -> installResult.text
@@ -361,19 +405,19 @@ private fun installedPackages(transport: AdbTransport, log: (String) -> Unit): S
  */
 fun installApkViaLocalinstall(
     transport: AdbTransport,
-    apkBytes: ByteArray,
+    apk: PushSource,
     helperBytes: ByteArray,
     log: (String) -> Unit,
     remoteApk: String = "/data/local/tmp/desaysv-install-target.apk",
     prePushed: Boolean = false,
 ): AdbInstallResult {
-    AdbInstallProgress.beginTransfer((if (prePushed) 0L else apkBytes.size.toLong()) + helperBytes.size)
+    AdbInstallProgress.beginTransfer((if (prePushed) 0L else apk.size) + helperBytes.size)
     val remoteHelper = "/data/local/tmp/desaysv-localinstall.apk"
 
     val before = installedPackages(transport, log)
 
     if (!prePushed) {
-        when (val r = syncPushBytes(transport, apkBytes, remoteApk, log)) {
+        when (val r = syncPush(transport, apk, remoteApk, log)) {
             is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
             AdbPushResult.Success -> {}
         }
@@ -437,13 +481,13 @@ private const val DEX_SHELL_ENTRY_CLASS = "MonjiShellInstaller"
 
 fun installApkViaDexShell(
     transport: AdbTransport,
-    apkBytes: ByteArray,
+    apk: PushSource,
     apkName: String,
     helperBytes: ByteArray,
     log: (String) -> Unit,
     prePushed: Boolean = false,
 ): AdbInstallResult {
-    AdbInstallProgress.beginTransfer((if (prePushed) 0L else apkBytes.size.toLong()) + helperBytes.size)
+    AdbInstallProgress.beginTransfer((if (prePushed) 0L else apk.size) + helperBytes.size)
     val remoteApk = "/data/local/tmp/$apkName"
     val quotedRemoteApk = posixShellQuote(remoteApk)
     val remoteHelper = "/data/local/tmp/dex_shell_helper.dex"
@@ -451,7 +495,7 @@ fun installApkViaDexShell(
     val before = installedPackages(transport, log)
 
     if (!prePushed) {
-        when (val r = syncPushBytes(transport, apkBytes, remoteApk, log)) {
+        when (val r = syncPush(transport, apk, remoteApk, log)) {
             is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
             AdbPushResult.Success -> {}
         }

@@ -122,9 +122,9 @@ class InstallEngine(
                     val name = cmd.getString("file")
                     val localPath = filesByName[name]
                         ?: return StageRunResult.Failed("Файл не найден для #push: $name")
-                    val bytes = File(localPath).readBytes()
                     val remote = cmd.getString("remote")
-                    when (val r = AdbSession.push(bytes, remote, log)) {
+                    // С диска потоком, не целиком в память (файлы бывают по сотни МБ, см. PushSource).
+                    when (val r = AdbSession.push(PushSource.of(File(localPath)), remote, log)) {
                         is AdbPushResult.Failed -> return StageRunResult.Failed(r.reason)
                         AdbPushResult.Success -> log("Файл $name записан на устройство ($remote).")
                     }
@@ -137,13 +137,13 @@ class InstallEngine(
                     val name = cmd.getString("file")
                     val localPath = filesByName[name]
                         ?: return StageRunResult.Failed("Файл не найден для установки: $name")
-                    val bytes = File(localPath).readBytes()
+                    val apk = PushSource.of(File(localPath))
                     // Лямбда, а не ссылка на метод: у installApk*/PmStream появился 3-й параметр stagedPath
-                    // (со значением по умолчанию), и ссылка-метода уже не подходит под тип (ByteArray,(String)->Unit).
-                    val install: (ByteArray, (String) -> Unit) -> AdbInstallResult =
-                        if (cmd.getString("kind") == "install_stream") { b, l -> AdbSession.installApkPmStream(b, l) }
-                        else { b, l -> AdbSession.installApk(b, l) }
-                    when (val r = install(bytes, log)) {
+                    // (со значением по умолчанию), и ссылка-метода уже не подходит под тип (PushSource,(String)->Unit).
+                    val install: (PushSource, (String) -> Unit) -> AdbInstallResult =
+                        if (cmd.getString("kind") == "install_stream") { a, l -> AdbSession.installApkPmStream(a, l) }
+                        else { a, l -> AdbSession.installApk(a, l) }
+                    when (val r = install(apk, log)) {
                         is AdbInstallResult.Failed -> return StageRunResult.Failed(r.reason)
                         is AdbInstallResult.Success -> log("Установлено: $name")
                     }
@@ -210,10 +210,10 @@ class InstallEngine(
     // install -r) и есть INSTALL_METHODS[0], тот же, что уже был здесь
     // раньше по умолчанию — так что desktop-спека с "adb_install" просто
     // попадает в default-порядок, что и так правильно.
-    // Установленный перед КАЖДЫМ install(bytes, log) в installApks() ниже —
+    // Установленный перед КАЖДЫМ install(apk, log) в installApks() ниже —
     // единственный способ дать методу dex_shell_install (см. ниже) имя
     // устанавливаемого APK: сигнатура методов в списке фиксирована
-    // (bytes, log) -> результат ещё с pm_install/localinstall, менять её
+    // (apk, log) -> результат ещё с pm_install/localinstall, менять её
     // ради одного нового способа не стали — closure просто читает текущее
     // значение поля на момент вызова.
     private var currentApkName: String = "install.apk"
@@ -280,31 +280,31 @@ class InstallEngine(
         "Связь с магнитолой оборвалась во время установки «$apkName». Проверьте Wi-Fi или кабель, " +
             "что магнитола не ушла в сон, и запустите этап заново. Техническая причина: ${technical ?: "нет ответа от устройства"}"
 
-    // (bytes, stagedPath, log): stagedPath — путь уже залитого на устройство APK (движок заливает его один
+    // (apk, stagedPath, log): stagedPath — путь уже залитого на устройство APK (движок заливает его один
     // раз перед перебором, см. installApksWithProgress) либо null — тогда способ заливает сам, как раньше.
-    private val INSTALL_METHODS: List<Pair<String, (ByteArray, String?, (String) -> Unit) -> AdbInstallResult>> = listOf(
-        "pm_install" to { bytes, staged, methodLog -> AdbSession.installApk(bytes, methodLog, staged) },
-        "pm_install_stream" to { bytes, staged, methodLog -> AdbSession.installApkPmStream(bytes, methodLog, staged) },
-        "pm_install_spoofed" to { bytes, staged, methodLog -> AdbSession.installApkSpoofed(bytes, methodLog, staged) },
-        "localinstall" to { bytes, staged, methodLog ->
+    private val INSTALL_METHODS: List<Pair<String, (PushSource, String?, (String) -> Unit) -> AdbInstallResult>> = listOf(
+        "pm_install" to { apk, staged, methodLog -> AdbSession.installApk(apk, methodLog, staged) },
+        "pm_install_stream" to { apk, staged, methodLog -> AdbSession.installApkPmStream(apk, methodLog, staged) },
+        "pm_install_spoofed" to { apk, staged, methodLog -> AdbSession.installApkSpoofed(apk, methodLog, staged) },
+        "localinstall" to { apk, staged, methodLog ->
             val helper = File(context.filesDir, "cars/_shared/chery_localinstall.apk")
             if (!helper.exists()) {
                 AdbInstallResult.Failed("chery_localinstall.apk не найден в cars/_shared (ещё не синхронизирован?)")
             } else {
-                AdbSession.installApkLocalinstall(bytes, helper.readBytes(), methodLog, staged)
+                AdbSession.installApkLocalinstall(apk, helper.readBytes(), methodLog, staged)
             }
         },
-        "dex_shell_install" to { bytes, staged, methodLog ->
+        "dex_shell_install" to { apk, staged, methodLog ->
             val helper = File(context.filesDir, "cars/_shared/dex_shell_helper.dex")
             if (!helper.exists()) {
                 AdbInstallResult.Failed("dex_shell_helper.dex не найден в cars/_shared (ещё не синхронизирован?)")
             } else {
-                AdbSession.installApkDexShell(bytes, currentApkName, helper.readBytes(), methodLog, staged)
+                AdbSession.installApkDexShell(apk, currentApkName, helper.readBytes(), methodLog, staged)
             }
         },
-        "adb_install_haval_revived" to { bytes, staged, methodLog -> AdbSession.installApkHavalRevived(bytes, methodLog, staged) },
-        "jdwp_whitelist" to { bytes, staged, methodLog ->
-            AdbSession.installApkJdwpWhitelist(bytes, currentPackageName, methodLog, staged, currentApkName)
+        "adb_install_haval_revived" to { apk, staged, methodLog -> AdbSession.installApkHavalRevived(apk, methodLog, staged) },
+        "jdwp_whitelist" to { apk, staged, methodLog ->
+            AdbSession.installApkJdwpWhitelist(apk, currentPackageName, methodLog, staged, currentApkName)
         },
     )
 
@@ -364,14 +364,14 @@ class InstallEngine(
             var stagedValid = false
             var stagingFailed = false
             var stagedRemote = ""
-            fun perform(install: (ByteArray, String?, (String) -> Unit) -> AdbInstallResult, bytes: ByteArray,
+            fun perform(install: (PushSource, String?, (String) -> Unit) -> AdbInstallResult, apk: PushSource,
                         staged: () -> String?): AdbInstallResult {
                 val apkName = File(path).name
                 var reconnected = false
                 while (true) {
                     try {
                         return AdbInstallProgress.observe({ onDetail(path, index, apkPaths.size, it) }, cancelled) {
-                            install(bytes, staged(), log)
+                            install(apk, staged(), log)
                         }
                     } catch (e: AdbLinkLostException) {
                         onProgress(path, index, apkPaths.size, "error")
@@ -409,9 +409,10 @@ class InstallEngine(
                 }
                 log("Подписано: ${file.name}")
             }
-            val bytes = try { signedFile.readBytes() } catch (e: Exception) {
-                return failed("Не удалось прочитать ${file.name}: ${e.message}")
-            }
+            // Сам APK в память не читаем — он заливается с диска потоком (PushSource): APK бывают по 500 МБ
+            // и больше, а здесь был readBytes() — и OutOfMemoryError на 166-мегабайтном MonjaroMOD (логи #449, #660).
+            if (!signedFile.canRead()) return failed("Не удалось прочитать ${file.name}")
+            val apk = PushSource.of(signedFile)
             // Имя файла на устройстве — без пробелов и кавычек: pm install получает путь без экранирования.
             // dex-хелпер работает с /data/local/tmp/<currentApkName> — тем же файлом.
             val stagedName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
@@ -424,8 +425,8 @@ class InstallEngine(
                 if (stagedValid) return stagedRemote
                 if (stagingFailed) return null   // заранее залить не вышло — способы заливают сами, как раньше
                 log("Заливаю ${file.name} на устройство один раз для всех способов установки...")
-                AdbInstallProgress.beginTransfer(bytes.size.toLong())
-                return when (val r = AdbSession.push(bytes, stagedRemote, log)) {
+                AdbInstallProgress.beginTransfer(apk.size)
+                return when (val r = AdbSession.push(apk, stagedRemote, log)) {
                     is AdbPushResult.Failed -> {
                         stagingFailed = true
                         log("  ↳ не удалось залить заранее: ${r.reason} — каждый способ будет заливать сам")
@@ -476,7 +477,7 @@ class InstallEngine(
 
             if (confirmedMethod != null) {
                 val (_, install) = INSTALL_METHODS[confirmedMethod]
-                when (val r = perform(install, bytes, { stagedPath() })) {
+                when (val r = perform(install, apk, { stagedPath() })) {
                     is AdbInstallResult.Failed -> {
                         dropStaged()
                         return failed(definitiveRejection(file.name, r.reason) ?: "${file.name}: ${r.reason}")
@@ -495,7 +496,7 @@ class InstallEngine(
             var installed = false
             for (methodIndex in order) {
                 val (label, install) = INSTALL_METHODS[methodIndex]
-                when (val r = perform(install, bytes, { stagedPath() })) {
+                when (val r = perform(install, apk, { stagedPath() })) {
                     is AdbInstallResult.Failed -> {
                         errors.add("$label: ${r.reason}")
                         // Причина каждого отказа сразу в лог — итоговая ошибка идёт только в окно этапа.

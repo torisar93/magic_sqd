@@ -179,7 +179,8 @@ class DiagnosticsActivity : AppCompatActivity() {
                         // чистая проверка транспорта: если сработает, "Magic SQD (spike)"
                         // физически появится в списке приложений на ТОМ устройстве.
                         try {
-                            val selfApk = java.io.File(applicationInfo.sourceDir).readBytes()
+                            // С диска потоком, не целиком в память (см. usb/AdbInstall.kt: PushSource).
+                            val selfApk = ru.magicsqd.mobile.usb.PushSource.of(java.io.File(applicationInfo.sourceDir))
                             log("Пушу собственный APK (${selfApk.size} байт) на целевое устройство...")
                             val installResult = ru.magicsqd.mobile.usb.installApkOverAdb(transport, selfApk, log = ::log)
                             when (installResult) {
