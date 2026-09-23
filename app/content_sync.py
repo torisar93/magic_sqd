@@ -1058,7 +1058,8 @@ def list_shared_apk_catalog(base_dir: Path, items: list[dict] | None = None) -> 
 
 def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: None,
                             check_cancelled=lambda: None,
-                            on_progress=lambda done, total, *args: None) -> int:
+                            on_progress=lambda done, total, *args: None,
+                            on_file_progress=lambda path, done, total: None) -> int:
     """Докачивает из paths (обычно ctx.selected_apks) только те файлы,
     которых ещё нет локально, — по одному, а не всю папку разом (см.
     list_shared_apk_catalog/scanner.scan_apks/scan_apk_dir_with_remote:
@@ -1069,14 +1070,19 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
     отмечено галочками, а не всю папку required/optional разом (см.
     app/web/api/install_api.py: standard_apks — список строится по
     манифесту, без докачки, реальные файлы попадают на диск только здесь).
-    Молча ничего не делает, если server.json не настроен."""
+    Молча ничего не делает, если server.json не настроен.
+
+    on_file_progress(путь, скачано, всего) — байты ТЕКУЩЕГО файла, путь —
+    ровно та строка, что пришла в paths (по ней окно установки находит
+    строку своей очереди, см. progress08.js: LabUI.progress). on_progress —
+    как раньше, суммарно по всем файлам (полоса в логе)."""
     url = get_base_url(base_dir)
     if not url:
         return 0
     apk_dir = apk_dir.resolve()
     cars_dir = (base_dir / "cars").resolve()
     manifest = fetch_manifest(url)
-    pending: list[tuple[Path, str, Path, int]] = []
+    pending: list[tuple[Path, str, Path, int, str]] = []
     for raw_path in paths:
         check_cancelled()
         path = Path(raw_path).resolve()
@@ -1099,12 +1105,12 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
                 continue
             log(f"{path.name}: на диске {path.stat().st_size} байт, на сервере {size} — "
                 f"докачиваю заново (обрыв в прошлый раз)")
-        pending.append((path, remote_path, rel, size))
+        pending.append((path, remote_path, rel, size, str(raw_path)))
 
     if not pending:
         return 0
     total_files = len(pending)
-    total_bytes = sum(size for _, _, _, size in pending)
+    total_bytes = sum(size for _, _, _, size, _ in pending)
     byte_progress = total_bytes > 0
     if byte_progress:
         on_progress(0, total_bytes, 0, total_files)
@@ -1112,10 +1118,12 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
         on_progress(0, total_files, 0, total_files)
     downloaded = 0
     completed_bytes = 0
-    for done, (path, remote_path, rel, size) in enumerate(pending, start=1):
+    for done, (path, remote_path, rel, size, raw_path) in enumerate(pending, start=1):
         check_cancelled()
         try:
-            def report(file_done: int, _file_total: int, *, base=completed_bytes, file_size=size) -> None:
+            def report(file_done: int, file_total: int, *, base=completed_bytes, file_size=size,
+                       raw=raw_path) -> None:
+                on_file_progress(raw, file_done, file_total or file_size)
                 if byte_progress:
                     on_progress(base + min(file_done, file_size), total_bytes, done - 1, total_files)
 

@@ -100,3 +100,39 @@ def test_runner_skip_sync_never_touches_network(tmp_path):
     assert done.wait(10)
     assert outcome["ok"] is True and seen == ["1.2.3.4:5555"]
     assert logs == [], f"при skip_sync не должно быть сетевых попыток: {logs}"
+
+
+def test_prefetch_reports_per_apk_download_progress_for_the_install_ring(catalog, app_base, monkeypatch):
+    # Жалоба владельца 2026-09-23: на этапе приложений не видно прогресса
+    # скачивания — кольцо окна установки понимает только apk_progress
+    # (progress08.js: LabUI.progress), а десктоп слал лишь общий sync_progress.
+    api, events = make_api(app_base, monkeypatch)
+    a, b = str(app_base / "apk/GPS/a.apk"), str(app_base / "apk/GPS/b.apk")
+
+    assert api.prefetch_apks("k", 3, [a, b]) == {"ok": True}
+
+    downloads = [e for e in events if e.get("kind") == "apk_progress"]
+    assert downloads, "ни одного apk_progress за всё скачивание"
+    assert all(e["stage_index"] == 3 and e["phase"] == "download" and e["state"] == "running"
+               for e in downloads)
+    by_path = {}
+    for e in downloads:
+        by_path.setdefault(e["path"], []).append(e)
+    assert set(by_path) == {a, b}  # те же строки, что в очереди окна — по ним ищется строка
+    last_a = by_path[a][-1]
+    assert last_a["bytes_done"] == last_a["bytes_total"] == 70_000 and last_a["determinate"] is True
+
+
+def test_runner_reports_per_apk_download_progress_too(catalog, app_base):
+    # Проводная установка: докачка внутри InstallRunner._run, до run(ctx).
+    from app.runner import InstallRunner
+    progress, finished = [], []
+    runner = InstallRunner("adb", lambda m: None, lambda ok, msg: finished.append(ok), base_dir=app_base,
+                           on_apk_download_progress=lambda p, d, t: progress.append((p, d, t)))
+    model = types.SimpleNamespace(dir=app_base / "cars/Test/Model")
+    b = str(app_base / "apk/GPS/b.apk")
+
+    runner.start(model, "serial", [b], run_fn=lambda ctx: None)
+    wait_until(lambda: finished)
+
+    assert progress and progress[-1] == (b, 5_000, 5_000)
