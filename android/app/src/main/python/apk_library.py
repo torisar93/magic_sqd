@@ -168,8 +168,11 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
                 f"на сервере {expected_size} — докачиваю заново (обрыв в прошлый раз)")
         log(f"Скачиваю {local_path.name}...")
         try:
+            # Путь в прогрессе — ровно та строка, что пришла в paths (как на ПК, content_sync.
+            # ensure_apks_downloaded): по ней окно установки находит строку очереди (progress08.js).
+            # resolve() раскрывает /data/user/0 → /data/data, и строки «Скачивание…» не находились.
             download_file(base_url, remote_path, local_path, check_cancelled=check_cancelled,
-                          on_progress=(lambda done, total: on_file_progress(str(local_path), done, total))
+                          on_progress=(lambda done, total, raw=str(p): on_file_progress(raw, done, total))
                           if on_file_progress else None)
             downloaded += 1
         except ContentSyncError as exc:
