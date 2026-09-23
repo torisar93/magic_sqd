@@ -422,9 +422,18 @@ def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
     """Все *.apk одной папки (без подпапок). Имя/описание можно задать в
     <файл>.json рядом с APK — те же поля "name"/"description", что и в
     apk/README.txt. Используется и для apk/ (см. scan_apks), и для
-    "Стандартных приложений" конкретной модели (см. stage_wizard.py)."""
+    "Стандартных приложений" конкретной модели (см. stage_wizard.py).
+
+    <имя>_resigned.apk пропускаются: раньше install_context._maybe_resign
+    клал переподписанную копию прямо рядом с оригиналом, и следующий запуск
+    этапа видел оба файла как обязательные — тот же пакет, другая подпись,
+    «Выбраны приложения с одним и тем же именем пакета», этап Changan падал
+    при каждом повторном запуске на том же компьютере (install_logs #589).
+    На сервере таких файлов нет — это только локальные остатки."""
     apks = []
     for apk_path in sorted(folder.glob("*.apk"), key=lambda p: p.name.lower()):
+        if apk_path.stem.endswith("_resigned"):
+            continue
         name, description = _read_apk_meta(apk_path)
         apks.append(ApkInfo(path=apk_path, name=name, description=description, category=category,
                             mock_location=read_apk_mock_location(apk_path)))
