@@ -77,6 +77,10 @@ object AdbPermissions {
     private val REQUESTED_PERMISSIONS_HEADER = Regex("^requested permissions:\\s*$")
     private val PERMISSION_LINE = Regex("^([\\w.]+)(?::.*)?$")
     private val COMPONENT_NAME_RE = Regex("name=([\\w.]+)")
+    // Компонент в коротком виде ("пакет/.Класс") — так он стоит в "Service
+    // Resolver Table" реального dumpsys package, в той же строке, что и
+    // разрешение службы (см. cars/_shared/adb_permissions.py:_SHORT_COMPONENT_RE).
+    private val SHORT_COMPONENT_RE = Regex("([\\w.]+)/([\\w.$]+)")
 
     private fun parseRequestedPermissions(dumpsysOutput: String): List<String> {
         val result = mutableListOf<String>()
@@ -98,24 +102,34 @@ object AdbPermissions {
         return result
     }
 
+    private fun fullClassName(pkg: String, cls: String): String = when {
+        cls.startsWith(".") -> pkg + cls
+        "." !in cls -> "$pkg.$cls"
+        else -> cls
+    }
+
     /** Best-effort поиск класса службы (спецвозможности/слушателя
      * уведомлений — marker разный, логика одна) в dumpsys package — портовая
-     * копия cars/_shared/adb_permissions.py:_find_service_component. Формат
-     * вывода не стандартизован между версиями Android/прошивками, поэтому
-     * если не нашли, вызывающий честно логирует это, а не молча пропускает. */
+     * копия cars/_shared/adb_permissions.py:_find_service_component (там же
+     * подробности). Основной путь — компонент в той же строке, что и marker
+     * (реальный формат Android 8+); раньше был только поиск "name=..." в
+     * строках выше, которого в реальном dumpsys нет, — служба не находилась
+     * ни у одного приложения (жалоба 2026-09-23, Haval Jolion 2026). Старый
+     * разбор оставлен запасным. Если не нашли, вызывающий честно логирует
+     * это, а не молча пропускает. */
     private fun findServiceComponent(pkg: String, dumpsysOutput: String, marker: String): String? {
         val lines = dumpsysOutput.lines()
+        for (line in lines) {
+            if (marker !in line) continue
+            for (m in SHORT_COMPONENT_RE.findAll(line)) {
+                if (m.groupValues[1] == pkg) return "$pkg/${fullClassName(pkg, m.groupValues[2])}"
+            }
+        }
         for (i in lines.indices) {
             if (marker !in lines[i]) continue
             for (j in (i - 1) downTo maxOf(0, i - 15)) {
                 val m = COMPONENT_NAME_RE.find(lines[j].trim()) ?: continue
-                var cls = m.groupValues[1]
-                cls = when {
-                    cls.startsWith(".") -> pkg + cls
-                    "." !in cls -> "$pkg.$cls"
-                    else -> cls
-                }
-                return "$pkg/$cls"
+                return "$pkg/${fullClassName(pkg, m.groupValues[1])}"
             }
         }
         return null
