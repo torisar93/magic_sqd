@@ -1853,6 +1853,8 @@
         mock_location: { bridgeMethod: "actions_mock_location", thirdPartyOnly: true },
         launch_activity: { bridgeMethod: "actions_launch_activity", thirdPartyOnly: true },
         uninstall_app: { bridgeMethod: "actions_uninstall_app", thirdPartyOnly: false },
+        disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: false },
+        enable_app: { bridgeMethod: "actions_enable_app", thirdPartyOnly: false },
       };
       const supported = !action.kind || ["command", ...Object.keys(PACKAGE_PICKER_ACTIONS)].includes(action.kind);
       const card = flowCard(action.label || action.kind || "Действие", supported ? "" : "Доступно только в версии для Windows.", action.kind === "grant_permissions" ? "shield" : action.kind === "mock_location" ? "location" : "terminal");
@@ -1861,14 +1863,12 @@
       btn.disabled = !supported;
       btn.addEventListener("click", () => {
         if (labInstallBusy) return;
-        // grant_permissions/mock_location/launch_activity/uninstall_app —
-        // техник выбирает установленное приложение (ask_choice на десктопе),
-        // дальше AdbPermissions.kt (см. WebBridge.kt: actionsGrantPermissions/
-        // actionsMockLocation/actionsLaunchActivity/actionsUninstallApp,
-        // портовая копия cars/_shared/adb_permissions.py). disable_app/
-        // enable_app пока не портированы — остаются с явным "не
-        // поддерживается" ниже, вместо того чтобы молча выполнить 0 команд
-        // как "успех".
+        // grant_permissions/mock_location/launch_activity/uninstall_app/
+        // disable_app/enable_app — техник выбирает установленное приложение
+        // (ask_choice на десктопе), дальше AdbPermissions.kt (см. WebBridge.kt:
+        // actionsGrantPermissions/…/actionsDisableApp/actionsEnableApp, портовая
+        // копия cars/_shared/adb_permissions.py). Любой другой kind — явное
+        // "не поддерживается" ниже, а не молча 0 команд как "успех".
         const pickerAction = PACKAGE_PICKER_ACTIONS[action.kind];
         if (pickerAction) {
           if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }

@@ -315,6 +315,20 @@ def uninstall_app(ctx, package: str) -> None:
         ctx.log(f"Не удалось удалить: {text or 'устройство не ответило'}")
 
 
+def _set_enabled_state(ctx, command: str, fail_verb: str) -> None:
+    """Общая часть disable_app/enable_app. Об успехе pm сообщает строкой
+    «Package <пакет> new state: disabled-user|enabled»; раньше здесь, как и в
+    uninstall_app до лога #536, безусловно писалось «Готово.» — даже когда
+    устройство отказало (системный пакет, SecurityException, опечатка в
+    имени пакета)."""
+    result = ctx.shell(command, check=False)
+    text = ((result.stdout or "") + (result.stderr or "")).strip()
+    if "new state" in text.lower():
+        ctx.log("Готово.")
+    else:
+        ctx.log(f"Не удалось {fail_verb}: {text or 'устройство не ответило'}")
+
+
 def disable_app(ctx, package: str) -> None:
     """Отключает приложение (--user 0 — на всех наблюдавшихся магнитолах
     единственный профиль, id 0) — для предустановленных программ, которые
@@ -324,12 +338,10 @@ def disable_app(ctx, package: str) -> None:
     просто не запускается и пропадает из лаунчера, обратимо через
     enable_app ниже."""
     ctx.log(f"Отключаю приложение: {package}")
-    ctx.shell(f"pm disable-user --user 0 {package}", check=False)
-    ctx.log("Готово.")
+    _set_enabled_state(ctx, f"pm disable-user --user 0 {package}", "отключить")
 
 
 def enable_app(ctx, package: str) -> None:
     """Обратное disable_app — включает ранее отключённое приложение."""
     ctx.log(f"Включаю приложение: {package}")
-    ctx.shell(f"pm enable {package}", check=False)
-    ctx.log("Готово.")
+    _set_enabled_state(ctx, f"pm enable {package}", "включить")

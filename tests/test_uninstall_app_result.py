@@ -64,3 +64,28 @@ def test_uninstall_app_checks_stderr_too():
     ctx, log = _make_ctx(stdout="", stderr="Failure [NOT_FOUND]")
     adb_permissions.uninstall_app(ctx, "com.example.missing")
     assert log == ["Удаляю приложение: com.example.missing", "Не удалось удалить: Failure [NOT_FOUND]"]
+
+
+# disable_app/enable_app — тот же класс бага: раньше безусловное «Готово.».
+# Успех pm печатает как «Package <пакет> new state: ...».
+
+def test_disable_app_reports_success():
+    ctx, log = _make_ctx(stdout="Package com.baidu.carlife new state: disabled-user\n")
+    adb_permissions.disable_app(ctx, "com.baidu.carlife")
+    assert log == ["Отключаю приложение: com.baidu.carlife", "Готово."]
+
+
+def test_disable_app_reports_refusal():
+    ctx, log = _make_ctx(stderr="Exception occurred while executing: java.lang.SecurityException: "
+                                "Cannot disable a protected package: android\n")
+    adb_permissions.disable_app(ctx, "android")
+    assert log[-1].startswith("Не удалось отключить: ") and "SecurityException" in log[-1]
+
+
+def test_enable_app_reports_success_and_failure():
+    ctx, log = _make_ctx(stdout="Package com.x new state: enabled\n")
+    adb_permissions.enable_app(ctx, "com.x")
+    assert log[-1] == "Готово."
+    ctx, log = _make_ctx(stdout="")
+    adb_permissions.enable_app(ctx, "com.typo")
+    assert log[-1] == "Не удалось включить: устройство не ответило"

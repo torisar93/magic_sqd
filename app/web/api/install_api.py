@@ -376,12 +376,18 @@ class InstallApi:
                                 log=self._on_log_passive, manifest=manifest,
                                 on_progress=self._on_sync_progress)
         self._on_sync_progress(0, 0)
-        return {
-            "required": [apk_to_dict(apk) for apk in
-                         scan_apk_dir_with_remote(required_dir, remote_items(required_dir))],
-            "optional": [apk_to_dict(apk) for apk in
-                         scan_apk_dir_with_remote(optional_dir, remote_items(optional_dir))],
-        }
+        # «Обязательных» больше нет (решение владельца, 2026-09-23; см.
+        # car_generator.load_car_spec) — всё из required/ (ещё не перенесённая
+        # на сервере модель или старая локальная копия у техника, которую
+        # prune_model_stale_files уберёт только при полной докачке модели)
+        # показываем обычными галочками вместе с необязательными. Одноимённый
+        # файл из optional/ побеждает — иначе одно приложение шло бы двумя строками.
+        required = scan_apk_dir_with_remote(required_dir, remote_items(required_dir))
+        optional = scan_apk_dir_with_remote(optional_dir, remote_items(optional_dir))
+        optional_names = {apk.path.name for apk in optional}
+        merged = [apk for apk in required if apk.path.name not in optional_names] + optional
+        merged.sort(key=lambda apk: apk.name.lower())
+        return {"required": [], "optional": [apk_to_dict(apk) for apk in merged]}
 
     # ------------------------------------------------------------------
     def list_devices(self) -> list[dict]:
