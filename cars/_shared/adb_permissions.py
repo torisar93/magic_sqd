@@ -116,6 +116,12 @@ _WRITE_SECURE_SETTINGS = "android.permission.WRITE_SECURE_SETTINGS"
 _REQUESTED_PERMISSIONS_RE = re.compile(r"^requested permissions:\s*$")
 _PERMISSION_LINE_RE = re.compile(r"^([\w.]+)(?::.*)?$")
 _COMPONENT_NAME_RE = re.compile(r"name=([\w.]+)")
+# Компонент в коротком виде (ComponentName.flattenToShortString) — так он
+# стоит в "Service Resolver Table" реального dumpsys package, в той же строке,
+# что и разрешение службы:
+#   "5c52dd ace.jun.simplecontrol/.service.AccService filter cef2b51 permission
+#    android.permission.BIND_ACCESSIBILITY_SERVICE"
+_SHORT_COMPONENT_RE = re.compile(r"([\w.]+)/([\w.$]+)")
 
 
 def list_installed_packages(ctx, third_party_only=True):
@@ -153,26 +159,43 @@ def _parse_requested_permissions(dumpsys_output: str) -> list[str]:
     return result
 
 
+def _full_class_name(package: str, cls: str) -> str:
+    if cls.startswith("."):
+        return package + cls
+    if "." not in cls:
+        return f"{package}.{cls}"
+    return cls
+
+
 def _find_service_component(package: str, dumpsys_output: str, marker: str) -> str | None:
     """Best-effort поиск класса службы (спецвозможности/слушателя
-    уведомлений — marker разный, логика одна) в dumpsys package — формат
-    вывода не стандартизован между версиями Android/прошивками, поэтому
-    если не нашли, просто не включаем эту часть (не критично, остальные
-    разрешения всё равно выдаются, но см. вызывающих — там теперь честно
-    логируется, что именно не получилось найти)."""
+    уведомлений — marker разный, логика одна) в dumpsys package.
+
+    Основной путь — компонент в той же строке, что и marker (см.
+    _SHORT_COMPONENT_RE): так выглядит реальный вывод Android 8+, проверено
+    на эмуляторе Android 9 и сверено с исходниками AOSP 12. Раньше здесь был
+    только поиск "name=..." в 15 строках ВЫШЕ marker — в реальном dumpsys
+    package такого нет, и служба не находилась ни у одного приложения
+    (жалоба 2026-09-23, Haval Jolion 2026: Simple Control и оригинальный
+    Floating Dock — "Служба спецвозможностей не найдена в dumpsys", хотя
+    Simple Control её объявляет). Старый разбор оставлен запасным на случай
+    нестандартного формата прошивки. Если не нашли ни так, ни так — просто
+    не включаем эту часть (остальные разрешения всё равно выдаются, а
+    вызывающие честно логируют, что именно не получилось найти)."""
     lines = dumpsys_output.splitlines()
+    for line in lines:
+        if marker not in line:
+            continue
+        for m in _SHORT_COMPONENT_RE.finditer(line):
+            if m.group(1) == package:
+                return f"{package}/{_full_class_name(package, m.group(2))}"
     for i, line in enumerate(lines):
         if marker not in line:
             continue
         for back in reversed(lines[max(0, i - 15):i]):
             m = _COMPONENT_NAME_RE.search(back.strip())
             if m:
-                cls = m.group(1)
-                if cls.startswith("."):
-                    cls = package + cls
-                elif "." not in cls:
-                    cls = f"{package}.{cls}"
-                return f"{package}/{cls}"
+                return f"{package}/{_full_class_name(package, m.group(1))}"
     return None
 
 
