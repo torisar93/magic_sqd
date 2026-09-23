@@ -826,7 +826,12 @@ def _model_wants_own_files(model_dir: Path) -> tuple[bool, bool]:
     for step in data.get("steps", []):
         step_type = step.get("type", "manual")
         variants = step.get("variants") or []
-        if step_type == "usb":
+        if step.get("flash_blocks"):
+            # Этап «Флешка» из блоков (может быть сохранён и как "qr_adb"): свои
+            # файлы — в usb_files, инструкции блоков — в files/flash_<id>/.
+            needs_usb_files = needs_usb_files or bool(step.get("usb_files"))
+            needs_files = needs_files or any(b.get("kind") == "instruction" for b in step["flash_blocks"])
+        elif step_type == "usb":
             if step.get("usb_files") or any(v.get("usb_files") for v in variants):
                 needs_usb_files = True
         elif step_type == "apps":

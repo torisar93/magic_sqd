@@ -14,6 +14,7 @@ copy_dir()/copy_selected_apks(), ctx.install_selected_apks()) уже есть в
 from __future__ import annotations
 import json
 import re
+import secrets
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,6 +36,22 @@ SPEC_FILENAME = "_wizard_spec.json"
 # stages.py вообще не нёс для них поле "instruction", так что кнопка была
 # рабочей только визуально.
 INSTRUCTION_BLOCK_STEP_TYPES = ("instruction", "usb", "qr_adb")
+
+# Этап «Флешка» (владелец, 2026-09-23): в редакторе «USB-флешка» и «Пароль ADB
+# по QR-коду» — один этап, собранный из блоков в любом порядке и количестве
+# (см. FlashBlockSpec). Тип в stages.py/_wizard_spec.json по-прежнему "usb" или
+# "qr_adb" — выводится из блоков при сохранении (см. _normalize_flash_step),
+# чтобы старые версии программы открывали такую модель прежним способом, а не
+# падали на незнакомом типе этапа.
+FLASH_STEP_TYPES = ("usb", "qr_adb")
+FLASH_BLOCK_KINDS = ("instruction", "write", "password")
+FLASH_BLOCK_ID_RE = re.compile(r"[0-9a-f]{8}")
+# Файлы-триггеры QR ADB (общие, лежат в cars/_shared/): svengmode.flag открывает
+# инженерное меню Desay x9h, svlog.flag — магнитола сохраняет на флешку логи для
+# пароля. В блоке записи это обычные файлы (владелец: «заготовленные варианты не
+# нужны, просто выбираем файл или папку»); имена нужны только для прежних полей.
+QR_ADB_PREP_FLAG = "svengmode.flag"
+QR_ADB_FLAG = "svlog.flag"
 
 
 @dataclass
@@ -119,6 +136,39 @@ class ActionSpec:
     # редакторе как новый узел, "actions" ("ADB-команды") делает то же
     # самое и для одиночных команд, и для батча с файлами).
     files: list[Path] = field(default_factory=list)
+
+
+@dataclass
+class FlashBlockSpec:
+    """Один блок этапа «Флешка» (StepSpec.flash_blocks). Техник видит блоки
+    карточками в том же порядке (см. stage_wizard.js/app.js:
+    renderFlashBlocksStage):
+    "instruction" — строка на карточке (title — короткое действие) и, если
+      написана, HTML-инструкция тем же редактором, что и этап «Инструкция»
+      (instruction_blocks) — тогда на карточке кнопка «Открыть инструкцию»;
+      пишется в files/flash_<id>/instruction.html;
+    "write" — запись на флешку выбранных файлов и папок (в том числе
+      svengmode.flag/svlog.flag — см. QR_ADB_PREP_FLAG), по желанию ещё
+      выбранных техником приложений и общего набора из _shared/. Свои файлы
+      лежат общей кучей в usb_files/step_<i>/ (имена в пределах этапа уникальны —
+      см. _normalize_flash_step), так старые версии программы записывают их все
+      разом, как обычный usb-этап;
+    "password" — прочитать флешку после «QNX OK» и посчитать пароль ADB.
+    id — постоянное имя папки инструкции (8 hex-символов): блоки можно
+    переставлять, папки при этом не переезжают, фото не теряются (см.
+    _assign_flash_block_ids). title — своё название карточки, пусто — стандартное."""
+    kind: str = "write"
+    title: str = ""
+    id: str = ""
+    instruction_blocks: list[dict] = field(default_factory=list)
+    files: list[Path] = field(default_factory=list)
+    copy_selected_apks: bool = False
+    apks_dest: str = ""
+    shared_folder: str = ""
+
+
+def flash_instruction_dir(files_dir: Path, block_id: str) -> Path:
+    return files_dir / f"flash_{block_id}"
 
 
 @dataclass
@@ -249,6 +299,12 @@ class StepSpec:
     # svlog.flag срабатывает и даёт «QNX OK». False (по умолчанию, все остальные модели —
     # Geely/VOLGA) — прежнее поведение без этого предварительного шага, ничего не меняется.
     qr_adb_engineering_menu: bool = False
+    # "usb"/"qr_adb" — этап «Флешка» из блоков (см. FlashBlockSpec). Непусто —
+    # блоки главные: тип этапа и поля выше (usb_files, usb_copy_selected_apks,
+    # usb_apks_dest, usb_shared_folder, qr_adb_engineering_menu, instruction_blocks)
+    # пересчитываются из них при сохранении — только для старых версий программы.
+    # Пусто — прежний этап (ещё не пересохранённая модель или этап с вариантами).
+    flash_blocks: list[FlashBlockSpec] = field(default_factory=list)
     # "exe" — готовый установщик, который производитель магнитолы даёт
     # только собранным .exe без исходных скриптов/инструкций; этап просто
     # даёт пользователю его запустить и завершить установку в нём самому
@@ -521,6 +577,11 @@ def _rebase_spec_paths(spec: NewCarSpec, old_dir: Path, new_dir: Path) -> None:
         for block in step.instruction_blocks:
             if block.get("type") == "photo" and block.get("path"):
                 block["path"] = str(rb(Path(block["path"])))
+        for flash in step.flash_blocks:
+            flash.files = [rb(p) for p in flash.files]
+            for block in flash.instruction_blocks:
+                if block.get("type") in ("photo", "video") and block.get("path"):
+                    block["path"] = str(rb(Path(block["path"])))
 
 
 def _parse_apk_entry(item, base_dir: Path) -> StandardApkSpec:
@@ -542,6 +603,147 @@ def _merge_required_into_optional(required: list[StandardApkSpec],
     двух одноимённых файлов быть не может)."""
     optional_names = {apk.path.name for apk in optional}
     return [apk for apk in required if apk.path.name not in optional_names] + list(optional)
+
+
+def _read_instruction_blocks(instr_dir: Path) -> list[dict]:
+    try:
+        text = (instr_dir / "instruction.html").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    return instruction_html.parse_blocks(text, instr_dir) or []
+
+
+def _parse_flash_block(raw: dict, files_dir: Path, usb_step_dir: Path) -> FlashBlockSpec:
+    block_id = str(raw.get("id") or "")
+    kind = raw.get("kind", "write")
+    instruction_blocks: list[dict] = []
+    if kind == "instruction" and FLASH_BLOCK_ID_RE.fullmatch(block_id):
+        instruction_blocks = _read_instruction_blocks(flash_instruction_dir(files_dir, block_id))
+    return FlashBlockSpec(
+        kind=kind, title=raw.get("title", ""), id=block_id, instruction_blocks=instruction_blocks,
+        files=[usb_step_dir / name for name in raw.get("files", [])],
+        copy_selected_apks=bool(raw.get("copy_selected_apks", False)),
+        apks_dest=raw.get("apks_dest", ""), shared_folder=raw.get("shared_folder", ""),
+    )
+
+
+# Шаги, которые раньше были зашиты прямо в интерфейс этапа "qr_adb" (ПК:
+# stage_wizard.js showUsbInstruction/showQrAdbPrepInstruction, Android: app.js
+# openUsbInstructions/openQrAdbPrepInstructions) — при открытии старой модели в
+# редакторе становятся обычными блоками инструкции, которые можно править (см.
+# convert_legacy_flash_step). Последний шаг — без привязки к платформе: раньше на
+# ПК и на Android он был написан по-разному.
+LEGACY_QR_ADB_PREP_STEPS = (
+    "Вставьте флешку в магнитолу.",
+    "Откроется инженерное меню.",
+    "Нажмите на нижний правый пункт меню — подписан «客制化» (китайскими иероглифами) "
+    "либо «Customization» (зависит от прошивки).",
+    "В открывшемся разделе найдите строку «Adb Switch» и нажмите рядом с ней «Open».",
+    "Откроется экран с QR-кодом.",
+    "Извлеките флешку из магнитолы и вернитесь к этому окну — запишите второй файл (следующий шаг).",
+)
+LEGACY_QR_ADB_STEPS = (
+    "На магнитоле откройте инженерное меню и экран с QR-кодом для ADB. Не закрывайте этот экран.",
+    "Вставьте в магнитолу флешку с записанным файлом svlog.flag.",
+    "Дождитесь надписи «QNX OK» на экране магнитолы, затем извлеките флешку.",
+    "Подключите эту же флешку обратно к компьютеру или телефону и нажмите «Получить пароль». "
+    "Введите полученный код на магнитоле.",
+)
+
+
+def convert_legacy_flash_step(step: StepSpec, shared_dir: Path) -> bool:
+    """Раскладывает прежний этап "usb"/"qr_adb" в блоки этапа «Флешка» — при
+    открытии модели в редакторе (см. car_editor_api.py: load_spec), чтобы
+    владелец сразу видел и правил этап блоками. Порядок и содержимое — ровно
+    то, что техник видел раньше: запись файлов (+ инструкция этапа, если была);
+    у QR — [svengmode.flag → шаги инженерного меню] → svlog.flag → шаги на
+    магнитоле (+ инструкция этапа) → пароль. Флаги — обычные файлы блока записи
+    из shared_dir (cars/_shared/, откуда их и брал прежний этап), при сохранении
+    копируются в файлы модели. Этап с вариантами (Full/Lite) не трогаем —
+    блоками он не собирается. Возвращает True, если этап изменён."""
+    if step.type not in FLASH_STEP_TYPES or step.flash_blocks or step.variants:
+        return False
+    stage_instruction = list(step.instruction_blocks)
+    if step.type == "usb":
+        blocks = [FlashBlockSpec(kind="write", files=list(step.usb_files),
+                                 copy_selected_apks=step.usb_copy_selected_apks,
+                                 apks_dest=step.usb_apks_dest, shared_folder=step.usb_shared_folder)]
+        if stage_instruction:
+            blocks.append(FlashBlockSpec(kind="instruction", instruction_blocks=stage_instruction))
+    else:
+        blocks = []
+        if step.qr_adb_engineering_menu:
+            blocks += [
+                FlashBlockSpec(kind="write", files=[shared_dir / QR_ADB_PREP_FLAG]),
+                FlashBlockSpec(kind="instruction", title="Откройте раздел с QR-кодом",
+                               instruction_blocks=[{"type": "steps", "text": "\n".join(LEGACY_QR_ADB_PREP_STEPS)}]),
+            ]
+        blocks += [
+            FlashBlockSpec(kind="write", files=[shared_dir / QR_ADB_FLAG],
+                           title="Запишите второй файл на флешку" if step.qr_adb_engineering_menu else ""),
+            FlashBlockSpec(kind="instruction",
+                           instruction_blocks=[{"type": "steps", "text": "\n".join(LEGACY_QR_ADB_STEPS)}]
+                           + stage_instruction),
+            FlashBlockSpec(kind="password"),
+        ]
+    step.flash_blocks = blocks
+    step.usb_files = []
+    step.usb_copy_selected_apks = False
+    step.usb_apks_dest = ""
+    step.usb_shared_folder = ""
+    step.qr_adb_engineering_menu = False
+    step.instruction_blocks = []
+    return True
+
+
+def _assign_flash_block_ids(spec: NewCarSpec) -> None:
+    """Постоянный id каждому блоку этапа «Флешка» — имя папки его инструкции
+    (files/flash_<id>/). Новому блоку (id ещё нет), испорченному и повторному в
+    пределах модели (две папки не могут делить одно имя) — новый случайный."""
+    seen: set[str] = set()
+    for step in spec.steps:
+        for block in step.flash_blocks:
+            if not FLASH_BLOCK_ID_RE.fullmatch(block.id or "") or block.id in seen:
+                block.id = secrets.token_hex(4)
+                while block.id in seen:
+                    block.id = secrets.token_hex(4)
+            seen.add(block.id)
+
+
+def _normalize_flash_step(step: StepSpec) -> None:
+    """Этап «Флешка» с блоками: проверяет блоки и пересчитывает из них тип этапа
+    и прежние поля — их читают старые версии программы, у которых блоков нет:
+    "qr_adb", если есть блок пароля (старая версия покажет прежние шаги QR, а
+    флажок инженерного меню — если среди файлов есть svengmode.flag), иначе
+    "usb" (старая версия запишет все файлы, выбранные приложения и общий набор
+    разом)."""
+    if not step.flash_blocks:
+        return
+    title = step.title or "Флешка"
+    if step.type not in FLASH_STEP_TYPES:
+        raise CarGenerationError(f"Этап «{title}»: блоки есть только у этапа «Флешка».")
+    if step.variants:
+        raise CarGenerationError(f"Этап «{title}»: этап с вариантами (Full/Lite) нельзя собирать из блоков.")
+    for block in step.flash_blocks:
+        if block.kind not in FLASH_BLOCK_KINDS:
+            raise CarGenerationError(f"Этап «{title}»: неизвестный блок {block.kind!r}.")
+    file_blocks = [b for b in step.flash_blocks if b.kind == "write"]
+    by_name: dict[str, Path] = {}
+    for block in file_blocks:
+        for path in block.files:
+            previous = by_name.setdefault(path.name, path)
+            if previous.resolve() != path.resolve():
+                raise CarGenerationError(
+                    f"Этап «{title}»: «{path.name}» добавлен в два блока записи из разных мест — "
+                    "переименуйте один из файлов.")
+    step.type = "qr_adb" if any(b.kind == "password" for b in step.flash_blocks) else "usb"
+    step.usb_files = list(by_name.values())
+    apk_block = next((b for b in file_blocks if b.copy_selected_apks), None)
+    step.usb_copy_selected_apks = apk_block is not None
+    step.usb_apks_dest = apk_block.apks_dest if apk_block else ""
+    step.usb_shared_folder = next((b.shared_folder for b in file_blocks if b.shared_folder), "")
+    step.qr_adb_engineering_menu = QR_ADB_PREP_FLAG in by_name
+    step.instruction_blocks = []
 
 
 def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "") -> NewCarSpec | None:
@@ -573,7 +775,10 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         exe_file: Path | None = None
         variants: list[StepVariant] = []
         variant_data = step_data.get("variants") or []
-        if step_type == "usb":
+        raw_flash_blocks = (step_data.get("flash_blocks") or []) if step_type in FLASH_STEP_TYPES else []
+        # Этап «Флешка» с блоками может сохраниться и как "qr_adb" (см.
+        # _normalize_flash_step) — свои файлы и приложения у него там же, где у "usb".
+        if step_type == "usb" or raw_flash_blocks:
             usb_step_dir = usb_root / f"step_{i}"
             if variant_data:
                 usb_pack_dir = files_dir / f"usb_pack_{i}"
@@ -628,17 +833,12 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         if step_type == "adb":
             adb_files = [files_dir / f"adb_{i}" / name for name in step_data.get("adb_files", [])]
         instruction_blocks: list[dict] = []
-        if step_type in INSTRUCTION_BLOCK_STEP_TYPES:
-            instr_step_dir = files_dir / f"instruction_{i}"
-            instr_path = instr_step_dir / "instruction.html"
-            try:
-                text = instr_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                text = ""
+        if step_type in INSTRUCTION_BLOCK_STEP_TYPES and not raw_flash_blocks:
             # model_dir=instr_step_dir (не model_dir целиком) — относительные
             # пути фото-блоков в этом файле считаются от instr_step_dir/images/
             # (см. instruction_html.save_instruction/_write_model_files).
-            instruction_blocks = instruction_html.parse_blocks(text, instr_step_dir) or []
+            instruction_blocks = _read_instruction_blocks(files_dir / f"instruction_{i}")
+        flash_blocks = [_parse_flash_block(raw, files_dir, usb_root / f"step_{i}") for raw in raw_flash_blocks]
         actions = [
             ActionSpec(
                 label=a.get("label", ""), kind=a.get("kind", "command"), commands=a.get("commands") or [],
@@ -690,6 +890,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             actions_wifi_port=step_data.get("actions_wifi_port"),
             uart_wifi_port=step_data.get("uart_wifi_port"),
             qr_adb_engineering_menu=step_data.get("qr_adb_engineering_menu", False),
+            flash_blocks=flash_blocks,
             exe_file=exe_file,
             video_file=video_file,
             video_label=step_data.get("video_label", ""),
@@ -818,6 +1019,9 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     в один этап (переименовали/удалили/переставили этапы местами), удаляем,
     чтобы не копились сироты."""
     _assign_step_ids(spec)
+    _assign_flash_block_ids(spec)
+    for step in spec.steps:
+        _normalize_flash_step(step)
     files_dir = model_dir / "files"
     files_dir.mkdir(parents=True, exist_ok=True)
     usb_root = model_dir / "usb_files"
@@ -852,7 +1056,9 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
                     sub_dir.mkdir(parents=True, exist_ok=True)
                     for apk in apks:
                         _copy_apk(apk, sub_dir / apk.path.name, keep_paths)
-        elif step.type == "usb":
+        elif step.type == "usb" or step.flash_blocks:
+            # flash_blocks — этап «Флешка» может сохраниться и как "qr_adb" (см.
+            # _normalize_flash_step), его файлы и приложения лежат там же, где у "usb".
             usb_step_dir = usb_root / f"step_{i}"
             if step.variants:
                 for variant in step.variants:
@@ -916,36 +1122,19 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
         # Не elif — instruction_blocks нужен ещё и "usb"/"qr_adb" (см.
         # INSTRUCTION_BLOCK_STEP_TYPES), а они уже отработали СВОЮ ветку
         # выше (usb_files и т.п.) — это отдельная, независимая проверка,
-        # а не продолжение того же elif-выбора.
-        if step.type in INSTRUCTION_BLOCK_STEP_TYPES:
-            instr_step_dir = files_dir / f"instruction_{i}"
-            existing_html = instr_step_dir / "instruction.html"
-            if step.instruction_blocks:
-                instr_step_dir.mkdir(parents=True, exist_ok=True)
-                instruction_html.save_instruction(instr_step_dir, step.instruction_blocks)
-                keep_paths.add(existing_html.resolve())
-                for subdir in instruction_html.BLOCK_FILE_SUBDIRS:
-                    media_dir = instr_step_dir / subdir
-                    if media_dir.is_dir():
-                        for f in media_dir.iterdir():
-                            if f.is_file():
-                                keep_paths.add(f.resolve())
-            elif existing_html.is_file() and existing_html.stat().st_size > 0:
-                # instruction_blocks пуст в памяти — либо шаг реально без
-                # инструкции, либо (см. car_editor_api.py:
-                # _sync_instruction_folders) load_car_spec() прочитал файл
-                # ДО того, как он был докачан с сервера. Раз на диске уже
-                # лежит непустой instruction.html — не удаляем его "на
-                # всякий случай": реальный инцидент (2026-08, 41 модель)
-                # именно так тихо остался без инструкции при массовой
-                # пересборке stages.py на машине с несинканными файлами.
-                keep_paths.add(existing_html.resolve())
-                for subdir in instruction_html.BLOCK_FILE_SUBDIRS:
-                    media_dir = instr_step_dir / subdir
-                    if media_dir.is_dir():
-                        for f in media_dir.iterdir():
-                            if f.is_file():
-                                keep_paths.add(f.resolve())
+        # а не продолжение того же elif-выбора. У этапа «Флешка» с блоками
+        # инструкции живут в самих блоках (ниже), общей files/instruction_<i>
+        # у него нет — прежняя, если была, уходит в сироты.
+        if step.type in INSTRUCTION_BLOCK_STEP_TYPES and not step.flash_blocks:
+            _write_instruction_dir(files_dir / f"instruction_{i}", step.instruction_blocks, keep_paths)
+        for block in step.flash_blocks:
+            if block.kind == "instruction":
+                # Без «на всякий случай»: у блока пустая инструкция — осознанный выбор
+                # владельца (строка на карточке без кнопки, «Убрать инструкцию»), а
+                # папки блоков докачиваются до открытия редактора (car_editor_api.py:
+                # _sync_instruction_folders).
+                _write_instruction_dir(flash_instruction_dir(files_dir, block.id), block.instruction_blocks,
+                                       keep_paths, keep_existing=False)
 
         # Видео-кнопка нав-бара — своя папка files/video_<i>, копируется
         # безусловно от step.type (в отличие от exe_file/instruction-блоков
@@ -1000,6 +1189,34 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     _write_version_file(model_dir, spec.changelog, spec.status)
 
 
+def _write_instruction_dir(instr_dir: Path, blocks: list[dict], keep_paths: set[Path],
+                           keep_existing: bool = True) -> None:
+    """instruction.html + images/videos одной инструкции — этапа "instruction"/
+    "usb"/"qr_adb" (files/instruction_<i>) или блока этапа «Флешка»
+    (files/flash_<id>). Пустые blocks: keep_existing — оставить уже лежащий на
+    диске файл (см. ниже), иначе инструкции нет — папка уходит в сироты."""
+    existing_html = instr_dir / "instruction.html"
+    if blocks:
+        instr_dir.mkdir(parents=True, exist_ok=True)
+        instruction_html.save_instruction(instr_dir, blocks)
+    elif not keep_existing or not (existing_html.is_file() and existing_html.stat().st_size > 0):
+        return
+    # Пустые blocks при непустом instruction.html на диске — либо инструкции
+    # правда нет, либо (см. car_editor_api.py: _sync_instruction_folders)
+    # load_car_spec() прочитал файл ДО того, как он был докачан с сервера. Раз
+    # на диске уже лежит непустой instruction.html — не удаляем его "на всякий
+    # случай": реальный инцидент (2026-08, 41 модель) именно так тихо остался
+    # без инструкции при массовой пересборке stages.py на машине с
+    # несинканными файлами.
+    keep_paths.add(existing_html.resolve())
+    for subdir in instruction_html.BLOCK_FILE_SUBDIRS:
+        media_dir = instr_dir / subdir
+        if media_dir.is_dir():
+            for f in media_dir.iterdir():
+                if f.is_file():
+                    keep_paths.add(f.resolve())
+
+
 def _write_version_file(model_dir: Path, changelog: str, status: str = "ok") -> None:
     """revision — просто счётчик сохранений этой модели через мастер,
     +1 к тому, что уже лежало в version.json (0, если файла ещё нет —
@@ -1031,6 +1248,14 @@ def _write_version_file(model_dir: Path, changelog: str, status: str = "ok") -> 
 # ----------------------------------------------------------------------
 def _apk_entry_to_json(apk: StandardApkSpec) -> dict:
     return {"filename": apk.path.name, "name": apk.name, "description": apk.description}
+
+
+def _flash_block_to_json(block: FlashBlockSpec) -> dict:
+    data = {"id": block.id, "kind": block.kind, "title": block.title}
+    if block.kind == "write":
+        data.update(files=[f.name for f in block.files], copy_selected_apks=block.copy_selected_apks,
+                    apks_dest=block.apks_dest, shared_folder=block.shared_folder)
+    return data
 
 
 def _render_spec_json(spec: NewCarSpec) -> str:
@@ -1082,6 +1307,9 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                     }
                     for v in step.variants
                 ],
+                # Только у этапа «Флешка» с блоками — у остальных этапов файл не меняется.
+                **({"flash_blocks": [_flash_block_to_json(b) for b in step.flash_blocks]}
+                   if step.flash_blocks else {}),
             }
             for step in spec.steps
         ],
@@ -1418,6 +1646,37 @@ def _render_install_py(spec: NewCarSpec) -> str:
 # ----------------------------------------------------------------------
 # stages.py
 # ----------------------------------------------------------------------
+def _render_flash_blocks_entry(step: StepSpec, i: int, model_dir: Path) -> list[str]:
+    """"flash_blocks" этапа «Флешка» в stages.py — только данные (без run):
+    запись блока ПК выполняет сам по этим полям (см. app/usb_context.py:
+    write_flash_files), инструкцию читает по относительному пути, как
+    "instruction" обычного этапа (см. install_api.py: _stage_to_dict)."""
+    lines = ['        "flash_blocks": [']
+    for block in step.flash_blocks:
+        lines.append("            {")
+        lines.append(f'                "id": {block.id!r},')
+        lines.append(f'                "kind": {block.kind!r},')
+        lines.append(f'                "title": {block.title!r},')
+        if block.kind == "instruction":
+            # Нет инструкции — нет ссылки: у техника строка без кнопки.
+            if block.instruction_blocks:
+                lines.append(f'                "instruction": {f"files/flash_{block.id}/instruction.html"!r},')
+        elif block.kind == "write":
+            lines.append('                "files": [')
+            for f in block.files:
+                lines.append(f'                    Path(__file__).resolve().parent / "usb_files" / "step_{i}" '
+                             f'/ {f.name!r},')
+            lines.append("                ],")
+            if block.copy_selected_apks:
+                lines.append('                "copy_selected_apks": True,')
+                lines.append(f'                "apks_dest": {block.apks_dest!r},')
+            if block.shared_folder:
+                lines.append(f'                "shared_folder": {block.shared_folder!r},')
+        lines.append("            },")
+    lines.append("        ],")
+    return lines
+
+
 def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
     lines = [
         f'"""{spec.brand} {spec.model} — этапы установки.',
@@ -1544,10 +1803,18 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
                 f'        "exe_path": Path(__file__).resolve().parent / "files" / "exe_{i}" '
                 f'/ {step.exe_file.name!r},'
             )
+        if step.flash_blocks:
+            entry += _render_flash_blocks_entry(step, i, model_dir)
+            if step.type != "usb" and (step.standard_apks or step.standard_apks_optional):
+                # Приложения модели для выбора галочками — как у "usb" выше (этап
+                # «Флешка» с флагами/паролем сохраняется как "qr_adb").
+                pack_expr = f'Path(__file__).resolve().parent / "files" / "usb_pack_{i}"'
+                entry.append(f'        "standard_dir": {pack_expr},')
         # Не elif — см. комментарий у INSTRUCTION_BLOCK_STEP_TYPES и
         # аналогичное место в _write_model_files: "usb"/"qr_adb" уже
         # отработали свою ветку выше, эта проверка отдельная и независимая.
-        if step.type in INSTRUCTION_BLOCK_STEP_TYPES:
+        # У этапа «Флешка» с блоками инструкции — в самих блоках.
+        if step.type in INSTRUCTION_BLOCK_STEP_TYPES and not step.flash_blocks:
             # "instruction" — относительный путь-строка (см.
             # app/stage_runner.py: stage_instruction_html_path резолвит его
             # как model.dir / rel), а не Path-выражение, как "exe_path" выше.

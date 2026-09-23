@@ -77,7 +77,8 @@ module.exports = async function () {
   await startWriting({ modelKey: "Test/Model", stageIndex: 2, variant: "Full", selectedApkPaths: ["/a.apk"], titleSuffix: "x" });
 
   assert(pywebviewCalls[0][0] === "usb_list_items", "usb_list_items вызван первым: " + JSON.stringify(pywebviewCalls));
-  assert(JSON.stringify(pywebviewCalls[0][1]) === JSON.stringify(["Test/Model", 2, "Full", ["/a.apk"]]),
+  // последний аргумент — блок этапа «Флешка»; у прежнего usb-этапа его нет (null — весь этап)
+  assert(JSON.stringify(pywebviewCalls[0][1]) === JSON.stringify(["Test/Model", 2, "Full", ["/a.apk"], null]),
     "аргументы usb_list_items совпадают с opts: " + JSON.stringify(pywebviewCalls[0][1]));
   assert(pywebviewCalls[1][0] === "usb_start", "usb_start вызван после сводки списка файлов");
   assert(labUiBusyCalls.length === 1, "LabUI.busy вызван ровно один раз: " + labUiBusyCalls.length);
@@ -114,4 +115,18 @@ module.exports = async function () {
   assert(labUiBusyCalls.length === 0, "ошибка сводки списка файлов не показывает кольцо");
   assert(els["usb06-ring"].hidden === true, "кольцо остаётся скрытым при ошибке сводки");
   assert(pywebviewCalls.some((c) => c[0] === "usb_start"), "запись всё равно стартовала несмотря на сбой сводки");
+  eventHandlers.usb_finished({ success: true, message: "Готово" });
+
+  // 4) Этап «Флешка» из блоков: окно пишет только свой блок (номер уходит и в сводку, и в запись),
+  //    флешка, выбранная на самом этапе, подставлена сразу.
+  pywebviewCalls.length = 0;
+  listItemsResult = { ok: true, items: [{ name: "f.bin", path: "/local/f.bin", size: 100 }] };
+  usbApi.open({ modelKey: "Test/Model", stageIndex: 1, variant: null, selectedApkPaths: [], block: 3, drive: "E:" });
+  await sleep(0);
+  assert(els["usb-drive"].value === "E:", "флешка с этапа выбрана сразу: " + els["usb-drive"].value);
+  await els["usb-start"].listeners.click();
+  const listCall = pywebviewCalls.find((c) => c[0] === "usb_list_items");
+  const startCall = pywebviewCalls.find((c) => c[0] === "usb_start");
+  assert(listCall[1][4] === 3, "номер блока в usb_list_items: " + JSON.stringify(listCall[1]));
+  assert(startCall[1][7] === 3 && startCall[1][4] === "E:", "номер блока и флешка в usb_start: " + JSON.stringify(startCall[1]));
 };

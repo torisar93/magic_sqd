@@ -413,20 +413,27 @@
     // renderHeader в car_wizard.js/graph_wizard.js) — впишите новое имя,
     // чтобы создать набор, или выберите существующее, чтобы переиспользовать.
     function renderSharedUsbFolderField(step) {
-      container.appendChild(el("span", {
+      container.appendChild(buildSharedFolderField(step, "usb_shared_folder"));
+    }
+
+    // owner[key] — имя набора: step.usb_shared_folder у прежнего usb-этапа или
+    // block.shared_folder у блока записи этапа «Флешка».
+    function buildSharedFolderField(owner, key) {
+      const wrap = el("div");
+      wrap.appendChild(el("span", {
         class: "field-label", style: "margin-top: 8px",
         text: "Общий набор файлов из _shared/ (необязательно, для многих моделей сразу)",
       }));
       const listId = "shared-usb-folders-" + Math.random().toString(36).slice(2, 8);
       const nameInput = el("input", { type: "text", list: listId, placeholder: "имя общего набора" });
-      nameInput.value = step.usb_shared_folder;
-      nameInput.addEventListener("input", () => { step.usb_shared_folder = nameInput.value.trim(); });
+      nameInput.value = owner[key] || "";
+      nameInput.addEventListener("input", () => { owner[key] = nameInput.value.trim(); });
       const datalist = el("datalist", { id: listId });
       window.pywebview.api.car_list_shared_usb_folders().then((folders) => {
         for (const name of folders) datalist.appendChild(el("option", { value: name }));
       });
-      container.appendChild(nameInput);
-      container.appendChild(datalist);
+      wrap.appendChild(nameInput);
+      wrap.appendChild(datalist);
 
       const addToShared = async (pickKind, multiple) => {
         const name = nameInput.value.trim();
@@ -441,13 +448,148 @@
           await window.notice(result.error, { title: "Общий набор файлов", danger: true });
           return;
         }
-        step.usb_shared_folder = result.name;
+        owner[key] = result.name;
         nameInput.value = result.name;
       };
       const sharedButtons = el("div", { class: "row", style: "margin-top: 4px" });
       sharedButtons.appendChild(el("button", { text: "Добавить файлы в набор...", onclick: () => addToShared("any", true) }));
       sharedButtons.appendChild(el("button", { text: "Добавить папку в набор...", onclick: () => addToShared("folder", false) }));
-      container.appendChild(sharedButtons);
+      wrap.appendChild(sharedButtons);
+      return wrap;
+    }
+
+    // -- этап «Флешка» из блоков (app/car_generator.py: FlashBlockSpec) ------
+    // «USB-флешка» и «Пароль ADB по QR-коду» — один этап (владелец, 2026-09-23):
+    // блоки «Инструкция» / «Запись на флешку» / «Получить пароль» в любом
+    // порядке и количестве, техник видит их карточками в том же порядке.
+    // Запись — просто выбранные файлы и папки (svengmode.flag/svlog.flag — тоже
+    // обычные файлы), под ними галочка «ещё и приложения». Инструкция — строка на
+    // карточке и, если написана, HTML по кнопке. Прежний этап приходит уже
+    // разложенным в блоки (car_editor_api.py: load_spec); этап с вариантами
+    // (Full/Lite) настраивается по-старому.
+    const FLASH_BLOCK_LABELS = { instruction: "Инструкция", write: "Запись на флешку", password: "Получить пароль ADB" };
+    // Что увидит техник, если своё название не задано (см. stage_wizard.js/app.js: renderFlashBlocksStage).
+    const FLASH_DEFAULT_TITLES = {
+      instruction: "Выполните шаги на магнитоле", write: "Запишите файлы на флешку", password: "Получите пароль ADB",
+    };
+
+    function newFlashBlock(kind) {
+      return {
+        id: "", kind, title: "", instruction_blocks: [], files: [],
+        copy_selected_apks: false, apks_dest: "", shared_folder: "",
+      };
+    }
+
+    function renderFlashFields(step) {
+      if (step.variants.length) {
+        container.appendChild(el("p", {
+          class: "app-desc",
+          text: "У этапа несколько вариантов содержимого (Full/Lite) — такой этап настраивается по-старому, без блоков.",
+        }));
+        renderUsbFields(step);
+        return;
+      }
+      if (!step.flash_blocks) step.flash_blocks = [];
+      container.appendChild(el("p", {
+        class: "app-desc",
+        text: "Этап собирается из блоков — техник увидит их карточками в том же порядке. Например: запись первой "
+          + "флешки → инструкция с фото → запись второй флешки → получение пароля.",
+      }));
+      step.flash_blocks.forEach((block, i) => container.appendChild(buildFlashBlockCard(step, block, i)));
+      if (!step.flash_blocks.length) {
+        container.appendChild(el("p", { class: "app-desc", text: "Блоков пока нет — добавьте первый кнопками ниже." }));
+      }
+      container.appendChild(el("div", { class: "row flash-add-row", style: "margin-top: 6px; flex-wrap: wrap" },
+        Object.entries(FLASH_BLOCK_LABELS).map(([kind, label]) => el("button", {
+          text: `+ ${label}`,
+          onclick: () => { step.flash_blocks.push(newFlashBlock(kind)); rerender(); },
+        }))));
+    }
+
+    function buildFlashBlockCard(step, block, i) {
+      const blocks = step.flash_blocks;
+      const move = (delta) => {
+        const target = i + delta;
+        if (target < 0 || target >= blocks.length) return;
+        [blocks[i], blocks[target]] = [blocks[target], blocks[i]];
+        rerender();
+      };
+      const card = el("div", { class: "instruction-block-row flash-block-row", "data-flash-kind": block.kind });
+      card.appendChild(el("div", { class: "block-row-header" }, [
+        el("span", { text: `${i + 1}. ${FLASH_BLOCK_LABELS[block.kind] || block.kind}` }),
+        el("div", {}, [
+          el("button", { class: "icon-btn", text: "▲", title: "Выше", disabled: i === 0 ? "" : null, onclick: () => move(-1) }),
+          el("button", {
+            class: "icon-btn", text: "▼", title: "Ниже", disabled: i === blocks.length - 1 ? "" : null,
+            onclick: () => move(1),
+          }),
+          el("button", {
+            class: "danger icon-btn", text: "✕", title: "Убрать блок",
+            onclick: () => { blocks.splice(i, 1); rerender(); },
+          }),
+        ]),
+      ]));
+
+      card.appendChild(el("span", {
+        class: "field-label",
+        text: block.kind === "instruction" ? "Что сделать (строка на карточке у техника)" : "Название карточки у техника (необязательно)",
+      }));
+      const titleInput = el("input", { type: "text", placeholder: FLASH_DEFAULT_TITLES[block.kind] || "" });
+      titleInput.value = block.title || "";
+      titleInput.addEventListener("input", () => { block.title = titleInput.value; });
+      card.appendChild(titleInput);
+
+      if (block.kind === "instruction") {
+        const count = block.instruction_blocks.length;
+        const row = el("div", { class: "row", style: "margin-top: 6px; align-items: center; flex-wrap: wrap" }, [
+          el("button", {
+            text: count ? "Изменить инструкцию..." : "Добавить подробную инструкцию (текст, фото)...",
+            onclick: () => window.instructionEditor.open(count ? block.instruction_blocks : null, (result) => {
+              block.instruction_blocks = result;
+              rerender();
+            }),
+          }),
+        ]);
+        if (count) {
+          row.appendChild(el("button", {
+            class: "danger", text: "Убрать инструкцию",
+            onclick: () => { block.instruction_blocks = []; rerender(); },
+          }));
+        }
+        card.appendChild(row);
+        card.appendChild(el("p", {
+          class: "app-desc", style: "margin-top: 4px",
+          text: count
+            ? `Инструкция написана (${count} блок(ов)) — на карточке будет кнопка «Открыть инструкцию».`
+            : "Без инструкции у техника будет только эта строка, без кнопки — для коротких действий.",
+        }));
+      } else if (block.kind === "write") {
+        card.appendChild(el("span", { class: "field-label", style: "margin-top: 6px", text: "Файлы и папки в корень флешки" }));
+        card.appendChild(buildFileList(block.files, "any", true, () => rerender()));
+        const copyCheckbox = el("input", { type: "checkbox" });
+        copyCheckbox.checked = !!block.copy_selected_apks;
+        copyCheckbox.addEventListener("change", () => { block.copy_selected_apks = copyCheckbox.checked; rerender(); });
+        card.appendChild(el("label", { class: "row", style: "margin-top: 8px" }, [
+          copyCheckbox, document.createTextNode("Ещё записать приложения (техник отметит их галочками)"),
+        ]));
+        if (block.copy_selected_apks) {
+          card.appendChild(el("span", {
+            class: "field-label", style: "margin-top: 4px", text: "Папка на флешке для приложений (пусто — корень флешки)",
+          }));
+          const destInput = el("input", { type: "text", placeholder: "например apps" });
+          destInput.value = block.apks_dest || "";
+          destInput.addEventListener("input", () => { block.apks_dest = destInput.value.trim(); });
+          card.appendChild(destInput);
+        }
+        card.appendChild(buildSharedFolderField(block, "shared_folder"));
+      } else if (block.kind === "password") {
+        card.appendChild(el("p", {
+          class: "app-desc", style: "margin-top: 4px",
+          text: "Техник вставит флешку после надписи «QNX OK» — программа прочитает сохранённые магнитолой логи "
+            + "и посчитает пароль ADB. Магнитола на этом шаге не обязана быть подключена.",
+        }));
+      }
+      return card;
     }
 
     const APPS_CONNECTION_LABELS = {
@@ -842,8 +984,10 @@
     // renderConditionFields, но createStepFieldsController используется
     // только графом, где он сознательно не подключался).
 
+    // "qr_adb" — тот же этап «Флешка» (тип выводится из блоков при сохранении,
+    // см. car_generator.py: _normalize_flash_step).
     const typeBuilders = {
-      adb: renderAdbFields, usb: renderUsbFields, apps: renderAppsFields,
+      adb: renderAdbFields, usb: renderFlashFields, qr_adb: renderFlashFields, apps: renderAppsFields,
       exe: renderExeFields, check: renderCheckFields, instruction: renderInstructionFields,
       uart: renderUartFields, telnet: renderTelnetFields, actions: renderActionsFields,
     };
@@ -856,28 +1000,6 @@
           class: "app-desc",
           text: "Для «Ручного шага» дополнительных полей нет — пользователь просто прочитает описание выше и отметит этап выполненным.",
         }));
-      } else if (step.type === "qr_adb") {
-        container.appendChild(el("p", {
-          class: "app-desc",
-          text: "Этап самостоятельно находит флешку с папкой logs_* и считает пароль (см. app/qr_adb_password.py). Магнитола на этом этапе не обязана быть подключена.",
-        }));
-        const engRow = el("label", { class: "row", style: "margin-top: 8px" });
-        const engCheckbox = el("input", { type: "checkbox" });
-        engCheckbox.checked = !!step.qr_adb_engineering_menu;
-        engCheckbox.addEventListener("change", () => { step.qr_adb_engineering_menu = engCheckbox.checked; rerender(); });
-        engRow.appendChild(engCheckbox);
-        engRow.appendChild(document.createTextNode("Сначала нужно войти в инженерное меню отдельным файлом (Desay x9h)"));
-        container.appendChild(engRow);
-        if (step.qr_adb_engineering_menu) {
-          container.appendChild(el("p", {
-            class: "app-desc",
-            text: "Перед обычным файлом добавится отдельный шаг: запись файла svengmode.flag на флешку, "
-              + "который открывает инженерное меню магнитолы — техник вручную доходит в нём до раздела с "
-              + "QR-кодом, и только после этого обычный файл срабатывает. Сейчас нужно только Haval Jolion "
-              + "2026 (Desay x9h) — на остальных моделях платформы (Geely/VOLGA) галочку не ставить.",
-          }));
-        }
-        renderOptionalInstructionButton(step);
       }
       // Универсально для ЛЮБОГО типа этапа (в отличие от всего выше) —
       // см. renderVideoField.

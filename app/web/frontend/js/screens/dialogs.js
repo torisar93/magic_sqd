@@ -15,6 +15,9 @@
     let refreshBtn, statusEl, statusDetailEl, logDetails, advancedDetails;
     let drives = [];
     let opts = null;
+    // Флешка, уже выбранная на самом этапе (этап «Флешка»: полоса выбора для флагов/пароля) —
+    // подставляется при первом чтении списка, дальше выбор техника.
+    let preferredDrive = "";
     let running = false, preparing = false, refreshing = false;
     let cancelRequested = false, finishDelivered = false;
     let openRevision = 0, refreshRevision = 0, runRevision = 0;
@@ -152,7 +155,8 @@
         if (revision !== refreshRevision || session !== openRevision) return;
         if (!Array.isArray(result)) throw new Error(result?.error || "Не удалось получить список накопителей.");
         drives = result;
-        populateDrives(selectedLetter);
+        populateDrives(selectedLetter || preferredDrive);
+        preferredDrive = "";
         driveHintEl.textContent = showAll
           ? "Показаны также внутренние диски, кроме системного. Проверьте накопитель перед записью."
           : "Только съёмные USB-накопители. Внутренние и системный диски скрыты.";
@@ -212,7 +216,8 @@
         let items = [];
         try {
           const itemsResult = await window.pywebview.api.usb_list_items(
-            launchOpts.modelKey, launchOpts.stageIndex, launchOpts.variant, launchOpts.selectedApkPaths
+            launchOpts.modelKey, launchOpts.stageIndex, launchOpts.variant, launchOpts.selectedApkPaths,
+            launchOpts.block ?? null
           );
           if (itemsResult?.ok && Array.isArray(itemsResult.items)) items = itemsResult.items;
         } catch { /* см. комментарий выше — не блокируем запись из-за сводки */ }
@@ -226,9 +231,10 @@
         }
         updateControls();
         setStatus("writing", "Записываем файлы на флешку", "Не отключайте накопитель. Время зависит от скорости флешки и размера файлов.");
+        // block — номер блока этапа «Флешка»: пишутся только его файлы (см. usb_api.py).
         const result = await window.pywebview.api.usb_start(
           launchOpts.modelKey, launchOpts.stageIndex, launchOpts.variant, launchOpts.selectedApkPaths,
-          drive.letter, shouldFormat, fs
+          drive.letter, shouldFormat, fs, launchOpts.block ?? null
         );
         if (revision !== runRevision || finishDelivered) return;
         if (!result?.ok) throw new Error(result?.error || "Не удалось начать запись на флешку.");
@@ -310,6 +316,7 @@
       openRevision += 1;
       refreshRevision += 1;
       opts = newOpts;
+      preferredDrive = newOpts.drive || "";
       document.getElementById("usb-dialog-title").textContent = "Запись на флешку";
       document.getElementById("usb06-model").textContent = opts.titleSuffix || "Подготовьте USB-накопитель для установки";
       clear(logEl);
