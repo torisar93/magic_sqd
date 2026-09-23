@@ -177,39 +177,40 @@ object AdbSession {
     fun service(serviceName: String, log: (String) -> Unit, timeoutMs: Int = 5000): AdbShellResult =
         runAdbService(requireTransport(), serviceName, log, timeoutMs)
 
-    fun push(bytes: ByteArray, remotePath: String, log: (String) -> Unit): AdbPushResult =
-        syncPushBytes(requireTransport(), bytes, remotePath, log)
+    // Файл — с диска потоком, не целиком в память (см. PushSource: APK бывают по 500 МБ и больше).
+    fun push(source: PushSource, remotePath: String, log: (String) -> Unit): AdbPushResult =
+        syncPush(requireTransport(), source, remotePath, log)
 
     // stagedPath != null — APK уже залит движком по этому пути один раз для всех способов (см.
     // InstallEngine.installApksWithProgress / AdbInstall.stageApkIfNeeded).
-    fun installApk(bytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
-        if (stagedPath == null) installApkOverAdb(requireTransport(), bytes, log = log)
-        else installApkOverAdb(requireTransport(), bytes, remotePath = stagedPath, log = log, prePushed = true)
+    fun installApk(apk: PushSource, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkOverAdb(requireTransport(), apk, log = log)
+        else installApkOverAdb(requireTransport(), apk, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkPmStream(bytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
-        if (stagedPath == null) installApkStreamOverAdb(requireTransport(), bytes, log = log)
-        else installApkStreamOverAdb(requireTransport(), bytes, remotePath = stagedPath, log = log, prePushed = true)
+    fun installApkPmStream(apk: PushSource, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkStreamOverAdb(requireTransport(), apk, log = log)
+        else installApkStreamOverAdb(requireTransport(), apk, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkSpoofed(bytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
-        if (stagedPath == null) installApkSpoofedOverAdb(requireTransport(), bytes, log = log)
-        else installApkSpoofedOverAdb(requireTransport(), bytes, remotePath = stagedPath, log = log, prePushed = true)
+    fun installApkSpoofed(apk: PushSource, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkSpoofedOverAdb(requireTransport(), apk, log = log)
+        else installApkSpoofedOverAdb(requireTransport(), apk, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkHavalRevived(bytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
-        if (stagedPath == null) installApkHavalRevivedOverAdb(requireTransport(), bytes, log = log)
-        else installApkHavalRevivedOverAdb(requireTransport(), bytes, remotePath = stagedPath, log = log, prePushed = true)
+    fun installApkHavalRevived(apk: PushSource, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkHavalRevivedOverAdb(requireTransport(), apk, log = log)
+        else installApkHavalRevivedOverAdb(requireTransport(), apk, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkLocalinstall(bytes: ByteArray, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
-        if (stagedPath == null) installApkViaLocalinstall(requireTransport(), bytes, helperBytes, log = log)
-        else installApkViaLocalinstall(requireTransport(), bytes, helperBytes, log = log, remoteApk = stagedPath, prePushed = true)
+    fun installApkLocalinstall(apk: PushSource, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        if (stagedPath == null) installApkViaLocalinstall(requireTransport(), apk, helperBytes, log = log)
+        else installApkViaLocalinstall(requireTransport(), apk, helperBytes, log = log, remoteApk = stagedPath, prePushed = true)
 
     /** stagedPath, если задан, обязан быть "/data/local/tmp/<apkName>" — dex-хелпер работает именно с этим путём. */
-    fun installApkDexShell(bytes: ByteArray, apkName: String, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
-        installApkViaDexShell(requireTransport(), bytes, apkName, helperBytes, log = log, prePushed = stagedPath != null)
+    fun installApkDexShell(apk: PushSource, apkName: String, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
+        installApkViaDexShell(requireTransport(), apk, apkName, helperBytes, log = log, prePushed = stagedPath != null)
 
     /** Desay x9h (Haval Jolion 2026 / TR01025 и родня): JDWP-патч mInstallWhiteList + pm install (см.
      * AdbJdwp.kt, desktop app/install_context.py:install_apk_jdwp_whitelist). packageName нужен ДО установки
      * — берётся из самого APK (getPackageArchiveInfo). stagedPath — уже залитый движком файл. */
-    fun installApkJdwpWhitelist(bytes: ByteArray, packageName: String, log: (String) -> Unit,
+    fun installApkJdwpWhitelist(apk: PushSource, packageName: String, log: (String) -> Unit,
                                 stagedPath: String? = null, apkName: String = "install.apk"): AdbInstallResult {
         val transport = requireTransport()
         if (packageName.isBlank()) return AdbInstallResult.Failed("не удалось прочитать имя пакета — нужно для JDWP-патча")
@@ -236,8 +237,8 @@ object AdbSession {
         // 3) push (если не залит заранее) + pm install -r -t
         val remotePath = stagedPath ?: "/data/local/tmp/$apkName"
         if (stagedPath == null) {
-            AdbInstallProgress.beginTransfer(bytes.size.toLong())
-            when (val r = syncPushBytes(transport, bytes, remotePath, log)) {
+            AdbInstallProgress.beginTransfer(apk.size)
+            when (val r = syncPush(transport, apk, remotePath, log)) {
                 is AdbPushResult.Failed -> return AdbInstallResult.Failed(r.reason)
                 AdbPushResult.Success -> {}
             }

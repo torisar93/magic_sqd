@@ -36,3 +36,11 @@
 dialog.apps-picker-dialog .apps-picker-close{display:flex;align-items:center;justify-content:center;line-height:1;gap:0}
 .apps-inline-body .apk-info-btn{display:flex;align-items:center;justify-content:center;line-height:1;gap:0}
 @media(min-width:600px){.apps-inline-card>.apps-install-start{align-self:flex-end;width:min(100%,340px)}.apps-inline-body .stage-apps-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Этап «Приложения» с вкладками (js/apps_tabs.js, css/apps_tabs.css): поиск и «+ Свой APK» одной
+   строкой; нижняя панель — «Выбрано» значками над кнопкой «Начать установку» во всю ширину. */
+.apps-tabs-tools{display:flex;gap:10px;align-items:stretch}
+.apps-tabs-tools>.apps-picker-search{flex:1;min-width:0}
+.apps-tabs-tools>.app-personal-apk-add{flex:0 0 auto;width:auto;height:46px;min-height:46px;margin:0;padding:0 14px;white-space:nowrap}
+#screen-wizard>.apps-dock{flex-wrap:wrap;gap:8px;padding:10px var(--mobile-gutter,16px) 12px}
+#screen-wizard>.apps-dock>.apps-dock-summary{flex:1 0 100%;min-height:28px}
+#screen-wizard>.apps-dock>.apps-install-start{flex:1 0 100%;width:100%;min-height:48px;margin:0;justify-content:center}
