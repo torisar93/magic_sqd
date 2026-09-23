@@ -49,6 +49,10 @@ module.exports = async function () {
   assert(bar.value === 25 && message.textContent === "25% скачано · 3 из 11 файлов", "прогресс: " + message.textContent);
   busy.progress(0, 0);
   assert(message.textContent === "25% скачано · 3 из 11 файлов", "total=0 не сбрасывает показанное");
+  busy.set(40.4, "Отправляем на сервер: 4.0 из 10.0 МБ");
+  assert(bar.value === 40 && message.textContent === "Отправляем на сервер: 4.0 из 10.0 МБ", "свой текст и процент: " + message.textContent);
+  busy.set(null, "Опубликовано на сервере.");
+  assert(bar.value === 40 && message.textContent === "Опубликовано на сервере.", "только текст — процент не трогает");
   let prevented = false;
   dlg.listeners.cancel({ preventDefault() { prevented = true; } });
   assert(prevented, "Esc не закрывает окно ожидания");

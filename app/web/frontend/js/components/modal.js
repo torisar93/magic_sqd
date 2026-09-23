@@ -176,6 +176,11 @@
           : "";
         busyMessageEl.textContent = `${percent}% скачано${suffix}`;
       },
+      // Свой текст (и, если известен, процент) — например отправка модели на сервер.
+      set(percent, text) {
+        if (Number.isFinite(percent)) busyProgressEl.value = Math.max(0, Math.min(100, Math.round(percent)));
+        if (text) busyMessageEl.textContent = text;
+      },
       close() {
         if (busyEl.open) busyEl.close();
       },

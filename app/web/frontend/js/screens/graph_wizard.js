@@ -79,6 +79,9 @@
   // публикация/отклонение — отдельные явные действия.
   let isPendingModel = false;
   let pendingSubmissionName = null;
+  // Окно «Сохранение модели» (components/modal.js: busyDialog) — от «Сохранить» до
+  // car_save_finished: этапы и процент отправки на сервер, итог — отдельным окном.
+  let saveBusy = null;
 
   let panX = 40, panY = 40, zoom = 1;
   let panState = null;
@@ -161,13 +164,37 @@
 
     initAdminLoginDialog();
 
-    window.events.on("car_save_log", (event) => logFn(event.text));
+    window.events.on("car_save_log", (event) => {
+      logFn(event.text);
+      if (saveBusy) saveBusy.set(null, event.text);
+    });
+    window.events.on("car_save_progress", (event) => {
+      if (!saveBusy || !(event.total > 0)) return;
+      const mb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+      saveBusy.set(event.done * 100 / event.total,
+        `Отправляем на сервер: ${mb(event.done)} из ${mb(event.total)} МБ`);
+    });
     window.events.on("car_saved", (event) => {
       if (onCreatedCb) onCreatedCb(event.brand, event.model, event.modification, event.dir);
     });
     window.events.on("car_save_finished", (event) => {
       logFn(event.message);
       setMainProgressVisible(false);
+      if (saveBusy) { saveBusy.close(); saveBusy = null; }
+      // Итог публикации — явно (владелец, 2026-09-23: посмотрел сервер посреди загрузки
+      // и решил, что файлы не дошли; неудачная публикация тоже была лишь строкой в журнале).
+      const publish = event.success ? event.publish : null;
+      if (publish && publish.mode === "admin" && publish.ok) {
+        window.notice("Модель сохранена и опубликована на сервере. Техники получат изменения при следующем открытии модели.",
+          { title: "Опубликовано" });
+      } else if (publish && publish.mode === "submit" && publish.ok) {
+        window.notice("Модель сохранена и отправлена разработчику на проверку.", { title: "Отправлено" });
+      } else if (publish && publish.error) {
+        window.notice(publish.mode === "admin"
+          ? `Модель сохранена на этом компьютере, но на сервер не опубликована: ${publish.error}`
+          : `Модель сохранена на этом компьютере, но не отправлена на проверку: ${publish.error}`,
+        { title: publish.mode === "admin" ? "Не опубликовано" : "Не отправлено", danger: true });
+      }
       // Диалог мастера к этому моменту уже закрыт (onSave закрывает его
       // оптимистично, не дожидаясь результата фонового потока — само
       // сохранение идёт в фоне, см. app/web/api/car_editor_api.py:_worker) —
@@ -899,6 +926,7 @@
     }
     logFn(`Сохраняю «${label}»...`);
     setMainProgressVisible(true);
+    saveBusy = window.busyDialog("Сохранение модели", `Сохраняем «${label}»…`);
     dialog.close();
   }
 

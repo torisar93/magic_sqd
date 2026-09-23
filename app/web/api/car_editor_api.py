@@ -533,6 +533,16 @@ class CarEditorApi:
         # content_sync.py: mark_local_edit).
         mark_local_edit(model_dir)
 
+        # Итог публикации — в car_save_finished (см. graph_wizard.js): раньше и
+        # успех, и неудача публикации были только строкой в журнале при общем
+        # «Готово.» — владелец, проверив сервер посреди загрузки (модель с APK
+        # льётся минутами), решил, что файлы не дошли (2026-09-23).
+        publish = {"mode": "admin" if admin_base_url else "submit" if submit_config else "none",
+                   "ok": False, "error": None}
+        if admin_base_url and not admin_session_cookie:
+            publish["error"] = "нет входа в админку — войдите и сохраните ещё раз."
+            self._log(f"Не опубликовано на сервере: {publish['error']}")
+
         if admin_base_url and admin_session_cookie:
             try:
                 # ВАЖНО: сначала залить, потом (при необходимости) убрать лишнее — НИКОГДА
@@ -557,8 +567,10 @@ class CarEditorApi:
                 shared_names = {s.usb_shared_folder for s in spec.steps if s.usb_shared_folder}
                 extra_dirs = [self.cars_dir / "_shared" / name for name in shared_names]
                 upload_model(admin_base_url, admin_session_cookie, self.cars_dir, model_dir,
-                             extra_dirs=extra_dirs, log=self._log, check_cancelled=self._check_cancelled)
+                             extra_dirs=extra_dirs, log=self._log, check_cancelled=self._check_cancelled,
+                             on_progress=self._upload_progress())
                 self._log("Опубликовано на сервере.")
+                publish["ok"] = True
                 # Уборка лишнего (см. admin_client.py: cleanup_stale_model_files) — НЕ
                 # фатальна: главное (новая версия модели) уже надёжно на сервере.
                 cleanup_stale_model_files(admin_base_url, admin_session_cookie, new_rel,
@@ -577,10 +589,12 @@ class CarEditorApi:
                     except AdminClientError as exc:
                         self._log(f"Не удалось удалить старый путь на сервере ({old_rel}): {exc}")
             except AdminUploadCancelled:
+                publish["error"] = "публикация отменена."
                 self._log("Публикация отменена (локально сохранено).")
             except AdminClientError as exc:
                 if "истекла" in str(exc):
                     clear_cached_session(admin_base_url)
+                publish["error"] = str(exc)
                 self._log(f"Не опубликовано на сервере: {exc}")
             except Exception as exc:  # noqa: BLE001 - см. докстринг ниже
                 # Раньше здесь ловились только AdminUploadCancelled/
@@ -595,6 +609,7 @@ class CarEditorApi:
                 # mark_local_edit/_local_edit_superseded). Техник ничего не
                 # видел, кроме зависшего "Сохраняем..." — теперь любая
                 # ошибка публикации хотя бы явно долетает до лога.
+                publish["error"] = f"непредвиденная ошибка: {exc}"
                 self._log(f"Не опубликовано на сервере (непредвиденная ошибка): {exc}")
         elif submit_config:
             try:
@@ -605,11 +620,29 @@ class CarEditorApi:
                              modification=spec.modification, client_id=client_id,
                              session_cookie=session_cookie or "",
                              log=self._log, check_cancelled=self._check_cancelled)
+                publish["ok"] = True
             except SubmitCancelled:
+                publish["error"] = "отправка отменена."
                 self._log("Отправка на проверку отменена (локально сохранено).")
             except SubmitError as exc:
+                publish["error"] = str(exc)
                 self._log(f"Не отправлено на проверку: {exc}")
             except Exception as exc:  # noqa: BLE001 - см. докстринг у одноимённого except выше
+                publish["error"] = f"непредвиденная ошибка: {exc}"
                 self._log(f"Не отправлено на проверку (непредвиденная ошибка): {exc}")
 
-        event_bridge.push({"kind": "car_save_finished", "success": True, "message": "Готово."})
+        event_bridge.push({"kind": "car_save_finished", "success": True, "message": "Готово.", "publish": publish})
+
+    @staticmethod
+    def _upload_progress():
+        """on_progress для upload_model — событие car_save_progress (окно
+        «Сохранение модели», см. graph_wizard.js) не чаще, чем на каждый новый
+        процент: архив отправляется кусками по 1 МБ."""
+        last = {"percent": -1}
+
+        def report(sent: int, total: int) -> None:
+            percent = int(sent * 100 / total) if total else 100
+            if percent != last["percent"]:
+                last["percent"] = percent
+                event_bridge.push({"kind": "car_save_progress", "done": sent, "total": total})
+        return report
