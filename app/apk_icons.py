@@ -39,6 +39,7 @@ import zipfile
 from pathlib import Path
 
 from .content_config import get_base_url
+from .content_sync import open_url
 from .platform_paths import bundled_tools_root
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
@@ -100,7 +101,7 @@ def _fetch_apk_icons(base_url: str) -> dict:
                 return _manifest_cache
         icons: dict = {}
         try:
-            with urllib.request.urlopen(f"{base_url}/manifest.json", timeout=10) as resp:
+            with open_url(f"{base_url}/manifest.json", timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             candidate = data.get("apk_icons")
             if isinstance(candidate, dict):

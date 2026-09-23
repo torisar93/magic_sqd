@@ -1515,6 +1515,21 @@ dialog .dialog-actions {
   margin-top: 10px;
 }
 
+/* «Кто видит» у кнопки сохранения в редакторе (только администратор): скрытые модели для
+   групп пользователей (см. graph_wizard.js: loadAccessControl, server/user_groups.py). */
+.editor-access {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.editor-access .field-label {
+  margin: 0;
+  white-space: nowrap;
+}
+
 dialog .dialog-actions.spread {
   justify-content: space-between;
 }
@@ -1543,6 +1558,14 @@ dialog textarea {
 
 dialog .field {
   margin-bottom: 10px;
+}
+
+/* «Сообщить о проблеме»: куда придёт ответ (см. js/screens/dialogs.js: report). */
+.report-email-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 6px;
 }
 
 /* ---- welcome-dialog/completion-dialog (js/components/boosty.js) — узкий

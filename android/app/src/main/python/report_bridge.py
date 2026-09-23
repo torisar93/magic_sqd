@@ -7,8 +7,10 @@ import urllib.request
 
 
 def send_report(brand: str, model: str, reason: str, description: str, app_version: str,
-                client_id: str, url: str, key: str) -> str:
-    """Возвращает JSON-строку {"ok": true} / {"ok": false, "error": "..."} — показывается технику."""
+                client_id: str, url: str, key: str, email: str = "", session_cookie: str = "") -> str:
+    """Возвращает JSON-строку {"ok": true} / {"ok": false, "error": "..."} — показывается технику.
+    email — почта для ответа от того, кто не вошёл в аккаунт; session_cookie — вошедший: ответ
+    придёт на почту аккаунта (сервер берёт её из сессии)."""
     body = json.dumps({
         "brand": brand,
         "model": model,
@@ -17,10 +19,12 @@ def send_report(brand: str, model: str, reason: str, description: str, app_versi
         "app_version": app_version,
         "platform": "android",
         "client_id": client_id,
+        "email": email,
     }).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"X-Submit-Key": key, "Content-Type": "application/json"})
+    headers = {"X-Submit-Key": key, "Content-Type": "application/json"}
+    if session_cookie:
+        headers["Cookie"] = session_cookie
+    request = urllib.request.Request(url, data=body, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))

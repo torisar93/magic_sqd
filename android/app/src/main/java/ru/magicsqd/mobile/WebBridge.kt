@@ -118,6 +118,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     init {
         if (!Python.isStarted()) Python.start(AndroidPlatform(context))
+        Thread { applyCatalogSession() }.start()  // не на главном потоке: импорт mobile_bridge — время
         webView.keepScreenOn = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
             .getBoolean("keep_screen_on", true)
         // Если техник уже входил раньше — сразу подтягиваем его заявки на
@@ -210,9 +211,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     reportSend(
                         args.optString("brand", ""), args.optString("model", ""),
                         args.getString("reason"), args.optString("description", ""),
+                        args.optString("email", ""),
                     )
                     "{}"
                 }
+                "report_info" -> JSONObject()
+                    .put("account_email", authEmail() ?: "")
+                    .put("saved_email", settingsPrefs().getString("report_email", "") ?: "")
+                    .toString()
                 "install_log_send" -> {
                     installLogSend(
                         args.getString("brand"), args.getString("model"), args.optString("modification", ""),
@@ -314,6 +320,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     }
     private fun clearAuthSession() { authPrefs().edit().clear().apply() }
 
+    /** Сессия техника — и для каталога: вошедшему сервер отдаёт скрытые (тестовые) модели его групп
+     * (server/user_groups.py, content_sync.set_auth_cookie). Зовётся при запуске, входе и выходе. */
+    private fun applyCatalogSession() {
+        try {
+            pyModule("mobile_bridge").callAttr("set_auth_cookie", authUserCookie() ?: "", Uri.parse(AUTH_BASE_URL).host ?: "")
+        } catch (_: Exception) { /* без сессии каталог просто общий */ }
+    }
+
     private fun authStatus(): JSONObject =
         JSONObject().put("email", authEmail()).put("subscriber", authPrefs().getBoolean("subscriber", false))
 
@@ -355,9 +369,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             if (result.optBoolean("ok")) {
                 saveAuthSession(result.getString("email"), result.getString("user_cookie"))
                 authPrefs().edit().putBoolean("subscriber", result.optBoolean("subscriber", false)).apply()
+                applyCatalogSession()
             }
             pushEvent(JSONObject().put("kind", "auth_login_result").put("result", result))
-            if (result.optBoolean("ok")) authSyncMyCars()
+            if (result.optBoolean("ok")) {
+                authSyncMyCars()
+                startSync()  // каталог заново — с тестовыми моделями групп техника
+            }
         }.start()
     }
 
@@ -375,11 +393,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     private fun authLogout() {
         val cookie = authUserCookie()
         clearAuthSession()
+        applyCatalogSession()
         Thread {
             if (cookie != null) {
                 try { pyModule("auth_bridge").callAttr("logout", AUTH_BASE_URL, cookie) } catch (e: Exception) { /* локально уже вышли — не критично */ }
             }
             pushEvent(JSONObject().put("kind", "auth_logout_result").put("result", JSONObject().put("ok", true)))
+            startSync()  // тестовые модели групп больше не видны — каталог уберёт их
         }.start()
     }
 
@@ -455,6 +475,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     private fun startSync() {
         Thread {
+            applyCatalogSession()  // первый sync может успеть раньше потока из init
             val resultJson = try {
                 pyModule("mobile_bridge").callAttr("sync_cars", carsDir, BASE_URL).toString()
             } catch (e: Exception) {
@@ -536,6 +557,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             if (!relative.startsWith("apk/") && !relative.startsWith("cars/")) return null
             if (System.currentTimeMillis() > labServerIconsUntil) {
                 val connection = java.net.URL("$BASE_URL/manifest.json").openConnection()
+                authUserCookie()?.let { connection.setRequestProperty("Cookie", it) }  // значки скрытых моделей
                 connection.connectTimeout = 8000
                 connection.readTimeout = 8000
                 val manifest = connection.getInputStream().bufferedReader().use { JSONObject(it.readText()) }
@@ -785,22 +807,32 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         }.apply { isDaemon = true; name = "magicsqd-install-log-recovery" }.start()
     }
 
+    private fun settingsPrefs() = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
     /** Обращение («Сообщить о проблеме»): brand/model пустые — к работе приложения в целом. Результат уходит
-     * событием report_result — в отличие от install_log_send, техник ждёт ответа в окне. */
-    private fun reportSend(brand: String, model: String, reason: String, description: String) {
+     * событием report_result — в отличие от install_log_send, техник ждёт ответа в окне. Ответ на обращение
+     * приходит письмом: вошедшему — на почту аккаунта (сервер берёт её из сессии), остальным — на email из
+     * окна (запоминается для следующего обращения). */
+    private fun reportSend(brand: String, model: String, reason: String, description: String, email: String) {
         val appVersion = try {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
         } catch (_: Exception) { "" }
+        val cookie = authUserCookie()
+        val replyEmail = if (cookie != null) "" else email.trim()
         Thread {
             val resultJson = try {
                 pyModule("report_bridge").callAttr(
                     "send_report", brand, model, reason, description, appVersion,
-                    getOrCreateClientId(), REPORT_URL, CHAT_KEY,
+                    getOrCreateClientId(), REPORT_URL, CHAT_KEY, replyEmail, cookie ?: "",
                 ).toString()
             } catch (e: Exception) {
                 JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()
             }
-            pushEvent(JSONObject().put("kind", "report_result").put("result", JSONObject(resultJson)))
+            val result = JSONObject(resultJson)
+            if (result.optBoolean("ok") && replyEmail.isNotEmpty()) {
+                settingsPrefs().edit().putString("report_email", replyEmail).apply()
+            }
+            pushEvent(JSONObject().put("kind", "report_result").put("result", result))
         }.start()
     }
 

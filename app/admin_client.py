@@ -31,6 +31,10 @@ class AdminUploadCancelled(RuntimeError):
     pass
 
 
+class AdminEndpointMissing(AdminClientError):
+    """На сервере нет такого адреса (сервер старее программы)."""
+
+
 # Кеш cookie-сессии в памяти процесса (не на диске — сессия и так живёт,
 # пока запущена программа) — чтобы диалог "Добавить машину..." мог залить
 # только что созданную модель на сервер сразу по кнопке "Создать" (см.
@@ -236,18 +240,23 @@ def _build_and_send(base_url: str, session_cookie: str, target: str, build_archi
             conn.close()
 
 
-def _request(base_url: str, session_cookie: str, method: str, path: str) -> dict:
-    """GET/DELETE без тела — общая часть list_cars_path/delete_cars_path
-    (см. server/backend.py: /admin/api/cars/list, /admin/api/cars — то же
-    HTTP-соединение и разбор ответа, что и _build_and_send, но без отправки
-    файла)."""
+def _request(base_url: str, session_cookie: str, method: str, path: str, body: dict | None = None) -> dict:
+    """Запрос без файла — общая часть list_cars_path/delete_cars_path/доступа к моделям
+    (см. server/backend.py: /admin/api/cars/list, /admin/api/cars, /admin/api/access —
+    то же HTTP-соединение и разбор ответа, что и _build_and_send). body — JSON-тело."""
     parts = urlsplit(base_url)
     conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
     conn = conn_cls(parts.netloc, timeout=30)
     try:
+        payload = json.dumps(body).encode("utf-8") if body is not None else None
         conn.putrequest(method, path)
         conn.putheader("Cookie", session_cookie)
+        if payload is not None:
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", str(len(payload)))
         conn.endheaders()
+        if payload is not None:
+            conn.send(payload)
         response = conn.getresponse()
         raw = response.read()
         if response.status == 401:
@@ -256,6 +265,8 @@ def _request(base_url: str, session_cookie: str, method: str, path: str) -> dict
             data = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError):
             data = {}
+        if response.status == 404 and data.get("error") == "not found":
+            raise AdminEndpointMissing(f"Сервер не знает {path.split('?', 1)[0]} — его нужно обновить.")
         if response.status != 200:
             raise AdminClientError(f"Сервер отклонил запрос ({response.status}): "
                                     f"{data.get('error', raw.decode('utf-8', 'replace'))}")
@@ -294,6 +305,20 @@ def list_cars_path_recursive(base_url: str, session_cookie: str, rel_path: str) 
     data = _request(base_url, session_cookie, "GET",
                      f"/admin/api/cars/list_recursive?path={quote(rel_path)}")
     return data.get("files", [])
+
+
+def get_model_access(base_url: str, session_cookie: str, rel_path: str | None = None) -> dict:
+    """Кто видит модель cars/<rel_path> (группы пользователей, см. server/user_groups.py):
+    {"restricted", "groups", "all_groups"}; без rel_path — только {"all_groups"}."""
+    suffix = f"?path={quote(rel_path)}" if rel_path else ""
+    return _request(base_url, session_cookie, "GET", "/admin/api/access" + suffix)
+
+
+def set_model_access(base_url: str, session_cookie: str, rel_path: str, restricted: bool, groups) -> None:
+    """«Кто видит»: restricted=False — все; иначе администраторы + группы groups.
+    Путь может ещё не существовать — так новая скрытая модель закрыта ДО загрузки."""
+    _request(base_url, session_cookie, "POST", "/admin/api/access",
+             {"path": rel_path, "restricted": bool(restricted), "groups": [int(g) for g in groups]})
 
 
 def compute_stale_files(local_files, server_files) -> list[str]:

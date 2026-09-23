@@ -3518,27 +3518,44 @@
     const reasonSelect = el("select", { "aria-label": "Причина" }, reasons.map((r) => el("option", { value: r, text: r })));
     reasonSelect.value = forModel && forModel.no_instruction ? "Появился способ установки" : reasons[0];
     const description = el("textarea", { rows: "5", placeholder: "Что случилось? Чем подробнее, тем быстрее разберёмся.", "aria-label": "Описание" });
+    // Ответ на обращение приходит письмом: вошедшему — на почту аккаунта (сервер берёт её из сессии),
+    // остальным — на почту из поля (необязательного; запоминается, см. WebBridge.kt: reportSend).
+    let contact = {};
+    try { contact = Bridge.call("report_info", {}) || {}; } catch (_) { contact = {}; }
+    const accountEmail = contact.account_email || "";
+    const emailInput = el("input", { type: "email", placeholder: "Почта для ответа (необязательно)",
+      "aria-label": "Почта для ответа", autocomplete: "email", maxlength: "254" });
+    emailInput.value = accountEmail ? "" : (contact.saved_email || "");
+    const emailBlock = accountEmail
+      ? el("p", { class: "stage-text report-email-note", text: `Если понадобится ответ, он придёт на почту вашего аккаунта: ${accountEmail}` })
+      : el("div", { class: "report-email-field" }, [emailInput,
+        el("p", { class: "stage-text report-email-note", text: "Без почты мы увидим обращение, но ответить не сможем." })]);
     const status = el("p", { class: "stage-text report-status", role: "status", style: "color: var(--text-dim); min-height: 1.4em; margin: 0" });
     const send = el("button", { class: "accent", text: "Отправить" });
     const cancel = el("button", { text: "Отмена", onclick: () => { reportInFlight = null; overlay.remove(); } });
     const target = forModel ? (forModel.display_label || forModel.name) : "работа приложения";
     send.addEventListener("click", () => {
+      const email = accountEmail ? "" : emailInput.value.trim();
+      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        status.textContent = "Проверьте почту для ответа — похоже, в ней ошибка.";
+        return;
+      }
       send.disabled = true;
       status.textContent = "Отправка…";
-      reportInFlight = { overlay, status, send, cancel };
+      reportInFlight = { overlay, status, send, cancel, replyTo: accountEmail || email };
       try {
         Bridge.call("report_send", {
           brand: forModel ? (forModel.brand || "") : "",
           // как на ПК: «Модель — модификация» (марка идёт отдельным полем, без дубля в display_label)
           model: forModel ? (forModel.modification ? `${forModel.name} — ${forModel.modification}` : (forModel.name || "")) : "",
-          reason: reasonSelect.value, description: description.value.trim(),
+          reason: reasonSelect.value, description: description.value.trim(), email,
         });
       } catch (error) { onReportResult({ result: { ok: false, error: error.message || String(error) } }); }
     });
     overlay = showModal([
       el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px; margin: 0", text: "Сообщить о проблеме" }),
       el("p", { class: "stage-text", style: "color: var(--text-dim); margin: 0", text: `К чему обращение: ${target}` }),
-      reasonSelect, description, status, send, cancel,
+      reasonSelect, description, emailBlock, status, send, cancel,
     ]);
     overlay.querySelector(".modal-box").classList.add("report-modal");
   }
@@ -3549,8 +3566,10 @@
     const r = event.result || {};
     if (r.ok) {
       reportInFlight = null;
-      flight.status.textContent = "Спасибо! Обращение отправлено.";
-      setTimeout(() => flight.overlay.remove(), 1200);
+      flight.status.textContent = flight.replyTo
+        ? `Спасибо! Обращение отправлено. Если понадобится ответ, он придёт на почту ${flight.replyTo}.`
+        : "Спасибо! Обращение отправлено.";
+      setTimeout(() => flight.overlay.remove(), flight.replyTo ? 2600 : 1200);
     } else {
       flight.send.disabled = false;
       flight.status.textContent = r.error || "Не удалось отправить обращение.";

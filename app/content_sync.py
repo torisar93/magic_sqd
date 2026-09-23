@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from .content_config import get_base_url
 
@@ -52,6 +52,27 @@ _LISTING_WORKERS = 16
 _DOWNLOAD_WORKERS = 16
 
 
+# Скрытые (тестовые) модели — группы пользователей, см. server/user_groups.py: вошедший
+# в аккаунт техник присылает cookie сессии со всеми запросами к каталогу, и сервер отдаёт
+# ему каталог с моделями его групп и пускает к их файлам. Ставит AuthApi при входе/выходе
+# (см. app/web/api/auth_api.py); cookie уходит только на сервер аккаунтов (host).
+_auth_cookie: str | None = None
+_auth_host: str | None = None
+
+
+def set_auth_cookie(cookie: str | None, host: str | None = None) -> None:
+    global _auth_cookie, _auth_host
+    _auth_cookie, _auth_host = (cookie, host) if cookie and host else (None, None)
+
+
+def open_url(url: str, timeout: float):
+    """urlopen для запросов к каталогу — с cookie сессии техника, если он вошёл."""
+    request = urllib.request.Request(url)
+    if _auth_cookie and urlparse(url).hostname == _auth_host:
+        request.add_header("Cookie", _auth_cookie)
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 class ContentSyncError(RuntimeError):
     def __init__(self, message: str, code: int | None = None) -> None:
         super().__init__(message)
@@ -64,7 +85,7 @@ def _encode_path(path: str) -> str:
 
 def _get_json(url: str) -> list[dict]:
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with open_url(url, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise ContentSyncError(f"Сервер вернул ошибку {exc.code} для {url}", code=exc.code) from exc
@@ -171,7 +192,7 @@ def fetch_manifest(base_url: str) -> dict[str, dict] | None:
     тогда вызывающий код откатывается на list_files_recursive для конкретно
     нужного ему поддерева, как раньше."""
     try:
-        with urllib.request.urlopen(f"{base_url}/manifest.json", timeout=30) as resp:
+        with open_url(f"{base_url}/manifest.json", timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
         return None
@@ -258,7 +279,7 @@ def download_file(base_url: str, remote_path: str, dest: Path,
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp_dest = dest.with_name(dest.name + ".part")
     try:
-        with urllib.request.urlopen(url, timeout=60) as resp, open(tmp_dest, "wb") as f:
+        with open_url(url, timeout=60) as resp, open(tmp_dest, "wb") as f:
             try:
                 total_bytes = int(resp.headers.get("Content-Length") or 0)
             except ValueError:

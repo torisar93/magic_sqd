@@ -18,9 +18,10 @@ from pathlib import Path
 import webview
 
 from ..events import event_bridge
-from ...admin_client import (AdminClientError, AdminUploadCancelled, clear_cached_session,
-                              cleanup_stale_model_files, delete_cars_path, get_cached_session,
-                              login, set_cached_session, upload_model)
+from ...admin_client import (AdminClientError, AdminEndpointMissing, AdminUploadCancelled,
+                             cleanup_stale_model_files, clear_cached_session, delete_cars_path,
+                             get_cached_session, get_model_access, login, set_cached_session,
+                             set_model_access, upload_model)
 from ...admin_config import get_admin_base_url
 from ...car_generator import (FLASH_BLOCK_ID_RE, FLASH_STEP_TYPES, INVALID_NAME_CHARS, ActionSpec,
                                CarGenerationError, FlashBlockSpec, NewCarSpec, StandardApkSpec, StepSpec,
@@ -179,6 +180,17 @@ def _step_from_dict(data: dict) -> StepSpec:
             for a in (data.get("actions") or [])
         ],
     )
+
+
+def _clean_access(access) -> dict | None:
+    """{"restricted": bool, "groups": [id, ...]} из окна сохранения редактора или None
+    («не менять»). Мусор — тоже None: доступ модели тогда просто не трогаем."""
+    if not isinstance(access, dict) or not isinstance(access.get("restricted"), bool):
+        return None
+    groups = access.get("groups") or []
+    if not isinstance(groups, list) or not all(isinstance(g, int) and not isinstance(g, bool) for g in groups):
+        return None
+    return {"restricted": access["restricted"], "groups": groups if access["restricted"] else []}
 
 
 class CarEditorApi:
@@ -420,6 +432,31 @@ class CarEditorApi:
         submit_config = get_submit_config(self.base_dir)
         return {"mode": "submit" if submit_config else "none", "base_url": None, "session_cached": False}
 
+    def get_access(self, edit_model_key: str | None, admin_mode: bool = False) -> dict:
+        """«Кто видит» для окна сохранения в редакторе (группы пользователей, см.
+        server/user_groups.py): текущий доступ модели на сервере и список групп. Только в
+        режиме администратора с живой сессией админки — иначе {"available": False}, и
+        редактор просто не показывает выбор (доступ модели при сохранении не меняется)."""
+        admin_base_url = get_admin_base_url(self.base_dir) if admin_mode else None
+        cookie = get_cached_session(admin_base_url) if admin_base_url else None
+        if not cookie:
+            return {"ok": True, "available": False}
+        rel_path = None
+        if edit_model_key:
+            model = self._scanner_api.get_model(edit_model_key)
+            if model is None or model.is_pending:
+                return {"ok": True, "available": False}
+            rel_path = model.dir.relative_to(self.cars_dir).as_posix()
+        try:
+            data = get_model_access(admin_base_url, cookie, rel_path)
+        except AdminClientError as exc:
+            if "истекла" in str(exc):
+                clear_cached_session(admin_base_url)
+            return {"ok": True, "available": False, "error": str(exc)}
+        return {"ok": True, "available": True, "path": rel_path,
+                "restricted": bool(data.get("restricted")), "groups": data.get("groups") or [],
+                "all_groups": data.get("all_groups") or []}
+
     def admin_login(self, base_url: str, username: str, password: str) -> dict:
         try:
             cookie = login(base_url, username, password)
@@ -429,7 +466,8 @@ class CarEditorApi:
         return {"ok": True}
 
     # -- сохранение (создание/правка) — фоновый поток, прогресс через events --
-    def save(self, spec_data: dict, edit_model_key: str | None, admin_mode: bool = False) -> dict:
+    def save(self, spec_data: dict, edit_model_key: str | None, admin_mode: bool = False,
+             access: dict | None = None) -> dict:
         if self._thread is not None and self._thread.is_alive():
             return {"ok": False, "error": "Сохранение уже выполняется."}
 
@@ -452,7 +490,9 @@ class CarEditorApi:
         )
 
         self._cancel_flag = threading.Event()
-        self._thread = threading.Thread(target=self._worker, args=(spec, edit_model_dir, is_pending, admin_mode), daemon=True)
+        access = _clean_access(access)
+        self._thread = threading.Thread(target=self._worker, args=(spec, edit_model_dir, is_pending, admin_mode, access),
+                                        daemon=True)
         self._thread.start()
         return {"ok": True}
 
@@ -467,7 +507,8 @@ class CarEditorApi:
     def _log(self, message) -> None:
         event_bridge.push({"kind": "car_save_log", "text": str(message)})
 
-    def _worker(self, spec: NewCarSpec, edit_model_dir, is_pending: bool = False, admin_mode: bool = False) -> None:
+    def _worker(self, spec: NewCarSpec, edit_model_dir, is_pending: bool = False, admin_mode: bool = False,
+                access: dict | None = None) -> None:
         old_rel_path = None  # относительный путь ДО переименования (если оно было) — для удаления на сервере
         try:
             if edit_model_dir:
@@ -563,6 +604,7 @@ class CarEditorApi:
                 # публикация вообще не удалась — не удалено ничего, модель на сервере не
                 # тронута.
                 new_rel = str(model_dir.relative_to(self.cars_dir)).replace("\\", "/")
+                self._apply_access(admin_base_url, admin_session_cookie, new_rel, old_rel_path, access)
                 self._log("Упаковываю в архив...")
                 shared_names = {s.usb_shared_folder for s in spec.steps if s.usb_shared_folder}
                 extra_dirs = [self.cars_dir / "_shared" / name for name in shared_names]
@@ -632,6 +674,25 @@ class CarEditorApi:
                 self._log(f"Не отправлено на проверку (непредвиденная ошибка): {exc}")
 
         event_bridge.push({"kind": "car_save_finished", "success": True, "message": "Готово.", "publish": publish})
+
+    def _apply_access(self, base_url: str, cookie: str, new_rel: str, old_rel_path, access: dict | None) -> None:
+        """«Кто видит» ставится ДО загрузки файлов — скрытая модель ни секунды не лежит на
+        сервере открытой. Без явного выбора в редакторе доступ не меняется, но при
+        переименовании скрытой модели он переезжает на новый путь (старый сервер забудет,
+        когда редактор удалит старую папку). Ошибка — AdminClientError: модель тогда не
+        публикуется вовсе (лучше не опубликовать, чем открыть тестовую модель всем)."""
+        if access is None and old_rel_path is not None:
+            try:
+                current = get_model_access(base_url, cookie, str(old_rel_path).replace("\\", "/"))
+            except AdminEndpointMissing:
+                return  # сервер без групп — скрытых моделей на нём и не бывает
+            if current.get("restricted"):
+                access = {"restricted": True, "groups": current.get("groups") or []}
+        if access is None:
+            return
+        set_model_access(base_url, cookie, new_rel, access["restricted"], access["groups"])
+        self._log("Доступ к модели: " + ("скрыта (видят администраторы и выбранные группы)."
+                                          if access["restricted"] else "видна всем."))
 
     @staticmethod
     def _upload_progress():

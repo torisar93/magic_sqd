@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from content_sync import ContentSyncError, _encode_path, download_file, fetch_manifest
+from content_sync import ContentSyncError, _encode_path, download_file, fetch_manifest, open_url
 
 _META_FETCH_WORKERS = 8
 
@@ -104,7 +104,7 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
                 json_rel, entry = job
                 try:
                     url = f"{base_url}/{_encode_path('apk/' + json_rel)}"
-                    with urllib.request.urlopen(url, timeout=15) as resp:
+                    with open_url(url, timeout=15) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
                     entry["name"] = str(data.get("name") or entry["name"])
                     entry["description"] = str(data.get("description") or "")
