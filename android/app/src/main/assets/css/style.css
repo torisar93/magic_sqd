@@ -1361,6 +1361,11 @@ html, body { background: var(--bg); }
 .update-modal > p { margin: 0; }
 .update-modal .update-title { font-weight: 600; font-size: 17px; }
 .update-modal .update-notes-title { color: var(--text-dim); font-size: 13px; }
+/* Обязательное обновление и предупреждение при запуске (владелец, 2026-09-25) — тёплая плашка, заметнее текста окна. */
+.modal-box.update-modal .update-mandatory, .modal-box .stage-text.welcome-disclaimer {
+  padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(224, 168, 60, 0.45);
+  background: rgba(224, 168, 60, 0.12); color: #f3d58a; font-size: 14px; line-height: 1.5; text-align: left;
+}
 .update-modal .update-notes {
   flex: 1 1 auto; min-height: 72px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 12px; border-radius: 10px;

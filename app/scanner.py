@@ -130,6 +130,12 @@ class ApkInfo:
     # приложение, после установки ему автоматически выдаётся фиктивное
     # местоположение (см. install_context.InstallContext._mock_location_target).
     mock_location: bool = False
+    # Модели «Марка/Модель[/Модификация]», где админ скрыл это приложение (<файл>.json "hidden_models",
+    # владелец 2026-09-25) — мастер их не показывает (см. apps_tabs.js: AppTabs.forModel).
+    hidden_models: list[str] = field(default_factory=list)
+    # «Только одно из группы» (<файл>.json "exclusive_group", владелец 2026-09-25): приложения с одной группой
+    # нельзя выбрать вместе — например, лаунчеры (см. apps_tabs.js: AppTabs.exclusiveGroups). "" — без ограничения.
+    exclusive_group: str = ""
 
 
 def scan_cars(cars_dir: Path) -> dict[str, list[ModelGroup]]:
@@ -380,6 +386,8 @@ def scan_apks(apk_dir: Path, remote_catalog: list[dict] | None = None) -> list[A
             remote_only=True,
             size=entry.get("size", -1),
             mock_location=read_apk_mock_location(apk_path),
+            hidden_models=read_apk_hidden_models(apk_path),
+            exclusive_group=read_apk_exclusive_group(apk_path),
         )
 
     return sorted(apks.values(), key=lambda a: (a.category != "", a.category.lower(), a.name.lower()))
@@ -418,6 +426,33 @@ def read_apk_mock_location(apk_path: Path) -> bool:
     return isinstance(meta, dict) and meta.get("mock_location") is True
 
 
+def read_apk_exclusive_group(apk_path: Path) -> str:
+    """<файл>.json "exclusive_group" (см. ApkInfo.exclusive_group); нет/битый сайдкар — ""."""
+    meta_path = Path(apk_path).with_suffix(".json")
+    if not meta_path.exists():
+        return ""
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+    value = meta.get("exclusive_group") if isinstance(meta, dict) else None
+    return value.strip() if isinstance(value, str) else ""
+
+
+def read_apk_hidden_models(apk_path: Path) -> list[str]:
+    """<файл>.json "hidden_models" (см. ApkInfo.hidden_models) — только строки; битый/отсутствующий сайдкар —
+    пусто, то есть приложение видно везде."""
+    meta_path = Path(apk_path).with_suffix(".json")
+    if not meta_path.exists():
+        return []
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    value = meta.get("hidden_models") if isinstance(meta, dict) else None
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
 def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
     """Все *.apk одной папки (без подпапок). Имя/описание можно задать в
     <файл>.json рядом с APK — те же поля "name"/"description", что и в
@@ -436,7 +471,9 @@ def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
             continue
         name, description = _read_apk_meta(apk_path)
         apks.append(ApkInfo(path=apk_path, name=name, description=description, category=category,
-                            mock_location=read_apk_mock_location(apk_path)))
+                            mock_location=read_apk_mock_location(apk_path),
+                            hidden_models=read_apk_hidden_models(apk_path),
+                            exclusive_group=read_apk_exclusive_group(apk_path)))
     return apks
 
 

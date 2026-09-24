@@ -126,7 +126,7 @@ def test_jdwp_first_method_keeps_the_real_adb_reason(tmp_path):
 
 
 def _runner(tmp_path, finished):
-    return InstallRunner("fake-adb", on_log=lambda line: None, on_finished=lambda ok, msg: finished.append((ok, msg)),
+    return InstallRunner("fake-adb", on_log=lambda line: None, on_finished=lambda ok, msg, **kw: finished.append((ok, msg)),
                          base_dir=tmp_path)
 
 

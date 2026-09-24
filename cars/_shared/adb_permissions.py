@@ -347,6 +347,11 @@ def uninstall_app(ctx, package: str) -> None:
     text = ((result.stdout or "") + (result.stderr or "")).strip()
     if "success" in text.lower() and "failure" not in text.lower():
         ctx.log("Готово.")
+    elif "error: closed" in text.lower():
+        # Geely OneOS/Monji, Jetour T2: pm закрыт прошивкой (логи #797, #962) — владелец (2026-09-25):
+        # пусть удаляют штатно на самой магнитоле.
+        ctx.log("Не удалось удалить: эта магнитола не даёт удалять приложения через программу — "
+                "удалите штатно на самой магнитоле (Настройки → Приложения).")
     else:
         ctx.log(f"Не удалось удалить: {text or 'устройство не ответило'}")
 

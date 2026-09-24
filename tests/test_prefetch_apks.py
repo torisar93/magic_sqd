@@ -93,7 +93,7 @@ def test_runner_skip_sync_never_touches_network(tmp_path):
     done = threading.Event()
     outcome: dict = {}
     logs: list[str] = []
-    runner = InstallRunner("adb", logs.append, lambda ok, msg: (outcome.update(ok=ok, msg=msg), done.set()), base_dir=base)
+    runner = InstallRunner("adb", logs.append, lambda ok, msg, **kw: (outcome.update(ok=ok, msg=msg), done.set()), base_dir=base)
     seen = []
     runner.start(types.SimpleNamespace(dir=base / "cars/Test/Model"), "1.2.3.4:5555",
                  [str(base / "apk/a.apk")], run_fn=lambda ctx: seen.append(ctx.device), skip_sync=True)
@@ -127,7 +127,7 @@ def test_runner_reports_per_apk_download_progress_too(catalog, app_base):
     # Проводная установка: докачка внутри InstallRunner._run, до run(ctx).
     from app.runner import InstallRunner
     progress, finished = [], []
-    runner = InstallRunner("adb", lambda m: None, lambda ok, msg: finished.append(ok), base_dir=app_base,
+    runner = InstallRunner("adb", lambda m: None, lambda ok, msg, **kw: finished.append(ok), base_dir=app_base,
                            on_apk_download_progress=lambda p, d, t: progress.append((p, d, t)))
     model = types.SimpleNamespace(dir=app_base / "cars/Test/Model")
     b = str(app_base / "apk/GPS/b.apk")
@@ -135,4 +135,5 @@ def test_runner_reports_per_apk_download_progress_too(catalog, app_base):
     runner.start(model, "serial", [b], run_fn=lambda ctx: None)
     wait_until(lambda: finished)
 
+    assert finished == [True]
     assert progress and progress[-1] == (b, 5_000, 5_000)

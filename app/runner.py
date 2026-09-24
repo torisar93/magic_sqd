@@ -7,13 +7,20 @@ from .content_sync import ensure_apks_downloaded, sync_model_subfolder
 from .install_context import InstallContext, InstallCancelled, check_device, device_unavailable_message
 
 
+def _installed(ctx) -> list[dict]:
+    """Что поставлено в этом запуске (InstallContext.installed_apps) — копия для события итога."""
+    return [dict(app) for app in getattr(ctx, "installed_apps", None) or []]
+
+
 class InstallRunner:
     def __init__(self, adb_path, on_log, on_finished, base_dir=None, ask_input_fn=None,
                  on_sync_progress=None, on_apk_download_progress=None, on_apk_install_progress=None):
         """
         on_log(str) вызывается из фонового потока при каждой строке лога.
-        on_finished(success: bool, message: str[, partial=True]) вызывается по завершении; partial —
-        этап пройден, но часть приложений пропущена (окно этапа покажет «Установлено не всё»).
+        on_finished(success: bool, message: str[, partial=True][, installed=[...]]) вызывается по
+        завершении; partial — этап пройден, но часть приложений пропущена (окно этапа покажет
+        «Установлено не всё»); installed — что поставлено в этом запуске (ctx.installed_apps, для
+        «Откатить в сток»), передаётся и при ошибке: откатить можно и то, что успело встать.
         Оба callback должны сами позаботиться о потокобезопасности (см. gui.py).
         base_dir, если задан, используется, чтобы перед установкой тихо
         подтянуть СВОИ файлы конкретного этапа (own_dirs у start(), см.
@@ -122,20 +129,20 @@ class InstallRunner:
             )
             run_fn(ctx)
         except InstallCancelled as exc:
-            self.on_finished(False, str(exc))
+            self.on_finished(False, str(exc), installed=_installed(ctx))
             return
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку скрипта
             # Магнитола пропала посреди команд этапа (ctx.shell/ctx.push… с проверкой результата) —
             # понятная фраза, по которой программа покажет окно «что сделать», а не сырая команда adb.
             gone = device_unavailable_message(str(exc), during=bool(ctx and ctx._device_confirmed))
             if gone:
-                self.on_finished(False, gone)
+                self.on_finished(False, gone, installed=_installed(ctx))
                 return
             # Полный traceback раньше шёл в видимый лог целиком — техника не
             # интересует трассировка Python, только понятная причина (см.
             # on_finished ниже); для отладки traceback всё равно попадает в
             # debug_logs/ в debug-сборке (см. main_web.py:_enable_debug_log_all).
-            self.on_finished(False, f"Ошибка установки: {exc}")
+            self.on_finished(False, f"Ошибка установки: {exc}", installed=_installed(ctx))
             return
         finally:
             # (0, 0) скрывает прогресс-бар в логе после успеха, ошибки или
@@ -150,9 +157,10 @@ class InstallRunner:
         failed_apps = getattr(ctx, "failed_apps", None)
         if failed_apps:
             self.on_finished(True, "Установка завершена, но не всё встало — пропущено: "
-                                    + "; ".join(failed_apps) + ". Остальные приложения установлены.", partial=True)
+                                    + "; ".join(failed_apps) + ". Остальные приложения установлены.", partial=True,
+                             installed=_installed(ctx))
         else:
-            self.on_finished(True, "Установка завершена успешно.")
+            self.on_finished(True, "Установка завершена успешно.", installed=_installed(ctx))
 
     def sync_resign_cert(self, model, check_cancelled=None) -> None:
         """Сертификат переподписи модели (files/resign_cert/{private.pk8,

@@ -59,3 +59,15 @@ def test_download_cancel_has_no_java_class_prefix():
     ensure = _function(code, "private fun ensureApksDownloaded(", indent="    ")
     assert "if (progress.isCancelled()) throw IllegalStateException(ApkDownloadProgress.CANCELLED_MESSAGE)" in ensure
     assert 'const val CANCELLED_MESSAGE = "Очередь остановлена пользователем"' in code
+
+
+def test_grant_permissions_does_not_claim_success_without_link():
+    """Разбор логов 2026-09-25 (#721, #910, #966): связь с магнитолой пропала — ни одна команда выдачи не ушла,
+    а в журнале было «Разрешения выданы.» (в #966 — сразу после переустановки Podpratel Pro)."""
+    code = _code(KOTLIN / "usb/AdbPermissions.kt")
+    grant = _function(code, "fun grantAllPermissions(", indent="    ")
+    check = grant.index("if (!AdbSession.isConnected)")
+    assert grant.index('shellText("dumpsys package $pkg"') < check < grant.index("pm grant $pkg $perm")
+    assert grant.count("log(linkLostMessage(pkg))") == 2 and grant.count("lastGrantAt.remove(pkg)") == 2
+    assert grant.index("if (AdbSession.isConnected) {") < grant.index('log("Разрешения выданы.")')
+    assert re.search(r"private fun linkLostMessage\(pkg: String\) =\s+\"Не удалось выдать разрешения \$pkg: связь с магнитолой потеряна", code)

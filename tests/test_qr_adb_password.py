@@ -9,17 +9,15 @@
    ("/Volumes/..." — см. usb_utils_mac.py: DriveInfo.letter). На macOS это
    ломало запись/чтение файлов на флешку целиком — вероятная реальная
    причина части жалоб.
-2) app/qr_adb_password.py:save_debug_copy/get_adb_password(debug_dir=...) —
-   временная мера, пока формула не подтверждена 100%-но надёжной: сохранять
-   исходный bugreport-*.zip ЦЕЛИКОМ, даже если разбор его полей не удался.
+2) Копий bugreport-*.zip больше нет (владелец, 2026-09-24: неверные коды
+   объяснились шрифтом и двумя флагами на флешке у Jolion — «можно полностью
+   убрать логирование»): get_adb_password ничего не сохраняет, QrAdbApi при
+   запуске убирает прежнюю папку qr_adb_debug.
 """
 from __future__ import annotations
-import os
 import sys
 import zipfile
 from pathlib import Path
-
-import pytest
 
 from app import qr_adb_password as qap
 from app import usb_utils
@@ -61,82 +59,32 @@ def test_drive_root_path_uses_mount_path_as_is_elsewhere(monkeypatch):
     assert str(usb_utils.drive_root_path("/media/tech/CARINSTALL")) == "/media/tech/CARINSTALL"
 
 
-# --- save_debug_copy / _trim_debug_dir --------------------------------------
+# --- без копий bugreport-*.zip ---------------------------------------------
 
-def test_save_debug_copy_copies_whole_file_byte_for_byte(tmp_path):
-    zip_path = _make_bugreport_zip(tmp_path / "bugreport-1.zip")
-    debug_dir = tmp_path / "debug"
-
-    dest = qap.save_debug_copy(debug_dir, zip_path)
-
-    assert dest is not None and dest.exists()
-    assert dest.read_bytes() == zip_path.read_bytes()
-    assert dest.name.endswith("_bugreport-1.zip")
-
-
-def test_save_debug_copy_returns_none_on_failure_without_raising(tmp_path):
-    zip_path = _make_bugreport_zip(tmp_path / "bugreport.zip")
-    blocked = tmp_path / "blocked"
-    blocked.write_text("это файл, не папка")  # mkdir(parents=True, exist_ok=True) бросит FileExistsError
-
-    assert qap.save_debug_copy(blocked, zip_path) is None
-
-
-def test_trim_debug_dir_keeps_only_the_newest_files(tmp_path):
-    debug_dir = tmp_path / "debug"
-    debug_dir.mkdir()
-    for i in range(5):
-        path = debug_dir / f"file_{i}.zip"
-        path.write_bytes(b"x")
-        os.utime(path, (i, i))  # разные mtime, независимо от скорости выполнения теста
-
-    qap._trim_debug_dir(debug_dir, keep=3)
-
-    remaining = {p.name for p in debug_dir.glob("*.zip")}
-    assert remaining == {"file_2.zip", "file_3.zip", "file_4.zip"}
-
-
-# --- get_adb_password(debug_dir=...) ----------------------------------------
-
-def test_get_adb_password_saves_debug_copy_on_success(tmp_path):
+def test_get_adb_password_saves_nothing(tmp_path):
     drive = tmp_path / "drive"
-    zip_path = _make_drive(drive, sn="SNXYZ")
-    debug_dir = tmp_path / "debug"
+    _make_drive(drive, sn="SNXYZ")
+    before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
 
-    result = qap.get_adb_password(drive, debug_dir=debug_dir)
+    result = qap.get_adb_password(drive)
 
     assert result["sn"] == "SNXYZ" and result["code"]
-    assert result["debug_copy"] is not None
-    saved = Path(result["debug_copy"])
-    assert saved.exists() and saved.read_bytes() == zip_path.read_bytes()
+    assert set(result) == {"code", "sn", "logs_folder", "zip_name"}
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
 
 
-def test_get_adb_password_saves_debug_copy_even_when_fields_missing(tmp_path):
-    """Именно этот случай важнее всего — если разбор упал, но zip сохранён,
-    можно разобрать причину офлайн, не имея больше доступа к флешке техника."""
-    drive = tmp_path / "drive"
-    logs_folder = drive / "logs_20260921_120000"
-    logs_folder.mkdir(parents=True)
-    zip_path = logs_folder / "bugreport-1.zip"
-    with zipfile.ZipFile(zip_path, "w") as zf:
-        zf.writestr("bugreport-dump.txt", "тут нет ни salt, ни password, ни sn")
-    debug_dir = tmp_path / "debug"
+def test_qr_adb_api_removes_leftover_debug_copies(tmp_path):
+    from app.web.api import qr_adb_api
 
-    with pytest.raises(qap.QrAdbError):
-        qap.get_adb_password(drive, debug_dir=debug_dir)
+    leftover = tmp_path / "qr_adb_debug"
+    leftover.mkdir()
+    (leftover / "20260922_120000_bugreport-1.zip").write_bytes(b"zip")
+    (tmp_path / "keep.txt").write_text("не наше — не трогаем")
 
-    saved = list(debug_dir.glob("*.zip"))
-    assert len(saved) == 1
-    assert saved[0].read_bytes() == zip_path.read_bytes()
+    qr_adb_api.QrAdbApi(tmp_path, tmp_path / "cars")
 
-
-def test_get_adb_password_without_debug_dir_saves_nothing(tmp_path):
-    drive = tmp_path / "drive"
-    _make_drive(drive)
-
-    result = qap.get_adb_password(drive)  # debug_dir не передан вовсе — старое поведение
-
-    assert result["debug_copy"] is None
+    assert not leftover.exists()
+    assert (tmp_path / "keep.txt").exists()
 
 
 # --- сквозной сценарий: тот самый macOS-баг, целиком через QrAdbApi --------
@@ -235,4 +183,4 @@ def test_qr_adb_api_get_password_reaches_real_mount_path_on_macos(tmp_path, monk
 
     assert result["ok"] is True
     assert result["sn"] == "MACSN1"
-    assert result["debug_copy"] is not None  # base_dir/qr_adb_debug — передан автоматически
+    assert "debug_copy" not in result and not (tmp_path / "qr_adb_debug").exists()

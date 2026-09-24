@@ -251,17 +251,36 @@ object AdbPermissions {
      * "Failure [...]"), тот же приём, что и на десктопе. */
     fun uninstallApp(pkg: String, log: (String) -> Unit) {
         log("Удаляю приложение: $pkg")
-        val text = when (val r = AdbSession.shell("pm uninstall $pkg", log)) {
-            is AdbShellResult.Output -> r.text
-            is AdbShellResult.Rejected -> "Команда отклонена устройством: ${r.reason}"
-            is AdbShellResult.Failed -> r.reason
-        }
-        if (text.contains("success", ignoreCase = true) && !text.contains("failure", ignoreCase = true)) {
-            log("Готово.")
-        } else {
-            log("Не удалось удалить: ${text.ifBlank { "устройство не ответило" }}")
+        when (val r = removePackage(pkg, log)) {
+            Removal.Removed -> log("Готово.")
+            Removal.Blocked -> log("Не удалось удалить: $MANUAL_REMOVAL")
+            is Removal.Failed -> log("Не удалось удалить: ${r.reason}")
         }
     }
+
+    /** Итог удаления одного пакета. Blocked — прошивка не даёт удалять через ADB: pm закрыт, поток сразу
+     *  закрывается (Geely OneOS/Monji, Jetour T2 — логи #797, #962); владелец (2026-09-25): пусть удаляют
+     *  штатно на самой магнитоле. */
+    sealed class Removal {
+        object Removed : Removal()
+        object Blocked : Removal()
+        data class Failed(val reason: String) : Removal()
+    }
+
+    const val MANUAL_REMOVAL = "эта магнитола не даёт удалять приложения через программу — " +
+        "удалите штатно на самой магнитоле (Настройки → Приложения)."
+
+    /** pm uninstall без записи в лог итога — общий для кнопки «Удалить приложение» и «Откатить в сток». */
+    fun removePackage(pkg: String, log: (String) -> Unit): Removal =
+        when (val r = AdbSession.shell("pm uninstall $pkg", log)) {
+            is AdbShellResult.Output -> {
+                val text = r.text.trim()
+                if (text.contains("success", ignoreCase = true) && !text.contains("failure", ignoreCase = true)) Removal.Removed
+                else Removal.Failed(text.ifBlank { "устройство не ответило" })
+            }
+            is AdbShellResult.Rejected -> Removal.Blocked
+            is AdbShellResult.Failed -> Removal.Failed(r.reason)
+        }
 
     /** Отключить/включить приложение — то же, что desktop cars/_shared/
      * adb_permissions.py: disable_app/enable_app (до 2026-09-23 на Android
@@ -310,6 +329,9 @@ object AdbPermissions {
         // в общие 5 с AdbSession.shell — вывод обрывается, и список запрошенных
         // разрешений получается неполным.
         val dumpsysOutput = shellText("dumpsys package $pkg", log, 20_000)
+        // Связь пропала ещё до первой команды: раньше ни одна команда не уходила, а в журнале всё равно
+        // было «Разрешения выданы.» (логи #721, #910, #966 — после переустановки Podpratel Pro).
+        if (!AdbSession.isConnected) { lastGrantAt.remove(pkg); log(linkLostMessage(pkg)); return }
         val requested = parseRequestedPermissions(dumpsysOutput).ifEmpty { COMMON_DANGEROUS_PERMISSIONS }
 
         for (perm in requested) {
@@ -333,6 +355,15 @@ object AdbPermissions {
         AdbSession.shell("dumpsys deviceidle whitelist +$pkg", log)
         enableAccessibilityService(pkg, dumpsysOutput, log)
         enableNotificationListener(pkg, dumpsysOutput, log)
-        log("Разрешения выданы.")
+        if (AdbSession.isConnected) {
+            log("Разрешения выданы.")
+        } else {
+            lastGrantAt.remove(pkg)
+            log(linkLostMessage(pkg))
+        }
     }
+
+    private fun linkLostMessage(pkg: String) =
+        "Не удалось выдать разрешения $pkg: связь с магнитолой потеряна. " +
+            "Переподключитесь и выдайте их на этапе «Доп. действия»."
 }

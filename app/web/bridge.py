@@ -59,7 +59,7 @@ class WebApi:
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
         self._usb = UsbApi(base_dir, self._scanner)
-        self._qr_adb = QrAdbApi(base_dir, self.cars_dir, platform=self._install_log_platform())
+        self._qr_adb = QrAdbApi(base_dir, self.cars_dir)
         self._report = ReportApi(base_dir)
         self._install_log = InstallLogApi(base_dir)
         self._admin = AdminApi(base_dir, self.apk_dir)
@@ -219,6 +219,9 @@ class WebApi:
 
     def install_cancel_stage(self) -> dict:
         return self._install.cancel_stage()
+
+    def install_rollback_apps(self, device_serial, stage_index: int, apps: list) -> dict:
+        return self._install.rollback_apps(device_serial, stage_index, apps)
 
     def install_run_action(self, model_key: str, stage_index: int, action_index: int, device_serial,
                             selected_apk_paths: list, prefetched: bool = False) -> dict:

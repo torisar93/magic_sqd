@@ -118,6 +118,13 @@ class AppInstallFailed(RuntimeError):
     должен стоить техникам всей остальной, уже сделанной работы."""
 
 
+class NewerVersionInstalled(RuntimeError):
+    """На магнитоле уже стоит версия новее, чем в сборке (INSTALL_FAILED_VERSION_DOWNGRADE). Раньше это
+    останавливало весь этап, и после перезапуска техник заново ставил всё, что уже встало (лог #968:
+    19 приложений по второму кругу). Владелец (2026-09-25): «если стоит более новая — пропускаем» —
+    install_selected_apks пропускает установку, выдаёт разрешения уже стоящей версии и идёт дальше."""
+
+
 _VERSION_DOWNGRADE_MARKER = "INSTALL_FAILED_VERSION_DOWNGRADE"
 _SIGNATURE_MISMATCH_MARKER = "INSTALL_FAILED_UPDATE_INCOMPATIBLE"
 
@@ -246,6 +253,9 @@ class InstallContext:
         # упомянуло пропуски, а не просто отрапортовало "успешно", раз стадия
         # в целом не упала (см. install_selected_apks/AppInstallFailed).
         self.failed_apps: list[str] = []
+        # Приложения, поставленные в этом запуске ({"package", "name", "path"}): окно итога предлагает
+        # «Откатить в сток» — удалить ровно их (владелец, 2026-09-25). Пропущенные «уже стоит новее» — не наши.
+        self.installed_apps: list[dict] = []
         # Магнитола уже подтверждена на связи в этом запуске (check_device перед этапом — см.
         # runner.py — или require_device ниже): тогда «нет устройства» дальше значит «отключилась».
         self._device_confirmed = device_confirmed
@@ -407,6 +417,13 @@ class InstallContext:
             self._on_apk_progress(str(apk), index, total, "running", "install")
             try:
                 self.install_apk_auto(apk, extra_args=extra_args)
+            except NewerVersionInstalled:
+                # Приложение на магнитоле уже есть (версия новее) — не стоп, а пропуск; разрешения
+                # выдаём уже стоящей версии, как после установки (владелец, 2026-09-25).
+                self.log(f"«{apk.name}»: на магнитоле уже стоит версия новее — установку пропускаю.")
+                self._on_apk_progress(str(apk), index + 1, total, "done", None)
+                self._after_app_installed(apk, apk == mock_target, installed_now=False)
+                continue
             except AppInstallFailed as exc:
                 # Способ установки уже подтверждён рабочим на этой магнитоле —
                 # сбой именно этого apk не должен стоить техникам остальных,
@@ -441,7 +458,7 @@ class InstallContext:
             return None
         return flagged[0] if flagged else None
 
-    def _after_app_installed(self, apk: Path, give_mock_location: bool) -> None:
+    def _after_app_installed(self, apk: Path, give_mock_location: bool, installed_now: bool = True) -> None:
         """После КАЖДОГО успешно установленного приложения (любым способом
         и по любому подключению — сюда приходят все семь способов через
         install_apk_auto) выдаёт ему все разрешения, а помеченному GPS-
@@ -453,6 +470,8 @@ class InstallContext:
         if not package:
             self.log(f"Не удалось определить имя пакета «{apk.name}» — разрешения автоматически не выданы.")
             return
+        if installed_now and all(app["package"] != package for app in self.installed_apps):
+            self.installed_apps.append({"package": package, "name": apk.name, "path": str(apk)})
         self._grant_all_permissions_if_available(package)
         if give_mock_location:
             self._set_mock_location_if_available(package)
@@ -490,8 +509,10 @@ class InstallContext:
         if self._install_method is not None:
             try:
                 self._install_with_method(self._install_method, path, extra_args)
+            except SignatureMismatchError as exc:
+                raise InstallCancelled(self._signature_mismatch_message(path, exc))
             except VersionDowngradeError as exc:
-                raise InstallCancelled(self._rejection_message(path, exc))
+                raise NewerVersionInstalled(Path(path).name) from exc
             except AdbError as exc:
                 label = _INSTALL_METHOD_LABELS[self._install_method]
                 self.log(f"  ↳ не сработало ({label}): {_short_reason(exc)}")
@@ -508,15 +529,14 @@ class InstallContext:
         for method in order:
             try:
                 self._install_with_method(method, path, extra_args)
+            except SignatureMismatchError as exc:
+                # Причина отказа не в способе установки, а в самом APK — дальше по
+                # списку способов пробовать бессмысленно (см. VersionDowngradeError).
+                raise InstallCancelled(self._signature_mismatch_message(path, exc))
             except VersionDowngradeError as exc:
-                # Причина отказа не в способе установки, а в самой версии APK
-                # — дальше по списку способов пробовать бессмысленно, они
-                # либо не поддерживаются этой платформой вовсе (см. остальные
-                # ошибки в этом же переборе), либо упрутся в тот же самый
-                # INSTALL_FAILED_VERSION_DOWNGRADE. Понятное сообщение вместо
-                # длинного списка из N разных "не сработало" (см.
-                # VersionDowngradeError).
-                raise InstallCancelled(self._rejection_message(path, exc))
+                # Та же причина — не способ, а версия; приложение уже стоит (новее) —
+                # не стоп, а пропуск (см. NewerVersionInstalled).
+                raise NewerVersionInstalled(Path(path).name) from exc
             except AdbError as exc:
                 errors.append(f"{_INSTALL_METHOD_LABELS[method]}: {exc}")
                 # Причину отказа каждого способа — сразу в лог: итоговое сообщение
@@ -540,25 +560,15 @@ class InstallContext:
             "(adb install / pm install / pm install -S / localinstall.apk):\n" + "\n".join(errors)
         )
 
-    @classmethod
-    def _rejection_message(cls, path, exc) -> str:
-        if isinstance(exc, SignatureMismatchError):
-            match = re.search(r"Package (\S+) signatures", str(exc))
-            what = f"приложение {match.group(1)}" if match else "приложение с тем же именем пакета"
-            return (
-                f"«{Path(path).name}» не установилось: на магнитоле уже стоит {what}, подписанное другим "
-                "ключом (другая сборка или другое приложение с тем же пакетом) — поверх обновить нельзя. "
-                "Удалите его на магнитоле вручную (Настройки → Приложения) и запустите установку заново "
-                "или не выбирайте такие приложения вместе."
-            )
-        return cls._version_downgrade_message(path)
-
     @staticmethod
-    def _version_downgrade_message(path) -> str:
+    def _signature_mismatch_message(path, exc) -> str:
+        match = re.search(r"Package (\S+) signatures", str(exc))
+        what = f"приложение {match.group(1)}" if match else "приложение с тем же именем пакета"
         return (
-            f"На магнитоле уже установлена версия «{Path(path).name}» новее (или такая же), чем в этой "
-            "сборке — Android не позволяет тихо откатить версию назад. Удалите текущую версию приложения "
-            "на магнитоле вручную (через её диспетчер приложений) и запустите установку заново."
+            f"«{Path(path).name}» не установилось: на магнитоле уже стоит {what}, подписанное другим "
+            "ключом (другая сборка или другое приложение с тем же пакетом) — поверх обновить нельзя. "
+            "Удалите его на магнитоле вручную (Настройки → Приложения) и запустите установку заново "
+            "или не выбирайте такие приложения вместе."
         )
 
     def _maybe_resign(self, path) -> Path:

@@ -129,4 +129,14 @@ module.exports = async function () {
   const startCall = pywebviewCalls.find((c) => c[0] === "usb_start");
   assert(listCall[1][4] === 3, "номер блока в usb_list_items: " + JSON.stringify(listCall[1]));
   assert(startCall[1][7] === 3 && startCall[1][4] === "E:", "номер блока и флешка в usb_start: " + JSON.stringify(startCall[1]));
+  eventHandlers.usb_finished({ success: true, message: "Готово" });
+
+  // 5) Итог уходит в onFinished вместе с причиной — для строки в журнале сессии (разбор логов 2026-09-25, №804/№913).
+  const finished = [];
+  await startWriting({ modelKey: "Test/Model", stageIndex: 0, variant: null, selectedApkPaths: [],
+    onFinished: (...args) => { finished.push(args); } });
+  await eventHandlers.usb_finished({ success: false, message: "Флешка E: не найдена." });
+  assert(finished.length === 1 && finished[0][0] === false, "onFinished вызван с неудачей: " + JSON.stringify(finished));
+  assert(finished[0][1].message === "Флешка E: не найдена." && finished[0][1].cancelled === false,
+    "причина и признак отмены переданы: " + JSON.stringify(finished[0][1]));
 };

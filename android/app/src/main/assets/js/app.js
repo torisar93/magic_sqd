@@ -1018,7 +1018,7 @@
   }
 
   function onApkLibraryResult(event) {
-    apkLibrary = event.apks || [];
+    apkLibrary = window.AppTabs.forModel(event.apks || [], model);  // без скрытых админом на этой модели
     apkLibraryLoaded = true;
     if (appPickerSession) { appPickerSession.render(); return; }
     if (!labInstallBusy && inlineAppsSession?.page.isConnected) { inlineAppsSession.render(); return; }
@@ -1323,6 +1323,45 @@
   }
 
   let labInstallBusy=false;
+  // «Откатить в сток» (владелец, 2026-09-25): очередь последней установки (названия) и само окно отката.
+  let lastAppsRunItems = [];
+  let rollbackState = null;
+
+  // Этап поставил приложения (adb_stage_result.installed) — в итоге плашка «не отключайте телефон» и кнопка
+  // «Откатить в сток» (stage_run.js: attachRollback). Названия — как в очереди окна установки.
+  function rollbackFor(index, installed) {
+    if (!Array.isArray(installed) || !installed.length) return null;
+    const names = new Map(lastAppsRunItems.map((item) => [item.path, item.name]));
+    const apps = installed.map((app) => ({ ...app, name: names.get(app.path) || app.name }));
+    return { apps, device: "телефон", onRollback: (list) => startRollback(index, list) };
+  }
+
+  function startRollback(index, apps) {
+    activeRun = null; afterRunClose = null; activeRunTag = null;  // итог этапа закрывается без перехода дальше
+    labInstallBusy = true;
+    const state = { apps, retryApps: apps };
+    state.run = window.StageRun.openRollback(apps, {
+      stageIndex: index,
+      retry: () => startRollback(index, state.retryApps),
+      onClose: () => { if (rollbackState === state) rollbackState = null; labInstallBusy = false; render(); },
+    });
+    rollbackState = state;
+    try { Bridge.call("apps_rollback", { index, apps }); }
+    catch (error) { finishRollback({ failed: apps.map((app) => app.package), error: error.message || String(error) }); }
+  }
+
+  function finishRollback(event) {
+    const state = rollbackState;
+    if (!state || state.run.finished) return;
+    labInstallBusy = false;
+    state.retryApps = state.apps.filter((app) => (event.failed || []).includes(app.package));
+    const outcome = window.StageRun.rollbackOutcome(event, state.apps);
+    const error = event.error || (event.busy ? "Уже выполняется другая операция — дождитесь её завершения." : "");
+    if (error) outcome.message = `${error} ${outcome.message}`;
+    log(outcome.message);
+    state.run.finish(outcome);
+  }
+
   function onAdbStageResult(event) {
     // Связь с магнитолой умерла (WebBridge.kt: запись в неё не прошла) — «не подключено», чтобы следующий
     // запуск сразу показал «Магнитола не подключена», а не пробовал писать в мёртвое соединение (лог #788).
@@ -1384,6 +1423,7 @@
       message: r.success
         ? (r.partial && r.message ? r.message : finishedStage?.type === "apps" ? "Все выбранные приложения установлены." : "")
         : (r.reason || ""),
+      rollback: rollbackFor(event.index, r.installed),
     }, afterClose, "stage");
   }
 
@@ -2117,6 +2157,9 @@
       }
     }
 
+    // «Только одно из группы» (apps_tabs.js): отметили второе из группы — первое снимается само; строки
+    // остаются в page и после раскладки по вкладкам.
+    window.AppTabs.exclusiveGroups(page, apkLibrary, (path) => selectedApks.has(path));
     return lists;
   }
 
@@ -2330,9 +2373,10 @@
       labInstallBusy=true;
       appInstallOperation={index:stage.index,cancelRequested:false};
       renderNav();
+      lastAppsRunItems = selection.entries.map(apk=>({name:apk.name||basename(apk.path),path:apk.path}));
       openStageRun({
         title: 'Установка приложений', stageIndex: stage.index, tag: 'stage',
-        items: selection.entries.map(apk=>({name:apk.name||basename(apk.path),path:apk.path})),
+        items: lastAppsRunItems,
         cancellable: true,
         onCancel: () => {
           if (!appInstallOperation || appInstallOperation.cancelRequested) return;
@@ -3092,26 +3136,35 @@
     const update = event.result;
     if (!update || !update.available) { maybeShowWelcomeModal(); return; }
     document.querySelector(".welcome-overlay")?.remove();
+    // Обязательный релиз (mobile_bridge.check_update: mandatory, владелец 2026-09-25) — окно нельзя закрыть
+    // или отложить: без «Позже», тап мимо и «Назад» его не закрывают, после «Скачать APK» оно остаётся.
+    const mandatory = !!update.mandatory;
     let overlay;
     overlay = showModal([
       el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
-      el("p", { class: "stage-text update-title", text: `Доступна новая версия: ${update.version}` }),
+      el("p", { class: "stage-text update-title",
+        text: mandatory ? `Обязательное обновление: ${update.version}` : `Доступна новая версия: ${update.version}` }),
+      mandatory ? el("p", { class: "stage-text update-mandatory",
+        text: "Без него дальше работать нельзя. Скачайте и установите новую версию, чтобы продолжить." }) : null,
       el("p", { class: "stage-text update-notes-title", text: "Что нового:" }),
       // Длинный список изменений прокручивается внутри окна, кнопки внизу всегда на экране.
       el("div", { class: "update-notes", tabindex: "0" }, [update.changelog || "—"]),
       el("a", {
         class: "accent", href: update.download_url, target: "_blank",
         text: "Скачать APK",
-        onclick: () => overlay.remove(),
+        onclick: () => { if (!mandatory) overlay.remove(); },
       }),
-      el("button", { text: "Позже", onclick: () => overlay.remove() }),
-    ]);
+      mandatory ? null : el("button", { text: "Позже", onclick: () => overlay.remove() }),
+    ].filter(Boolean), { dismissible: !mandatory });
     overlay.querySelector(".modal-box").classList.add("update-modal");
   }
 
-  function showModal(boxChildren) {
-    const overlay = el("div", { class: "modal-overlay dismissible" });
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  // dismissible: false — окно закрывается только своей кнопкой (тап мимо и «Назад» не закрывают, см.
+  // closeDismissibleModal): обязательное обновление, предупреждение при запуске.
+  function showModal(boxChildren, options = {}) {
+    const dismissible = options.dismissible !== false;
+    const overlay = el("div", { class: dismissible ? "modal-overlay dismissible" : "modal-overlay" });
+    if (dismissible) overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
     overlay.appendChild(el("div", { class: "modal-box info-modal" }, boxChildren));
     document.body.appendChild(overlay);
     return overlay;
@@ -3156,23 +3209,43 @@
 
   const WELCOME_SHOWN_KEY = "magicsqd_welcome_shown_at";
 
+  // «Понятно» — только после отсчёта 3, 2, 1: сначала прочитать предупреждение (владелец, 2026-09-25).
+  // Та же функция в app/web/frontend/js/components/boosty.js (tests/js/welcome_countdown.test.js).
+  function countdownButton(button, label, seconds) {
+    let left = seconds;
+    button.disabled = true;
+    button.textContent = String(left);
+    const timer = setInterval(() => {
+      left -= 1;
+      if (left > 0) { button.textContent = String(left); return; }
+      clearInterval(timer);
+      button.disabled = false;
+      button.textContent = label;
+      if (typeof button.focus === "function") button.focus();
+    }, 1000);
+    return () => clearInterval(timer);
+  }
+
   function maybeShowWelcomeModal() {
     const last = Number(localStorage.getItem(WELCOME_SHOWN_KEY) || 0);
     if (Date.now() - last < 60 * 60 * 1000) return; // раз в час, не при каждом запуске
     localStorage.setItem(WELCOME_SHOWN_KEY, String(Date.now()));
     let overlay;
+    const okButton = el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() });
     overlay = showModal([
       el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
       el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px", text: "Добро пожаловать!" }),
+      el("p", { class: "stage-text welcome-disclaimer", text: "Программа предназначена для людей с техническими знаниями о работе Android-магнитол. Все действия вы выполняете на свой страх и риск." }),
       el("p", {
         class: "stage-text", style: "color: var(--text-dim)",
         text: "Мобильная версия Magic SQD пока в стадии тестирования — что-то может работать нестабильно. " +
           "Если найдёшь баг — дай знать нам.",
       }),
       boostyLinksRow(),
-      el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
-    ]);
+      okButton,
+    ], { dismissible: false });
     overlay.classList.add("welcome-overlay");
+    countdownButton(okButton, "Понятно", 3);
   }
 
   // Значок "?" в шапке (только на списке марок) — что за приложение,
@@ -3765,6 +3838,7 @@
     window.events.on("adb_log", onAdbLog);
     window.events.on("adb_ask_input", onAdbAskInput);
     window.events.on("adb_stage_result", onAdbStageResult);
+    window.events.on("apps_rollback_result", finishRollback);
     window.events.on("usb_connect_result", onUsbConnectResult);
     window.events.on("usb_format_result", onUsbFormatResult);
     window.events.on("qr_adb_prep_write_result", onQrAdbPrepWriteResult);

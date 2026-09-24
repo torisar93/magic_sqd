@@ -89,6 +89,16 @@ MAC_BUNDLE_ID = "ru.magicsqd.desktop"  # см. CFBundleIdentifier в magic_sqd_m
 MAC_EXE_NAME = "magic_sqd"
 REQUEST_TIMEOUT_SECONDS = 8
 DOWNLOAD_TIMEOUT_SECONDS = 60
+# Обязательный релиз (владелец, 2026-09-25): отдельная строка «Обязательное обновление» в описании релиза
+# (сообщение тега → тело GitHub-релиза → changelog в version.json зеркала). Действует на все версии НИЖЕ
+# помеченной, даже если потом вышли обычные: зеркало несёт "min_version" — самый новый помеченный релиз
+# (считает scripts/mirror_release.sh), на GitHub смотрим описания всех релизов новее своей версии.
+# Окно такого обновления нельзя закрыть или отложить (dialogs.js: update, Android app.js).
+_MANDATORY_RE = re.compile(r"^\s*обязательное обновление\s*[.!]?\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def is_mandatory_changelog(text) -> bool:
+    return bool(_MANDATORY_RE.search(str(text or "")))
 
 
 def _parse_version(tag: str) -> tuple[int, ...]:
@@ -228,7 +238,9 @@ class UpdateApi:
 
         if not results:
             return {"available": False}
-        best = max(results, key=lambda r: _parse_version(r["version"]))
+        best = dict(max(results, key=lambda r: _parse_version(r["version"])))
+        # Обязательность — про НАШУ версию (ниже помеченного релиза), а не про самый новый: достаточно одного источника.
+        best["mandatory"] = any(r.get("mandatory") for r in results)
         return best
 
     def _own_server_asset_key(self) -> str:
@@ -266,12 +278,16 @@ class UpdateApi:
         version = str(data.get("version") or "")
         if not version or _parse_version(version) <= _parse_version(APP_VERSION):
             return None
+        min_version = str(data.get("min_version") or "").strip()
+        mandatory = (bool(min_version) and _parse_version(APP_VERSION) < _parse_version(min_version)) \
+            or is_mandatory_changelog(data.get("changelog"))
         return {
             "available": True,
             "version": version,
             "changelog": str(data.get("changelog") or "").strip(),
             "download_url": f"{url}/{asset_name}",
             "asset_name": asset_name,
+            "mandatory": mandatory,
         }
 
     def _check_github(self) -> dict | None:
@@ -295,12 +311,17 @@ class UpdateApi:
         asset = next((a for a in latest.get("assets", []) if self._asset_re.match(a.get("name") or "")), None)
         if not asset:
             return None
+        mandatory = any(
+            isinstance(release, dict) and is_mandatory_changelog(release.get("body"))
+            and _parse_version(str(release.get("tag_name") or "")) > _parse_version(APP_VERSION)
+            for release in releases)
         return {
             "available": True,
             "version": version,
             "changelog": str(latest.get("body") or "").strip(),
             "download_url": asset["browser_download_url"],
             "asset_name": asset["name"],
+            "mandatory": mandatory,
         }
 
     # -- установка -----------------------------------------------------------

@@ -20,6 +20,9 @@ sealed class StageRunResult {
     data class Partial(val message: String) : StageRunResult()
 }
 
+/** Приложение, поставленное в этом запуске этапа — для «Откатить в сток» в окне итога (владелец, 2026-09-25). */
+data class InstalledApp(val packageName: String, val name: String, val path: String)
+
 /**
  * Мост для команды "#ask" (см. wizard_spec.py:parse_adb_line) — исполнение
  * команд идёт на фоновом потоке (см. InstallEngine.runAdbCommands) и должно
@@ -225,7 +228,8 @@ class InstallEngine(
 
     /** Отказ, причина которого не в СПОСОБЕ установки, а в самом APK: перебор остальных
      *  способов бесполезен (на Monji/Geely OneOS они и так закрываются) — сразу понятное
-     *  сообщение технику вместо сырого «Failure status=5 …». null — обычный отказ. */
+     *  сообщение технику вместо сырого «Failure status=5 …». null — обычный отказ.
+     *  «Версия новее уже стоит» сюда не входит — это пропуск (см. newerVersionInstalled). */
     private fun definitiveRejection(apkName: String, reason: String): String? {
         val upper = reason.uppercase()
         return when {
@@ -237,13 +241,19 @@ class InstallEngine(
                     "Удалите его на магнитоле вручную (Настройки → Приложения) и запустите установку заново " +
                     "или не выбирайте такие приложения вместе."
             }
-            "INSTALL_FAILED_VERSION_DOWNGRADE" in upper ->
-                "На магнитоле уже установлена версия «$apkName» новее (или такая же), чем в этой сборке — " +
-                    "Android не позволяет тихо откатить версию назад. Удалите текущую версию приложения " +
-                    "на магнитоле вручную (через её диспетчер приложений) и запустите установку заново."
             else -> null
         }
     }
+
+    /** На магнитоле уже стоит версия новее. Раньше это останавливало всю очередь, и после перезапуска
+     *  техник заново ставил всё, что уже встало (лог #968: 19 приложений по второму кругу). Владелец
+     *  (2026-09-25): «если стоит более новая — пропускаем» — приложение уже есть, идём дальше. */
+    private fun newerVersionInstalled(reason: String): Boolean =
+        "INSTALL_FAILED_VERSION_DOWNGRADE" in reason.uppercase()
+
+    /** Что поставлено в последнем запуске installApksWithProgress (пропущенные «уже стоит новее» — не наши). */
+    @Volatile var lastInstalled: List<InstalledApp> = emptyList()
+        private set
 
     /** Выбраны разные файлы с ОДНИМ именем пакета (например GLauncher.Link и 3screen — оба
      *  com.maxinf.car): они заменяют друг друга, второй не встанет из-за другой подписи, и
@@ -328,6 +338,8 @@ class InstallEngine(
         cancelled: () -> Boolean = { false }, onProgress: (String, Int, Int, String) -> Unit = { _, _, _, _ -> },
         onDetail: (String, Int, Int, ApkOperationProgress) -> Unit = { _, _, _, _ -> },
         mockLocationPath: String? = null): StageRunResult {
+        val installed = mutableListOf<InstalledApp>()
+        lastInstalled = installed
         duplicatePackageConflict(apkPaths)?.let { return StageRunResult.Failed(it) }
         var confirmedMethod: Int? = null
         // Приложения, которые не встали уже ПОСЛЕ того, как способ подтвердился на этой магнитоле, — пропущены,
@@ -471,7 +483,7 @@ class InstallEngine(
             // местоположение. Имя пакета — из самого APK, а не из вывода способа
             // установки (у большинства способов имени нет). Сбой выдачи не должен
             // срывать установку — приложение уже стоит.
-            fun afterInstall() {
+            fun afterInstall(installedNow: Boolean = true) {
                 val pkg = try {
                     context.packageManager.getPackageArchiveInfo(signedFile.path, 0)?.packageName
                 } catch (e: Exception) { null }
@@ -479,6 +491,7 @@ class InstallEngine(
                     log("Не удалось определить имя пакета ${file.name} — разрешения автоматически не выданы.")
                     return
                 }
+                if (installedNow && installed.none { it.packageName == pkg }) installed.add(InstalledApp(pkg, file.name, path))
                 if (!AdbPermissions.grantedSince(pkg, startedAt)) {
                     try {
                         AdbPermissions.grantAllPermissions(pkg, log)
@@ -495,12 +508,20 @@ class InstallEngine(
                 }
             }
 
+            // Версия новее уже стоит — установку пропускаем, разрешения выдаём уже стоящей версии.
+            fun keepNewer() {
+                log("«${file.name}»: на магнитоле уже стоит версия новее — установку пропускаю.")
+                afterInstall(installedNow = false)
+                onProgress(path, index + 1, apkPaths.size, "done")
+            }
+
             if (confirmedMethod != null) {
                 val (label, install) = INSTALL_METHODS[confirmedMethod]
                 when (val r = perform(install, apk, { stagedPath() })) {
                     is AdbInstallResult.Failed -> {
                         dropStaged()
-                        // Отказ из-за самого APK (другая подпись, версия новее) — стоп, как на ПК (VersionDowngradeError).
+                        if (newerVersionInstalled(r.reason)) { keepNewer(); continue }
+                        // Отказ из-за самого APK (другая подпись) — стоп, как на ПК (SignatureMismatchError).
                         definitiveRejection(file.name, r.reason)?.let { return failed(it) }
                         // Способ на этой магнитоле уже сработал — не встало только это приложение: пропускаем и ставим
                         // остальные, как ПК (install_context.py: AppInstallFailed). Раньше вся очередь останавливалась
@@ -522,7 +543,8 @@ class InstallEngine(
             }
 
             val errors = mutableListOf<String>()
-            var installed = false
+            var done = false
+            var keptNewer = false
             for (methodIndex in order) {
                 val (label, install) = INSTALL_METHODS[methodIndex]
                 when (val r = perform(install, apk, { stagedPath() })) {
@@ -530,6 +552,8 @@ class InstallEngine(
                         errors.add("$label: ${r.reason}")
                         // Причина каждого отказа сразу в лог — итоговая ошибка идёт только в окно этапа.
                         log("  ↳ не сработало ($label): ${r.reason.split(Regex("\\s+")).joinToString(" ").take(300)}")
+                        // До PackageManager способ дошёл, отказ — из-за версии: остальные способы упрутся в то же.
+                        if (newerVersionInstalled(r.reason)) { keptNewer = true; break }
                         definitiveRejection(file.name, r.reason)?.let { dropStaged(); return failed(it) }
                     }
                     is AdbInstallResult.Success -> {
@@ -542,15 +566,16 @@ class InstallEngine(
                             log("Запомнил: для магнитолы $deviceModel работает способ «$label» — в следующий раз начну с него.")
                         }
                         log("Установлено: ${file.name}")
-                        installed = true
+                        done = true
                         afterInstall()
                         onProgress(path, index + 1, apkPaths.size, "done")
                     }
                 }
-                if (installed) break
+                if (done) break
             }
             dropStaged()
-            if (!installed) {
+            if (keptNewer) { keepNewer(); continue }
+            if (!done) {
                 return failed(
                     "Не удалось установить ${file.name} ни одним из способов:\n" + errors.joinToString("\n")
                 )

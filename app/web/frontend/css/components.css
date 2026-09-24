@@ -1592,6 +1592,16 @@ dialog.dialog-info p {
   margin: 0 0 4px;
 }
 
+/* Предупреждение в окне при запуске (владелец, 2026-09-25) — заметнее обычного текста окна. */
+dialog.dialog-info p.welcome-disclaimer {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  color: var(--warn-text);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+}
+
 .boosty-links {
   display: flex;
   flex-direction: column;

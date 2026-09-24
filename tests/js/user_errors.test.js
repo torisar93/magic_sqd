@@ -23,6 +23,8 @@ const CASES = [
   ["Не удалось подключиться по TCP к 192.168.43.1:5555: ConnectException: failed to connect to /192.168.43.1 (port 5555) from /192.168.43.20 (port 41234) after 5000ms: isConnected failed: EHOSTUNREACH (No route to host)", "wifi_unreachable"],
   ["Ошибка установки: Не удалось подключиться по telnet к [fe80::1:2:3%en0]:23: [Errno 61] Connection refused", "wifi_unreachable"],
   ["Ошибка установки: Не удалось подключиться к 192.168.1.1:5555", "wifi_unreachable"],
+  // Android: VPN не дал привязать соединение к Wi-Fi магнитолы (логи #880, #887)
+  ["Не удалось подключиться по TCP к 192.168.196.29:5555: SocketException: Binding socket to network 193 failed: EPERM (Operation not permitted)", "wifi_vpn_blocked"],
   // Флешка (логи #781, #783, #749, #750, #767, #671, #289, #105)
   ["Флешка не найдена (нет USB mass storage устройств) — проверь OTG-подключение.", "flash_not_found"],
   ["Флешка не подключена — сначала подключись к ней", "flash_not_found"],

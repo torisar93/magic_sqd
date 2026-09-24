@@ -18,6 +18,7 @@ import ru.magicsqd.mobile.usb.ApkOperationProgress
 import ru.magicsqd.mobile.usb.AdbShellResult
 import ru.magicsqd.mobile.usb.AskInputBroker
 import ru.magicsqd.mobile.usb.InstallEngine
+import ru.magicsqd.mobile.usb.InstalledApp
 import ru.magicsqd.mobile.usb.MdnsResolve
 import ru.magicsqd.mobile.usb.NetworkScan
 import ru.magicsqd.mobile.usb.StageRunResult
@@ -129,6 +130,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         authSyncMyCars()
         startHeartbeat()
         startInstallLogRecovery()
+        // До 1.0.41 при каждом «Получить пароль» сюда падала копия bugreport-zip (разбор жалоб «пароль
+        // неверный»); сбор выключен — прежние копии убираем.
+        Thread { File(context.filesDir, "qr_adb_debug").deleteRecursively() }.start()
     }
 
     /** Пульс раз в PING_INTERVAL_MS, пока процесс жив: client_id, версия, platform=android. Раньше Android
@@ -289,6 +293,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "actions_mock_location" -> { actionsMockLocation(args.getString("pkg")); "{}" }
                 "actions_launch_activity" -> { actionsLaunchActivity(args.getString("pkg")); "{}" }
                 "actions_uninstall_app" -> { actionsUninstallApp(args.getString("pkg")); "{}" }
+                "apps_rollback" -> { appsRollback(args); "{}" }
                 "actions_disable_app" -> { actionsDisableApp(args.getString("pkg")); "{}" }
                 "actions_enable_app" -> { actionsEnableApp(args.getString("pkg")); "{}" }
                 "pick_personal_apks" -> { pickPersonalApks(); "{}" }
@@ -1080,6 +1085,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         labCancelInstall = false
         AdbEchoStats.reset()
         runExclusive({ pushStageResult(stageIndex, StageRunResult.Failed("Другая операция ещё выполняется")) }) {
+            // Что поставлено в этом запуске — в итог этапа для «Откатить в сток» (и при ошибке посреди очереди).
+            val engine = installEngine()
             val result = try {
                 if (!AdbSession.isConnected) {
                     StageRunResult.Failed("ADB не подключён — сначала подключись к устройству")
@@ -1087,7 +1094,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     if (!skipDownload) ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
                         pushApkProgress(stageIndex, path, 0, paths.size, "running", ApkOperationProgress("download", done, total))
                     }, { labCancelInstall }))
-                    installEngine().installApksWithProgress(paths, preferredMethod, modelDir, { labCancelInstall },
+                    engine.installApksWithProgress(paths, preferredMethod, modelDir, { labCancelInstall },
                         onProgress = { path, completed, total, state ->
                             pushApkProgress(stageIndex, path, completed, total, state)
                         },
@@ -1103,7 +1110,64 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             // десятков нечитаемых («Пропускаю чужое сообщение…», лог #374).
             val echoes = AdbEchoStats.take()
             if (echoes > 0) pushAdbLog("Магнитола $echoes раз подтвердила закрытие служебных каналов ADB (CLSE) — это штатно, не ошибка.")
-            pushStageResult(stageIndex, result)
+            pushStageResult(stageIndex, result, engine.lastInstalled)
+        }
+    }
+
+    /** «Откатить в сток» (владелец, 2026-09-25): удалить с магнитолы то, что поставил последний запуск этапа
+     *  «Приложения» (args.apps — из его итога, {package, name, path}), в обратном порядке. Ход — теми же
+     *  apk_progress с фазой remove (кольцо и очередь окна), итог — событие apps_rollback_result со списками
+     *  имён пакетов removed/manual/failed (как desktop app/rollback.py). */
+    private fun appsRollback(args: JSONObject) {
+        val stageIndex = args.optInt("index", -1)
+        val arr = args.optJSONArray("apps") ?: JSONArray()
+        val apps = (0 until arr.length()).map { arr.getJSONObject(it) }.reversed()
+        // Занято другой операцией — окно отката не должно висеть без итога: сразу «не удалось, повторите».
+        val busy = {
+            onBusy()
+            pushEvent(JSONObject().put("kind", "apps_rollback_result").put("index", stageIndex).put("busy", true)
+                .put("removed", JSONArray()).put("manual", JSONArray())
+                .put("failed", JSONArray(apps.map { it.optString("package") })).put("not_connected", false))
+        }
+        runExclusive(busy) {
+            val removed = JSONArray()
+            val manual = JSONArray()
+            val failed = JSONArray()
+            if (!AdbSession.isConnected) {
+                pushAdbLog("ADB не подключён — откат не выполнен.")
+                apps.forEach { failed.put(it.optString("package")) }
+                pushEvent(JSONObject().put("kind", "apps_rollback_result").put("index", stageIndex)
+                    .put("removed", removed).put("manual", manual).put("failed", failed).put("not_connected", true))
+                return@runExclusive
+            }
+            pushAdbLog("Откат в сток: удаляю приложения, поставленные сейчас (${apps.size}).")
+            for ((i, app) in apps.withIndex()) {
+                val pkg = app.optString("package")
+                val name = app.optString("name").ifEmpty { pkg }
+                val path = app.optString("path")
+                pushApkProgress(stageIndex, path, i, apps.size, "running", ApkOperationProgress("remove"))
+                pushAdbLog("Удаляю приложение: $pkg")
+                when (val r = AdbPermissions.removePackage(pkg, ::pushAdbLog)) {
+                    AdbPermissions.Removal.Removed -> {
+                        pushAdbLog("Удалено: $name")
+                        removed.put(pkg)
+                        pushApkProgress(stageIndex, path, i + 1, apps.size, "done", ApkOperationProgress("remove"))
+                    }
+                    AdbPermissions.Removal.Blocked -> {
+                        pushAdbLog("Не удалось удалить $name: ${AdbPermissions.MANUAL_REMOVAL}")
+                        manual.put(pkg)
+                        pushApkProgress(stageIndex, path, i + 1, apps.size, "error", ApkOperationProgress("remove"))
+                    }
+                    is AdbPermissions.Removal.Failed -> {
+                        pushAdbLog("Не удалось удалить $name: ${r.reason}")
+                        failed.put(pkg)
+                        pushApkProgress(stageIndex, path, i + 1, apps.size, "error", ApkOperationProgress("remove"))
+                    }
+                }
+            }
+            pushEvent(JSONObject().put("kind", "apps_rollback_result").put("index", stageIndex)
+                .put("removed", removed).put("manual", manual).put("failed", failed)
+                .put("not_connected", !AdbSession.isConnected))
         }
     }
 
@@ -1316,14 +1380,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 readQrAdbBugreportZip(UsbFlashSession.requireFs()).fold(
                     onSuccess = { bytes ->
                         val zipB64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                        // debug_dir: пока формула не подтверждена 100%-но
-                        // надёжной (жалобы клиентов на неверный пароль,
-                        // 2026-09-21) — сохраняем исходный bugreport-zip
-                        // целиком, см. android/.../python/qr_adb_password.py:
-                        // _save_debug_copy (порт desktop save_debug_copy).
-                        val debugDir = File(context.filesDir, "qr_adb_debug").absolutePath
                         val resultJson = pyModule("qr_adb_password")
-                            .callAttr("get_password_from_zip_b64", zipB64, debugDir).toString()
+                            .callAttr("get_password_from_zip_b64", zipB64).toString()
                         JSONObject(resultJson)
                     },
                     onFailure = { e -> JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")) },
@@ -1332,14 +1390,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         } catch (e: Exception) {
             JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
         }
-        // Раньше вся эта попытка была невидима в постоянном журнале сессии —
-        // жалобы «пароль неверный» нельзя было разобрать без доступа к
-        // самому телефону техника. Логируем тем же каналом, что и остальные
-        // ADB-действия (см. pushAdbLog/app.js: onAdbLog — тот же вызов
-        // взводит sessionHasActivity и пишет в install_log_append).
+        // В журнал — только сам факт (тем же каналом, что и остальные ADB-действия, см. pushAdbLog/app.js:
+        // onAdbLog). Код и SN больше не пишем: неверные коды объяснились шрифтом и двумя флагами на флешке
+        // у Jolion (владелец, 2026-09-24: «можно полностью убрать логирование»).
         if (event.optBoolean("ok", false)) {
-            val debugNote = if (event.isNull("debug_copy") || event.optString("debug_copy", "").isEmpty()) "" else ", копия дампа сохранена"
-            pushAdbLog("QR ADB: пароль получен — код ${event.optString("code")}, SN ${event.optString("sn")}$debugNote.")
+            pushAdbLog("QR ADB: пароль получен.")
         } else {
             pushAdbLog("QR ADB: не удалось получить пароль — ${event.optString("error", "неизвестная ошибка")}")
         }
@@ -1440,7 +1495,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         return uri.lastPathSegment
     }
 
-    private fun pushStageResult(stageIndex: Int, result: StageRunResult) {
+    private fun pushStageResult(stageIndex: Int, result: StageRunResult, installed: List<InstalledApp> = emptyList()) {
         val resultJson = when (result) {
             StageRunResult.Success -> JSONObject().put("success", true)
             is StageRunResult.Failed -> JSONObject().put("success", false).put("reason", result.reason)
@@ -1450,6 +1505,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // Жива ли связь с магнитолой после этапа (AdbSession.isConnected учитывает неудачную запись): app.js
         // показывает «не подключено», и следующий запуск сразу даёт окно «Магнитола не подключена».
         resultJson.put("adb_connected", AdbSession.isConnected)
+        // Поставлено в этом запуске — окно итога предлагает «Откатить в сток» (удалить ровно это).
+        resultJson.put("installed", JSONArray(installed.map {
+            JSONObject().put("package", it.packageName).put("name", it.name).put("path", it.path)
+        }))
         pushEvent(JSONObject().put("kind", "adb_stage_result").put("index", stageIndex).put("result", resultJson))
     }
 }

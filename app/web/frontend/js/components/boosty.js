@@ -33,18 +33,21 @@
     ]);
   }
 
-  let welcomeDialog, welcomeLinksEl, welcomeCloseButton;
+  let welcomeDialog, welcomeLinksEl, welcomeBoostyText, welcomeCloseButton, stopWelcomeCountdown = null;
   let completionDialog, completionLinksEl, completionCloseButton, completionThanksEl;
 
   function init() {
     welcomeDialog = document.getElementById("welcome-dialog");
     welcomeLinksEl = document.getElementById("welcome-boosty-links");
+    welcomeBoostyText = document.getElementById("welcome-boosty-text");
     completionDialog = document.getElementById("completion-dialog");
     completionLinksEl = document.getElementById("completion-boosty-links");
     completionThanksEl = document.getElementById("completion-thanks");
     welcomeCloseButton = document.getElementById("welcome-dialog-close");
     completionCloseButton = document.getElementById("completion-dialog-close");
     welcomeCloseButton.addEventListener("click", () => welcomeDialog.close());
+    // Пока идёт отсчёт — Esc окно не закрывает: сначала прочитать предупреждение.
+    welcomeDialog.addEventListener("cancel", (event) => { if (welcomeCloseButton.disabled) event.preventDefault(); });
     completionCloseButton.addEventListener("click", () => completionDialog.close());
     refreshSupporters();
   }
@@ -74,16 +77,40 @@
   // временем работы программы, скорее уместно, чем баг).
   const WELCOME_SHOWN_KEY = "magicsqd_welcome_shown_at";
 
-  function maybeShowWelcomeDialog() {
+  // «Понятно» — только после отсчёта 3, 2, 1: сначала прочитать предупреждение (владелец, 2026-09-25).
+  // Та же функция в android/app/src/main/assets/js/app.js (tests/js/welcome_countdown.test.js).
+  function countdownButton(button, label, seconds) {
+    let left = seconds;
+    button.disabled = true;
+    button.textContent = String(left);
+    const timer = setInterval(() => {
+      left -= 1;
+      if (left > 0) { button.textContent = String(left); return; }
+      clearInterval(timer);
+      button.disabled = false;
+      button.textContent = label;
+      if (typeof button.focus === "function") button.focus();
+    }, 1000);
+    return () => clearInterval(timer);
+  }
+
+  // firstRun — самый первый запуск (каталог ещё пуст): предупреждение показываем, а просьбу о Boosty — нет,
+  // рано просить поддержку, пока программой ни разу не пользовались.
+  function maybeShowWelcomeDialog(options = {}) {
     const last = Number(localStorage.getItem(WELCOME_SHOWN_KEY) || 0);
     if (Date.now() - last < 60 * 60 * 1000) return;
     localStorage.setItem(WELCOME_SHOWN_KEY, String(Date.now()));
+    const firstRun = !!options.firstRun;
+    welcomeBoostyText.hidden = firstRun;
+    welcomeLinksEl.hidden = firstRun;
     welcomeLinksEl.innerHTML = "";
-    welcomeLinksEl.appendChild(boostyLinksRow());
+    if (!firstRun) welcomeLinksEl.appendChild(boostyLinksRow());
+    if (stopWelcomeCountdown) stopWelcomeCountdown();
+    stopWelcomeCountdown = countdownButton(welcomeCloseButton, "Понятно", 3);
     welcomeDialog.showModal();
-    // Иначе Chromium/WebView2 фокусирует первую ссылку в <dialog>. Раньше
-    // она из-за общего :hover/:focus-visible правила сразу выглядела наведённой.
-    welcomeCloseButton.focus();
+    // Кнопка пока выключена — фокус на само окно: иначе Chromium/WebView2 фокусирует первую ссылку
+    // в <dialog>, и она из-за общего :hover/:focus-visible правила сразу выглядит наведённой.
+    welcomeDialog.focus();
   }
 
   function showCompletionDialog() {

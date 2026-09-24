@@ -16,8 +16,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
-import shutil
-import time
 import zipfile
 from ast import literal_eval
 from pathlib import Path
@@ -26,18 +24,6 @@ from pathlib import Path
 class QrAdbError(RuntimeError):
     """Понятная причина, почему код не удалось вычислить — показывается
     технику в диалоге как есть, без дополнительной обработки."""
-
-
-# Жалобы клиентов на неверный пароль (2026-09-21), а в постоянном журнале
-# сессии — вообще ничего об этой попытке. Пока формула (см. докстринг
-# модуля) не подтверждена 100%-но надёжной на всём разнообразии реальных
-# магнитол, сохраняем ИСХОДНЫЙ bugreport-*.zip целиком — без него нельзя ни
-# подтвердить, ни опровергнуть, что salt/password/sn разобраны верно; сам
-# текстовый лог даёт только код+SN, а не сырые данные, из которых код
-# получен. Ограничение числа копий — чисто на случай, если техник несколько
-# раз подряд гоняет "Получить пароль" при отладке, не хотим расти
-# неограниченно.
-_DEBUG_KEEP = 40
 
 
 _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -152,38 +138,11 @@ def compute_auth_code(salt: bytes, password: bytes, sn: str) -> str:
     return _encode_alphanumeric(six_bytes)
 
 
-def _trim_debug_dir(debug_dir: Path, keep: int = _DEBUG_KEEP) -> None:
-    """Оставляет только keep самых свежих debug-копий (см. save_debug_copy) —
-    старые больше не нужны, обычно интересна только ПОСЛЕДНЯЯ попытка."""
-    files = sorted(debug_dir.glob("*.zip"), key=lambda p: p.stat().st_mtime)
-    for path in files[:-keep] if len(files) > keep else []:
-        try:
-            path.unlink()
-        except OSError:
-            pass  # чужой процесс уже удалил/держит открытым — не критично
-
-
-def save_debug_copy(debug_dir: Path, zip_path: Path) -> Path | None:
-    """Сохраняет копию исходного bugreport-*.zip ЦЕЛИКОМ в debug_dir (см.
-    комментарий у _DEBUG_KEEP выше за причиной). Возвращает None при
-    сбое — сохранение debug-копии никогда не должно портить основной
-    результат (сам пароль к этому моменту мог уже посчитаться)."""
-    try:
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        dest = debug_dir / f"{stamp}_{zip_path.name}"
-        shutil.copyfile(zip_path, dest)
-        _trim_debug_dir(debug_dir)
-        return dest
-    except OSError:
-        return None
-
-
-def get_adb_password(drive_root: Path, debug_dir: Path | None = None) -> dict:
+def get_adb_password(drive_root: Path) -> dict:
     """Полный проход: флешка → папка logs_* → bugreport-*.zip → код.
-    debug_dir (если задан) — куда сохранить найденный zip ЦЕЛИКОМ, ДО
-    попытки разобрать его поля (см. save_debug_copy) — если разбор ниже
-    бросит QrAdbError, копия всё равно уже сохранена. Бросает QrAdbError с
+    Копий zip больше не сохраняем: неверные коды объяснились шрифтом (техник путал I/l и 0/O, см.
+    css/usb06.css) и двумя флагами на флешке у Jolion (usb_context.TRIGGER_FLAGS) — владелец,
+    2026-09-24: «можно полностью убрать логирование». Бросает QrAdbError с
     понятной причиной на первом шаге, где не найдено ожидаемое (тексту
     исключения можно доверять как готовому сообщению для техника — см.
     app/web/api/qr_adb_api.py)."""
@@ -199,10 +158,6 @@ def get_adb_password(drive_root: Path, debug_dir: Path | None = None) -> dict:
     zip_path = find_bugreport_zip(logs_folder)
     if zip_path is None:
         raise QrAdbError(f"В папке {logs_folder.name} не найден файл bugreport-*.zip")
-    debug_copy = save_debug_copy(debug_dir, zip_path) if debug_dir is not None else None
     salt, password, sn = _extract_fields(zip_path)
     code = compute_auth_code(salt, password, sn)
-    return {
-        "code": code, "sn": sn, "logs_folder": logs_folder.name, "zip_name": zip_path.name,
-        "debug_copy": str(debug_copy) if debug_copy else None,
-    }
+    return {"code": code, "sn": sn, "logs_folder": logs_folder.name, "zip_name": zip_path.name}

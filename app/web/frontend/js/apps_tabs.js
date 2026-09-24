@@ -124,5 +124,61 @@
     }
   }
 
-  window.AppTabs = { mount, summary };
+  /* Общая библиотека APK без приложений, скрытых админом на этой модели: в <файл>.json рядом с APK —
+     "hidden_models", пути «Марка/Модель[/Модификация]» (владелец, 2026-09-25: «выбирать, на каких моделях их
+     видно»; пусто — видно везде, так новая модель получает все приложения сама). model — {brand, name,
+     modification}, те же имена папок, из которых складывается путь. */
+  function forModel(apks, model) {
+    if (!model) return apks;
+    const path = [model.brand, model.name, model.modification].filter(Boolean).join('/');
+    return apks.filter((apk) => !(apk.hidden_models || []).includes(path));
+  }
+
+  /* «Только одно из группы» (<файл>.json "exclusive_group"; группы заводит админ, владелец 2026-09-25: «ставишь
+     галочку на одном, пытаешься на второе — и она просто перепрыгивает»). Отметили приложение группы — другие
+     отмеченные приложения той же группы снимаются сами; ничего не блокируется и не подписывается. Группы
+     сравниваются без учёта регистра, у приложений без группы ограничений нет. container — где строки
+     ([data-apk-path] с галочкой), apks — приложения библиотеки на этой модели, isSelected(path) — выбрано ли.
+     Слушатель вешается на контейнер один раз — повторный вызов (перерисовка) только обновляет данные. */
+  const exclusiveState = new WeakMap();
+  const groupKey = (apk) => lower(String((apk && apk.exclusive_group) || '').trim());
+
+  function uncheckRow(row) {
+    const box = row.querySelector('input[type="checkbox"]');
+    if (!box || !box.checked) return;
+    box.checked = false;
+    box.dispatchEvent(new Event('change', { bubbles: true }));  // платформа сама уберёт его из выбора
+  }
+
+  /* keepPath — отмеченное только что: остальные из его группы снимаются. Без него (первый показ) — в каждой
+     группе остаётся первое выбранное, если вдруг выбрано несколько. */
+  function applyExclusive(container, keepPath) {
+    const { apks, isSelected } = exclusiveState.get(container);
+    const byPath = new Map(apks.filter(groupKey).map((apk) => [apk.path, apk]));
+    const keep = new Map();
+    if (keepPath && byPath.has(keepPath)) keep.set(groupKey(byPath.get(keepPath)), keepPath);
+    for (const apk of byPath.values()) {
+      if (isSelected(apk.path) && !keep.has(groupKey(apk))) keep.set(groupKey(apk), apk.path);
+    }
+    for (const row of container.querySelectorAll('[data-apk-path]')) {
+      const apk = byPath.get(row.dataset.apkPath);
+      if (apk && isSelected(apk.path) && keep.get(groupKey(apk)) !== apk.path) uncheckRow(row);
+    }
+  }
+
+  function exclusiveGroups(container, apks, isSelected) {
+    const wired = exclusiveState.has(container);
+    exclusiveState.set(container, { apks: apks || [], isSelected });
+    if (!wired) {
+      container.addEventListener('change', (event) => {
+        const box = event.target;
+        if (!box || !box.checked || !box.matches || !box.matches('input[type="checkbox"]')) return;
+        const row = box.closest && box.closest('[data-apk-path]');
+        if (row) applyExclusive(container, row.dataset.apkPath);
+      });
+    }
+    applyExclusive(container, null);
+  }
+
+  window.AppTabs = { mount, summary, forModel, exclusiveGroups };
 })();

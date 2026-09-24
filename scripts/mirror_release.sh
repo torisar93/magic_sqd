@@ -56,11 +56,28 @@ done
 [ ${#UPLOAD[@]} -gt 0 ] || { echo "нечего зеркалить"; exit 1; }
 
 CHANGELOG=$(gh api "repos/{owner}/{repo}/releases/$REL_ID" --jq '.body')
-python3 - "$WORK/version.json" "$TAG" "$CHANGELOG" "{${ASSETS_JSON%, }}" "{${SHA_JSON%, }}" <<'PY'
-import json, sys
-path, tag, changelog, assets, sha = sys.argv[1:]
-json.dump({"version": tag, "changelog": changelog.strip(), "assets": json.loads(assets), "sha256": json.loads(sha)},
-          open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+# Обязательные релизы (владелец, 2026-09-25): отдельная строка «Обязательное обновление» в описании релиза.
+# min_version — самый новый такой релиз: все версии ниже него программа обязана обновить (окно нельзя закрыть,
+# см. update_api.py/mobile_bridge.py), даже если этот релиз уже не последний. Пометить старый релиз задним
+# числом: gh release edit vX.Y.Z --notes-file … (добавить строку) и перезапустить этот скрипт.
+gh api "repos/{owner}/{repo}/releases" --paginate --jq '.[] | [.tag_name, .body] | @json' > "$WORK/releases.jsonl"
+python3 - "$WORK/version.json" "$TAG" "$CHANGELOG" "{${ASSETS_JSON%, }}" "{${SHA_JSON%, }}" "$WORK/releases.jsonl" <<'PY'
+import json, re, sys
+path, tag, changelog, assets, sha, releases_path = sys.argv[1:]
+MANDATORY = re.compile(r"^\s*обязательное обновление\s*[.!]?\s*$", re.IGNORECASE | re.MULTILINE)
+def ver(text):
+    return tuple(int(m.group()) if (m := re.match(r"\d+", c)) else 0
+                 for c in text.strip().lstrip("vV").split("-")[0].split("."))
+marked = []
+for line in open(releases_path, encoding="utf-8"):
+    if line.strip():
+        name, body = json.loads(line)
+        if MANDATORY.search(body or "") and ver(name) <= ver(tag):
+            marked.append(name)
+data = {"version": tag, "changelog": changelog.strip(), "assets": json.loads(assets), "sha256": json.loads(sha)}
+if marked:
+    data["min_version"] = max(marked, key=ver)
+json.dump(data, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
 
 echo "== загружаю на сервер ($(du -ch "${UPLOAD[@]/#/$WORK/}" | tail -1 | cut -f1))"
@@ -75,4 +92,4 @@ echo "== проверка по HTTPS"
 for f in "${UPLOAD[@]}"; do
   code=$(curl -s -o /dev/null -w '%{http_code}' -I "https://magicsqd.ru/download/$f"); echo "   $f → HTTP $code"; [ "$code" = 200 ] || exit 1
 done
-curl -s https://magicsqd.ru/download/version.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('   version.json:', d['version'], '| assets:', ', '.join(d['assets']))"
+curl -s https://magicsqd.ru/download/version.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('   version.json:', d['version'], '| assets:', ', '.join(d['assets']), '| обязательна до:', d.get('min_version', '—'))"

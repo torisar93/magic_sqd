@@ -11,7 +11,13 @@
    успешно / с ошибкой / остановлено. При ошибке всегда показываем подсказку
    про лог и разработчика, кнопки «Открыть лог» и «Скопировать лог» — кроме
    ошибок на стороне техника (user_errors.js: нет магнитолы, флешки, интернета…):
-   для них — что случилось и что сделать, без «отправьте разработчику». */
+   для них — что случилось и что сделать, без «отправьте разработчику».
+
+   «Откатить в сток» (владелец, 2026-09-25, вариант 1 макета): если этап поставил приложения
+   (finish({rollback: {apps, device, onRollback}})), в итоге — жёлтая плашка «Не отключайте
+   телефон/компьютер, проверьте, что магнитола работает» и кнопка отката; подтверждение — прямо в
+   окне со списком. Само удаление — окно openRollback (то же кольцо и список, фаза remove в
+   progress08.js), итог — rollbackOutcome. И при успехе, и при сбое этапа. */
 (() => {
   const n = (tag, cls, text) => {
     const node = document.createElement(tag);
@@ -154,6 +160,85 @@
     return run;
   }
 
+  // Склонение «приложение/приложения/приложений» для кнопки подтверждения.
+  function appsWord(count) {
+    const m10 = count % 10, m100 = count % 100;
+    if (m10 === 1 && m100 !== 11) return "приложение";
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return "приложения";
+    return "приложений";
+  }
+
+  function appNames(apps, packages) {
+    return (packages || []).map((pkg) => {
+      const app = (apps || []).find((item) => item.package === pkg);
+      return (app && app.name) || pkg;
+    });
+  }
+
+  // Плашка и кнопка «Откатить в сток» в итоге этапа; подтверждение — в том же окне, «Отмена» возвращает как было.
+  function attachRollback(view, actions, rollback) {
+    const note = n("div", "stage-run-rollback-note");
+    note.append(n("b", "", `Не отключайте ${rollback.device || "телефон"}.`),
+      document.createTextNode(" Проверьте, что магнитола работает: откройте главный экран и новые приложения."));
+    // Как в макете: под текстом итога, над списком приложений.
+    (view.querySelector(":scope > .stage-run-queue") || actions).before(note);
+    const button = n("button", "danger stage-run-rollback", "Откатить в сток");
+    button.type = "button";
+    actions.prepend(button);
+    button.onclick = () => {
+      const buttons = [...actions.children];
+      const names = rollback.apps.map((app) => app.name || app.package);
+      const confirm = n("div", "stage-run-rollback-confirm");
+      confirm.append(n("h3", "", "Откатить в сток?"),
+        n("p", "", `С магнитолы будут удалены приложения, поставленные сейчас (${names.length}): ${names.join(", ")}. Остальное на магнитоле не трогаем.`));
+      const yes = n("button", "danger", `Удалить ${names.length} ${appsWord(names.length)}`);
+      const no = n("button", "", "Отмена");
+      yes.type = "button";
+      no.type = "button";
+      note.replaceWith(confirm);
+      actions.replaceChildren(yes, no);
+      no.onclick = () => { confirm.replaceWith(note); actions.replaceChildren(...buttons); button.focus({ preventScroll: true }); };
+      yes.onclick = () => rollback.onRollback(rollback.apps);
+      no.focus({ preventScroll: true });
+    };
+  }
+
+  // Окно удаления: то же кольцо и список (строки по path — как у установки), ход — apk_progress с фазой remove.
+  function openRollback(apps, options = {}) {
+    const list = apps || [];
+    const run = open({
+      title: "Откат в сток", stageIndex: options.stageIndex,
+      items: list.map((app) => ({ name: app.name || app.package, path: app.path || app.package })),
+      resultTitles: { success: "Откат выполнен", partial: "Удалите вручную", error: "Откат не завершён" },
+      continueLabel: "Закрыть", retry: options.retry, onClose: options.onClose,
+    });
+    const heading = run.host.querySelector(".progress08 h2");
+    if (heading) heading.textContent = "Удаление приложений";
+    const detail = run.host.querySelector(".install-phase-detail");
+    if (detail) detail.textContent = "Удаляем то, что поставили сейчас";
+    const summary = run.host.querySelector(".queue-summary");
+    if (summary) summary.textContent = `Удалено 0 из ${list.length}`;
+    return run;
+  }
+
+  // Итог отката для run.finish: списки пакетов removed/manual/failed от платформы → текст для техника.
+  function rollbackOutcome(event = {}, apps = []) {
+    const removed = appNames(apps, event.removed), manual = appNames(apps, event.manual), failed = appNames(apps, event.failed);
+    const done = removed.length ? ` Удалено: ${removed.join(", ")}.` : "";
+    if (failed.length) {
+      const why = event.not_connected
+        ? `Магнитола не подключена или отключилась — не удалены: ${failed.join(", ")}. Подключите её и нажмите «Повторить».`
+        : `Не удалось удалить: ${failed.join(", ")}. Подробности — в логе.`;
+      const hand = manual.length ? ` Удалите вручную (Настройки → Приложения): ${manual.join(", ")}.` : "";
+      return { success: false, plain: true, message: why + hand + done };
+    }
+    if (manual.length) {
+      return { success: true, partial: true, message: "Эта магнитола не даёт удалять приложения через программу. " +
+        `Удалите их штатно на самой магнитоле (Настройки → Приложения): ${manual.join(", ")}.` + done };
+    }
+    return { success: true, message: `Удалено: ${removed.join(", ")}.` };
+  }
+
   function open(options = {}) {
     if (active) active.dispose();
     const previousFocus = document.activeElement;
@@ -268,7 +353,7 @@
       box.querySelectorAll(":scope > .stage-run-actions").forEach((node) => node.remove());
       const state = result.partial ? "partial" : result.success ? "success" : result.cancelled ? "cancelled" : "error";
       const message = result.message.trim();
-      const userError = state === "error" ? userErrorFor(outcome.userError, message) : null;
+      const userError = state === "error" && !outcome.plain ? userErrorFor(outcome.userError, message) : null;
       let view;
       if (userError) {
         view = userErrorView(userError, message);
@@ -279,8 +364,8 @@
         view.dataset.state = state;
         view.setAttribute("role", state === "error" ? "alert" : "status");
         view.append(n("div", "stage-run-symbol", { success: "✓", partial: "!", cancelled: "■", error: "!" }[state]));
-        view.append(n("h2", "stage-run-title",
-          { success: "Готово", partial: "Установлено не всё", cancelled: "Остановлено", error: "Не удалось завершить этап" }[state]));
+        view.append(n("h2", "stage-run-title", (options.resultTitles && options.resultTitles[state])
+          || { success: "Готово", partial: "Установлено не всё", cancelled: "Остановлено", error: "Не удалось завершить этап" }[state]));
       }
 
       const shortMessage = message && message.length <= 200 && !message.includes("\n");
@@ -333,6 +418,10 @@
         primary = primary || closeBtn;
       }
       view.append(actions);
+      const rollback = outcome.rollback;
+      if (rollback && Array.isArray(rollback.apps) && rollback.apps.length && typeof rollback.onRollback === "function") {
+        attachRollback(view, actions, rollback);
+      }
       host.append(view);
       // Без прокрутки к кнопке: на узком экране длинный итог (шаги «что сделать») иначе открывался бы
       // уже прокрученным вниз, без заголовка.
@@ -362,6 +451,8 @@
 
   window.StageRun = {
     open,
+    openRollback,
+    rollbackOutcome,
     hintBlock,
     showUserError,
     userErrorBlock,

@@ -61,6 +61,7 @@ module.exports = async function () {
         scanner_list_apks: async () => [],
       } },
       notice() {},
+      AppTabs: { forModel: (apks) => apks },  // apps_tabs.js в программе подключается раньше мастера
     },
   };
   run(code, ctx);

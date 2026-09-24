@@ -29,6 +29,18 @@ class ApkInfo:
     # Пометка админа «выдавать фиктивное местоположение» (только раздел GPS) —
     # см. app/scanner.py:ApkInfo.mock_location на десктопе.
     mock_location: bool = False
+    # Модели, где админ скрыл приложение (<файл>.json "hidden_models") — см. app/scanner.py:ApkInfo.hidden_models.
+    hidden_models: list = field(default_factory=list)
+    # «Только одно из группы» (<файл>.json "exclusive_group") — см. app/scanner.py:ApkInfo.exclusive_group.
+    exclusive_group: str = ""
+
+
+def _exclusive_group(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _hidden_models(value) -> list:
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
 def _read_local_apk_meta(apk_path: Path):
@@ -36,9 +48,10 @@ def _read_local_apk_meta(apk_path: Path):
     try:
         data = json.loads(meta_path.read_text(encoding="utf-8"))
         return (str(data.get("name") or apk_path.stem), str(data.get("description") or ""),
-                data.get("mock_location") is True)
+                data.get("mock_location") is True, _hidden_models(data.get("hidden_models")),
+                _exclusive_group(data.get("exclusive_group")))
     except (OSError, json.JSONDecodeError, AttributeError):
-        return apk_path.stem, "", False
+        return apk_path.stem, "", False, [], ""
 
 
 def _scan_local_dir(dir_path: Path, category: str) -> list:
@@ -46,9 +59,10 @@ def _scan_local_dir(dir_path: Path, category: str) -> list:
         return []
     items = []
     for f in sorted(dir_path.glob("*.apk")):
-        name, description, mock_location = _read_local_apk_meta(f)
+        name, description, mock_location, hidden_models, exclusive_group = _read_local_apk_meta(f)
         items.append(ApkInfo(path=str(f), name=name, description=description, category=category,
-                             mock_location=mock_location))
+                             mock_location=mock_location, hidden_models=hidden_models,
+                             exclusive_group=exclusive_group))
     return items
 
 
@@ -93,6 +107,7 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
             entry = {
                 "path": str(local_path), "name": Path(rel).stem, "description": "",
                 "category": category, "remote_only": True, "size": size, "mock_location": False,
+                "hidden_models": [], "exclusive_group": "",
             }
             remote_entries.append(entry)
             json_rel = rel[:-4] + ".json"
@@ -109,6 +124,8 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
                     entry["name"] = str(data.get("name") or entry["name"])
                     entry["description"] = str(data.get("description") or "")
                     entry["mock_location"] = data.get("mock_location") is True
+                    entry["hidden_models"] = _hidden_models(data.get("hidden_models"))
+                    entry["exclusive_group"] = _exclusive_group(data.get("exclusive_group"))
                 except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
                     pass
 

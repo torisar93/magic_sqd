@@ -99,22 +99,95 @@ def test_install_selected_apks_all_succeed_no_failures(tmp_path):
     assert not any("Не установлено" in line for line in log)
 
 
-def test_version_downgrade_still_cancels_whole_run(tmp_path):
-    """Понижение версии — не AppInstallFailed: это по-прежнему InstallCancelled
-    (регресс-проверка, что новый except AdbError не перехватил лишнего)."""
-    from app.install_context import VersionDowngradeError
+def test_newer_version_is_skipped_but_other_signature_still_cancels(tmp_path):
+    """Версия новее уже на магнитоле — не стоп, а пропуск (владелец, 2026-09-25: «если стоит более новая —
+    пропускаем»; лог #968 — после остановки 19 приложений ставились заново). Другая подпись — по-прежнему стоп."""
+    from app.install_context import NewerVersionInstalled, SignatureMismatchError, VersionDowngradeError
 
     log = []
     ctx, apks = _make_ctx(tmp_path, ["a.apk"], log)
     ctx._install_with_method = lambda method, path, extra_args: None
     ctx.install_apk_auto(apks[0])  # локает способ
 
-    def fake_fail(method, path, extra_args):
+    def newer(method, path, extra_args):
+        raise VersionDowngradeError("Failure [INSTALL_FAILED_VERSION_DOWNGRADE]")
+
+    ctx._install_with_method = newer
+    with pytest.raises(NewerVersionInstalled):
+        ctx.install_apk_auto(tmp_path / "b.apk")
+
+    def other_key(method, path, extra_args):
+        raise SignatureMismatchError("Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package com.maxinf.car signatures do not match]")
+
+    ctx._install_with_method = other_key
+    with pytest.raises(InstallCancelled) as exc_info:
+        ctx.install_apk_auto(tmp_path / "c.apk")
+    assert "com.maxinf.car" in str(exc_info.value) and "подписанное другим" in str(exc_info.value)
+
+    # И до того, как способ подтвердился (первое же приложение): тоже пропуск, перебор дальше не идёт.
+    fresh_log = []
+    fresh, _ = _make_ctx(tmp_path, ["d.apk"], fresh_log)
+    tried = []
+
+    def first_newer(method, path, extra_args):
+        tried.append(method)
         raise VersionDowngradeError("INSTALL_FAILED_VERSION_DOWNGRADE")
 
-    ctx._install_with_method = fake_fail
-    with pytest.raises(InstallCancelled):
-        ctx.install_apk_auto(tmp_path / "b.apk")
+    fresh._install_with_method = first_newer
+    with pytest.raises(NewerVersionInstalled):
+        fresh.install_apk_auto(tmp_path / "d.apk")
+    assert len(tried) == 1 and fresh._install_method is None
+
+
+def test_queue_skips_newer_version_and_keeps_going(tmp_path, monkeypatch):
+    """install_selected_apks: «версия новее» — строка в лог, приложение отмечено готовым, разрешения выдаются
+    уже стоящей версии, очередь идёт дальше; в «поставлено сейчас» (для отката) оно не попадает."""
+    import app.install_context as ic
+    from app.install_context import VersionDowngradeError
+
+    monkeypatch.setattr(ic, "read_package_name", lambda apk: "pkg." + apk.stem)
+    log, progress, granted = [], [], []
+    ctx, apks = _make_ctx(tmp_path, ["a.apk", "b.apk", "c.apk"], log)
+    ctx._on_apk_progress = lambda path, done, total, state, phase: progress.append((path.split("/")[-1], state))
+    ctx._grant_all_permissions_if_available = granted.append
+    ctx.require_device = lambda: None
+
+    def install(method, path, extra_args):
+        if path.name == "b.apk":
+            raise VersionDowngradeError("INSTALL_FAILED_VERSION_DOWNGRADE")
+
+    ctx._install_with_method = install
+    ctx.install_selected_apks()
+
+    assert ctx.failed_apps == []
+    assert any("«b.apk»: на магнитоле уже стоит версия новее" in line for line in log)
+    assert ("b.apk", "done") in progress and not any(state == "error" for _, state in progress)
+    assert granted == ["pkg.a", "pkg.b", "pkg.c"]
+    assert [app["package"] for app in ctx.installed_apps] == ["pkg.a", "pkg.c"]
+
+
+def test_runner_passes_installed_apps_even_on_failure(tmp_path):
+    """Окно итога предлагает «Откатить в сток» и при ошибке посреди очереди — откатить то, что успело встать."""
+    results = []
+    runner = InstallRunner(adb_path="fake-adb", on_log=lambda m: None,
+                            on_finished=lambda ok, msg, **kw: results.append((ok, msg, kw)))
+
+    class FakeModel:
+        dir = tmp_path
+
+    def run_fn(ctx):
+        ctx.installed_apps.append({"package": "pkg.a", "name": "a.apk", "path": "/a.apk"})
+        raise InstallCancelled("Магнитола отключилась во время установки")
+
+    runner._run(FakeModel(), "fake-device", [], run_fn, [], "", True)
+    ok, message, extra = results[0]
+    assert ok is False and extra["installed"] == [{"package": "pkg.a", "name": "a.apk", "path": "/a.apk"}]
+
+    def run_ok(ctx):
+        ctx.installed_apps.append({"package": "pkg.b", "name": "b.apk", "path": "/b.apk"})
+
+    runner._run(FakeModel(), "fake-device", [], run_ok, [], "", True)
+    assert results[1][0] is True and results[1][2]["installed"][0]["package"] == "pkg.b"
 
 
 def test_runner_reports_partial_failure_in_final_message(tmp_path):
@@ -138,7 +211,7 @@ def test_runner_reports_partial_failure_in_final_message(tmp_path):
     assert ok is True
     assert "x.apk: причина" in message
     assert "не всё встало" in message
-    assert extra == {"partial": True}  # окно этапа: «Установлено не всё», а не «Готово»
+    assert extra == {"partial": True, "installed": []}  # окно этапа: «Установлено не всё», а не «Готово»
 
 
 def test_runner_reports_plain_success_without_failures(tmp_path):
@@ -146,7 +219,7 @@ def test_runner_reports_plain_success_without_failures(tmp_path):
     что обычный путь не поменялся."""
     results = []
     runner = InstallRunner(adb_path="fake-adb", on_log=lambda m: None,
-                            on_finished=lambda ok, msg: results.append((ok, msg)))
+                            on_finished=lambda ok, msg, **kw: results.append((ok, msg)))
 
     class FakeModel:
         dir = tmp_path

@@ -58,6 +58,13 @@ _OWN_SERVER_VERSION_URL = "https://magicsqd.ru/download/version.json"
 _OWN_SERVER_DOWNLOAD_BASE = "https://magicsqd.ru/download/"
 _REQUEST_TIMEOUT_SECONDS = 8
 _APK_ASSET_RE = re.compile(r"^MagicSQD_Android_(.+)\.apk$", re.IGNORECASE)
+# Обязательный релиз — как desktop update_api.py: строка «Обязательное обновление» в описании релиза,
+# действует на все версии ниже помеченной ("min_version" в version.json зеркала, описания релизов на GitHub).
+_MANDATORY_RE = re.compile(r"^\s*обязательное обновление\s*[.!]?\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _is_mandatory_changelog(text) -> bool:
+    return bool(_MANDATORY_RE.search(str(text or "")))
 
 
 def _parse_version(text: str) -> tuple:
@@ -101,7 +108,10 @@ def check_update(current_version: str) -> str:
         results = [r for r in (own.result(), github.result()) if r]
     if not results:
         return json.dumps({"available": False})
-    return json.dumps(max(results, key=lambda r: _parse_version(r["version"])))
+    best = dict(max(results, key=lambda r: _parse_version(r["version"])))
+    # Обязательность — про нашу версию (ниже помеченного релиза): достаточно одного источника.
+    best["mandatory"] = any(r.get("mandatory") for r in results)
+    return json.dumps(best)
 
 
 def _check_update_own_server(current_version: str):
@@ -120,9 +130,12 @@ def _check_update_own_server(current_version: str):
     version = str(data.get("version") or "").strip().lstrip("vV")
     if not version or _parse_version(version) <= _parse_version(current_version):
         return None
+    min_version = str(data.get("min_version") or "").strip().lstrip("vV")
+    mandatory = (bool(min_version) and _parse_version(current_version) < _parse_version(min_version)) \
+        or _is_mandatory_changelog(data.get("changelog"))
     return {"available": True, "version": version,
             "changelog": str(data.get("changelog") or "").strip(),
-            "download_url": _OWN_SERVER_DOWNLOAD_BASE + name}
+            "download_url": _OWN_SERVER_DOWNLOAD_BASE + name, "mandatory": mandatory}
 
 
 def _check_update_github(current_version: str):
@@ -152,11 +165,16 @@ def _check_update_github(current_version: str):
         return None
     if _parse_version(apk_version) <= _parse_version(current_version):
         return None
+    mandatory = any(
+        isinstance(release, dict) and _is_mandatory_changelog(release.get("body"))
+        and _parse_version(str(release.get("tag_name") or "").lstrip("vV")) > _parse_version(current_version)
+        for release in releases)
     return {
         "available": True,
         "version": apk_version,
         "changelog": str(latest.get("body") or "").strip(),
         "download_url": apk_asset["browser_download_url"],
+        "mandatory": mandatory,
     }
 
 

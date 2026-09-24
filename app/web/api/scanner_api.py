@@ -31,6 +31,8 @@ def apk_to_dict(apk) -> dict:
         "remote_only": apk.remote_only,
         "size": apk.size,
         "mock_location": bool(getattr(apk, "mock_location", False)),
+        "hidden_models": list(getattr(apk, "hidden_models", None) or []),
+        "exclusive_group": getattr(apk, "exclusive_group", "") or "",
     }
 
 

@@ -308,7 +308,8 @@
         logDetails.open = true;
       }
       if (typeof onComplete === "function") {
-        try { await onComplete(success); }
+        // Причина и отмена — для строки в журнале сессии (раньше в логе была только «запись не удалась», №804/№913).
+        try { await onComplete(success, { message: event.message || "", cancelled: wasCancelled }); }
         catch (error) { log(error?.message || String(error)); logDetails.open = true; }
       }
     }
@@ -824,13 +825,18 @@
   // catalog-startup-progress-track), плюс лог здесь же в диалоге.
   // ==================================================================
   const update = (() => {
-    let dialog, versionEl, changelogEl, progressTrack, progressFill, progressLabel, logEl, installBtn, laterBtn;
+    let dialog, titleEl, versionEl, mandatoryEl, changelogEl, progressTrack, progressFill, progressLabel, logEl, installBtn, laterBtn;
     let downloadUrl = null;
     let installing = false;
+    // Обязательный релиз (update_api.py: mandatory, владелец 2026-09-25) — окно нельзя закрыть или отложить:
+    // ни «Позже», ни Esc. Остаётся только «Установить» (и «Повторить» после сбоя).
+    let mandatory = false;
 
     function init() {
       dialog = document.getElementById("update-dialog");
+      titleEl = document.getElementById("update-title");
       versionEl = document.getElementById("update-version-label");
+      mandatoryEl = document.getElementById("update-mandatory");
       changelogEl = document.getElementById("update-changelog");
       progressTrack = document.getElementById("update-progress-track");
       progressFill = document.getElementById("update-progress-fill");
@@ -844,7 +850,7 @@
       // Пока идёт скачивание, Esc не должен незаметно "закрыть" диалог —
       // сама программа всё равно скоро закроется сама (см. update_api.py:
       // _close_app), просто пользователь перестанет видеть, что происходит.
-      dialog.addEventListener("cancel", (event) => { if (installing) event.preventDefault(); });
+      dialog.addEventListener("cancel", (event) => { if (installing || mandatory) event.preventDefault(); });
 
       window.events.on("update_log", (event) => log(event.text));
       window.events.on("update_progress", (event) => setProgress(event.done, event.total));
@@ -876,9 +882,17 @@
       }
     }
 
+    // «Позже» — только у необязательного обновления и не во время установки.
+    function showLater() {
+      laterBtn.style.display = mandatory ? "none" : "";
+    }
+
     function open(info) {
       installing = false;
+      mandatory = !!info.mandatory;
       downloadUrl = info.download_url;
+      titleEl.textContent = mandatory ? "Обязательное обновление Magic SQD" : "Доступно обновление Magic SQD";
+      mandatoryEl.hidden = !mandatory;
       versionEl.textContent = `Версия ${info.version}`;
       changelogEl.textContent = info.changelog || "—";
       progressTrack.style.display = "none";
@@ -889,7 +903,7 @@
       installBtn.disabled = false;
       installBtn.textContent = "Установить";
       installBtn.style.display = "";
-      laterBtn.style.display = "";
+      showLater();
       dialog.showModal();
     }
 
@@ -911,7 +925,7 @@
         installing = false;
         installBtn.disabled = false;
         installBtn.textContent = "Установить";
-        laterBtn.style.display = "";
+        showLater();
         progressTrack.style.display = "none";
         progressLabel.style.display = "none";
         log("Открыл страницу загрузки в браузере — скачайте и замените приложение в Программах вручную.");
@@ -920,8 +934,8 @@
       if (!result.ok) {
         installing = false;
         installBtn.disabled = false;
-        installBtn.textContent = "Установить";
-        laterBtn.style.display = "";
+        installBtn.textContent = mandatory ? "Повторить" : "Установить";
+        showLater();
         log(result.error || "Не удалось начать обновление.");
       }
     }
@@ -930,8 +944,8 @@
       if (!event.success) {
         installing = false;
         installBtn.disabled = false;
-        installBtn.textContent = "Установить";
-        laterBtn.style.display = "";
+        installBtn.textContent = mandatory ? "Повторить" : "Установить";
+        showLater();
         log(event.message || "Не удалось установить обновление.");
       }
       // При успехе окно программы скоро само закроется (см. update_api.py:

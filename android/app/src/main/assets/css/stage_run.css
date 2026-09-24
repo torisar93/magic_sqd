@@ -33,6 +33,12 @@
 .stage-run-details pre{margin:0;padding:12px;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:10px;background:#0000002e;color:#b9c8cf;font:12.5px/1.55 ui-monospace,Menlo,Consolas,monospace}
 .stage-run-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:22px}
 .stage-run-actions button{min-height:44px}
+/* «Откатить в сток» (stage_run.js: attachRollback) — жёлтая плашка «не отключайте…» и подтверждение удаления. */
+.stage-run-rollback-note{width:100%;box-sizing:border-box;margin-top:4px;padding:12px 14px;border-radius:12px;background:#473d2240;border:1px solid #f3d58a55;color:#f3e3b5;font-size:15px;line-height:1.5;text-align:left}
+.stage-run-rollback-note b{color:#f3d58a}
+.stage-run-rollback-confirm{width:100%;box-sizing:border-box;margin-top:4px;padding:14px 16px;border-radius:12px;background:#4b303633;border:1px solid #ffb6b655;text-align:left}
+.stage-run-rollback-confirm h3{margin:0 0 6px;font-size:17px;color:#ffd0d0}
+.stage-run-rollback-confirm p{margin:0;color:#e3ecef;font-size:15px;line-height:1.5;overflow-wrap:anywhere}
 .stage-run-hint-block{margin:14px 0 18px;text-align:left}
 .stage-run-hint-block .stage-run-hint{max-width:none}
 .stage-run-hint-block .stage-run-actions{justify-content:flex-start;margin-top:12px}

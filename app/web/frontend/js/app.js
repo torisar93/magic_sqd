@@ -651,8 +651,10 @@ window.addEventListener("pywebviewready", async () => {
       // Админ и без того поддерживает проект своей работой, ему не нужен
       // донат-попап. catalogWasEmpty (см. выше) — признак самого первого
       // запуска (каталог ещё не синхронизирован ни разу): просить донат
-      // раньше, чем человек хоть раз воспользовался программой, неуместно.
-      if (!shown && !catalogWasEmpty) window.boostyDialogs.maybeShowWelcomeDialog();
+      // раньше, чем человек хоть раз воспользовался программой, неуместно —
+      // но предупреждение «на свой страх и риск» нужно как раз тогда
+      // (владелец, 2026-09-25): окно есть, блока Boosty в нём нет.
+      if (!shown) window.boostyDialogs.maybeShowWelcomeDialog({ firstRun: catalogWasEmpty });
     });
   }
 

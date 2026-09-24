@@ -42,13 +42,6 @@ class SubmitConfig:
         return self.submit_url.rsplit("/", 1)[0] + "/diagnostics"
 
     @property
-    def qr_adb_debug_url(self) -> str:
-        # Тот же сервер/ключ, путь "/submit" -> "/qr_adb_debug" (см.
-        # app/qr_adb_debug_client.py, server/backend.py: POST /qr_adb_debug)
-        # — временная возможность, см. app/qr_adb_password.py за причиной.
-        return self.submit_url.rsplit("/", 1)[0] + "/qr_adb_debug"
-
-    @property
     def install_log_url(self) -> str:
         # Тот же сервер/ключ, путь "/submit" -> "/install_log" (см.
         # app/install_log_client.py, server/backend.py: POST /install_log) —

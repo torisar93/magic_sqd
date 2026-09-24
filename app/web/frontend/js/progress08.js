@@ -3,7 +3,9 @@
   const {n}=LabUI;
   const icon=name=>window.AppIcons?AppIcons.icon(name):LabUI.symbol(name);
   const normalize=path=>String(path||'').split('\\').join('/').toLowerCase();
-  const phaseNames={download:'Скачивание приложений',transfer:'Передача приложения',install:'Установка приложения',prepare:'Подготовка',done:'Готово'};
+  // remove — «Откатить в сток» (stage_run.js: openRollback): та же очередь, но удаляем поставленное.
+  const phaseNames={download:'Скачивание приложений',transfer:'Передача приложения',install:'Установка приложения',remove:'Удаление приложений',prepare:'Подготовка',done:'Готово'};
+  const stateLabels={running:'Установка…',done:'Готово',error:'Ошибка'},removeLabels={running:'Удаление…',done:'Удалено',error:'Не удалось'};
   function setProgress(box, measurement) {
     const graphic=box.querySelector('.install-graphic'),bar=box.querySelector('.run-progress'),count=box.querySelector('.install-count');
     const phase=measurement.phase||'install';
@@ -25,7 +27,7 @@
     if(known&&Number(measurement.bytes_total)>0){
       const megabytes=value=>(Number(value)/1048576).toLocaleString('ru-RU',{maximumFractionDigits:1});
       hint.textContent=`${megabytes(measurement.bytes_done)} из ${megabytes(measurement.bytes_total)} МБ`;
-    }else hint.textContent=phase==='install'?'Ожидаем подтверждение устройства':known?'':'Получаем данные о ходе операции';
+    }else hint.textContent=phase==='install'?'Ожидаем подтверждение устройства':phase==='remove'?'Удаляем то, что поставили сейчас':known?'':'Получаем данные о ходе операции';
   }
   LabUI.busy=(root,label,items=[])=>{
     root.querySelector('.run-status')?.remove();
@@ -49,6 +51,8 @@
     const box=root?.querySelector('.progress08');if(!box)return;
     const rows=[...box.querySelectorAll('.run-queue li')];
     const row=rows.find(node=>normalize(node.dataset.path)===normalize(e.path));
+    if(e.phase==='remove')box.dataset.operation='remove';
+    const removing=box.dataset.operation==='remove';
     if(row){
       // Downloads are sequential preparation, not completed installations.
       // A different current file must not leave the previous download spinning.
@@ -65,7 +69,7 @@
       if(e.phase)row.dataset.phase=e.phase;
       else if(e.state==='running')row.dataset.phase='install';
       if(['running','done','error'].includes(e.state)){
-        row.dataset.state=e.state;row.querySelector('small').textContent={running:'Установка…',done:'Готово',error:'Ошибка'}[e.state];
+        row.dataset.state=e.state;row.querySelector('small').textContent=(removing?removeLabels:stateLabels)[e.state];
       }
       if(e.phase==='download'&&e.state!=='error'){
         if(row.dataset.downloadComplete==='true'){
@@ -76,15 +80,15 @@
       }
     }
     const completed=rows.filter(node=>node.dataset.state==='done').length;
-    const summary=box.querySelector('.queue-summary');if(summary)summary.textContent=`Готово ${completed} из ${rows.length}`;
+    const summary=box.querySelector('.queue-summary');if(summary)summary.textContent=`${removing?'Удалено':'Готово'} ${completed} из ${rows.length}`;
     if(e.phase){
       setProgress(box,e);
-      if(row){const label={download:'Скачивание…',transfer:'Передача…',install:'Установка…'}[e.phase];if(row.dataset.state==='running'&&label)row.querySelector('small').textContent=label;}
+      if(row){const label={download:'Скачивание…',transfer:'Передача…',install:'Установка…',remove:'Удаление…'}[e.phase];if(row.dataset.state==='running'&&label)row.querySelector('small').textContent=label;}
     }else if(e.state==='running')setProgress(box,{phase:'install',determinate:false});
     if(row)box.querySelector('.run-event').textContent=row.querySelector('.run-app-name').textContent;
     if(rows.length&&completed===rows.length){
       setProgress(box,{phase:'done',determinate:true,percent:100});
-      box.querySelector('.install-phase-detail').textContent='Все приложения установлены';
+      box.querySelector('.install-phase-detail').textContent=removing?'Все приложения удалены':'Все приложения установлены';
       box.querySelector('.install-center>.ui-icon').replaceWith(icon('check'));
     }
   };

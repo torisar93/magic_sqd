@@ -23,6 +23,7 @@ from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_de
 from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
                              sync_model_subfolder, sync_shared_folder)
 from ...install_context import InstallCancelled
+from ...rollback import rollback
 from ...pending_install_logs import start_session as start_pending_log_session
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir_with_remote
@@ -107,6 +108,7 @@ class InstallApi:
         # при start(), а докачка идёт ДО него.
         self._prefetch_cancel = threading.Event()
         self._prefetching = False
+        self._rollback_running = False  # «Откатить в сток» (rollback_apps) идёт — второй не запускаем
         self._manifest_cache: dict | None = None
         self._manifest_cache_time: float = 0.0
         # Лог текущей попытки установки (см. POST /install_log,
@@ -985,6 +987,30 @@ class InstallApi:
         # флешки сюда не относятся).
         return [model.dir / "files"]
 
+    def rollback_apps(self, device_serial: str | None, stage_index: int, apps: list[dict]) -> dict:
+        """«Откатить в сток»: удалить с магнитолы то, что поставил последний запуск этапа «Приложения»
+        (apps — поле installed его итога). Ход — apk_progress с фазой remove, итог — rollback_finished."""
+        if self._runner.running or self._rollback_running:
+            return {"ok": False, "error": "Установка уже выполняется."}
+        apps = [app for app in (apps or []) if isinstance(app, dict) and app.get("package")]
+        if not apps:
+            return {"ok": False, "error": "Нечего удалять: в этом запуске ничего не установлено."}
+        self._rollback_running = True
+        threading.Thread(target=self._rollback_worker, args=(device_serial, stage_index, apps), daemon=True).start()
+        return {"ok": True}
+
+    def _rollback_worker(self, device_serial: str | None, stage_index: int, apps: list[dict]) -> None:
+        outcome = {"removed": [], "manual": [], "failed": [app.get("package") for app in apps], "not_connected": False}
+        try:
+            outcome = rollback(Adb(self.adb_path, device_serial), apps, self._on_log,
+                               lambda path, done, total, state: self._push_apk_install(
+                                   stage_index, path, done, total, state, "remove"))
+        except Exception as exc:  # noqa: BLE001 - итог должен дойти до окна в любом случае
+            self._on_log(f"Откат в сток прерван: {exc}")
+        finally:
+            self._rollback_running = False
+            event_bridge.push({"kind": "rollback_finished", "stage_index": stage_index, **outcome})
+
     def cancel_stage(self) -> dict:
         if self._prefetching:
             self._prefetch_cancel.set()
@@ -1157,11 +1183,13 @@ class InstallApi:
         event_bridge.push({"kind": "sync_progress", "done": done, "total": total,
                            "files_done": files_done, "files_total": files_total})
 
-    def _on_finished(self, success: bool, message: str, partial: bool = False) -> None:
+    def _on_finished(self, success: bool, message: str, partial: bool = False,
+                     installed: list[dict] | None = None) -> None:
         event_bridge.push({
             "kind": "install_finished",
             "success": success,
             "message": message,
             "partial": partial,  # этап пройден, но часть приложений пропущена (runner.py)
+            "installed": installed or [],  # поставлено в этом запуске — для «Откатить в сток»
             "stage_index": self._pending_stage_index,
         })

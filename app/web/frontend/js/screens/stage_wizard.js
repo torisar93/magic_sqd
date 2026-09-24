@@ -67,6 +67,10 @@
   // render() сотрёт страницу прямо под ним.
   let activeRun = null;
   let afterRunClose = null;
+  // «Откатить в сток» (владелец, 2026-09-25): чем и на какой магнитоле шла последняя установка — и само окно отката.
+  let lastRunDevice = null;
+  let lastRunItems = [];
+  let rollbackState = null;
   let activeAppPicker = null;
   let activeCommand = null;
   const commandResults = new Map();
@@ -148,6 +152,7 @@
       if (!event.passive && activeRun) activeRun.detail(event.text);
     });
     window.events.on("install_finished", onInstallFinished);
+    window.events.on("rollback_finished", finishRollback);
     window.events.on("ask_input", (event) => showAskInputDialog(event));
     // Какое окно «что сделать» увидел техник (user_errors.js) — строкой в лог сессии: по ней разбор логов
     // на сервере отличает ошибку подключения/действий техника от сбоя программы.
@@ -351,7 +356,48 @@
     runnerBusy = false;
     log(event.message);
     trackStageResult(event);
-    finishRun({ success: !!event.success, message: event.message, partial: !!event.partial }, () => afterStageFinished(event));
+    finishRun({ success: !!event.success, message: event.message, partial: !!event.partial, rollback: rollbackFor(event) },
+      () => afterStageFinished(event));
+  }
+
+  // Этап поставил приложения (install_finished.installed) — в итоге плашка «не отключайте компьютер» и кнопка
+  // «Откатить в сток» (stage_run.js: attachRollback). Названия — как в очереди окна установки.
+  const samePath = (path) => String(path || "").split("\\").join("/").toLowerCase();
+  function rollbackFor(event) {
+    const installed = Array.isArray(event.installed) ? event.installed : [];
+    if (!installed.length) return null;
+    const names = new Map(lastRunItems.map((item) => [samePath(item.path), item.name]));
+    const apps = installed.map((app) => ({ ...app, name: names.get(samePath(app.path)) || app.name }));
+    return { apps, device: "компьютер", onRollback: (list) => startRollback(event.stage_index, list) };
+  }
+
+  function startRollback(stageIndex, apps) {
+    activeRun = null; afterRunClose = null;  // окно итога этапа закрывается без перехода к следующему
+    contentEl.classList.remove('installing-apps');  // как afterStageFinished — страница этапа снова обычная
+    contentEl.parentElement.classList.remove('installing-apps');
+    runnerBusy = true;
+    const state = { apps, retryApps: apps };
+    state.run = window.StageRun.openRollback(apps, {
+      stageIndex,
+      retry: () => startRollback(stageIndex, state.retryApps),
+      onClose: () => { if (rollbackState === state) rollbackState = null; runnerBusy = false; render(); },
+    });
+    rollbackState = state;
+    const fail = (error) => finishRollback({ failed: apps.map((app) => app.package), error });
+    window.pywebview.api.install_rollback_apps(lastRunDevice, stageIndex, apps)
+      .then((result) => { if (!result || !result.ok) fail(result?.error || "Не удалось начать откат."); })
+      .catch((error) => fail(error.message || String(error)));
+  }
+
+  function finishRollback(event) {
+    const state = rollbackState;
+    if (!state || state.run.finished) return;
+    runnerBusy = false;
+    state.retryApps = state.apps.filter((app) => (event.failed || []).includes(app.package));
+    const outcome = window.StageRun.rollbackOutcome(event, state.apps);
+    if (event.error) outcome.message = `${event.error} ${outcome.message}`;
+    log(outcome.message);
+    state.run.finish(outcome);
   }
 
   function trackStageResult(event) {
@@ -531,7 +577,7 @@
         if (!(apk.path in appSelection)) appSelection[apk.path] = false;
       }
     }
-    const shared = await sharedApks();
+    const shared = window.AppTabs.forModel(await sharedApks(), model);  // без скрытых на этой модели
     if (generation !== openGeneration) return;
     for (const apk of shared) {
       if (!(apk.path in appSelection)) appSelection[apk.path] = false;
@@ -1210,7 +1256,7 @@
       tree.appendChild(buildCollapsibleSection("standard-optional", "Дополнительно", standard.optional));
     }
 
-    const shared = await sharedApks();
+    const shared = window.AppTabs.forModel(await sharedApks(), model);  // без скрытых на этой модели
     if(revision!==renderRevision)return tree;
     const byCategory = {};
     for (const apk of shared) {
@@ -1246,6 +1292,9 @@
       syncSelection();
     });
     syncSelection();
+    // «Только одно из группы» (apps_tabs.js): отметили второе из группы — первое снимается само. Слушатель
+    // после syncSelection — к этому моменту выбор уже обновлён.
+    window.AppTabs.exclusiveGroups(tree, shared, (path) => !!selection[path]);
     return tree;
   }
 
@@ -1478,7 +1527,12 @@
         selectedApkPaths: stage.usb_copy_selected_apks
           ? chooser.paths()
           : selectedApkPaths(), titleSuffix: `${model.display_label} — ${stage.title}`,
-        onFinished: success => { if (success) advanceAfter(stage.index); },
+        onFinished: (success, result) => {
+          // Прежний usb-этап в журнал сессии не писал ничего — запись на флешку на ПК в логах не была видна.
+          sessionHasActivity = true;
+          log(flashResultLine(stage.usb_copy_selected_apks ? 'файлы этапа и выбранные приложения' : 'файлы этапа', success, result));
+          if (success) advanceAfter(stage.index);
+        },
       });
     };
     const instructionStage = stage.instruction_html || stage.description ? stage
@@ -1697,14 +1751,9 @@
         meta.textContent = `SN: ${result.sn} · ${result.logs_folder}/${result.zip_name}`;
         resultDrive = drive.letter; resultBox.hidden = false; three.dataset.state = 'done';
         two.dataset.state = 'done'; status(readStatus, 'Пароль готов. Введите его на экране магнитолы.');
-        // Единственное место, откуда видно, что реально попало в формулу
-        // (жалобы клиентов на неверный пароль, 2026-09-21) — код+SN+источник
-        // в постоянном журнале сессии, полная копия zip — на диске техника
-        // (result.debug_copy, см. app/qr_adb_password.py:save_debug_copy),
-        // пока не накоплена уверенность в 100% надёжности формулы.
-        sessionHasActivity = true;
-        log(`QR ADB: пароль получен — код ${result.code}, SN ${result.sn}, источник ${result.logs_folder}/${result.zip_name}` +
-          (result.debug_copy ? ', копия дампа сохранена.' : '.'));
+        // Сам код, SN и источник в журнал больше не пишем: неверные коды объяснились шрифтом и двумя
+        // флагами на флешке у Jolion (владелец, 2026-09-24: «можно полностью убрать логирование»).
+        sessionHasActivity = true; log('QR ADB: пароль получен.');
         run.finish({ success: true, message: 'Пароль готов. Введите его на экране магнитолы.' });
       } catch (err) {
         if (live()) {
@@ -1738,6 +1787,15 @@
     if (block.copy_selected_apks) parts.push('выбранные приложения');
     if (block.shared_folder) parts.push('комплект файлов для магнитолы');
     return parts.length ? `На флешку будет записано: ${parts.join(', ')}.` : 'В этом блоке пока нет файлов для записи.';
+  }
+
+  // Итог записи на флешку — одна строка журнала сессии, с причиной неудачи (раньше в логе была
+  // только «запись не удалась», и разобрать жалобу было нечем — №804, №913).
+  function flashResultLine(what, success, result) {
+    if (success) return `Флешка: записано — ${what}.`;
+    if (result?.cancelled) return `Флешка: запись остановлена пользователем — ${what}.`;
+    const reason = String(result?.message || '').trim().replace(/\.+$/, '');
+    return `Флешка: запись не удалась — ${what}${reason ? `: ${reason}` : ''}.`;
   }
 
   // Та же полоса выбора флешки, что у прежнего этапа "qr_adb" (renderQrAdbStage) —
@@ -1883,10 +1941,7 @@
             if (!result.ok) throw new Error(result.error || 'Не удалось получить пароль.');
             state.password = result; showPassword(result);
             setStatus(status, 'Пароль готов. Введите его на экране магнитолы.');
-            // См. renderQrAdbStage — единственное место, откуда видно, что попало в формулу.
-            sessionHasActivity = true;
-            log(`QR ADB: пароль получен — код ${result.code}, SN ${result.sn}, источник ${result.logs_folder}/${result.zip_name}` +
-              (result.debug_copy ? ', копия дампа сохранена.' : '.'));
+            sessionHasActivity = true; log('QR ADB: пароль получен.');  // без кода — см. renderQrAdbStage
             run.finish({success:true, message:'Пароль готов. Введите его на экране магнитолы.'});
             markDone(k);
           } catch (err) {
@@ -1923,10 +1978,10 @@
             modelKey: model.key, stageIndex: stage.index, variant: null, block: k, drive: drive?.current()?.letter,
             selectedApkPaths: block.copy_selected_apks ? chooser.paths() : [],
             titleSuffix: `${model.display_label} — ${block.title || stage.title}`,
-            onFinished: success => {
+            onFinished: (success, result) => {
               // Как у прежнего QR-этапа: что и когда записали — в журнале сессии (разбор жалоб).
               sessionHasActivity = true;
-              log(success ? `Флешка: записано — ${what}.` : `Флешка: запись не удалась — ${what}.`);
+              log(flashResultLine(what, success, result));
               if (success) markDone(k);
             },
           });
@@ -2061,6 +2116,8 @@
           }
           prefetched = true;
         }
+        lastRunDevice = device;
+        lastRunItems = items;
         const result = await window.pywebview.api.install_start_stage(model.key, stage.index, device, selected,
           prefetched || prefetchedStages.has(String(stage.index)));
         if (result.ok) return;

@@ -101,10 +101,11 @@
     </div>
   </div>
 
-  <dialog id="welcome-dialog" class="dialog-info">
+  <dialog id="welcome-dialog" class="dialog-info" tabindex="-1">
     <img class="modal-logo" src="img/logo-full-dark.svg" alt="Magic SQD" />
     <h2>Добро пожаловать!</h2>
-    <p>Magic SQD ставит приложения на магнитолы по ADB и через USB-флешку. Если программа экономит тебе время — загляни на Boosty, это реально помогает разработке.</p>
+    <p class="callout welcome-disclaimer">Программа предназначена для людей с техническими знаниями о работе Android-магнитол. Все действия вы выполняете на свой страх и риск.</p>
+    <p id="welcome-boosty-text">Magic SQD ставит приложения на магнитолы по ADB и через USB-флешку. Если программа экономит тебе время — загляни на Boosty, это реально помогает разработке.</p>
     <div class="boosty-links" id="welcome-boosty-links"></div>
     <div class="dialog-actions">
       <button id="welcome-dialog-close" class="accent">Понятно</button>
@@ -237,8 +238,9 @@
   </dialog>
 
   <dialog id="update-dialog">
-    <h2>Доступно обновление Magic SQD</h2>
+    <h2 id="update-title">Доступно обновление Magic SQD</h2>
     <p id="update-version-label" style="color: var(--text-dim); font-size: 12px; margin-bottom: 8px"></p>
+    <p id="update-mandatory" class="callout update-mandatory" hidden>Это обязательное обновление: без него дальше работать нельзя. Установите его, чтобы продолжить.</p>
     <p id="update-changelog" style="white-space: pre-wrap"></p>
     <div class="catalog-startup-progress-track" id="update-progress-track" style="display: none">
       <div id="update-progress-fill"></div>

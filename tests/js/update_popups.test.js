@@ -4,10 +4,10 @@
 const { read, slice, assert, run } = require("./_util");
 
 function make(code) {
-  const st = { welcome: 0, updateModals: 0, checks: 0, removedWelcome: 0, timers: [], welcomeOpen: false };
-  const overlayStub = { querySelector: () => ({ classList: { add() {} } }) };
+  const st = { welcome: 0, updateModals: 0, checks: 0, removedWelcome: 0, timers: [], welcomeOpen: false, modals: [] };
+  const overlayStub = { querySelector: () => ({ classList: { add() {} } }), remove: () => { st.overlayRemoved = (st.overlayRemoved || 0) + 1; } };
   const ctx = {
-    el: (...a) => ({ a }), showModal: () => { st.updateModals++; return overlayStub; },
+    el: (...a) => ({ a }), showModal: (children, options) => { st.updateModals++; st.modals.push({ children, options }); return overlayStub; },
     maybeShowWelcomeModal: () => { st.welcome++; },
     checkForUpdate: () => { st.checks++; },
     document: { querySelector: (sel) => (sel === ".welcome-overlay" && st.welcomeOpen ? { remove: () => { st.removedWelcome++; } } : null) },
@@ -48,4 +48,20 @@ module.exports = async function () {
   ({ st, api } = make(code)); api.startupPopups(); api.onUpdateCheckResult({ result: update });
   if (!st.timers[0].cleared) st.timers[0].fn();
   assert(st.welcome === 0, "таймер после ответа не показывает приветствие");
+
+  // Обязательное обновление (владелец, 2026-09-25): без «Позже», тап мимо и «Назад» не закрывают окно.
+  const texts = (modal) => modal.children.map((node) => (node.a[1] && node.a[1].text) || "");
+  ({ st, api } = make(code)); api.onUpdateCheckResult({ result: update });
+  assert(st.modals[0].options.dismissible === true && texts(st.modals[0]).includes("Позже"), "обычное: можно отложить");
+  ({ st, api } = make(code)); api.onUpdateCheckResult({ result: { ...update, mandatory: true } });
+  const mandatory = st.modals[0];
+  assert(mandatory.options.dismissible === false, "обязательное: закрыть тапом мимо/«Назад» нельзя");
+  assert(!texts(mandatory).includes("Позже"), "обязательное: без «Позже» — " + texts(mandatory).join("|"));
+  assert(texts(mandatory).some((t) => t.startsWith("Обязательное обновление")), "обязательное: так и названо");
+  const download = (modal) => modal.children.find((node) => node.a[1] && node.a[1].text === "Скачать APK").a[1];
+  download(mandatory).onclick();
+  assert(!st.overlayRemoved, "обязательное: окно остаётся после «Скачать APK»");
+  ({ st, api } = make(code)); api.onUpdateCheckResult({ result: update });
+  download(st.modals[0]).onclick();
+  assert(st.overlayRemoved === 1, "обычное: «Скачать APK» закрывает окно, как раньше");
 };
