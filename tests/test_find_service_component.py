@@ -146,3 +146,44 @@ def test_grant_all_permissions_enables_real_accessibility_service():
            "ace.jun.simplecontrol/ace.jun.simplecontrol.service.AccService" in log
     assert not any("не найдена в dumpsys (ace.jun.simplecontrol)" in line and "спецвозможностей" in line
                    for line in log)
+
+
+def _grant(dumpsys_output, package):
+    def shell(command, **kwargs):
+        if command.startswith("dumpsys package"):
+            return SimpleNamespace(stdout=dumpsys_output, stderr="", returncode=0)
+        if command.startswith("settings get secure"):
+            return SimpleNamespace(stdout="null\n", stderr="", returncode=0)
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    log = []
+    adb_permissions.grant_all_permissions(SimpleNamespace(log=log.append, shell=shell), package)
+    return log
+
+
+def test_app_without_services_gets_no_scary_lines():
+    """Лог #799 (Haval Jolion 2026, v1.0.38): у SmartTube, RuStore, Кинопоиска и т.д. таких служб нет вовсе,
+    а в лог на каждое приложение шли две строки «Служба … не найдена в dumpsys … включить придётся
+    вручную» — выглядело как сбой. Службы нет — и строки нет."""
+    out = ("    requested permissions:\n"
+           "      android.permission.INTERNET\n"
+           "\n"
+           "Activity Resolver Table:\n"
+           "  Non-Data Actions:\n"
+           "      android.intent.action.MAIN:\n"
+           "        1f2e3d org.smarttube.stable/com.liskovsoft.smartyoutubetv2.tv.ui.main.SplashActivity filter 4c5b6a\n")
+    log = _grant(out, "org.smarttube.stable")
+    assert not any("не найдена" in line or "служба" in line.lower() for line in log), log
+
+
+def test_declared_but_unreadable_service_is_still_reported():
+    """Служба есть (строка с разрешением службы в dumpsys), а определить компонент не вышло — предупреждение
+    остаётся: включать придётся вручную."""
+    out = ("Service Resolver Table:\n"
+           "  Non-Data Actions:\n"
+           "      android.accessibilityservice.AccessibilityService:\n"
+           "        5c52dd <компонент в незнакомом формате> filter cef2b51 "
+           "permission android.permission.BIND_ACCESSIBILITY_SERVICE\n")
+    log = _grant(out, "com.example.app")
+    assert any(line.startswith("Внимание: у com.example.app есть служба спецвозможностей") for line in log), log
+    assert not any("уведомлениям" in line for line in log), log

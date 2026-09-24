@@ -1,4 +1,8 @@
 /* USB workflow: one native drive connection and three readable, numbered steps. */
+/* Пароль ADB по QR — встроенным JetBrains Mono Bold (../fonts/, рядом лицензия OFL), как на ПК
+   (app/web/frontend/css/usb06.css — тот же файл и то же имя шрифта). Системный monospace здесь — Droid Sans Mono,
+   в нём ноль как O, и техник вводил пароль с ошибкой (2026-09-24). */
+@font-face{font-family:"MSQD Password";src:url(../fonts/JetBrainsMono-Bold.ttf) format("truetype");font-weight:700;font-style:normal;font-display:block}
 .stage-page.usb-stage{padding:20px 14px 24px;gap:10px;overflow:visible}
 .usb-stage>.stage-chip{font-size:26px;line-height:1.2;margin:0;letter-spacing:-.5px}
 .usb-stage-intro{font-size:14px;line-height:1.5;color:#c0d0d8;margin:0 0 4px;max-width:48em}
@@ -37,7 +41,7 @@
 .usb-step-card[data-state=error] .usb-step-feedback{color:#ffb9aa}
 .usb-password-result{display:flex;flex-direction:column;align-items:center;gap:8px;border:1px solid #9ae3c440;border-radius:12px;background:#10251e70;padding:16px}
 .usb-password-result>span{font-size:12px;color:#b4cdc3}
-.usb-password-result .qr-adb-code{font-size:30px;line-height:1.3;letter-spacing:3px;font-weight:600;margin:0;padding:0;background:transparent;border:0;word-break:break-all;color:#b6f1d8;user-select:text}
+.usb-password-result .qr-adb-code{font-family:"MSQD Password",monospace;font-size:30px;line-height:1.3;letter-spacing:3px;font-weight:700;font-synthesis:none;margin:0;padding:0;background:transparent;border:0;word-break:break-all;color:#b6f1d8;user-select:text}
 .usb-password-result small{font-size:11px;line-height:1.5;color:#91aaa3;overflow-wrap:anywhere}
 .usb-operation-status{font-size:12px;line-height:1.5;color:#b4d6c8}
 progress.usb-operation-progress{appearance:none;display:block;width:100%;height:5px;border:0;border-radius:4px;overflow:hidden;margin:11px 0 0;background:#a4daca18}

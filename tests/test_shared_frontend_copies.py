@@ -20,6 +20,9 @@ SHARED = [
     ("css/progress08.css", "css/progress08.css"),
     ("js/apps_tabs.js", "js/apps_tabs.js"),
     ("css/apps_tabs.css", "css/apps_tabs.css"),
+    # Шрифт пароля ADB по QR (см. tests/test_password_font.py) — один файл на обе платформы.
+    ("fonts/JetBrainsMono-Bold.ttf", "fonts/JetBrainsMono-Bold.ttf"),
+    ("fonts/JetBrainsMono-OFL.txt", "fonts/JetBrainsMono-OFL.txt"),
 ]
 
 

@@ -462,7 +462,7 @@ html, body {
 }
 
 .qr-adb-code {
-  font-family: monospace;
+  font-family: "MSQD Password", monospace; /* шрифт объявлен в usb06.css */
   font-size: 26px;
   font-weight: 700;
   letter-spacing: 3px;

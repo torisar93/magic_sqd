@@ -257,6 +257,8 @@
       result = {
         success: !!outcome.success && !cancelled,
         cancelled,
+        // Этап пройден, но часть приложений пропущена (не встала) — успех с честным итогом, не «Готово».
+        partial: !!outcome.partial && !!outcome.success && !cancelled,
         message: outcome.message ? String(outcome.message) : "",
       };
       host.classList.remove("is-running");
@@ -264,7 +266,7 @@
       const summary = host.querySelector(".queue-summary");
       host.replaceChildren();
       box.querySelectorAll(":scope > .stage-run-actions").forEach((node) => node.remove());
-      const state = result.success ? "success" : result.cancelled ? "cancelled" : "error";
+      const state = result.partial ? "partial" : result.success ? "success" : result.cancelled ? "cancelled" : "error";
       const message = result.message.trim();
       const userError = state === "error" ? userErrorFor(outcome.userError, message) : null;
       let view;
@@ -276,9 +278,9 @@
         view = n("div", "stage-run-result");
         view.dataset.state = state;
         view.setAttribute("role", state === "error" ? "alert" : "status");
-        view.append(n("div", "stage-run-symbol", { success: "✓", cancelled: "■", error: "!" }[state]));
+        view.append(n("div", "stage-run-symbol", { success: "✓", partial: "!", cancelled: "■", error: "!" }[state]));
         view.append(n("h2", "stage-run-title",
-          { success: "Готово", cancelled: "Остановлено", error: "Не удалось завершить этап" }[state]));
+          { success: "Готово", partial: "Установлено не всё", cancelled: "Остановлено", error: "Не удалось завершить этап" }[state]));
       }
 
       const shortMessage = message && message.length <= 200 && !message.includes("\n");
@@ -286,6 +288,9 @@
         // Текст, шаги и подробности уже собраны в userErrorView.
       } else if (state === "success") {
         view.append(n("p", "stage-run-message", shortMessage ? message : "Этап выполнен успешно."));
+      } else if (state === "partial") {
+        // Текст наш (какие приложения пропущены и почему) — показываем целиком, а не «Этап выполнен».
+        view.append(n("p", "stage-run-message", message || "Часть приложений не установилась, остальные установлены."));
       } else if (state === "cancelled") {
         view.append(n("p", "stage-run-message", "Этап остановлен, не завершив работу. Можно запустить его заново."));
       } else {
@@ -306,7 +311,7 @@
 
       const actions = n("div", "stage-run-actions");
       let primary;
-      if (state === "success") {
+      if (state === "success" || state === "partial") {
         primary = n("button", "accent", options.continueLabel || "Продолжить");
         primary.type = "button";
         primary.onclick = close;

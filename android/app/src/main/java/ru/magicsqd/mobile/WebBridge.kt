@@ -1444,6 +1444,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val resultJson = when (result) {
             StageRunResult.Success -> JSONObject().put("success", true)
             is StageRunResult.Failed -> JSONObject().put("success", false).put("reason", result.reason)
+            // Этап пройден, но часть приложений пропущена — успех с честным итогом (окно «Установлено не всё»).
+            is StageRunResult.Partial -> JSONObject().put("success", true).put("partial", true).put("message", result.message)
         }
         // Жива ли связь с магнитолой после этапа (AdbSession.isConnected учитывает неудачную запись): app.js
         // показывает «не подключено», и следующий запуск сразу даёт окно «Магнитола не подключена».

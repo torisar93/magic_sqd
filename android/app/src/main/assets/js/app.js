@@ -1343,7 +1343,8 @@
       stageExecutionResults[event.index] = { ...r, actionIndex: stageOperation.actionIndex };
       stageOperation = null;
     }
-    log(r.success ? "Этап выполнен успешно."
+    // partial — очередь пройдена, но часть приложений пропущена (InstallEngine: StageRunResult.Partial, как на ПК).
+    log(r.success ? (r.partial && r.message ? r.message : "Этап выполнен успешно.")
       : stoppedByUser ? "Этап остановлен пользователем."
       : `Этап завершился с ошибкой: ${r.reason || "?"}`);
     const finishedStage = stages.find(item => item.index === event.index);
@@ -1369,7 +1370,7 @@
           advanceAfter(currentIndex);
           if(stage.next==null){
             document.querySelector('.stage-primary-actions')?.remove();document.querySelector('.apps-dock')?.remove();clear(wizardContentEl);
-            wizardContentEl.append(el('div',{class:'stage-page'},[el('h2',{text:'Установка завершена'}),el('p',{class:'stage-text',text:'Все выбранные приложения установлены.'})]));
+            wizardContentEl.append(el('div',{class:'stage-page'},[el('h2',{text:'Установка завершена'}),el('p',{class:'stage-text',text:r.partial&&r.message?r.message:'Все выбранные приложения установлены.'})]));
             wizardNextBtn.style.display='';wizardNextBtn.textContent='К моделям';nextAction=()=>showScreen('picker');
           }
         }else render();
@@ -1379,8 +1380,9 @@
     finishRun({
       success: !!r.success,
       cancelled: !!(r.cancelled || r.canceled),
+      partial: !!r.partial,
       message: r.success
-        ? (finishedStage?.type === "apps" ? "Все выбранные приложения установлены." : "")
+        ? (r.partial && r.message ? r.message : finishedStage?.type === "apps" ? "Все выбранные приложения установлены." : "")
         : (r.reason || ""),
     }, afterClose, "stage");
   }

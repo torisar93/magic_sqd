@@ -27,6 +27,7 @@ const CASES = [
   ["Флешка не найдена (нет USB mass storage устройств) — проверь OTG-подключение.", "flash_not_found"],
   ["Флешка не подключена — сначала подключись к ней", "flash_not_found"],
   ["Подключите флешку и выберите её в списке.", "flash_not_found"],
+  ["Выберите флешку в списке накопителей.", "flash_not_selected"],
   ["Пользователь отклонил разрешение на доступ к флешке", "usb_permission"],
   ["Не удалось записать svlog.flag: флешка перестала отвечать. Выньте и снова вставьте флешку (и OTG-переходник) и повторите запись; если не помогло — отформатируйте флешку", "flash_io"],
   ["Ошибка записи: IOException: MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device, please reattach device and try again", "flash_io"],
@@ -181,6 +182,23 @@ module.exports = async function () {
     assert(window.StageRun.showUserError({ id: "no_device" }) === null, "идущий этап не закрываем чужим окном");
     assert(!running.finished, "идущий этап цел");
     assert(window.StageRun.showUserError({ message: "Ошибка установки: monji" }) === null, "не ошибка техника — окна нет");
+  }
+
+  // 5a) Очередь пройдена, но часть приложений пропущена (ПК runner.py / Android StageRunResult.Partial): не «Готово»,
+  // а «Установлено не всё» с перечнем пропущенного целиком (лог #764: раньше Android останавливал очередь).
+  {
+    const { window, document } = load(true);
+    const runWin = window.StageRun.open({ title: "Установка приложений" });
+    const message = "Установка завершена, но не всё встало — пропущено: Settings.apk: pm install не вернул Success: " +
+      "Failure [INSTALL_FAILED_CONFLICTING_PROVIDER: provider com.android.settings.files already used]. " +
+      "Остальные приложения установлены.";
+    runWin.finish({ success: true, partial: true, message });
+    const view = find(document.body, "stage-run-result");
+    assert(view.dataset.state === "partial", "состояние «не всё»: " + view.dataset.state);
+    const all = texts(view);
+    assert(all.includes("Установлено не всё") && all.includes(message), "заголовок и полный перечень: " + all.join(" | "));
+    const buttons = view.all().filter((c) => c.tagName === "BUTTON").map((b) => b._text);
+    assert(buttons.join() === "Продолжить", "как у успеха — «Продолжить»: " + buttons);
   }
 
   // 5) Блок для окна записи на флешку (ПК): шаги без подсказки про разработчика.

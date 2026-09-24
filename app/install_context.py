@@ -713,8 +713,9 @@ class InstallContext:
         self.log(f"Установка APK (JDWP-патч белого списка, Desay x9h): {path.name} [{package}]")
         try:
             self._jdwp_whitelist_packages([package])
-        except JdwpError as exc:
-            raise AdbError(f"JDWP-патч белого списка не удался: {exc}")
+        except (JdwpError, OSError) as exc:
+            # OSError — таймаут/обрыв сокета JDWP: это отказ способа, а не повод ронять весь этап.
+            raise AdbError(f"JDWP-патч белого списка не удался: {exc or type(exc).__name__}")
         self.push(path, remote_path)
         extra = (" " + " ".join(extra_args)) if extra_args else ""
         result = self.shell(f"pm install -r -t {shlex.quote(remote_path)}{extra}", check=False)
@@ -750,7 +751,12 @@ class InstallContext:
             finally:
                 sock.close()
         finally:
-            self._adb.run("forward", "--remove", f"tcp:{port}", check=False)
+            # Уборка проброса — коротко и без исключений: в логе #799 «forward --remove» висел 120 с и его
+            # таймаут подменил настоящую причину сбоя JDWP (приложение пропущено с «Команда не ответила»).
+            try:
+                self._adb.run("forward", "--remove", f"tcp:{port}", check=False, timeout=15)
+            except AdbError as exc:
+                self.log(f"  JDWP: не удалось снять проброс порта {port}: {_short_reason(exc, 160)}")
 
     def _installed_packages(self) -> set[str]:
         result = self.shell("pm list packages", check=False)

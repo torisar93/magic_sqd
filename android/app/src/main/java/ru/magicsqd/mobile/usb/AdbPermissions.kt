@@ -135,12 +135,22 @@ object AdbPermissions {
         return null
     }
 
-    /** Портовая копия cars/_shared/adb_permissions.py:_enable_accessibility_service. */
+    /** Портовая копия cars/_shared/adb_permissions.py:_service_declared — у службы в dumpsys строка
+     * «… filter … permission android.permission.BIND_…» (у старых прошивок «permission=…»); строка из
+     * «requested permissions» — не служба. */
+    private fun serviceDeclared(dumpsysOutput: String, marker: String): Boolean =
+        Regex("\\bpermission[\\s=]+android\\.permission\\.$marker\\b").containsMatchIn(dumpsysOutput)
+
+    /** Портовая копия cars/_shared/adb_permissions.py:_enable_accessibility_service. Службы нет — молчим
+     * (у большинства приложений её нет, раньше строка «не найдена в dumpsys» шла у каждого и выглядела как
+     * сбой, лог #799); объявлена, но не разобрали — предупреждаем. */
     private fun enableAccessibilityService(pkg: String, dumpsysOutput: String, log: (String) -> Unit) {
         val component = findServiceComponent(pkg, dumpsysOutput, "BIND_ACCESSIBILITY_SERVICE")
         if (component == null) {
-            log("Служба спецвозможностей не найдена в dumpsys ($pkg) — похоже, приложение " +
-                "её не объявляет, либо включить придётся вручную.")
+            if (serviceDeclared(dumpsysOutput, "BIND_ACCESSIBILITY_SERVICE")) {
+                log("Внимание: у $pkg есть служба спецвозможностей, но определить её не удалось — " +
+                    "включите её вручную (Настройки → Спецвозможности).")
+            }
             return
         }
         val current = shellText("settings get secure enabled_accessibility_services", log).trim()
@@ -164,8 +174,10 @@ object AdbPermissions {
     private fun enableNotificationListener(pkg: String, dumpsysOutput: String, log: (String) -> Unit) {
         val component = findServiceComponent(pkg, dumpsysOutput, "BIND_NOTIFICATION_LISTENER_SERVICE")
         if (component == null) {
-            log("Служба доступа к уведомлениям не найдена в dumpsys ($pkg) — похоже, " +
-                "приложение её не объявляет, либо включить придётся вручную.")
+            if (serviceDeclared(dumpsysOutput, "BIND_NOTIFICATION_LISTENER_SERVICE")) {
+                log("Внимание: у $pkg есть служба доступа к уведомлениям, но определить её не удалось — " +
+                    "включите доступ вручную (Настройки → Уведомления → Доступ к уведомлениям).")
+            }
             return
         }
         val current = shellText("settings get secure enabled_notification_listeners", log).trim()

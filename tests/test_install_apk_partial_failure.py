@@ -123,7 +123,7 @@ def test_runner_reports_partial_failure_in_final_message(tmp_path):
     install_selected_apks пропустил хотя бы один apk."""
     results = []
     runner = InstallRunner(adb_path="fake-adb", on_log=lambda m: None,
-                            on_finished=lambda ok, msg: results.append((ok, msg)))
+                            on_finished=lambda ok, msg, **kw: results.append((ok, msg, kw)))
 
     class FakeModel:
         dir = tmp_path
@@ -134,10 +134,11 @@ def test_runner_reports_partial_failure_in_final_message(tmp_path):
     runner._run(FakeModel(), "fake-device", [], run_fn, [], "", True)
 
     assert len(results) == 1
-    ok, message = results[0]
+    ok, message, extra = results[0]
     assert ok is True
     assert "x.apk: причина" in message
     assert "не всё встало" in message
+    assert extra == {"partial": True}  # окно этапа: «Установлено не всё», а не «Готово»
 
 
 def test_runner_reports_plain_success_without_failures(tmp_path):

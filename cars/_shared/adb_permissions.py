@@ -199,11 +199,22 @@ def _find_service_component(package: str, dumpsys_output: str, marker: str) -> s
     return None
 
 
+def _service_declared(dumpsys_output: str, marker: str) -> bool:
+    """Объявляет ли приложение такую службу: у службы в dumpsys package строка вида «… filter …
+    permission android.permission.BIND_…» (у старых прошивок — «permission=…»). Строка из «requested
+    permissions» — не служба."""
+    return re.search(rf"\bpermission[\s=]+android\.permission\.{marker}\b", dumpsys_output) is not None
+
+
 def _enable_accessibility_service(ctx, package: str, dumpsys_output: str) -> None:
     component = _find_service_component(package, dumpsys_output, "BIND_ACCESSIBILITY_SERVICE")
     if not component:
-        ctx.log(f"Служба спецвозможностей не найдена в dumpsys ({package}) — "
-                f"похоже, приложение её не объявляет, либо включить придётся вручную.")
+        # У большинства приложений такой службы нет вовсе — это не ошибка, и в лог это не пишется: раньше
+        # «Служба … не найдена в dumpsys» шла у каждого приложения дважды и выглядела как сбой (лог #799).
+        # Предупреждаем, только если служба объявлена, а определить её не удалось.
+        if _service_declared(dumpsys_output, "BIND_ACCESSIBILITY_SERVICE"):
+            ctx.log(f"Внимание: у {package} есть служба спецвозможностей, но определить её не удалось — "
+                    "включите её вручную (Настройки → Спецвозможности).")
         return
     current = (ctx.shell("settings get secure enabled_accessibility_services", check=False).stdout or "").strip()
     existing = [c for c in current.split(":") if c] if current and current != "null" else []
@@ -225,8 +236,10 @@ def _enable_notification_listener(ctx, package: str, dumpsys_output: str) -> Non
     применяется для приложений, поставленных не через "доверенный" магазин."""
     component = _find_service_component(package, dumpsys_output, "BIND_NOTIFICATION_LISTENER_SERVICE")
     if not component:
-        ctx.log(f"Служба доступа к уведомлениям не найдена в dumpsys ({package}) — "
-                f"похоже, приложение её не объявляет, либо включить придётся вручную.")
+        # См. _enable_accessibility_service: службы нет — молчим, есть, но не разобрали — предупреждаем.
+        if _service_declared(dumpsys_output, "BIND_NOTIFICATION_LISTENER_SERVICE"):
+            ctx.log(f"Внимание: у {package} есть служба доступа к уведомлениям, но определить её не удалось — "
+                    "включите доступ вручную (Настройки → Уведомления → Доступ к уведомлениям).")
         return
     current = (ctx.shell("settings get secure enabled_notification_listeners", check=False).stdout or "").strip()
     existing = [c for c in current.split(":") if c] if current and current != "null" else []

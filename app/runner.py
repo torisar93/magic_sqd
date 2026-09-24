@@ -12,7 +12,8 @@ class InstallRunner:
                  on_sync_progress=None, on_apk_download_progress=None, on_apk_install_progress=None):
         """
         on_log(str) вызывается из фонового потока при каждой строке лога.
-        on_finished(success: bool, message: str) вызывается по завершении.
+        on_finished(success: bool, message: str[, partial=True]) вызывается по завершении; partial —
+        этап пройден, но часть приложений пропущена (окно этапа покажет «Установлено не всё»).
         Оба callback должны сами позаботиться о потокобезопасности (см. gui.py).
         base_dir, если задан, используется, чтобы перед установкой тихо
         подтянуть СВОИ файлы конкретного этапа (own_dirs у start(), см.
@@ -149,7 +150,7 @@ class InstallRunner:
         failed_apps = getattr(ctx, "failed_apps", None)
         if failed_apps:
             self.on_finished(True, "Установка завершена, но не всё встало — пропущено: "
-                                    + "; ".join(failed_apps) + ". Остальные приложения установлены.")
+                                    + "; ".join(failed_apps) + ". Остальные приложения установлены.", partial=True)
         else:
             self.on_finished(True, "Установка завершена успешно.")
 

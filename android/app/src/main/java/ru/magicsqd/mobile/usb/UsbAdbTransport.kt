@@ -337,6 +337,9 @@ sealed class AdbHandshakeResult {
     data class Failed(val reason: String, val noDevice: Boolean = false) : AdbHandshakeResult()
 }
 
+// Сколько устаревших CLSE прошлого подключения пропускаем в ожидании ответа на CNXN (см. performCnxnHandshake).
+private const val STALE_CLSE_LIMIT = 1000
+
 /**
  * Полный CNXN(+AUTH) хендшейк поверх уже готового транспорта (USB-интерфейс
  * должен быть claimed заранее вызывающим кодом, TCP-сокет — просто открыт).
@@ -360,15 +363,18 @@ fun performCnxnHandshake(
         var (respHeader, respPayload) = readMessage(transport)
         // Устаревший CLSE от потока ПРОШЛОГО подключения (магнитола досылает его уже после нашего нового
         // CNXN — реальный лог #305: «Неожиданная команда 0x45534c43», со второй попытки прошло) — не ответ
-        // на рукопожатие, читаем дальше. Ограничение — чтобы не зациклиться на потоке мусора.
+        // на рукопожатие, читаем дальше. Их бывает много — по одному на каждый поток прошлой сессии (логи
+        // #758, #761: больше 5, и прежний предел 5 срывал первое подключение). Предел — только от
+        // зацикливания на потоке мусора: каждое чтение и так ограничено таймаутом.
         var staleClosed = 0
-        while (respHeader.command == AdbProtocol.A_CLSE && staleClosed < 5) {
+        while (respHeader.command == AdbProtocol.A_CLSE && staleClosed < STALE_CLSE_LIMIT) {
             staleClosed++
-            log("Пропускаю устаревшее закрытие канала (CLSE) от прошлого подключения — жду ответ на CNXN...")
+            if (staleClosed == 1) log("Пропускаю устаревшие закрытия каналов (CLSE) от прошлого подключения — жду ответ на CNXN...")
             val next = readMessage(transport)
             respHeader = next.first
             respPayload = next.second
         }
+        if (staleClosed > 1) log("Пропущено устаревших закрытий каналов: $staleClosed.")
         log("Ответ: command=0x${respHeader.command.toUInt().toString(16)} dataLength=${respHeader.dataLength}")
 
         when (respHeader.command) {

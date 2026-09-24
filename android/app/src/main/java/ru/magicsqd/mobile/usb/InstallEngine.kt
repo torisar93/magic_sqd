@@ -15,6 +15,9 @@ private const val LINK_RECOVERY_TIMEOUT_MS = 45_000L
 sealed class StageRunResult {
     object Success : StageRunResult()
     data class Failed(val reason: String) : StageRunResult()
+    /** Очередь приложений пройдена, но часть не встала (пропущена, остальные установлены) — как на ПК
+     * (runner.py: «Установка завершена, но не всё встало — пропущено: …»). message — этот итог для техника. */
+    data class Partial(val message: String) : StageRunResult()
 }
 
 /**
@@ -327,6 +330,9 @@ class InstallEngine(
         mockLocationPath: String? = null): StageRunResult {
         duplicatePackageConflict(apkPaths)?.let { return StageRunResult.Failed(it) }
         var confirmedMethod: Int? = null
+        // Приложения, которые не встали уже ПОСЛЕ того, как способ подтвердился на этой магнитоле, — пропущены,
+        // очередь идёт дальше (см. ветку confirmedMethod ниже).
+        val skipped = mutableListOf<String>()
         val baseOrder = INSTALL_METHODS.indices.let { indices ->
             val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
             if (preferredIndex >= 0) listOf(preferredIndex) + indices.filter { it != preferredIndex } else indices.toList()
@@ -490,11 +496,20 @@ class InstallEngine(
             }
 
             if (confirmedMethod != null) {
-                val (_, install) = INSTALL_METHODS[confirmedMethod]
+                val (label, install) = INSTALL_METHODS[confirmedMethod]
                 when (val r = perform(install, apk, { stagedPath() })) {
                     is AdbInstallResult.Failed -> {
                         dropStaged()
-                        return failed(definitiveRejection(file.name, r.reason) ?: "${file.name}: ${r.reason}")
+                        // Отказ из-за самого APK (другая подпись, версия новее) — стоп, как на ПК (VersionDowngradeError).
+                        definitiveRejection(file.name, r.reason)?.let { return failed(it) }
+                        // Способ на этой магнитоле уже сработал — не встало только это приложение: пропускаем и ставим
+                        // остальные, как ПК (install_context.py: AppInstallFailed). Раньше вся очередь останавливалась
+                        // на нём (лог #764: Settings.apk с INSTALL_FAILED_CONFLICTING_PROVIDER, остальное — вторым запуском).
+                        val reason = r.reason.split(Regex("\\s+")).joinToString(" ")
+                        log("  ↳ не сработало ($label): ${reason.take(300)}")
+                        skipped.add("${file.name}: ${reason.take(150)}")
+                        onProgress(path, index, apkPaths.size, "error")
+                        continue
                     }
                     is AdbInstallResult.Success -> {
                         log("Установлено: ${file.name}")
@@ -540,6 +555,13 @@ class InstallEngine(
                     "Не удалось установить ${file.name} ни одним из способов:\n" + errors.joinToString("\n")
                 )
             }
+        }
+        if (skipped.isNotEmpty()) {
+            log("Не установлено (пропущено, остальные приложения из списка установлены): " + skipped.joinToString("; "))
+            return StageRunResult.Partial(
+                "Установка завершена, но не всё встало — пропущено: " + skipped.joinToString("; ") +
+                    ". Остальные приложения установлены."
+            )
         }
         return StageRunResult.Success
     }

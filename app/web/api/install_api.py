@@ -1157,10 +1157,11 @@ class InstallApi:
         event_bridge.push({"kind": "sync_progress", "done": done, "total": total,
                            "files_done": files_done, "files_total": files_total})
 
-    def _on_finished(self, success: bool, message: str) -> None:
+    def _on_finished(self, success: bool, message: str, partial: bool = False) -> None:
         event_bridge.push({
             "kind": "install_finished",
             "success": success,
             "message": message,
+            "partial": partial,  # этап пройден, но часть приложений пропущена (runner.py)
             "stage_index": self._pending_stage_index,
         })

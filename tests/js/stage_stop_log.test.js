@@ -38,4 +38,13 @@ module.exports = async function () {
   api.onAdbStageResult({ index: 2, result: { success: true } });
   assert(logs.at(-1) === "Этап выполнен успешно.", "успех");
   assert(runs.length === 3, "окно этапа получает итог каждый раз");
+
+  // 4) очередь пройдена, но одно приложение пропущено (как на ПК; лог #764) — итог честно называет пропуск
+  const partial = "Установка завершена, но не всё встало — пропущено: Settings.apk: INSTALL_FAILED_CONFLICTING_PROVIDER. " +
+    "Остальные приложения установлены.";
+  ctx.appInstallOperation = { index: 2, cancelRequested: false };
+  api.onAdbStageResult({ index: 2, result: { success: true, partial: true, message: partial } });
+  assert(logs.at(-1) === partial, "в логе — что пропущено: " + logs.at(-1));
+  assert(runs.at(-1).success === true && runs.at(-1).partial === true && runs.at(-1).message === partial,
+    "окно этапа: успех с пропуском: " + JSON.stringify(runs.at(-1)));
 };

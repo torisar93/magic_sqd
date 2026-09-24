@@ -351,7 +351,7 @@
     runnerBusy = false;
     log(event.message);
     trackStageResult(event);
-    finishRun({ success: !!event.success, message: event.message }, () => afterStageFinished(event));
+    finishRun({ success: !!event.success, message: event.message, partial: !!event.partial }, () => afterStageFinished(event));
   }
 
   function trackStageResult(event) {
@@ -1550,7 +1550,8 @@
     resultBox.append(codeEl, copyBtn, meta); three.append(resultBox);
     if (needsPrep) panel.append(strip, options, driveStatus, prepOne, prepTwo, one, two, three);
     else panel.append(strip, options, driveStatus, one, two, three);
-    let drives = [], busy = false, loading = false, request = 0, writeDrive = '', resultDrive = '', prepDrive = '';
+    // chosenDrive — выбранная техником (или единственная) флешка; помним, пока она в магнитоле (см. keepDrive).
+    let drives = [], busy = false, loading = false, request = 0, writeDrive = '', resultDrive = '', prepDrive = '', chosenDrive = '';
 
     function syncControls() {
       const locked = busy || loading;
@@ -1567,7 +1568,6 @@
     function currentDrive() { return drives.find(d => d.letter === driveSelect.value); }
     async function refreshDrives() {
       const id = ++request;
-      const previous = driveSelect.value;
       loading = true; syncControls();
       try {
         const result = await window.pywebview.api.usb_list_drives(showAllCheckbox.checked);
@@ -1575,8 +1575,9 @@
         drives = Array.isArray(result) ? result : [];
         driveSelect.replaceChildren(el('option', {value:'', text:drives.length ? 'Выберите USB-накопитель' : 'Подключите USB-накопитель'}));
         for (const d of drives) driveSelect.append(el('option', {value:d.letter, text:d.display}));
-        driveSelect.value = drives.some(d => d.letter === previous) ? previous : '';
-        const lost = previous && !driveSelect.value;
+        driveSelect.value = keepDrive(drives, chosenDrive, showAllCheckbox.checked);
+        if (driveSelect.value) chosenDrive = driveSelect.value;
+        const lost = chosenDrive && !driveSelect.value;
         status(driveStatus, lost ? 'Выбранная флешка отключена. Подключите её и обновите список.' : '');
         resetDifferentDrive();
         return true;
@@ -1600,7 +1601,7 @@
       if (resultDrive && resultDrive !== driveSelect.value) { resultBox.hidden = true; three.dataset.state = ''; resultDrive = ''; }
       syncControls();
     }
-    driveSelect.onchange = () => { resetDifferentDrive(); status(driveStatus, ''); };
+    driveSelect.onchange = () => { if (driveSelect.value) chosenDrive = driveSelect.value; resetDifferentDrive(); status(driveStatus, ''); };
     refreshBtn.onclick = () => { if (!busy && !loading) refreshDrives(); };
     showAllCheckbox.onchange = () => { if (!busy && !loading) refreshDrives(); };
     helpBtn.onclick = () => showUsbInstruction(stage, true);
@@ -1684,8 +1685,9 @@
         if (!live()) { run.dispose(); return; }
         const drive = currentDrive();
         if (!drive) {
-          status(readStatus, 'Подключите флешку и выберите её в списке.', true);
-          run.finish({ success: false, message: 'Подключите флешку и выберите её в списке.' });
+          const message = noDriveMessage(drives);
+          status(readStatus, message, true);
+          run.finish({ success: false, message });
           return;
         }
         const result = await window.pywebview.api.qr_adb_get_password(drive.letter);
@@ -1715,7 +1717,7 @@
     };
     copyBtn.onclick = async () => {
       try { await navigator.clipboard.writeText(codeEl.textContent); copyBtn.lastChild.textContent = 'Скопировано'; setTimeout(() => { copyBtn.lastChild.textContent = 'Скопировать'; }, 1500); }
-      catch (_) { window.notice(codeEl.textContent, {title:'Пароль ADB'}); }
+      catch (_) { window.notice(codeEl.textContent, {title:'Пароль ADB', code:true}); }
     };
     refreshDrives();
   }
@@ -1756,11 +1758,10 @@
         el('p', {text:'Системный диск и диск программы исключены. Проверьте выбранный накопитель перед записью.'}),
       ]),
       statusEl);
-    let drives = [], request = 0;
+    let drives = [], request = 0, chosen = '';
     const setStatus = (text, error = false) => { statusEl.textContent = text; statusEl.dataset.error = String(error); };
     async function refresh() {
       const id = ++request;
-      const previous = select.value;
       refreshBtn.disabled = true;
       try {
         const result = await window.pywebview.api.usb_list_drives(showAll.checked);
@@ -1768,8 +1769,9 @@
         drives = Array.isArray(result) ? result : [];
         select.replaceChildren(el('option', {value:'', text:drives.length ? 'Выберите USB-накопитель' : 'Подключите USB-накопитель'}));
         for (const d of drives) select.append(el('option', {value:d.letter, text:d.display}));
-        select.value = drives.some(d => d.letter === previous) ? previous : '';
-        setStatus(previous && !select.value ? 'Выбранная флешка отключена. Подключите её и обновите список.' : '');
+        select.value = keepDrive(drives, chosen, showAll.checked);
+        if (select.value) chosen = select.value;
+        setStatus(chosen && !select.value ? 'Выбранная флешка отключена. Подключите её и обновите список.' : '');
         return true;
       } catch (err) {
         if (live() && id === request) {
@@ -1779,11 +1781,26 @@
         return false;
       } finally { if (id === request) refreshBtn.disabled = false; }
     }
-    select.onchange = () => setStatus('');
+    select.onchange = () => { if (select.value) chosen = select.value; setStatus(''); };
     refreshBtn.onclick = () => refresh();
     showAll.onchange = () => refresh();
     refresh();
-    return {current: () => drives.find(d => d.letter === select.value), refresh, setStatus, focus: () => select.focus()};
+    return {current: () => drives.find(d => d.letter === select.value), all: () => drives, refresh, setStatus,
+      focus: () => select.focus()};
+  }
+
+  // Какую флешку выбрать после обновления списка: ту, что техник выбрал раньше (пока флешка была в
+  // магнитоле, её в списке не было — выбор не забываем), а если её нет — единственную USB-флешку. Раньше
+  // после «вынули-вставили» выбор сбрасывался, и «Получить пароль» раз за разом отвечало «Флешка не
+  // найдена», хотя флешка была в списке (лог #799: 13 таких окон подряд). Только чтение пароля и
+  // запись маленьких файлов-флагов; при «Показать все локальные диски» сами не выбираем.
+  function keepDrive(drives, chosen, showAll) {
+    if (chosen && drives.some(d => d.letter === chosen)) return chosen;
+    return !showAll && drives.length === 1 ? drives[0].letter : '';
+  }
+
+  function noDriveMessage(drives) {
+    return drives.length ? 'Выберите флешку в списке накопителей.' : 'Подключите флешку и выберите её в списке.';
   }
 
   // Блок пройден: записан, пароль получен, инструкция открыта — или это инструкция одной
@@ -1854,7 +1871,7 @@
             // Флешку только что вернули из магнитолы — список накопителей перечитываем.
             if (!await drive.refresh()) { if (live()) run.finish({success:false, message:'Не удалось прочитать список накопителей.'}); else run.dispose(); return; }
             const d = drive.current();
-            if (!d) { setStatus(status, 'Подключите флешку и выберите её в списке.', true); run.finish({success:false, message:'Подключите флешку и выберите её в списке.'}); return; }
+            if (!d) { const message = noDriveMessage(drive.all()); setStatus(status, message, true); run.finish({success:false, message}); return; }
             const result = await window.pywebview.api.qr_adb_get_password(d.letter);
             if (!live()) { run.dispose(); return; }
             if (!result.ok) throw new Error(result.error || 'Не удалось получить пароль.');
@@ -1876,7 +1893,7 @@
         };
         copyBtn.onclick = async () => {
           try { await navigator.clipboard.writeText(codeEl.textContent); copyBtn.lastChild.textContent = 'Скопировано'; setTimeout(() => { copyBtn.lastChild.textContent = 'Скопировать'; }, 1500); }
-          catch (_) { window.notice(codeEl.textContent, {title:'Пароль ADB'}); }
+          catch (_) { window.notice(codeEl.textContent, {title:'Пароль ADB', code:true}); }
         };
       } else {
         const writeBtn = UsbUI.button('', 'Записать на флешку', 'download', true);

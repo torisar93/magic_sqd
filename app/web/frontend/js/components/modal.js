@@ -54,12 +54,15 @@
     });
   }
 
-  function notice(message, { title = "Magic SQD", danger = false } = {}) {
+  // code: true — message это пароль ADB (запасной показ, когда «Скопировать» не сработало), тем же шрифтом,
+  // что и в карточке этапа: .app-modal-code в css/usb06.css (в обычном шрифте I и l, 0 и O неразличимы).
+  function notice(message, { title = "Magic SQD", danger = false, code = false } = {}) {
     ensureBuilt();
     okBtn.className="accent";
     titleEl.textContent = title;
     messageEl.textContent = message;
     messageEl.style.color = danger ? "var(--danger)" : "";
+    messageEl.classList.toggle("app-modal-code", code);
     selectEl.style.display = "none";
     inputEl.style.display = "none";
     cancelBtn.style.display = "none";
@@ -74,6 +77,7 @@
     titleEl.textContent = title;
     messageEl.textContent = message;
     messageEl.style.color = "";
+    messageEl.classList.remove("app-modal-code");
     selectEl.style.display = "none";
     inputEl.style.display = "none";
     cancelBtn.style.display = "";
@@ -91,6 +95,7 @@
     titleEl.textContent = title;
     messageEl.textContent = message;
     messageEl.style.color = "";
+    messageEl.classList.remove("app-modal-code");
     selectEl.style.display = "none";
     inputEl.style.display = "";
     inputEl.type = password ? "password" : "text";
@@ -114,6 +119,7 @@
     titleEl.textContent = title;
     messageEl.textContent = message;
     messageEl.style.color = "";
+    messageEl.classList.remove("app-modal-code");
     selectEl.innerHTML = "";
     for (const choice of choices) {
       const opt = document.createElement("option");

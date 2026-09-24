@@ -14,8 +14,8 @@
 .stage-run-result[data-state=success] .stage-run-symbol{background:#1d4a3f;color:#a0efda}
 .stage-run-result[data-state=error] .stage-run-symbol{background:#4b3036;color:#ffb6b6}
 .stage-run-result[data-state=cancelled] .stage-run-symbol{background:#3f3a26;color:#ecd99b;font-size:24px}
-/* Ошибка на стороне техника (user_errors.js): не красная «поломка», а жёлтое «сделайте вот что». */
-.stage-run-result[data-state=user] .stage-run-symbol{background:#473d22;color:#f3d58a}
+/* Ошибка на стороне техника (user_errors.js) и «установлено не всё»: не красная «поломка», а жёлтое «обратите внимание». */
+.stage-run-result[data-state=user] .stage-run-symbol,.stage-run-result[data-state=partial] .stage-run-symbol{background:#473d22;color:#f3d58a}
 .stage-run-symbol .ui-icon{width:32px;height:32px;flex-basis:32px}
 .stage-run-symbol svg{width:32px;height:32px}
 .stage-run-steps{width:100%;max-width:52ch;box-sizing:border-box;padding:14px 16px;border-radius:12px;background:#ffffff0f;text-align:left}
