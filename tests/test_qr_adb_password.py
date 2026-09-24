@@ -154,7 +154,7 @@ def test_qr_adb_api_write_flag_reaches_real_mount_path_on_macos(tmp_path, monkey
 
     result = api.write_flag(str(drive))
 
-    assert result == {"ok": True}
+    assert result == {"ok": True, "removed": []}  # removed — см. tests/test_flash_trigger_flags.py
     # ДО фикса файл ушёл бы в /Volumes/ с буквальным "\" в имени, мимо самой флешки.
     assert (drive / "svlog.flag").read_text() == "trigger-content"
 

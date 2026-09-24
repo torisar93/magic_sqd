@@ -16,6 +16,37 @@ from .install_context import InstallCancelled
 # программа вообще что-то делает (жалоба клиента, 2026-09-21).
 _COPY_CHUNK_SIZE = 4 * 1024 * 1024
 
+# Файлы-триггеры магнитол (см. car_generator.py: QR_ADB_PREP_FLAG/QR_ADB_FLAG): магнитола срабатывает на
+# КАЖДЫЙ из них при каждой вставке флешки — svengmode.flag открывает инженерное меню Desay x9h, svlog.flag
+# пишет на флешку лог, и лог должен записаться, пока на экране открыт QR-код. У Haval Jolion 2026 они
+# пишутся по очереди; svengmode.flag, оставшийся с первого шага рядом со svlog.flag, во время записи лога
+# возвращал магнитолу на главный экран инженерного меню — QR-код сбрасывался, и пароль из такого лога не
+# подходил (владелец, 2026-09-24). Поэтому запись, в которой есть триггер, убирает с флешки остальные — на
+# флешке только триггер текущего шага. Тот же список — в Android (UsbFlashWrite.kt: TRIGGER_FLAGS).
+TRIGGER_FLAGS = ("svengmode.flag", "svlog.flag")
+
+
+def remove_other_trigger_flags(drive_root: Path, written_names, log=lambda message: None) -> list[str]:
+    """Перед записью: если среди written_names (имена записываемых файлов) есть триггер из TRIGGER_FLAGS —
+    убирает из корня флешки остальные триггеры. Без триггера в записи ничего не трогает. Возвращает
+    убранные имена. Не удалось убрать — OSError с понятным текстом: иначе магнитола снова сработает."""
+    written = {name.lower() for name in written_names}
+    if not written.intersection(TRIGGER_FLAGS):
+        return []
+    removed = []
+    for name in TRIGGER_FLAGS:
+        target = Path(drive_root) / name
+        if name in written or not target.is_file():
+            continue
+        try:
+            target.unlink()
+        except OSError as exc:
+            raise OSError(f"не удалось убрать с флешки {name} от прошлого шага ({exc}) — иначе магнитола снова "
+                          "сработает на него. Удалите файл вручную или отформатируйте флешку.") from exc
+        removed.append(name)
+        log(f"Убран с флешки {name} от прошлого шага — иначе магнитола снова сработает на него.")
+    return removed
+
 
 class UsbContext:
     def __init__(self, drive_root: Path, model_dir: Path, selected_apks, log_fn, cancel_flag,

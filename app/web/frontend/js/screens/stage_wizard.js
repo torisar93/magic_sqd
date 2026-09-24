@@ -1626,7 +1626,7 @@
           // Раньше вся процедура QR ADB была невидима в постоянном журнале
           // сессии — жалобы «пароль неверный» нельзя было разобрать без
           // доступа к самому компьютеру техника (см. getBtn.onclick ниже).
-          sessionHasActivity = true; log(`QR ADB: файл svengmode.flag записан на ${drive.letter}.`);
+          sessionHasActivity = true; log(`QR ADB: файл svengmode.flag записан на ${drive.letter}.${removedFlagsNote(result)}`);
           run.finish({ success: true, message: 'Файл записан на флешку. Подключите её к магнитоле.' });
         } catch (err) {
           if (live()) {
@@ -1657,7 +1657,7 @@
         writeDrive = drive.letter; one.dataset.state = 'done'; two.dataset.state = 'active';
         if (needsPrep) prepTwo.dataset.state = 'done';
         status(writeStatus, 'Файл записан. Теперь подключите эту флешку к магнитоле.');
-        sessionHasActivity = true; log(`QR ADB: файл svlog.flag записан на ${drive.letter}.`);
+        sessionHasActivity = true; log(`QR ADB: файл svlog.flag записан на ${drive.letter}.${removedFlagsNote(result)}`);
         run.finish({ success: true, message: 'Файл записан на флешку. Теперь подключите её к магнитоле.' });
       } catch (err) {
         if (live()) {
@@ -1801,6 +1801,12 @@
 
   function noDriveMessage(drives) {
     return drives.length ? 'Выберите флешку в списке накопителей.' : 'Подключите флешку и выберите её в списке.';
+  }
+
+  // Триггер прошлого шага, убранный перед записью (app/usb_context.py: remove_other_trigger_flags) — в журнал.
+  function removedFlagsNote(result) {
+    const removed = (result && result.removed) || [];
+    return removed.length ? ` Убран файл прошлого шага: ${removed.join(', ')}.` : '';
   }
 
   // Блок пройден: записан, пароль получен, инструкция открыта — или это инструкция одной

@@ -22,6 +22,8 @@ private const val PREP_FLAG_FILENAME = "svengmode.flag"
 /** Общая часть writeQrAdbFlag/writeQrAdbPrepFlag ниже. */
 private fun writeFlag(fs: FileSystem, localFlagFile: File, filename: String, log: (String) -> Unit): Result<Unit> {
     return try {
+        // Только триггер текущего шага — см. removeOtherTriggerFlags (UsbFlashWrite.kt).
+        removeOtherTriggerFlags(fs, listOf(filename), log)
         writeFileToUsb(fs, localFlagFile, filename, log)
         Result.success(Unit)
     } catch (e: Exception) {

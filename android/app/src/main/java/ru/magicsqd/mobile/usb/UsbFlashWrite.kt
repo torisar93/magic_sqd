@@ -38,6 +38,35 @@ private const val WRITE_CHUNK_SIZE = 4 * 1024 * 1024
 private const val WRITE_RETRY_ATTEMPTS = 5
 private const val WRITE_RETRY_DELAY_MS = 300L
 
+/** Файлы-триггеры магнитол — тот же список, что desktop app/usb_context.py: TRIGGER_FLAGS (там полное
+ * объяснение). svengmode.flag открывает инженерное меню, svlog.flag пишет лог, пока на экране QR-код; оба на
+ * одной флешке — магнитола во время записи лога возвращается на главный экран инженерного меню, QR-код
+ * сбрасывается, и пароль из лога не подходит (Haval Jolion 2026, владелец, 2026-09-24). */
+private val TRIGGER_FLAGS = listOf("svengmode.flag", "svlog.flag")
+
+/** Перед записью: если среди writtenNames есть триггер — убирает из корня флешки остальные триггеры (без
+ * триггера в записи ничего не трогает). Возвращает убранные имена; не удалось убрать — UsbWriteFailedException с
+ * понятным текстом, запись не начинается (desktop: remove_other_trigger_flags). */
+fun removeOtherTriggerFlags(fs: FileSystem, writtenNames: Collection<String>, log: (String) -> Unit): List<String> {
+    val written = writtenNames.map { it.lowercase() }.toSet()
+    if (TRIGGER_FLAGS.none { it in written }) return emptyList()
+    val removed = mutableListOf<String>()
+    for (name in TRIGGER_FLAGS) {
+        if (name in written) continue
+        val existing = fs.rootDirectory.search(name) ?: continue
+        if (existing.isDirectory) continue
+        try {
+            existing.delete()
+        } catch (e: IOException) {
+            throw UsbWriteFailedException("Не удалось убрать с флешки $name от прошлого шага (${e.message}) — иначе магнитола " +
+                "снова сработает на него. Удалите файл вручную или отформатируйте флешку.", e)
+        }
+        removed += name
+        log("Убран с флешки $name от прошлого шага — иначе магнитола снова сработает на него.")
+    }
+    return removed
+}
+
 // ДОБАВЛЕНО ПОЗЖЕ (install_logs на сервере, 2026-09): реальные клиентские
 // падения — "IllegalArgumentException: newLimit > capacity: (65536 >
 // 32768)" и т.п. — это баг самой libaums 0.10.0, а не наш: ClusterChain.
@@ -227,6 +256,8 @@ fun writeUsbStage(
     val filesTotal = scanUsbStageItems(files, sharedFolderDir, selectedApkPaths).size
     var filesDone = 0
     return try {
+        // Пишем svlog.flag — со флешки уходит svengmode.flag прошлого шага (и наоборот), см. TRIGGER_FLAGS.
+        removeOtherTriggerFlags(fs, files.map { File(it).name }, log)
         for (path in files) {
             val f = File(path)
             if (!f.exists()) return StageRunResult.Failed("Файл не скачан: $path")

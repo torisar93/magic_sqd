@@ -12,7 +12,7 @@ from ..events import event_bridge
 from ...content_sync import ensure_apks_downloaded, sync_model_files, sync_shared_folder
 from ...install_context import InstallCancelled
 from ...stage_runner import load_stages
-from ...usb_context import UsbContext, write_flash_files
+from ...usb_context import UsbContext, remove_other_trigger_flags, write_flash_files
 from ...usb_utils import list_drives as _list_drives, format_drive, UsbSafetyError
 
 
@@ -206,6 +206,8 @@ class UsbApi:
             # sync_shared_folder), так что список не должен разъехаться.
             items = (_scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths) if flash_block
                      else _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths))
+            # Пишем svlog.flag — со флешки уходит svengmode.flag прошлого шага (и наоборот), см. TRIGGER_FLAGS.
+            remove_other_trigger_flags(drive_root, [item["name"] for item in items], self._log)
             ctx = UsbContext(
                 drive_root=drive_root,
                 model_dir=model.dir,

@@ -10,6 +10,7 @@ from ...ping_client import get_or_create_client_id
 from ...qr_adb_debug_client import QrAdbDebugUploadError, upload_debug_copy
 from ...qr_adb_password import QrAdbError, find_bugreport_zip, find_latest_logs_folder, get_adb_password
 from ...submit_config import get_submit_config
+from ...usb_context import remove_other_trigger_flags
 from ...usb_utils import drive_root_path
 
 _FLAG_FILENAME = "svlog.flag"
@@ -33,10 +34,14 @@ def _write_shared_flag(cars_dir: Path, filename: str, drive_letter: str) -> dict
                      "Проверить обновления) и попробуйте снова.",
         }
     try:
+        # На флешке — только триггер текущего шага: оставшийся svengmode.flag рядом со svlog.flag во время
+        # записи лога возвращает магнитолу на главный экран инженерного меню и сбрасывает QR-код (см.
+        # usb_context.TRIGGER_FLAGS).
+        removed = remove_other_trigger_flags(drive_root_path(drive_letter), [filename])
         shutil.copyfile(src, drive_root_path(drive_letter) / filename)
     except OSError as exc:
         return {"ok": False, "error": f"Не удалось записать на флешку {drive_letter}: {exc}"}
-    return {"ok": True}
+    return {"ok": True, "removed": removed}
 
 
 class QrAdbApi:
