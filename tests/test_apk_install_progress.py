@@ -21,8 +21,10 @@ def make_ctx(tmp_path, names, events, outcomes):
         apk = tmp_path / name
         apk.write_bytes(b"not a real apk")
         paths.append(str(apk))
+    # device_confirmed: проверка «магнитола на связи» здесь не предмет теста (см. test_no_device_stops.py).
     ctx = InstallContext("adb", "SERIAL", tmp_path, paths, log_fn=lambda message: None,
-                         cancel_flag=threading.Event(), on_apk_progress=lambda *event: events.append(event))
+                         cancel_flag=threading.Event(), on_apk_progress=lambda *event: events.append(event),
+                         device_confirmed=True)
 
     def install(apk, extra_args=None):
         outcome = outcomes.get(apk.name)

@@ -162,7 +162,12 @@
   // страницу прямо под ним.
   let activeRun = null;
   let afterRunClose = null;
-  window.StageRun.configure({ openLog: () => setLogOpen(true) });
+  // onUserError: какое окно «что сделать» увидел техник (user_errors.js) — строкой в лог сессии: по ней
+  // разбор логов на сервере отличает ошибку подключения/действий техника от сбоя программы.
+  window.StageRun.configure({
+    openLog: () => setLogOpen(true),
+    onUserError: (rule) => log(`Показано окно для техника: «${rule.title}»`),
+  });
 
   function onRunClosed() {
     activeRun = null;
@@ -1197,6 +1202,10 @@
       if (flow) askWifiForInstall(flow, r.reason || "не удалось подключиться");
       const stage = stages[currentIndex];
       if (r.no_device && stage && connectionModeFor(stage) !== "wifi") showOtgHintModal();
+      // Не «нет устройства» (для него — окно про OTG-переходник), а отказ в доступе к USB, Wi-Fi не
+      // отвечает и т.п.: окно «что сделать», если причина на стороне техника (user_errors.js). В Wi-Fi-потоке
+      // установки причину и так показывает окно подключения.
+      else if (!flow) window.StageRun.showUserError({ message: r.reason || "" });
       if (stage && connectionModeFor(stage) !== "wifi") {
         // USB-C↔USB-C кабель напрямую часто не работает: обе стороны
         // Type-C сами договариваются о роли host/device через CC-пин, и
@@ -1315,6 +1324,9 @@
 
   let labInstallBusy=false;
   function onAdbStageResult(event) {
+    // Связь с магнитолой умерла (WebBridge.kt: запись в неё не прошла) — «не подключено», чтобы следующий
+    // запуск сразу показал «Магнитола не подключена», а не пробовал писать в мёртвое соединение (лог #788).
+    if (event.result && event.result.adb_connected === false && adbConnected) setAdbStatus(false, "ADB: не подключено");
     if (usbOperation && (usbOperation.kind !== "files" || usbOperation.index !== event.index)) return;
     if (stageOperation && stageOperation.index !== event.index) return;
     if (appInstallOperation && appInstallOperation.index !== event.index) return;
@@ -1382,6 +1394,14 @@
     actions.append(el('button',{text:withLog?'Открыть лог':'Понятно',onclick:()=>{close();if(withLog)setLogOpen(true);}}));
     if(withLog)actions.append(el('button',{class:'accent',text:'Повторить',onclick:()=>{close();document.querySelector('.apps-install-start,.stage-primary-actions>.accent')?.click();}}));
     content.push(actions);overlay=showModal(content);
+  }
+
+  // Этапу нужна магнитола, а ADB не подключён — то же окно «что сделать», что и после неудачного этапа
+  // (user_errors.js: шаги про OTG-переходник, отладку и «Подключить»), вместо короткого «Нет подключения».
+  function showNoAdbNotice() {
+    if (!window.StageRun.showUserError({ id: "no_device" })) {
+      showLabNotice("Нет подключения", "Подключите магнитолу к ADB с помощью кнопки над этапом.");
+    }
   }
 
   function showLabBusyNotice() {
@@ -1844,7 +1864,7 @@
     flowTechnicalDetails(card, commandsText, `Команды этапа · ${(stage.commands || []).length}`);
     if (modelWifi) prefetchStageFiles(stage, stage.adb_files);
     const btn = usbStageButton("Выполнить", "play", () => {
-      if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
+      if (!adbConnected) { showNoAdbNotice(); return; }
       runStageOperation("adb_run_stage", {
         index: stage.index,
         commands: stage.commands || [],
@@ -1887,7 +1907,7 @@
         // "не поддерживается" ниже, а не молча 0 команд как "успех".
         const pickerAction = PACKAGE_PICKER_ACTIONS[action.kind];
         if (pickerAction) {
-          if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
+          if (!adbConnected) { showNoAdbNotice(); return; }
           log("Получаю список приложений...");
           card.querySelector('.flow-action-note')?.remove();
           const note=el('p',{class:'flow-action-note',role:'status',text:'Получаем список приложений…'});
@@ -1916,7 +1936,7 @@
           log(`Действие "${action.label}" (${action.kind}) пока не поддерживается в мобильной версии.`);
           return;
         }
-        if (!adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
+        if (!adbConnected) { showNoAdbNotice(); return; }
         log(`Выполняю действие: ${action.label}`);
         runStageOperation("adb_run_stage", {
           index: stage.index, commands: action.commands || [],
@@ -2300,7 +2320,7 @@
       if (labInstallBusy) return;
       // Wi-Fi ADB: подключение НЕ нужно заранее — сначала скачиваем, потом окно подключения (beginWifiInstall).
       const wifiFirst = connectionModeFor(stage) === "wifi";
-      if (!wifiFirst && !adbConnected) { showLabNotice("Нет подключения","Подключите магнитолу к ADB с помощью кнопки над этапом."); return; }
+      if (!wifiFirst && !adbConnected) { showNoAdbNotice(); return; }
       const selection = selectedAppsForStage(stage);
       const apkPaths = selection.entries.map(apk => apk.path);
       if (!apkPaths.length) { showLabNotice("Выберите приложения","Отметьте приложения, которые нужно установить."); return; }

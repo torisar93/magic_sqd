@@ -940,10 +940,20 @@ class InstallApi:
             self._runner.start(model, device_serial, selected_apk_paths, run_fn=run_fn,
                                 own_dirs=self._stage_own_dirs(model, stage, stage_index=stage_index),
                                 preferred_install_method=stage.get("apps_install_method", ""),
-                                skip_sync=prefetched)
+                                skip_sync=prefetched, require_device=self._needs_device(stage, run_fn))
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
+
+    @staticmethod
+    def _needs_device(stage: dict, run_fn) -> bool:
+        """Нужна ли этапу УЖЕ подключённая магнитола (см. runner.py: require_device). apps и actions —
+        всегда (Wi-Fi к этому моменту подключён окном подключения). adb — если этап не подключается сам:
+        у моделей «весь ADB по Wi-Fi» генератор оборачивает его в _with_connect (car_generator.py:
+        _render_stages_py), и магнитола появляется только внутри run. uart/telnet подключаются сами."""
+        if "_with_connect" in getattr(run_fn, "__qualname__", ""):
+            return False
+        return stage.get("type") in ("apps", "actions", "adb")
 
     @staticmethod
     def _stage_own_dirs(model, stage: dict, action_index: int | None = None,
@@ -1010,7 +1020,7 @@ class InstallApi:
         try:
             self._runner.start(model, device_serial, selected_apk_paths, run_fn=action["run"],
                                 own_dirs=self._stage_own_dirs(model, stage, action_index, stage_index),
-                                skip_sync=prefetched)
+                                skip_sync=prefetched, require_device=True)
         except RuntimeError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}

@@ -364,18 +364,30 @@ class InstallEngine(
             var stagedValid = false
             var stagingFailed = false
             var stagedRemote = ""
+            // Связь не вернулась — соединение закрываем: «не подключено» на экране и сразу окно «Магнитола не
+            // подключена» при следующем запуске, а не новые попытки писать в мёртвую связь.
+            fun giveUp(apkName: String, technical: String?): Nothing {
+                AdbSession.disconnect()
+                throw AdbLinkLostException(linkLostAdvice(apkName, technical))
+            }
             fun perform(install: (PushSource, String?, (String) -> Unit) -> AdbInstallResult, apk: PushSource,
                         staged: () -> String?): AdbInstallResult {
                 val apkName = File(path).name
                 var reconnected = false
                 while (true) {
                     try {
-                        return AdbInstallProgress.observe({ onDetail(path, index, apkPaths.size, it) }, cancelled) {
+                        val result = AdbInstallProgress.observe({ onDetail(path, index, apkPaths.size, it) }, cancelled) {
                             install(apk, staged(), log)
                         }
+                        // Способ не сработал, потому что запись в магнитолу не прошла: связь умерла, и остальные
+                        // способы упрутся в то же самое (лог #788: «Не удалось отправить OPEN для sync» у всех 7
+                        // способов, 4 запуска подряд). Тот же путь, что при обрыве чтения: ждём магнитолу и
+                        // повторяем этот способ, не вернулась — останавливаемся.
+                        if (result is AdbInstallResult.Failed && AdbSession.linkLost) throw AdbLinkLostException(result.reason)
+                        return result
                     } catch (e: AdbLinkLostException) {
                         onProgress(path, index, apkPaths.size, "error")
-                        if (reconnected || cancelled()) throw AdbLinkLostException(linkLostAdvice(apkName, e.message))
+                        if (reconnected || cancelled()) giveUp(apkName, e.message)
                         reconnected = true
                         stagedValid = false  // после обрыва файл на устройстве мог не долиться — зальём заново
                         log("Связь с магнитолой оборвалась во время установки ${apkName} — жду её возвращения и повторяю...")
@@ -385,7 +397,7 @@ class InstallEngine(
                             AdbHandshakeResult.Failed(r.message ?: r.javaClass.simpleName)
                         }
                         if (back !is AdbHandshakeResult.Connected) {
-                            throw AdbLinkLostException(linkLostAdvice(apkName, (back as AdbHandshakeResult.Failed).reason))
+                            giveUp(apkName, (back as AdbHandshakeResult.Failed).reason)
                         }
                         log("Связь восстановлена, повторяю установку ${apkName}.")
                         onProgress(path, index, apkPaths.size, "running")
@@ -428,6 +440,8 @@ class InstallEngine(
                 AdbInstallProgress.beginTransfer(apk.size)
                 return when (val r = AdbSession.push(apk, stagedRemote, log)) {
                     is AdbPushResult.Failed -> {
+                        // Связь умерла ещё до установки — не «каждый способ зальёт сам», а обрыв (см. perform).
+                        if (AdbSession.linkLost) throw AdbLinkLostException(r.reason)
                         stagingFailed = true
                         log("  ↳ не удалось залить заранее: ${r.reason} — каждый способ будет заливать сам")
                         null

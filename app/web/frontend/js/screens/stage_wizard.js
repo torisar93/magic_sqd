@@ -149,6 +149,9 @@
     });
     window.events.on("install_finished", onInstallFinished);
     window.events.on("ask_input", (event) => showAskInputDialog(event));
+    // Какое окно «что сделать» увидел техник (user_errors.js) — строкой в лог сессии: по ней разбор логов
+    // на сервере отличает ошибку подключения/действий техника от сбоя программы.
+    window.StageRun.configure({ onUserError: (rule) => log(`Показано окно для техника: «${rule.title}»`) });
     window.events.on("sync_progress", (event) => updateSyncProgress(
       event.done, event.total, event.files_done, event.files_total,
     ));
@@ -777,6 +780,10 @@
         deviceByLabel[label] = d.state === "device" ? d.serial : null;
         select.appendChild(el("option", { value: label, text: label }));
       }
+      // Первой в списке — готовая магнитола, а не «[unauthorized]»/«[offline]» (иначе getDevice() даёт null).
+      const ready = [...select.options].find((option) => deviceByLabel[option.value]);
+      if (ready) select.value = ready.value;
+      return devices;
     }
     refreshBtn.addEventListener("click", refreshDevices);
     const wiredRow = el("div", { class: "row" }, [select, refreshBtn]);
@@ -863,7 +870,7 @@
 
     return {
       element: bar, getDevice: () => wifiSerial || deviceByLabel[select.value] || null,
-      mode: () => (connection === "ask" ? askMode : connection), askWifi,
+      mode: () => (connection === "ask" ? askMode : connection), askWifi, refreshDevices,
     };
   }
 
@@ -1933,6 +1940,22 @@
     };
   }
 
+  // Этапу нужна магнитола, а в списке её нет. Раньше спрашивали «Продолжить всё равно?», и после «да»
+  // установка перебирала все способы с «no devices/emulators found» (логи #734, #736, #737, #786, #789).
+  // Теперь сначала сами обновляем список (магнитолу часто подключают уже после открытия этапа) и берём
+  // её, если нашлась; нет — окно «что сделать» (user_errors.js) с кнопкой «Повторить».
+  async function findDevice(getDevice, transport, retry) {
+    let devices = [];
+    if (transport && transport.mode() !== "wifi" && typeof transport.refreshDevices === "function") {
+      try { devices = (await transport.refreshDevices()) || []; } catch { devices = []; }
+      const device = getDevice();
+      if (device) return device;
+    }
+    const unauthorized = devices.some((d) => d.state === "unauthorized");
+    window.StageRun.showUserError({ id: unauthorized ? "unauthorized" : "no_device" }, { retry });
+    return null;
+  }
+
   // -- adb ------------------------------------------------------------------
   // Общий блок "Начать/Стоп" — используется и здесь, и apps-этапом (см.
   // renderAppsStage выше). Устройство/Wi-Fi выбираются в баре НАД этапом
@@ -1968,7 +1991,12 @@
       // (пока у компьютера есть интернет), затем показываем окно подключения и только потом ставим.
       const wifiFirst = stage.type === "apps" && !!transport && transport.mode() === "wifi";
       let device = getDevice();
-      if (!wifiFirst && requiresDevice && !device && !(await window.confirmDialog("Не выбрано подключённое устройство ADB. Продолжить всё равно?"))) return;
+      // adb-этап модели «весь ADB по Wi-Fi» подключается сам, внутри этапа.
+      const connectsItself = stage.type === "adb" && modelWifi;
+      if (!wifiFirst && requiresDevice && !device && !connectsItself) {
+        device = await findDevice(getDevice, transport, () => startBtn.click());
+        if (!device) return;
+      }
       if (runnerBusy) return;
       startBtn.disabled = true;
       runnerBusy = true;
@@ -2031,10 +2059,10 @@
     } catch (error) { log(`Файлы этапа заранее не скачались: ${error.message || error}`); }
   }
 
-  function renderAdbStage(panel, stage, getDevice) {
+  function renderAdbStage(panel, stage, getDevice, transport) {
     stageInfo(panel, 'settings', 'Выполнение команд', 'Команды этого этапа выполнятся на выбранном устройстве. Ход выполнения будет показан здесь и в логе.');
     if (modelWifi) prefetchStageFiles(stage);
-    buildStartStopButtons(panel, stage, getDevice);
+    buildStartStopButtons(panel, stage, getDevice, { transport });
   }
 
   // -- uart -------------------------------------------------------------
@@ -2060,7 +2088,7 @@
   // onInstallFinished — успех/ошибка действия не переводит на следующий этап
   // сами по себе). Нужно ADB-устройство, как и у "adb"-этапа — команды/выдача
   // разрешений/фиктивные местоположения все идут через ctx.shell.
-  function renderActionsStage(panel, stage, getDevice) {
+  function renderActionsStage(panel, stage, getDevice, transport) {
     if ((stage.actions_connection || 'wired') === 'wifi') prefetchStageFiles(stage);
     const actions = stage.actions || [];
     const list = el('div', {class:'stage06-commands'});
@@ -2076,8 +2104,8 @@
       card.append(el('span',{class:'stage06-symbol'},[UsbUI.icon(result?.success?'check':'settings')]),el('h3',{text:action.label||`Действие ${i+1}`}),button,feedback);
       const runAction = async () => {
         if (runnerBusy) return;
-        const device = getDevice();
-        if (!device && !(await window.confirmDialog('Не выбрано подключённое устройство ADB. Продолжить всё равно?'))) return;
+        const device = getDevice() || await findDevice(getDevice, transport, runAction);
+        if (!device) return;
         if (runnerBusy) return;
         runnerBusy = true; activeCommand = {key,stageIndex:stage.index};
         buttons.forEach(b=>b.disabled=true); navBackBtn.disabled=true; navNextBtn.disabled=true;

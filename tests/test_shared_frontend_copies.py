@@ -14,6 +14,7 @@ ANDROID = ROOT / "android/app/src/main/assets"
 
 SHARED = [
     ("js/components/stage_run.js", "js/stage_run.js"),
+    ("js/components/user_errors.js", "js/user_errors.js"),
     ("css/stage_run.css", "css/stage_run.css"),
     ("js/progress08.js", "js/progress08.js"),
     ("css/progress08.css", "css/progress08.css"),
@@ -35,3 +36,15 @@ def test_shared_file_is_identical_on_both_platforms(desktop, android):
 def test_apps_tabs_is_included_on_both_platforms(index, css, js):
     html = index.read_text(encoding="utf-8")
     assert f'href="{css}"' in html and f'src="{js}"' in html
+
+
+@pytest.mark.parametrize("index, user_errors, stage_run", [
+    (DESKTOP / "index.html", "js/components/user_errors.js", "js/components/stage_run.js"),
+    (ANDROID / "index.html", "js/user_errors.js", "js/stage_run.js"),
+])
+def test_user_errors_is_loaded_before_stage_run(index, user_errors, stage_run):
+    # Окно этапа узнаёт ошибки техника по каталогу user_errors.js — без него показало бы прежнее
+    # «отправьте лог разработчику».
+    html = index.read_text(encoding="utf-8")
+    assert f'src="{user_errors}"' in html
+    assert html.index(f'src="{user_errors}"') < html.index(f'src="{stage_run}"')

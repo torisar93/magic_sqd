@@ -22,12 +22,18 @@ import java.util.concurrent.TimeUnit
 object AdbSession {
     private enum class Mode { USB, WIFI }
 
-    @Volatile private var transport: AdbTransport? = null
+    @Volatile private var transport: LinkWatch? = null
     @Volatile private var mode: Mode? = null
     @Volatile private var wifiHost: String? = null
     @Volatile private var wifiPort: Int = 0
 
-    val isConnected: Boolean get() = transport != null
+    /** Связь есть и не умерла: запись в магнитолу, не прошедшая хоть раз (кабель вынут, магнитола ушла в сон,
+     * Wi-Fi пропал), значит соединение мёртвое — дальше каждая команда падала бы так же («Не удалось
+     * отправить OPEN», лог #788: 7 способов установки подряд, 4 запуска этапа). */
+    val isConnected: Boolean get() = transport?.let { !it.lost } ?: false
+
+    /** Соединение было, но запись в него не прошла (см. isConnected). Сбрасывается новым подключением. */
+    val linkLost: Boolean get() = transport?.lost == true
 
     /** ro.product.model из баннера последнего успешного подключения — ключ памяти «какой способ установки
      * сработал на этой магнитоле» (см. InstallEngine.rememberedMethod). null, если магнитола его не назвала. */
@@ -81,7 +87,7 @@ object AdbSession {
         val result = performCnxnHandshake(usbTransport, context, log)
         if (result is AdbHandshakeResult.Connected) {
             deviceModel = parseDeviceModel(result.bannerFromDevice)
-            transport = usbTransport
+            transport = LinkWatch(usbTransport)
             mode = Mode.USB
         } else {
             usbTransport.close()
@@ -112,7 +118,7 @@ object AdbSession {
         val result = performCnxnHandshake(tcpTransport, context, log)
         if (result is AdbHandshakeResult.Connected) {
             deviceModel = parseDeviceModel(result.bannerFromDevice)
-            transport = tcpTransport
+            transport = LinkWatch(tcpTransport)
             mode = Mode.WIFI
             wifiHost = host
             wifiPort = port
@@ -268,4 +274,19 @@ object AdbSession {
         latch.await(60, TimeUnit.SECONDS)
         return granted
     }
+}
+
+/** Транспорт, который помнит, что запись в магнитолу не прошла ([AdbSession.linkLost]). Только запись:
+ * чтение по USB возвращает -1 и на обычный таймаут долгой команды (транспорт не отличает его от обрыва),
+ * а неудачная запись на живой магнитоле не бывает — это вынутый кабель, уснувшая магнитола или пропавший Wi-Fi. */
+class LinkWatch(private val inner: AdbTransport) : AdbTransport {
+    @Volatile var lost = false
+        private set
+
+    override fun write(bytes: ByteArray, timeoutMs: Int): Boolean =
+        inner.write(bytes, timeoutMs).also { if (!it) lost = true }
+
+    override fun read(buffer: ByteArray, timeoutMs: Int): Int = inner.read(buffer, timeoutMs)
+
+    override fun close() = inner.close()
 }

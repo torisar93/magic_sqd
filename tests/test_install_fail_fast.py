@@ -44,7 +44,7 @@ def test_no_device_stops_after_first_method(tmp_path, error):
 
     ctx._install_with_method = fake_install
 
-    with pytest.raises(InstallCancelled, match="не подключена или отключилась"):
+    with pytest.raises(InstallCancelled, match="Магнитола не подключена"):
         ctx.install_apk_auto(apks[0])
     assert len(calls) == 1  # раньше — все 8 способов подряд
     assert any("не сработало" in line for line in log)  # причина всё равно в логе
@@ -74,7 +74,7 @@ def test_device_lost_after_method_is_locked_stops_the_whole_list(tmp_path):
 
     ctx._install_with_method = fake_install
 
-    with pytest.raises(InstallCancelled, match="не подключена или отключилась"):
+    with pytest.raises(InstallCancelled, match="отключилась во время установки"):
         ctx.install_selected_apks()
     assert calls == ["a.apk", "b.apk"]  # c.apk уже не пробовали
     assert ctx.failed_apps == []

@@ -2,8 +2,9 @@
 from __future__ import annotations
 import threading
 
+from .adb_utils import Adb
 from .content_sync import ensure_apks_downloaded, sync_model_subfolder
-from .install_context import InstallContext, InstallCancelled
+from .install_context import InstallContext, InstallCancelled, check_device, device_unavailable_message
 
 
 class InstallRunner:
@@ -57,7 +58,7 @@ class InstallRunner:
         self._cancel_flag.set()
 
     def start(self, model, device_serial, selected_apks, run_fn, own_dirs=None,
-              preferred_install_method: str = "", skip_sync: bool = False):
+              preferred_install_method: str = "", skip_sync: bool = False, require_device: bool = False):
         """Запускает run_fn(ctx) в фоновом потоке — run_fn это функция
         конкретного ADB-этапа из stages.py модели (см. stage_wizard.py,
         единственный вызывающий). own_dirs — локальные папки СВОИХ файлов
@@ -68,14 +69,17 @@ class InstallRunner:
         car_generator.py (только для "apps"-этапов без своего run — пусто у
         всех остальных). skip_sync — всё нужное уже скачано отдельно (см. install_api.py:prefetch_apks —
         Wi-Fi ADB: компьютер к этому моменту уже в сети магнитолы БЕЗ интернета, повторная сверка с
-        сервером только ждала бы таймаут)."""
+        сервером только ждала бы таймаут). require_device — этапу нужна уже подключённая магнитола
+        (см. install_api.py: _needs_device): без неё этап сразу заканчивается окном «Магнитола не
+        подключена», ничего не скачивая и не выполняя."""
         if self.running:
             raise RuntimeError("Установка уже выполняется.")
 
         self._cancel_flag = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
-            args=(model, device_serial, selected_apks, run_fn, own_dirs or [], preferred_install_method, skip_sync),
+            args=(model, device_serial, selected_apks, run_fn, own_dirs or [], preferred_install_method, skip_sync,
+                  require_device),
             daemon=True,
         )
         self._thread.start()
@@ -85,8 +89,13 @@ class InstallRunner:
             raise InstallCancelled("Установка остановлена пользователем.")
 
     def _run(self, model, device_serial, selected_apks, run_fn, own_dirs, preferred_install_method="",
-             skip_sync=False):
+             skip_sync=False, require_device=False):
+        ctx = None
         try:
+            if require_device:
+                missing = check_device(Adb(self.adb_path, device_serial))
+                if missing:
+                    raise InstallCancelled(missing)  # текст уйдёт в лог через install_finished
             if self.base_dir and not skip_sync:
                 for local_dir in own_dirs:
                     sync_model_subfolder(self.base_dir, local_dir, log=self.on_log,
@@ -108,12 +117,19 @@ class InstallRunner:
                 shared_dir=(self.base_dir / "cars" / "_shared") if self.base_dir else None,
                 preferred_install_method=preferred_install_method,
                 on_apk_progress=self.on_apk_install_progress,
+                device_confirmed=require_device,
             )
             run_fn(ctx)
         except InstallCancelled as exc:
             self.on_finished(False, str(exc))
             return
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку скрипта
+            # Магнитола пропала посреди команд этапа (ctx.shell/ctx.push… с проверкой результата) —
+            # понятная фраза, по которой программа покажет окно «что сделать», а не сырая команда adb.
+            gone = device_unavailable_message(str(exc), during=bool(ctx and ctx._device_confirmed))
+            if gone:
+                self.on_finished(False, gone)
+                return
             # Полный traceback раньше шёл в видимый лог целиком — техника не
             # интересует трассировка Python, только понятная причина (см.
             # on_finished ниже); для отладки traceback всё равно попадает в

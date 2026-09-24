@@ -87,6 +87,8 @@
 
     // При ошибке — та же подсказка «откройте лог, скопируйте, отправьте
     // разработчику» и те же кнопки, что в окне остальных этапов (StageRun).
+    // Ошибка на стороне техника (флешку вынули, нет места, защита от записи —
+    // user_errors.js) — вместо неё что случилось и что сделать.
     let hintNode = null;
     function setStatus(state, title, detail) {
       dialog.dataset.usbState = state;
@@ -95,7 +97,12 @@
       hintNode?.remove();
       hintNode = null;
       if (state === "error" && window.StageRun) {
-        hintNode = window.StageRun.hintBlock();
+        const known = window.StageRun.userErrorBlock ? window.StageRun.userErrorBlock(detail || "") : null;
+        if (known) {
+          statusEl.textContent = known.rule.title;
+          statusDetailEl.textContent = known.rule.keepMessage ? detail : known.rule.text;
+        }
+        hintNode = known ? known.node : window.StageRun.hintBlock();
         statusDetailEl.closest('.usb06-transfer').after(hintNode);
       }
     }

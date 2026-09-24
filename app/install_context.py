@@ -147,19 +147,41 @@ def _check_pm_install_result(result) -> None:
 # магнитолы нет (не подключена, отвалилась посреди установки) или она не разрешила
 # отладку. Раньше перебор шёл до конца — 8 способов подряд с одной и той же
 # «no devices/emulators found» / «device '…' not found» (install_logs #648, #557).
+# Тексты ниже узнаёт окно «что сделать» (app/web/frontend/js/components/user_errors.js).
 _DEVICE_UNAUTHORIZED_RE = re.compile(r"\bdevice unauthorized\b", re.IGNORECASE)
 _DEVICE_GONE_RE = re.compile(r"no devices/emulators found|device '[^']*' not found|device not found|device offline",
                              re.IGNORECASE)
 
 
-def _device_unavailable_message(text: str) -> str | None:
+def device_unavailable_message(text: str, during: bool = False) -> str | None:
+    """Понятный текст, если ошибка adb значит «магнитолы нет», иначе None. during — магнитола уже была на
+    связи в этом запуске (проверка перед этапом прошла), значит она отключилась по ходу, а не «не подключена»."""
     if _DEVICE_UNAUTHORIZED_RE.search(text):
         return ("Магнитола не разрешила отладку по USB — подтвердите запрос «Разрешить отладку» на её экране "
-                "и запустите установку заново.")
-    if _DEVICE_GONE_RE.search(text):
-        return ("Магнитола не подключена или отключилась во время установки — проверьте кабель (или Wi-Fi-"
-                "подключение) и запустите установку заново.")
-    return None
+                "и запустите этап заново. (adb: device unauthorized)")
+    match = _DEVICE_GONE_RE.search(text)
+    if not match:
+        return None
+    if during:
+        return ("Магнитола отключилась во время установки — дальше ничего не ставилось. Проверьте кабель "
+                f"(или Wi-Fi), подключитесь заново и запустите этап ещё раз. (adb: {match.group(0)})")
+    return ("Магнитола не подключена — установка не начиналась. Подключите её кабелем (или по Wi-Fi), "
+            f"проверьте отладку по USB и запустите этап заново. (adb: {match.group(0)})")
+
+
+def check_device(adb: Adb) -> str | None:
+    """Магнитола на связи? Одна команда `adb get-state` ДО установки и команд этапа: без неё программа
+    перебирала все способы установки с «no devices/emulators found» на каждом приложении (логи #734, #736,
+    #737, #786, #789 — техник ответил «Продолжить всё равно» без выбранной магнитолы). Отвечает сам
+    adb-сервер, магнитолу команда не трогает. Возвращает понятный текст, если магнитолы нет; None — если
+    она на связи или проверить не удалось (нет adb, таймаут): тогда этап идёт как раньше и сам покажет ошибку."""
+    try:
+        result = adb.run("get-state", check=False, timeout=20)
+    except AdbError:
+        return None
+    if result.returncode == 0:
+        return None
+    return device_unavailable_message((result.stdout or "") + (result.stderr or ""))
 
 
 def _short_reason(exc, limit: int = 300) -> str:
@@ -173,7 +195,7 @@ def _short_reason(exc, limit: int = 300) -> str:
 class InstallContext:
     def __init__(self, adb_path, device_serial, model_dir: Path, selected_apks,
                  log_fn, cancel_flag, ask_input_fn=None, shared_dir: Path | None = None,
-                 preferred_install_method: str = "", on_apk_progress=None):
+                 preferred_install_method: str = "", on_apk_progress=None, device_confirmed: bool = False):
         # on_apk_progress(путь, готово, всего, "running"/"done"/"error", фаза|None) — ход установки
         # каждого выбранного APK для очереди окна установки (см. install_selected_apks).
         self._on_apk_progress = on_apk_progress or (lambda path, completed, total, state, phase: None)
@@ -224,6 +246,9 @@ class InstallContext:
         # упомянуло пропуски, а не просто отрапортовало "успешно", раз стадия
         # в целом не упала (см. install_selected_apks/AppInstallFailed).
         self.failed_apps: list[str] = []
+        # Магнитола уже подтверждена на связи в этом запуске (check_device перед этапом — см.
+        # runner.py — или require_device ниже): тогда «нет устройства» дальше значит «отключилась».
+        self._device_confirmed = device_confirmed
 
     # --- служебное -------------------------------------------------
     def log(self, message):
@@ -232,6 +257,17 @@ class InstallContext:
     def check_cancelled(self):
         if self._cancel_flag.is_set():
             raise InstallCancelled("Установка остановлена пользователем.")
+
+    def require_device(self):
+        """Остановить этап понятной фразой, если магнитолы нет (см. check_device) — до первой команды
+        или установки, а не после перебора всех способов."""
+        self.check_cancelled()
+        if self._device_confirmed:
+            return
+        message = check_device(self._adb)
+        if message:
+            raise InstallCancelled(message)
+        self._device_confirmed = True
 
     def ask_input(self, prompt, title="Ввод данных"):
         """Запрашивает у пользователя строку (например, IPv6-адрес магнитолы)
@@ -358,6 +394,8 @@ class InstallContext:
         conflict = self._duplicate_package_conflict()
         if conflict:
             raise InstallCancelled(conflict)
+        # Магнитолы нет — ни одного «Установка APK…»: сразу окно «Магнитола не подключена».
+        self.require_device()
         mock_target = self._mock_location_target()
         # Очередь окна установки (progress08.js) — та же последовательность, что шлёт Android
         # (InstallEngine.installApksWithProgress): «устанавливается» (готово = index) → «готово»
@@ -458,7 +496,7 @@ class InstallContext:
                 label = _INSTALL_METHOD_LABELS[self._install_method]
                 self.log(f"  ↳ не сработало ({label}): {_short_reason(exc)}")
                 # Магнитола отвалилась — остальные приложения списка тоже не встанут.
-                gone = _device_unavailable_message(str(exc))
+                gone = device_unavailable_message(str(exc), during=True)
                 if gone:
                     raise InstallCancelled(gone) from exc
                 raise AppInstallFailed(f"{Path(path).name}: {_short_reason(exc, 150)}") from exc
@@ -487,8 +525,8 @@ class InstallContext:
                 # 7 «Установка APK…» подряд и ни одной причины).
                 self.log(f"  ↳ не сработало ({_INSTALL_METHOD_LABELS[method]}): {_short_reason(exc)}")
                 # Причина не в способе, а в том, что магнитолы нет — остальные способы
-                # упрутся в то же самое (см. _device_unavailable_message).
-                gone = _device_unavailable_message(str(exc))
+                # упрутся в то же самое (см. device_unavailable_message).
+                gone = device_unavailable_message(str(exc), during=self._device_confirmed)
                 if gone:
                     raise InstallCancelled(gone) from exc
                 continue
@@ -692,7 +730,12 @@ class InstallContext:
         pid_result = self.shell("pidof system_server", check=False)
         pid = ((pid_result.stdout or "").strip().split() or [""])[0]
         if not pid.isdigit():
-            raise AdbError("не удалось получить PID system_server (магнитола не даёт pidof?)")
+            # Ответ adb — в текст ошибки: «no devices/emulators found» здесь раньше терялся, и этот способ
+            # (первый у Haval Jolion 2026) писал «магнитола не даёт pidof?», когда магнитолы просто нет
+            # (логи #786, #789).
+            detail = " ".join(((pid_result.stderr or "") + " " + (pid_result.stdout or "")).split())
+            raise AdbError("не удалось получить PID system_server (магнитола не даёт pidof?)"
+                           + (f": {detail}" if detail else ""))
         forward = self._adb.run("forward", "tcp:0", f"jdwp:{pid}", check=False)
         port_text = (forward.stdout or "").strip()
         if not port_text.isdigit():

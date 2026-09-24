@@ -55,7 +55,19 @@ object UsbFlashSession {
             log("Флешка смонтирована: ${partitionFs.volumeLabel ?: "(без метки)"}, ${partitionFs.type}")
             Result.success(partitionFs)
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(IllegalStateException(connectFailure(e), e))
+        }
+    }
+
+    /** Сырое исключение libaums при подключении — понятной фразой: по ней окно «что сделать» (user_errors.js)
+     * отличает «флешка перестала отвечать» (переходник, контакт) от «не удалось прочитать» (не FAT32, повреждена).
+     * Раньше техник видел голое «Index 8 out of bounds for length 8», «newLimit > capacity» или «?». */
+    private fun connectFailure(e: Exception): String {
+        val raw = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+        return if (raw.contains("MAX_RECOVERY_ATTEMPTS") || raw.contains("claim interface", ignoreCase = true)) {
+            "Флешка перестала отвечать при подключении ($raw)"
+        } else {
+            "Не удалось прочитать флешку ($raw)"
         }
     }
 
