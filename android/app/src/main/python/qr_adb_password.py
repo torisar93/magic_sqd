@@ -62,6 +62,31 @@ def _parse_int_list(raw: str) -> bytes:
     return bytes(b & 0xFF for b in values)
 
 
+# Как на ПК (app/qr_adb_password.py: _last_fields): отчёт кусками, а не целиком — logcat в сотни МБ
+# при чтении целиком падал MemoryError (лог #1182).
+_CHUNK_CHARS = 4 * 1024 * 1024
+_OVERLAP_CHARS = 64 * 1024
+
+
+def _last_fields(stream) -> tuple[str | None, str | None, str | None]:
+    text = io.TextIOWrapper(stream, encoding="utf-8", errors="ignore", newline="")
+    patterns = {"salt": _SALT_RE, "salt_fallback": _SALT_FALLBACK_RE, "password": _PASSWORD_RE,
+                "password_fallback": _PASSWORD_FALLBACK_RE, "sn": _SN_RE}
+    last: dict[str, str] = {}
+    tail = ""
+    chunk = text.read(_CHUNK_CHARS)
+    while chunk:
+        window = tail + chunk
+        for key, pattern in patterns.items():
+            for match in pattern.finditer(window):
+                last[key] = match.group(1)
+        tail = window[-_OVERLAP_CHARS:]
+        chunk = text.read(_CHUNK_CHARS)
+    salt = last["salt"] if "salt" in last else last.get("salt_fallback")
+    password = last["password"] if "password" in last else last.get("password_fallback")
+    return salt, password, last.get("sn")
+
+
 def get_password_from_zip_b64(zip_b64: str) -> str:
     """Возвращает JSON-строку (Chaquopy отдаёт объекты в Kotlin неудобно —
     строка проще и однозначнее): {"ok": true, "code": ..., "sn": ...} или
@@ -74,14 +99,12 @@ def get_password_from_zip_b64(zip_b64: str) -> str:
             if not txt_names:
                 return json.dumps({"ok": False, "error": "Внутри bugreport-zip нет .txt файлов"})
             for name in txt_names:
-                content = zf.read(name).decode("utf-8", errors="ignore")
-                salt_matches = _SALT_RE.findall(content) or _SALT_FALLBACK_RE.findall(content)
-                password_matches = _PASSWORD_RE.findall(content) or _PASSWORD_FALLBACK_RE.findall(content)
-                sn_matches = _SN_RE.findall(content)
-                if salt_matches and password_matches and sn_matches:
-                    salt = _parse_int_list(salt_matches[-1])
-                    password = _parse_int_list(password_matches[-1])
-                    sn = sn_matches[-1].strip()
+                with zf.open(name) as stream:
+                    salt_raw, password_raw, sn_raw = _last_fields(stream)
+                if salt_raw is not None and password_raw is not None and sn_raw is not None:
+                    salt = _parse_int_list(salt_raw)
+                    password = _parse_int_list(password_raw)
+                    sn = sn_raw.strip()
                     prk = _hkdf_extract(salt, password)
                     six_bytes = _hkdf_expand(prk, sn.encode("utf-8"), 6)
                     code = _encode_alphanumeric(six_bytes)

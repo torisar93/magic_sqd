@@ -36,10 +36,30 @@ object NetworkScan {
      * полагаемся на "активную". */
     fun wifiNetwork(context: Context): android.net.Network? {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+        // VPN поверх Wi-Fi тоже несёт TRANSPORT_WIFI. Попадался первым — и скан шёл по tun0 (находил
+        // только сам телефон, лог #1233), а привязка сокета к чужому VPN давала EPERM «Binding socket to
+        // network … failed» (логи #880, #887).
         return cm.allNetworks.firstOrNull { network ->
-            cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            val caps = cm.getNetworkCapabilities(network)
+            caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
         }
     }
+
+    /** Все адреса самого телефона (Wi-Fi, VPN, сотовая) без зоны «%wlan0» — чтобы не предлагать технику
+     * подключиться к самому себе: телефон слышит свой же mDNS-запрос, и в списке «найдено 2» один адрес
+     * был его собственный (telnet «to /X from /X» — ECONNREFUSED, логи #1151, #1178, #1233). */
+    fun ownAddresses(): Set<String> = try {
+        NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            .flatMap { it.inetAddresses.toList() }
+            .mapNotNull { it.hostAddress?.let(::withoutZone) }
+            .toSet()
+    } catch (_: Exception) {
+        emptySet()
+    }
+
+    /** «fe80::1%wlan0» → «fe80::1»; квадратные скобки и регистр — тоже прочь, для сравнения адресов. */
+    fun withoutZone(host: String): String = host.trim('[', ']').substringBefore('%').lowercase()
 
     /** Собственный IPv4 + длина префикса Wi-Fi подключения (к точке доступа
      * магнитолы или её собственной сети) — см. wifiNetwork. */

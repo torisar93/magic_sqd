@@ -15,6 +15,7 @@ expand с sn в качестве контекста ("info") — код прив
 from __future__ import annotations
 import hashlib
 import hmac
+import io
 import re
 import zipfile
 from ast import literal_eval
@@ -72,6 +73,34 @@ def _encode_alphanumeric(data: bytes) -> str:
     return "".join(_ALPHABET[b % len(_ALPHABET)] for b in data)
 
 
+# Отчёт читается кусками, а не целиком: bugreport-*.txt — полный logcat, бывает в сотни МБ, и
+# чтение целиком на ПК падало MemoryError / «Unable to allocate output buffer» (лог #1182).
+# Куски перекрываются, чтобы поле на границе двух кусков не потерялось (строка с полем — сотни символов).
+_CHUNK_CHARS = 4 * 1024 * 1024
+_OVERLAP_CHARS = 64 * 1024
+
+
+def _last_fields(stream) -> tuple[str | None, str | None, str | None]:
+    """Последние salt/password/sn в одном .txt — то же, что findall(...)[-1] по всему тексту (со
+    скобками, если такое поле есть хоть где-то, иначе запасной вариант без скобок)."""
+    text = io.TextIOWrapper(stream, encoding="utf-8", errors="ignore", newline="")
+    patterns = {"salt": _SALT_RE, "salt_fallback": _SALT_FALLBACK_RE, "password": _PASSWORD_RE,
+                "password_fallback": _PASSWORD_FALLBACK_RE, "sn": _SN_RE}
+    last: dict[str, str] = {}
+    tail = ""
+    chunk = text.read(_CHUNK_CHARS)
+    while chunk:
+        window = tail + chunk
+        for key, pattern in patterns.items():
+            for match in pattern.finditer(window):
+                last[key] = match.group(1)
+        tail = window[-_OVERLAP_CHARS:]
+        chunk = text.read(_CHUNK_CHARS)
+    salt = last["salt"] if "salt" in last else last.get("salt_fallback")
+    password = last["password"] if "password" in last else last.get("password_fallback")
+    return salt, password, last.get("sn")
+
+
 def find_latest_logs_folder(drive_root: Path) -> Path | None:
     """Самая свежая по имени папка logs_* в корне флешки — имя содержит
     таймстемп, поэтому обычная сортировка строк даёт хронологический
@@ -119,16 +148,14 @@ def _extract_fields(zip_path: Path) -> tuple[bytes, bytes, str]:
         if not txt_names:
             raise QrAdbError(f"Внутри {zip_path.name} нет .txt файлов")
         for name in txt_names:
-            content = zf.read(name).decode("utf-8", errors="ignore")
-            # findall(...)[-1] (последнее совпадение), не первое встречное —
-            # 1:1 с эталонным скриптом поставщика (см. комментарий у _SN_RE).
-            salt_matches = _SALT_RE.findall(content) or _SALT_FALLBACK_RE.findall(content)
-            password_matches = _PASSWORD_RE.findall(content) or _PASSWORD_FALLBACK_RE.findall(content)
-            sn_matches = _SN_RE.findall(content)
-            if salt_matches and password_matches and sn_matches:
-                salt = bytes(b & 0xFF for b in _parse_int_list(salt_matches[-1]))
-                password = bytes(b & 0xFF for b in _parse_int_list(password_matches[-1]))
-                return salt, password, sn_matches[-1].strip()
+            # Последнее совпадение, не первое встречное — 1:1 с эталонным скриптом поставщика
+            # (см. комментарий у _SN_RE).
+            with zf.open(name) as stream:
+                salt_raw, password_raw, sn = _last_fields(stream)
+            if salt_raw is not None and password_raw is not None and sn is not None:
+                salt = bytes(b & 0xFF for b in _parse_int_list(salt_raw))
+                password = bytes(b & 0xFF for b in _parse_int_list(password_raw))
+                return salt, password, sn.strip()
     raise QrAdbError(f"Поля salt/password/sn не найдены ни в одном .txt внутри {zip_path.name}")
 
 

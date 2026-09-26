@@ -714,6 +714,11 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
         )
     finally:
         _log_step("webview.start() returned (normal close)")
+        # Сессию — на диск первым делом: kill-server ниже может занять до 15 с, и если за это время
+        # программу добьют (выключение Windows, повторный запуск), следующий запуск слал её как вылет —
+        # «Предыдущий запуск не завершился штатно» (Windows 1.0.41: №1040, №1115, №1145, №1230).
+        api.seal_abandoned_install_log()
+        _log_step("seal_abandoned_install_log() done")
         shutil.rmtree(webview2_storage, ignore_errors=True)
         # adb.exe запускает свой собственный фоновый сервер-процесс при
         # первом обращении (adb devices/connect/...) и живёт отдельно от

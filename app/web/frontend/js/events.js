@@ -89,6 +89,9 @@
     // ошибок загрузки ресурса; у обычной JS-ошибки e.target === window.
     if (e.target && e.target !== window) {
       const el = e.target;
+      // Картинка не загрузилась (значок, картинка инструкции без интернета) — не сбой программы: на
+      // Android такие строки шли в журнал как вылет, до 20 за сессию (логи #1148, #1172, #1179).
+      if (el.tagName === "IMG") return;
       sendError(`resource load failed: <${el.tagName}> ${el.src || el.href || ""}`, "");
       return;
     }

@@ -2,6 +2,7 @@ package ru.magicsqd.mobile.usb
 
 import android.content.Context
 import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import me.jahnen.libaums.core.UsbMassStorageDevice
 import me.jahnen.libaums.core.fs.FileSystem
 import java.util.concurrent.CountDownLatch
@@ -20,6 +21,15 @@ object UsbFlashSession {
     @Volatile private var fs: FileSystem? = null
 
     val isMounted: Boolean get() = fs != null
+
+    /** Смонтированная флешка всё ещё вставлена в телефон. Флешку для QR ADB и флагов Jolion носят в магнитолу
+     * и обратно; заново вставленная — уже другое USB-устройство (новое имя /dev/bus/usb/…), а старое
+     * подключение libaums на ней падает MAX_RECOVERY_ATTEMPTS. */
+    fun isStillAttached(context: Context): Boolean {
+        val mounted = device ?: return false
+        val manager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return true
+        return manager.deviceList.values.any { it.deviceName == mounted.usbDevice.deviceName }
+    }
 
     fun disconnect() {
         device = null

@@ -21,19 +21,27 @@ async function checkFile(file, { window: windowMock, listeners, calls }) {
   errorHandler({ message: "ResizeObserver loop limit exceeded", error: null, target: windowMock });
   assert(calls.length === 0, `${file}: ResizeObserver не отправлен: ${JSON.stringify(calls)}`);
 
+  // 1б) Не загрузилась картинка (значок с сервера без интернета) — не шлётся; сломанный скрипт — шлётся.
+  // Логи #1148, #1172, #1179: до 20 строк «ПРИЛОЖЕНИЕ ЗАВЕРШИЛОСЬ…» на сессию без единого действия.
+  errorHandler({ target: { tagName: "IMG", src: "https://magicsqd.ru/content/icons/abc.png" } });
+  assert(calls.length === 0, `${file}: незагрузившаяся картинка не отправлена: ${JSON.stringify(calls)}`);
+  errorHandler({ target: { tagName: "SCRIPT", src: "js/app.js" } });
+  assert(calls.length === 1 && calls[0].message === "resource load failed: <SCRIPT> js/app.js",
+    `${file}: незагрузившийся скрипт отправлен: ${JSON.stringify(calls)}`);
+
   // 2) Обычная ошибка — отправляется как раньше.
   errorHandler({ message: "TypeError: x is not a function", error: { stack: "at foo()" }, target: windowMock });
-  assert(calls.length === 1, `${file}: обычная ошибка отправлена`);
-  assert(calls[0].message === "TypeError: x is not a function", `${file}: текст ошибки передан как есть: ${calls[0].message}`);
+  assert(calls.length === 2, `${file}: обычная ошибка отправлена`);
+  assert(calls[1].message === "TypeError: x is not a function", `${file}: текст ошибки передан как есть: ${calls[1].message}`);
 
   // unhandledrejection — тоже доходит (второй путь в sendError, не ResizeObserver-специфичный).
   rejectionHandler({ reason: { message: "boom", stack: "at bar()" } });
-  assert(calls.length === 2, `${file}: unhandledrejection тоже отправлен`);
-  assert(calls[1].message === "unhandledrejection: boom", `${file}: текст unhandledrejection: ${calls[1].message}`);
+  assert(calls.length === 3, `${file}: unhandledrejection тоже отправлен`);
+  assert(calls[2].message === "unhandledrejection: boom", `${file}: текст unhandledrejection: ${calls[2].message}`);
 
   // 3) Общий лимит на сессию — зацикленная НЕ-ResizeObserver ошибка тоже режется.
-  // MAX_ERRORS_PER_SESSION считает ВСЕ отправленные ошибки за сессию (включая 2 уже
-  // отправленных выше), а не только эту серию — значит из 30 новых пройдёт только 18.
+  // MAX_ERRORS_PER_SESSION считает ВСЕ отправленные ошибки за сессию (включая 3 уже
+  // отправленных выше), а не только эту серию — значит из 30 новых пройдёт только 17.
   for (let i = 0; i < 30; i++) {
     errorHandler({ message: "Loop error " + i, error: null, target: windowMock });
   }

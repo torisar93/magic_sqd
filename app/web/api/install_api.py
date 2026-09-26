@@ -121,6 +121,10 @@ class InstallApi:
         # случай, если окно закрыли раньше, чем JS успела сама отправить
         # (см. main_web.py/main_web_win7.py: finally-блок).
         self._session_log_lines: list[str] = []
+        # Те же строки без фоновой докачки (_on_log_passive) — по ним seal_abandoned_session сверяет, полон ли
+        # журнал на диске: докачка при открытии модели идёт раньше, чем интерфейс узнаёт токен сессии, и в
+        # журнал на диске не попадает.
+        self._session_active_lines: list[str] = []
         self._session_meta: dict | None = None
         self._session_flushed = True
         # Токен текущей сессии для прочного журнала на диске (см.
@@ -154,6 +158,7 @@ class InstallApi:
         if model is None:
             return {"error": "unknown model key"}
         self._session_log_lines = []
+        self._session_active_lines = []
         self._session_meta = {"brand": model.brand, "model": model.name,
                                "modification": model.modification or ""}
         self._session_flushed = True  # ничего слать не нужно, пока не появится реальная активность
@@ -1106,6 +1111,7 @@ class InstallApi:
     # трогают в webview напрямую.
     def _on_log(self, message: str) -> None:
         self._session_log_lines.append(str(message))
+        self._session_active_lines.append(str(message))
         self._session_flushed = False
         event_bridge.push({"kind": "install_log", "text": message})
 
@@ -1142,6 +1148,7 @@ class InstallApi:
         if self._session_flushed or not self._session_log_lines:
             return None
         return {**(self._session_meta or {}), "log_text": "\n".join(self._session_log_lines),
+                "active_text": "\n".join(self._session_active_lines),
                 "token": self._session_log_token}
 
     @staticmethod

@@ -7,6 +7,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import me.jahnen.libaums.core.fs.FileSystem
 import org.json.JSONArray
 import org.json.JSONObject
 import ru.magicsqd.mobile.usb.AdbConsoleFormat
@@ -795,9 +796,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             file.appendText("---\n")
         } catch (_: Exception) {
         }
+        // Тот же маркер, что на ПК (events.js): ошибка в JS — не вылет, программа работает дальше.
+        // CRASH_MARKER («ПРИЛОЖЕНИЕ ЗАВЕРШИЛОСЬ…») — только настоящему падению процесса (MainActivity).
         InstallLogQueue.appendCurrent(
             context.filesDir,
-            "${InstallLogQueue.CRASH_MARKER}\n$message" + (if (stack.isNotEmpty()) "\n$stack" else ""),
+            "=== НЕОБРАБОТАННАЯ ОШИБКА JS: $message ===" + (if (stack.isNotEmpty()) "\n$stack" else ""),
             true,
         )
     }
@@ -943,10 +946,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 } catch (e: Exception) {
                     pushAdbLog("Скан сети (IPv6-соседи): ${e.message ?: "неизвестная ошибка"}"); emptyList()
                 }
-                val hosts = (listOfNotNull(ipv6) + neighbors).distinct()
+                val own = NetworkScan.ownAddresses()
+                val recommended = ipv6?.takeIf { NetworkScan.withoutZone(it) !in own }
+                val hosts = (listOfNotNull(recommended) + neighbors).distinct()
+                    .filter { NetworkScan.withoutZone(it) !in own }
                 pushAdbLog("Скан сети (telnet, IPv6): найдено ${hosts.size}.")
                 event.put("hosts", JSONArray(hosts))
-                if (ipv6 != null) event.put("recommended", ipv6)
+                if (recommended != null) event.put("recommended", recommended)
             } else {
                 val mdns = try {
                     MdnsResolve.resolveAndroidLocal(context)
@@ -963,10 +969,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 } catch (e: Exception) {
                     pushAdbLog("Скан сети (порт $port): ${e.message ?: "неизвестная ошибка"}"); emptyList()
                 }
-                val hosts = (listOfNotNull(mdns.ipv4) + ping + portOpen).distinct()
+                val own = NetworkScan.ownAddresses()
+                val recommended = mdns.ipv4?.takeIf { NetworkScan.withoutZone(it) !in own }
+                val hosts = (listOfNotNull(recommended) + ping + portOpen).distinct()
+                    .filter { NetworkScan.withoutZone(it) !in own }
                 pushAdbLog("Скан сети (Wi-Fi ADB, IPv4): найдено ${hosts.size}.")
                 event.put("hosts", JSONArray(hosts))
-                if (mdns.ipv4 != null) event.put("recommended", mdns.ipv4)
+                if (recommended != null) event.put("recommended", recommended)
             }
             pushEvent(event)
         }.start()
@@ -1216,7 +1225,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     /** Ищет USB mass storage устройство, запрашивает разрешение и монтирует
      * (БЕЗ форматирования — см. UsbFlashSession) — держится живым между
      * этапами мастера, как AdbSession для ADB. */
-    private fun usbConnect() = runExclusive(::onBusy) {
+    private fun usbConnect() = runExclusive(::onBusy) { connectFlashAndReport() }
+
+    private fun connectFlashAndReport(): Result<FileSystem> {
         val result = UsbFlashSession.connectBlocking(context, ::pushAdbLog)
         val event = result.fold(
             onSuccess = { fs ->
@@ -1227,6 +1238,18 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             onFailure = { e -> JSONObject().put("mounted", false).put("reason", e.message) },
         )
         pushEvent(JSONObject().put("kind", "usb_connect_result").put("result", event))
+        return result
+    }
+
+    /** Перед каждой операцией с флешкой: если её вынимали (носили в магнитолу) и вставили снова, сессия держит
+     * подключение к уже отключённому устройству — запись и чтение на нём падали MAX_RECOVERY_ATTEMPTS, и техник
+     * видел «Флешка перестала отвечать», хотя с флешкой всё в порядке (25–26.09: 16 из 19 таких сбоев — на
+     * подключении, которое до этого уже поработало, логи #1052, #1106, #1154, #1205). Подключаемся к той, что
+     * вставлена сейчас. null — флешка готова (или не была подключена — это проверит сама операция). */
+    private fun remountIfReplugged(): String? {
+        if (!UsbFlashSession.isMounted || UsbFlashSession.isStillAttached(context)) return null
+        pushAdbLog("Флешку вынимали — подключаюсь к ней заново...")
+        return connectFlashAndReport().exceptionOrNull()?.let { it.message ?: "не удалось подключить флешку" }
     }
 
     /** Полное форматирование в FAT32 (см. UsbFlashFormat.kt) — ЗАТИРАЕТ
@@ -1236,6 +1259,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val label = args.optString("label", "MAGICSQD")
         runExclusive(::onBusy) {
             val event = try {
+                remountIfReplugged()?.let { throw IllegalStateException(it) }
                 val capacity = UsbFlashSession.capacityBytes()
                 UsbFlashSession.format(capacity, label, ::pushAdbLog).fold(
                     onSuccess = { JSONObject().put("success", true) },
@@ -1285,7 +1309,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val apksDest = args.optString("apksDest", "")
         runExclusive(::onBusy) {
             val result = try {
-                if (!UsbFlashSession.isMounted) {
+                val remountError = remountIfReplugged()
+                if (remountError != null) {
+                    StageRunResult.Failed(remountError)
+                } else if (!UsbFlashSession.isMounted) {
                     StageRunResult.Failed("Флешка не подключена — сначала подключись к ней")
                 } else {
                     // Файлы этапа (files/usb_files/step_N/...) и отмеченные
@@ -1319,7 +1346,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * svlog.flag (см. qrAdbWriteFlag ниже) срабатывает. */
     private fun qrAdbWritePrepFlag() = runExclusive(::onBusy) {
         val event = try {
-            if (!UsbFlashSession.isMounted) {
+            val remountError = remountIfReplugged()
+            if (remountError != null) {
+                JSONObject().put("ok", false).put("error", remountError)
+            } else if (!UsbFlashSession.isMounted) {
                 JSONObject().put("ok", false).put("error", "Флешка не подключена — сначала подключите её сверху.")
             } else {
                 val flagFile = File(carsDir, "_shared/svengmode.flag")
@@ -1347,7 +1377,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * после qrAdbWritePrepFlag, для qr_adb_engineering_menu=true): */
     private fun qrAdbWriteFlag() = runExclusive(::onBusy) {
         val event = try {
-            if (!UsbFlashSession.isMounted) {
+            val remountError = remountIfReplugged()
+            if (remountError != null) {
+                JSONObject().put("ok", false).put("error", remountError)
+            } else if (!UsbFlashSession.isMounted) {
                 JSONObject().put("ok", false).put("error", "Флешка не подключена — сначала подключите её сверху.")
             } else {
                 val flagFile = File(carsDir, "_shared/svlog.flag")
@@ -1374,7 +1407,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * android/.../python/qr_adb_password.py — порт desktop-алгоритма). */
     private fun qrAdbGetPassword() = runExclusive(::onBusy) {
         val event = try {
-            if (!UsbFlashSession.isMounted) {
+            val remountError = remountIfReplugged()
+            if (remountError != null) {
+                JSONObject().put("ok", false).put("error", remountError)
+            } else if (!UsbFlashSession.isMounted) {
                 JSONObject().put("ok", false).put("error", "Флешка не подключена — сначала подключите её сверху.")
             } else {
                 readQrAdbBugreportZip(UsbFlashSession.requireFs()).fold(

@@ -77,6 +77,8 @@ def run() -> None:
         webview.start(debug=debug, gui="qt")
     finally:
         main_web._log_step("webview.start() returned (normal close)")
+        api.seal_abandoned_install_log()  # до kill-server — см. main_web.py
+        main_web._log_step("seal_abandoned_install_log() done")
         from app.adb_utils import kill_server
         kill_server(api.adb_path)
         main_web._log_step("kill_server() done")

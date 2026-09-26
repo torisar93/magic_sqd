@@ -283,6 +283,7 @@
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const usingChoices = select.style.display !== "none";
+      if (usingChoices && select.value === "") { select.focus(); return; } // приложение ещё не выбрано
       const value = (usingChoices && select.value !== MANUAL_CHOICE_VALUE)
         ? select.value
         : valueInput.value;
@@ -297,6 +298,15 @@
     });
   }
 
+  // Список пакетов (разрешения, удалить/отключить/включить приложение): первым в нём стоит «android» — ядро
+  // системы, и раньше он был выбран заранее. Техник жал «OK», не выбрав, и программа отключала или пыталась
+  // удалить сам Android (лог #1013: «Отключаю приложение: android … Готово.», №1042, №757). Для пакетов —
+  // пустой пункт, пока техник не выберет сам; адреса и порты (скан сети, COM) по-прежнему с первым пунктом.
+  function isPackageList(choices) {
+    return choices.some((choice) => choice.includes("."))
+      && choices.every((choice) => /^[A-Za-z]\w*(\.\w+)*$/.test(choice));
+  }
+
   function showAskInputDialog(event) {
     const dialog = document.getElementById("ask-input-dialog");
     dialog.dataset.reqId = event.id;
@@ -307,6 +317,14 @@
     const choices = event.choices || [];
     if (choices.length) {
       select.innerHTML = "";
+      const packages = isPackageList(choices);
+      if (packages) {
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "— выберите приложение —";
+        placeholder.disabled = true;
+        select.appendChild(placeholder);
+      }
       for (const choice of choices) {
         const opt = document.createElement("option");
         opt.value = choice;
@@ -320,7 +338,7 @@
         select.appendChild(manualOpt);
       }
       select.style.display = "";
-      select.value = choices[0];
+      select.value = packages ? "" : choices[0];
       valueInput.style.display = "none";
     } else {
       select.style.display = "none";

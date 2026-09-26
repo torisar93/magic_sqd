@@ -89,3 +89,53 @@ def test_enable_app_reports_success_and_failure():
     ctx, log = _make_ctx(stdout="")
     adb_permissions.enable_app(ctx, "com.typo")
     assert log[-1] == "Не удалось включить: устройство не ответило"
+
+
+# Штатные приложения удалять и отключать нельзя (владелец, 2026-09-26; лог #1013 — техник отключил сам
+# «android», pm ответил «new state: disabled-user»). В списке выбора их больше нет, а это — на случай
+# ручного ввода имени и старых моделей.
+
+def _ctx_by_command(responses):
+    log, commands = [], []
+
+    def shell(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(stdout=responses.get(command, ""), stderr="")
+
+    return SimpleNamespace(log=log.append, shell=shell), log, commands
+
+
+SYSTEM_LIST = "package:android\npackage:com.android.systemui\npackage:com.geely.launcher3\n"
+
+
+def test_uninstall_refuses_stock_app_without_touching_it():
+    ctx, log, commands = _ctx_by_command({"pm list packages -s": SYSTEM_LIST})
+    adb_permissions.uninstall_app(ctx, "com.android.systemui")
+    assert log == ["Удаляю приложение: com.android.systemui",
+                   "Не удалось удалить: это штатное приложение магнитолы — удалять его через программу нельзя."]
+    assert not any(c.startswith("pm uninstall") for c in commands)
+
+
+def test_disable_refuses_stock_app_without_touching_it():
+    ctx, log, commands = _ctx_by_command({"pm list packages -s": SYSTEM_LIST})
+    adb_permissions.disable_app(ctx, "android")
+    assert log == ["Отключаю приложение: android",
+                   "Не удалось отключить: это штатное приложение магнитолы — отключать его через программу нельзя."]
+    assert not any(c.startswith("pm disable") for c in commands)
+
+
+def test_third_party_app_still_removed_and_disabled():
+    ctx, log, _ = _ctx_by_command({"pm list packages -s": SYSTEM_LIST, "pm uninstall ru.yandex.music": "Success\n"})
+    adb_permissions.uninstall_app(ctx, "ru.yandex.music")
+    assert log[-1] == "Готово."
+    ctx, log, _ = _ctx_by_command({"pm list packages -s": SYSTEM_LIST,
+                                   "pm disable-user --user 0 ru.yandex.music": "Package ru.yandex.music new state: disabled-user\n"})
+    adb_permissions.disable_app(ctx, "ru.yandex.music")
+    assert log[-1] == "Готово."
+
+
+def test_enable_is_not_restricted():
+    # Включить можно и штатное — чтобы вернуть отключённое раньше.
+    ctx, log, _ = _ctx_by_command({"pm list packages -s": SYSTEM_LIST, "pm enable android": "Package android new state: enabled\n"})
+    adb_permissions.enable_app(ctx, "android")
+    assert log[-1] == "Готово."

@@ -1924,14 +1924,15 @@
     page.classList.add("flow-stage");
     (stage.actions || []).forEach((action, actionIndex) => {
       const PACKAGE_PICKER_ACTIONS = {
-        // bridgeMethod — см. WebBridge.kt; thirdPartyOnly=false — полный
-        // список (как disable_app/enable_app на десктопе — обычно нужны как
-        // раз предустановленные системные приложения).
+        // bridgeMethod — см. WebBridge.kt. Удалять и отключать — только
+        // сторонние (владелец, 2026-09-26: штатные нельзя — техники пытались
+        // удалить сам «android», логи #1187, #1222); включать — из полного
+        // списка (thirdPartyOnly=false), чтобы вернуть отключённое раньше.
         grant_permissions: { bridgeMethod: "actions_grant_permissions", thirdPartyOnly: true },
         mock_location: { bridgeMethod: "actions_mock_location", thirdPartyOnly: true },
         launch_activity: { bridgeMethod: "actions_launch_activity", thirdPartyOnly: true },
-        uninstall_app: { bridgeMethod: "actions_uninstall_app", thirdPartyOnly: false },
-        disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: false },
+        uninstall_app: { bridgeMethod: "actions_uninstall_app", thirdPartyOnly: true },
+        disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: true },
         enable_app: { bridgeMethod: "actions_enable_app", thirdPartyOnly: false },
       };
       const supported = !action.kind || ["command", ...Object.keys(PACKAGE_PICKER_ACTIONS)].includes(action.kind);

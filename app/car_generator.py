@@ -112,21 +112,19 @@ class ActionSpec:
     # "mock_location" — то же самое, но cars/_shared/adb_permissions.py.
     # set_mock_location_app назначает выбранное приложение приложением для
     # фиктивных местоположений и включает саму возможность.
-    # "disable_app"/"enable_app" — тот же выбор приложения (но из ПОЛНОГО
-    # списка, не только сторонних — third_party_only=False, см.
-    # _render_install_py: обычно это как раз предустановленные системные
-    # программы, которые нельзя удалить, только отключить), дальше
+    # "disable_app"/"enable_app" — тот же выбор приложения, дальше
     # cars/_shared/adb_permissions.py.disable_app/enable_app — pm
-    # disable-user/pm enable. Для мешающих предустановленных приложений
-    # (конкурирующая навигация, голосовой ассистент и т.п.).
+    # disable-user/pm enable. Отключать — только сторонние (владелец,
+    # 2026-09-26: штатные приложения удалять и отключать нельзя — техники
+    # отключали сам «android», лог #1013); включать — из ПОЛНОГО списка
+    # (third_party_only=False), чтобы вернуть отключённое раньше.
     # "launch_activity" — выбор из сторонних (third_party_only=True, как
     # grant_permissions/mock_location — обычно только что установленное
     # приложение), дальше adb_permissions.py.launch_main_activity ("monkey
     # -c android.intent.category.LAUNCHER" — сам находит launcher-activity).
-    # "uninstall_app" — выбор из ПОЛНОГО списка (как disable_app/enable_app),
-    # дальше adb_permissions.py.uninstall_app (pm uninstall) — в отличие от
-    # disable_app стирает приложение полностью, для системных пакетов без
-    # root обычно не сработает.
+    # "uninstall_app" — выбор из сторонних (как disable_app), дальше
+    # adb_permissions.py.uninstall_app (pm uninstall) — в отличие от
+    # disable_app стирает приложение полностью.
     kind: str = "command"
     commands: list[str] = field(default_factory=list)
     # Файлы, прикреплённые к ЭТОМУ действию — на них ссылаются #push/
@@ -1560,9 +1558,8 @@ def _render_install_py(spec: NewCarSpec) -> str:
                         f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
                     lines.append("    set_mock_location_app(ctx, package)")
                 elif action.kind == "disable_app":
-                    # third_party_only=False — обычно это как раз системное
-                    # предустановленное приложение (см. ActionSpec.kind).
-                    lines.append("    packages = list_installed_packages(ctx, third_party_only=False)")
+                    # Только сторонние: штатные отключать нельзя (см. ActionSpec.kind).
+                    lines.append("    packages = list_installed_packages(ctx)")
                     lines.append(
                         f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
                     lines.append("    disable_app(ctx, package)")
@@ -1577,7 +1574,7 @@ def _render_install_py(spec: NewCarSpec) -> str:
                         f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
                     lines.append("    launch_main_activity(ctx, package)")
                 elif action.kind == "uninstall_app":
-                    lines.append("    packages = list_installed_packages(ctx, third_party_only=False)")
+                    lines.append("    packages = list_installed_packages(ctx)")
                     lines.append(
                         f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
                     lines.append("    uninstall_app(ctx, package)")

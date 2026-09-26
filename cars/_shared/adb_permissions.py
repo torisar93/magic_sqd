@@ -331,18 +331,29 @@ def launch_main_activity(ctx, package: str) -> None:
     ctx.log("Готово.")
 
 
+def _is_system_package(ctx, package: str) -> bool:
+    """Штатное (системное) приложение магнитолы. Владелец, 2026-09-26: удалять и отключать их через
+    программу нельзя — в списке выбора их больше нет (list_installed_packages без third_party_only=False),
+    а это — на случай ручного ввода имени («Ввести вручную...») и старых моделей. Раньше техники так
+    отключили сам «android» (лог #1013 — pm ответил «new state: disabled-user»)."""
+    result = ctx.shell("pm list packages -s", check=False)
+    return f"package:{package}" in {line.strip() for line in (result.stdout or "").splitlines()}
+
+
 def uninstall_app(ctx, package: str) -> None:
-    """Удаляет приложение (pm uninstall) — в отличие от disable_app, СТИРАЕТ
-    его с магнитолы полностью. Для системных/предустановленных пакетов без
-    root обычно не сработает (тогда используйте disable_app) — раньше
-    здесь безусловно писалось "Готово." независимо от того, что реально
-    ответило устройство (реальный случай, лог #536: техник попробовал
+    """Удаляет стороннее приложение (pm uninstall) — в отличие от disable_app,
+    СТИРАЕТ его с магнитолы полностью. Штатные удалять нельзя (см.
+    _is_system_package). Раньше здесь безусловно писалось "Готово."
+    независимо от того, что реально ответило устройство (лог #536: техник попробовал
     "pm uninstall android" — ядро системы, заведомо защищено от удаления —
     и всё равно увидел "Готово.", хотя pm команду отклонила). Настоящий
     результат смотрим в тексте, как выводит сама pm ("Success"/"Failure
     [...]") — тот же приём, что и install_context.py:_check_pm_install_result
     на десктопе."""
     ctx.log(f"Удаляю приложение: {package}")
+    if _is_system_package(ctx, package):
+        ctx.log("Не удалось удалить: это штатное приложение магнитолы — удалять его через программу нельзя.")
+        return
     result = ctx.shell(f"pm uninstall {package}", check=False)
     text = ((result.stdout or "") + (result.stderr or "")).strip()
     if "success" in text.lower() and "failure" not in text.lower():
@@ -371,14 +382,15 @@ def _set_enabled_state(ctx, command: str, fail_verb: str) -> None:
 
 
 def disable_app(ctx, package: str) -> None:
-    """Отключает приложение (--user 0 — на всех наблюдавшихся магнитолах
-    единственный профиль, id 0) — для предустановленных программ, которые
-    мешают (конкурирующая навигация, голосовой ассистент и т.п.) и которые
-    нельзя просто удалить (системные, pm uninstall для них не работает без
-    root). Не путать с pm uninstall — приложение остаётся установленным,
-    просто не запускается и пропадает из лаунчера, обратимо через
-    enable_app ниже."""
+    """Отключает стороннее приложение (--user 0 — на всех наблюдавшихся
+    магнитолах единственный профиль, id 0). Штатные отключать нельзя (см.
+    _is_system_package). Не путать с pm uninstall — приложение остаётся
+    установленным, просто не запускается и пропадает из лаунчера, обратимо
+    через enable_app ниже."""
     ctx.log(f"Отключаю приложение: {package}")
+    if _is_system_package(ctx, package):
+        ctx.log("Не удалось отключить: это штатное приложение магнитолы — отключать его через программу нельзя.")
+        return
     _set_enabled_state(ctx, f"pm disable-user --user 0 {package}", "отключить")
 
 

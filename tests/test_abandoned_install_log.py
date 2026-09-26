@@ -106,3 +106,77 @@ def test_second_seal_does_not_duplicate(tmp_path):
 
 def test_nothing_to_send_without_session(tmp_path):
     assert flush(tmp_path, "windows", pending=None) == []
+
+
+def test_full_disk_journal_preferred_over_backend_buffer(tmp_path):
+    # Разбор логов 2026-09-26: при закрытии окна уходил бэкендовый буфер — без строки версии и без
+    # строк интерфейса (81 лог с ПК, например №1144, №1163). Журнал той же сессии на диске полнее.
+    token = pil.start_session(tmp_path, "Haval", "Jolion", "2026")
+    for line, activity in [("Magic SQD v1.0.42 (x64) · client=", False),
+                           ("Флешка: записано — svlog.flag.", True),
+                           ("Установка APK (JDWP-патч белого списка, Desay x9h): WiFi.apk", True),
+                           ("Установка завершена успешно.", True)]:
+        pil.append_current(tmp_path, token, line, activity)
+    pending = {"brand": "Haval", "model": "Jolion", "modification": "2026", "token": token,
+               "log_text": "Установка APK (JDWP-патч белого списка, Desay x9h): WiFi.apk\nУстановка завершена успешно."}
+
+    calls = flush(tmp_path, "windows", pending)
+
+    assert [c["log_text"] for c in calls] == [
+        "Magic SQD v1.0.42 (x64) · client=\nФлешка: записано — svlog.flag.\n"
+        "Установка APK (JDWP-патч белого списка, Desay x9h): WiFi.apk\nУстановка завершена успешно."]
+    assert not (tmp_path / "pending_install_logs" / "_current.log").exists()
+
+
+def test_session_sealed_before_adb_kill_server_on_close():
+    # kill-server держит закрытие до 15 с; если программу добьют в это время (выключение Windows, повторный
+    # запуск), незапечатанная сессия уходила следующим запуском как вылет (Windows 1.0.41: №1040, №1115, №1230).
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    for name in ("main_web.py", "main_web_win7.py"):
+        source = (root / name).read_text(encoding="utf-8")
+        finally_block = source[source.index('_log_step("webview.start() returned (normal close)")'):]
+        assert finally_block.index("api.seal_abandoned_install_log()") < finally_block.index("kill_server(api.adb_path)"), name
+
+
+def test_journal_preferred_even_without_early_download_lines(tmp_path):
+    # Докачка при открытии модели (_on_log_passive) идёт раньше, чем интерфейс узнаёт токен сессии, —
+    # в журнале на диске её нет. Сверяем только строки действий, иначе журнал не выбирался бы никогда.
+    token = pil.start_session(tmp_path, "Haval", "Jolion", "2026")
+    pil.append_current(tmp_path, token, "Magic SQD v1.0.42 (x64) · client=", False)
+    pil.append_current(tmp_path, token, "Установлено: WiFi.apk", True)
+    pending = {"brand": "Haval", "model": "Jolion", "modification": "2026", "token": token,
+               "log_text": "Скачано файлов (cars/Haval/Jolion/2026/files/instruction_1): 3.\nУстановлено: WiFi.apk",
+               "active_text": "Установлено: WiFi.apk"}
+
+    calls = flush(tmp_path, "windows", pending)
+
+    assert [c["log_text"] for c in calls] == ["Magic SQD v1.0.42 (x64) · client=\nУстановлено: WiFi.apk"]
+
+
+def test_backend_buffer_kept_when_journal_misses_an_action(tmp_path):
+    # Интерфейс завис раньше бэкенда — на диске нет последнего действия: шлём бэкендовый буфер, как раньше.
+    token = pil.start_session(tmp_path, "Haval", "Jolion", "2026")
+    pil.append_current(tmp_path, token, "Magic SQD v1.0.42 (x64) · client=", False)
+    pil.append_current(tmp_path, token, "Установлено: WiFi.apk", True)
+    pending = {"brand": "Haval", "model": "Jolion", "modification": "2026", "token": token,
+               "log_text": "Установлено: WiFi.apk\nУстановлено: Dock.apk",
+               "active_text": "Установлено: WiFi.apk\nУстановлено: Dock.apk"}
+
+    calls = flush(tmp_path, "windows", pending)
+
+    assert [c["log_text"] for c in calls] == ["Установлено: WiFi.apk\nУстановлено: Dock.apk"]
+
+
+def test_install_api_marks_download_lines_as_not_actions(tmp_path, monkeypatch):
+    from app.web.api import install_api as ia
+    monkeypatch.setattr(ia.event_bridge, "push", lambda event: None)
+    api = ia.InstallApi("adb", tmp_path, types.SimpleNamespace(get_model=lambda key: None))
+    api._session_meta = {"brand": "Haval", "model": "Jolion", "modification": "2026"}
+    api._on_log_passive("Скачано файлов (cars/Haval/Jolion/2026/files/instruction_1): 3.")
+    api._on_log("Установлено: WiFi.apk")
+
+    pending = api.pending_session_log()
+
+    assert pending["log_text"] == "Скачано файлов (cars/Haval/Jolion/2026/files/instruction_1): 3.\nУстановлено: WiFi.apk"
+    assert pending["active_text"] == "Установлено: WiFi.apk"

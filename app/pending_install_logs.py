@@ -242,17 +242,42 @@ def seal_abandoned_session(base_dir, platform: str, pending: dict | None) -> Pat
     """Всё, что нужно запечатать при закрытии программы посреди сессии (см.
     app/web/bridge.py:seal_abandoned_install_log) — только локальные файлы,
     без сети. pending — бэкендовый буфер строк (InstallApi.
-    pending_session_log(), None — бэкенд ничего не логировал): он, как и
-    раньше, первый; если его нет или токен уже не совпал — прочный журнал
-    на диске (seal_abandoned_current)."""
+    pending_session_log(), None — бэкенд ничего не логировал): он первый,
+    но текст берётся из журнала той же сессии на диске, если тот полнее
+    (см. _fuller_journal); если буфера нет или токен уже не совпал —
+    прочный журнал на диске (seal_abandoned_current)."""
     path = None
     if pending is not None:
-        path = finalize_to_queue(base_dir, pending.get("token") or "", platform,
+        token = pending.get("token") or ""
+        path = finalize_to_queue(base_dir, token, platform,
                                  pending["brand"], pending["model"], pending["modification"],
-                                 False, pending["log_text"])
+                                 False, _fuller_journal(base_dir, token, pending["log_text"],
+                                                        pending.get("active_text")))
     if path is None:
         path = seal_abandoned_current(base_dir, platform)
     return path
+
+
+def _fuller_journal(base_dir, token: str, backend_text: str, active_text: str | None = None) -> str:
+    """Журнал той же сессии на диске, если в нём есть все бэкендовые строки действий, — он полнее: там и
+    строка версии, и то, что пишет только интерфейс (запись на флешку, QR ADB, показанные окна). Раньше при
+    закрытии окна уходил бэкендовый буфер — 81 лог с ПК без версии программы и без этих строк (№1144,
+    №1163, №1188…). Фоновую докачку (active_text её не содержит) не сверяем: при открытии модели она идёт
+    раньше, чем интерфейс узнаёт токен, и на диск не попадает. Если на диске нет какого-то действия
+    (интерфейс завис раньше) — прежний буфер."""
+    base_dir = Path(base_dir)
+    with _LOCK:
+        meta = _read_current_meta(base_dir)
+        if not meta or meta.get("token") != token:
+            return backend_text
+        try:
+            journal = _current_log_path(base_dir).read_text(encoding="utf-8")
+        except OSError:
+            return backend_text
+    required = backend_text if active_text is None else active_text
+    if set(required.splitlines()) <= set(journal.splitlines()):
+        return journal.rstrip("\n")
+    return backend_text
 
 
 def list_queue(base_dir) -> list[Path]:
