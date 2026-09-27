@@ -35,6 +35,12 @@ object AdbSession {
     /** Соединение было, но запись в него не прошла (см. isConnected). Сбрасывается новым подключением. */
     val linkLost: Boolean get() = transport?.lost == true
 
+    /** Команда упала с AdbLinkLostException (магнитола не ответила на открытие потока) — связь мёртвая, как и при
+     * неудачной записи: дальше isConnected=false, следующие команды не ждут каждая свой таймаут. */
+    fun markLinkLost() {
+        transport?.markLost()
+    }
+
     /** ro.product.model из баннера последнего успешного подключения — ключ памяти «какой способ установки
      * сработал на этой магнитоле» (см. InstallEngine.rememberedMethod). null, если магнитола его не назвала. */
     @Volatile var deviceModel: String? = null
@@ -285,6 +291,11 @@ class LinkWatch(private val inner: AdbTransport) : AdbTransport {
 
     override fun write(bytes: ByteArray, timeoutMs: Int): Boolean =
         inner.write(bytes, timeoutMs).also { if (!it) lost = true }
+
+    /** Магнитола не ответила даже на открытие потока (см. AdbSession.markLinkLost). */
+    fun markLost() {
+        lost = true
+    }
 
     override fun read(buffer: ByteArray, timeoutMs: Int): Int = inner.read(buffer, timeoutMs)
 

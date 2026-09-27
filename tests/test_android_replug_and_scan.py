@@ -71,3 +71,20 @@ def test_js_error_is_not_logged_as_app_crash():
     assert "НЕОБРАБОТАННАЯ ОШИБКА JS" in client_error and "CRASH_MARKER" not in client_error
     main_activity = _code(KOTLIN / "MainActivity.kt")
     assert "InstallLogQueue.CRASH_MARKER" in main_activity  # настоящий вылет процесса — по-прежнему «вылет»
+
+
+def test_link_loss_in_actions_does_not_crash_the_app():
+    # Лог #1266 (1.0.42): связь умерла на «Выдать разрешения» — AdbLinkLostException из ответа на открытие
+    # потока вылетел из потока операции, и программа упала («ПРИЛОЖЕНИЕ ЗАВЕРШИЛОСЬ…»).
+    permissions = _code(KOTLIN / "usb/AdbPermissions.kt")
+    assert permissions.count("AdbSession.shell(") == 1  # единственный — внутри safeShell
+    safe = _function(permissions, "private fun safeShell(")
+    assert "catch (e: AdbLinkLostException)" in safe and "AdbSession.markLinkLost()" in safe
+    assert "if (!AdbSession.isConnected) return AdbShellResult.Failed" in safe  # мёртвая связь — без таймаутов
+
+    session = _code(KOTLIN / "usb/AdbSession.kt")
+    assert "fun markLinkLost()" in session and "fun markLost()" in session
+
+    bridge = _code(KOTLIN / "WebBridge.kt")
+    run = _function(bridge, "private fun runExclusive(")
+    assert run.index("catch (e: AdbLinkLostException)") < run.index("catch (e: Exception)") < run.index("finally")

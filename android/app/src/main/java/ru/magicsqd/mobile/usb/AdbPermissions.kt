@@ -159,9 +159,9 @@ object AdbPermissions {
         } else mutableListOf()
         if (component !in existing) {
             existing.add(component)
-            AdbSession.shell("settings put secure enabled_accessibility_services ${existing.joinToString(":")}", log)
+            safeShell("settings put secure enabled_accessibility_services ${existing.joinToString(":")}", log)
         }
-        AdbSession.shell("settings put secure accessibility_enabled 1", log)
+        safeShell("settings put secure accessibility_enabled 1", log)
         log("Служба специальных возможностей включена: $component")
     }
 
@@ -186,17 +186,31 @@ object AdbPermissions {
         } else mutableListOf()
         if (component !in existing) {
             existing.add(component)
-            AdbSession.shell("settings put secure enabled_notification_listeners ${existing.joinToString(":")}", log)
+            safeShell("settings put secure enabled_notification_listeners ${existing.joinToString(":")}", log)
         }
-        AdbSession.shell("cmd notification allow_listener $component", log)
+        safeShell("cmd notification allow_listener $component", log)
         log("Доступ к уведомлениям включён: $component")
     }
 
     private fun shellText(command: String, log: (String) -> Unit, timeoutMs: Int = 5000): String =
-        when (val r = AdbSession.shell(command, log, timeoutMs)) {
+        when (val r = safeShell(command, log, timeoutMs)) {
             is AdbShellResult.Output -> r.text
             else -> ""
         }
+
+    /** AdbSession.shell без исключения наружу. Связь умерла прямо на команде — ответа на открытие потока нет,
+     * и AdbLinkLostException раньше вылетал из потока операции и ронял всю программу (лог #1266: «Выдать
+     * разрешения» com.maxinf.car на Atlas New Monji, 1.0.42). Отмечаем связь потерянной: следующие команды
+     * не ждут каждая свой таймаут, а выдача честно пишет «связь с магнитолой потеряна». */
+    private fun safeShell(command: String, log: (String) -> Unit, timeoutMs: Int = 5000): AdbShellResult {
+        if (!AdbSession.isConnected) return AdbShellResult.Failed("связь с магнитолой потеряна")
+        return try {
+            AdbSession.shell(command, log, timeoutMs)
+        } catch (e: AdbLinkLostException) {
+            AdbSession.markLinkLost()
+            AdbShellResult.Failed(e.message ?: "связь с магнитолой потеряна")
+        }
+    }
 
     /** Список установленных на магнитоле пакетов (для выбора приложения
      * перед grantAllPermissions/setMockLocationApp ниже) — портовая копия
@@ -223,9 +237,9 @@ object AdbPermissions {
      * appops эту операцию не знает. */
     fun setMockLocationApp(pkg: String, log: (String) -> Unit) {
         log("Приложение для фиктивных местоположений: $pkg")
-        AdbSession.shell("appops set $pkg android:mock_location allow", log)
-        AdbSession.shell("settings put secure mock_location 1", log)
-        log("Готово.")
+        safeShell("appops set $pkg android:mock_location allow", log)
+        safeShell("settings put secure mock_location 1", log)
+        log(if (AdbSession.isConnected) "Готово." else "Не удалось: связь с магнитолой потеряна.")
     }
 
     /** Запускает главную activity приложения (как обычный тап по иконке в
@@ -236,8 +250,8 @@ object AdbPermissions {
      * требует знать её имя заранее). */
     fun launchMainActivity(pkg: String, log: (String) -> Unit) {
         log("Запускаю приложение: $pkg")
-        AdbSession.shell("monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)
-        log("Готово.")
+        safeShell("monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)
+        log(if (AdbSession.isConnected) "Готово." else "Не удалось: связь с магнитолой потеряна.")
     }
 
     /** Удаляет приложение (pm uninstall) — портовая копия
@@ -272,7 +286,7 @@ object AdbPermissions {
 
     /** pm uninstall без записи в лог итога — общий для кнопки «Удалить приложение» и «Откатить в сток». */
     fun removePackage(pkg: String, log: (String) -> Unit): Removal =
-        when (val r = AdbSession.shell("pm uninstall $pkg", log)) {
+        when (val r = safeShell("pm uninstall $pkg", log)) {
             is AdbShellResult.Output -> {
                 val text = r.text.trim()
                 if (text.contains("success", ignoreCase = true) && !text.contains("failure", ignoreCase = true)) Removal.Removed
@@ -297,7 +311,7 @@ object AdbPermissions {
     }
 
     private fun setEnabledState(command: String, failVerb: String, log: (String) -> Unit) {
-        val text = when (val r = AdbSession.shell(command, log)) {
+        val text = when (val r = safeShell(command, log)) {
             is AdbShellResult.Output -> r.text
             is AdbShellResult.Rejected -> "Команда отклонена устройством: ${r.reason}"
             is AdbShellResult.Failed -> r.reason
@@ -336,23 +350,23 @@ object AdbPermissions {
 
         for (perm in requested) {
             if (perm in APPOPS_BY_PERMISSION) continue // выдаётся ниже через appops
-            AdbSession.shell("pm grant $pkg $perm", log)
+            safeShell("pm grant $pkg $perm", log)
         }
         for (op in APPOPS_BY_PERMISSION.values) {
-            AdbSession.shell("appops set $pkg $op allow", log)
+            safeShell("appops set $pkg $op allow", log)
             if (op == MANAGE_EXTERNAL_STORAGE_OP) {
                 // См. cars/_shared/adb_permissions.py — на части прошивок
                 // (Geely Cityray/Monji) обычная форма выше молча не
                 // применяется, --uid (не стандартный AOSP-флаг, добавлен
                 // этим OEM) реально резолвит uid заново.
-                AdbSession.shell("appops set --uid $pkg $op allow", log)
+                safeShell("appops set --uid $pkg $op allow", log)
             }
         }
         for (op in EXTRA_APPOPS) {
-            AdbSession.shell("appops set $pkg $op allow", log)
+            safeShell("appops set $pkg $op allow", log)
         }
-        AdbSession.shell("pm grant $pkg $WRITE_SECURE_SETTINGS", log)
-        AdbSession.shell("dumpsys deviceidle whitelist +$pkg", log)
+        safeShell("pm grant $pkg $WRITE_SECURE_SETTINGS", log)
+        safeShell("dumpsys deviceidle whitelist +$pkg", log)
         enableAccessibilityService(pkg, dumpsysOutput, log)
         enableNotificationListener(pkg, dumpsysOutput, log)
         if (AdbSession.isConnected) {

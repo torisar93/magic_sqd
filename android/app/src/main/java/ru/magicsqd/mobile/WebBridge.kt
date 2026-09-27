@@ -13,6 +13,7 @@ import org.json.JSONObject
 import ru.magicsqd.mobile.usb.AdbConsoleFormat
 import ru.magicsqd.mobile.usb.AdbEchoStats
 import ru.magicsqd.mobile.usb.AdbHandshakeResult
+import ru.magicsqd.mobile.usb.AdbLinkLostException
 import ru.magicsqd.mobile.usb.AdbPermissions
 import ru.magicsqd.mobile.usb.AdbSession
 import ru.magicsqd.mobile.usb.ApkOperationProgress
@@ -112,6 +113,15 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         Thread {
             try {
                 body()
+            } catch (e: AdbLinkLostException) {
+                // Последняя страховка: обрыв связи в операции, которая его не ждала (консоль, кнопки «Доп.
+                // действий»), ронял всю программу (лог #1266). Теперь — строка в журнал.
+                AdbSession.markLinkLost()
+                pushAdbLog("Связь с магнитолой оборвалась — операция прервана. Переподключитесь и повторите.")
+            } catch (e: Exception) {
+                val where = e.stackTrace.firstOrNull { it.className.startsWith("ru.magicsqd") }
+                pushAdbLog("Операция прервалась из-за ошибки программы: ${e.javaClass.simpleName}: ${e.message}" +
+                    (where?.let { " (${it.fileName}:${it.lineNumber})" } ?: ""))
             } finally {
                 operationBusy.set(false)
             }
