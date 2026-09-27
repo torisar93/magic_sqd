@@ -1580,6 +1580,17 @@
     return true;
   }
 
+  // Адрес прошлой магнитолы подставляем, только если он из сети, в которой сейчас телефон: техники переходили к
+  // следующей машине, не закрывая программу, жали «Подключиться» на адрес прошлой магнитолы и ждали таймаут
+  // (8 логов, №1226, №1339). Сеть не понять (нет Wi-Fi, IPv6) — подставляем, как раньше.
+  function lastHostForThisNetwork() {
+    if (!lastWifiHost) return "";
+    try {
+      const r = Bridge.call("wifi_host_in_subnet", { host: lastWifiHost });
+      return r && r.inSubnet === false ? "" : lastWifiHost;
+    } catch (_) { return lastWifiHost; }
+  }
+
   // opts.editablePort — показать поле порта рядом со сканом (по умолчанию
   // то, что задано в _wizard_spec.json редактором на desktop, см. onAdbConnect)
   // с возможностью поменять "на всякий случай" и пересканировать по новому
@@ -1593,7 +1604,7 @@
     opts=opts||{};
     let cancelScan=null;
     let submitted=false;
-    LabUI.connection({title:port===23?'Подключение к магнитоле':'Подключение по Wi-Fi',port:port||5555,host:lastWifiHost||'',help:opts.help||'',
+    LabUI.connection({title:port===23?'Подключение к магнитоле':'Подключение по Wi-Fi',port:port||5555,host:lastHostForThisNetwork(),help:opts.help||'',
       scan:p=>new Promise(resolve=>{
         let hosts=[],services=[],waiting=opts.discoverAdbService?2:1;
         const finish=()=>{if(--waiting===0){cancelScan=null;resolve([...services,...hosts.filter(h=>!services.some(s=>s.host===h))]);}};

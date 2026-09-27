@@ -242,16 +242,69 @@ object AdbPermissions {
         log(if (AdbSession.isConnected) "Готово." else "Не удалось: связь с магнитолой потеряна.")
     }
 
-    /** Запускает главную activity приложения (как обычный тап по иконке в
-     * лаунчере) — портовая копия cars/_shared/adb_permissions.py:
-     * launch_main_activity ("monkey -c android.intent.category.LAUNCHER" —
-     * тот же приём, что уже используется после каждой автоматической
-     * установки, см. AdbInstall.kt — сам находит launcher-activity, не
-     * требует знать её имя заранее). */
+    /** Запускает главную activity приложения (как тап по иконке в лаунчере) — портовая копия
+     * cars/_shared/adb_permissions.py:launch_main_activity («monkey -c android.intent.category.LAUNCHER» сам
+     * находит launcher-activity). Раньше всегда писалось «Готово.», что бы ни ответила магнитола: у техника на
+     * Geely Preface приложения «не запускались», а в журнале — «Готово.» по десять раз (лог #1348: GInputBridge
+     * четыре раза подряд; у MicroG значка для запуска нет вовсе). Теперь: нет значка — так и пишем; monkey не
+     * сработал — запускаем activity напрямую (am start); через полторы секунды смотрим, есть ли приложение на
+     * экране, и если нет — что там вместо него. */
     fun launchMainActivity(pkg: String, log: (String) -> Unit) {
         log("Запускаю приложение: $pkg")
-        safeShell("monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)
-        log(if (AdbSession.isConnected) "Готово." else "Не удалось: связь с магнитолой потеряна.")
+        val monkey = shellText("monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)
+        if (!AdbSession.isConnected) { log("Не удалось: связь с магнитолой потеряна."); return }
+        if (monkey.contains("No activities found")) {
+            log("Не удалось запустить: у приложения нет значка для запуска — оно работает в фоне " +
+                "или открывается из другого приложения.")
+            return
+        }
+        if (!monkey.contains("Events injected: 1")) {
+            val resolved = shellText("cmd package resolve-activity --brief -a android.intent.action.MAIN " +
+                "-c android.intent.category.LAUNCHER $pkg", log)
+            val component = resolved.lines().map { it.trim() }.lastOrNull { it.contains("/") && !it.contains(" ") }
+            if (component == null) {
+                val answer = monkey.trim().lines().lastOrNull()?.take(200)?.takeIf { it.isNotBlank() } ?: "магнитола не ответила"
+                log("Не удалось запустить: $answer")
+                return
+            }
+            val started = shellText("am start -n $component", log)
+            if (started.contains("Error")) {
+                log("Не удалось запустить: ${started.trim().lines().last().take(200)}")
+                return
+            }
+        }
+        Thread.sleep(1500)
+        val screen = onScreen(pkg, log)
+        when {
+            screen == null || screen.first == 0 -> log("Готово.")
+            screen.first != null -> log("Готово: приложение открылось на дополнительном экране магнитолы " +
+                "(экран ${screen.first}), а не на основном.")
+            else -> {
+                val now = if (screen.second.isNotEmpty()) " (на экране: ${screen.second.take(2).joinToString(", ")})" else ""
+                log("Команда запуска прошла, но через полторы секунды приложения на экране нет$now. Если оно не " +
+                    "открылось — его закрывает прошивка магнитолы или у него нет окна.")
+            }
+        }
+    }
+
+    /** Что сейчас на экранах магнитолы: (номер экрана с нашим приложением или null, приложения на основном).
+     * null — магнитола не ответила. «Display #N» — заголовок экрана, mResumedActivity (Android 9) /
+     * ResumedActivity (10+) — приложение на нём; topResumedActivity не берём — он печатается после всех экранов. */
+    private fun onScreen(pkg: String, log: (String) -> Unit): Pair<Int?, List<String>>? {
+        val out = shellText("dumpsys activity activities | grep -E 'Display #|ResumedActivity'", log)
+        if (out.isBlank()) return null
+        var display = 0
+        var ours: Int? = null
+        val main = mutableListOf<String>()
+        for (line in out.lines()) {
+            val header = Regex("Display #(\\d+)").find(line)
+            if (header != null) { display = header.groupValues[1].toInt(); continue }
+            if (!line.contains("ResumedActivity") || line.contains("topResumedActivity")) continue
+            val component = Regex("u\\d+ (\\S+/\\S+)").find(line)?.groupValues?.get(1) ?: continue
+            if (display == 0 && component !in main) main.add(component)
+            if (ours == null && component.startsWith("$pkg/")) ours = display
+        }
+        return ours to main
     }
 
     /** Удаляет приложение (pm uninstall) — портовая копия

@@ -88,3 +88,41 @@ def test_link_loss_in_actions_does_not_crash_the_app():
     bridge = _code(KOTLIN / "WebBridge.kt")
     run = _function(bridge, "private fun runExclusive(")
     assert run.index("catch (e: AdbLinkLostException)") < run.index("catch (e: Exception)") < run.index("finally")
+
+
+def test_last_head_unit_address_from_other_network_is_explained():
+    # Адрес прошлой магнитолы (8 логов, №1226, №1339): подставляется только из сети телефона (tests/js/
+    # wifi_last_host.test.js), а неудачное подключение к адресу из другой сети объясняет, в чём дело.
+    scan = _code(KOTLIN / "usb/NetworkScan.kt")
+    subnet = _function(scan, "fun inWifiSubnet(")
+    assert "getLocalIPv4Subnet(context) ?: return null" in subnet and "(own and mask) == (target and mask)" in subnet
+    session = _code(KOTLIN / "usb/AdbSession.kt")
+    connect = _function(session, "fun connectWifiBlocking(")
+    assert "NetworkScan.inWifiSubnet(context, host) == false" in connect and "адрес не из сети телефона" in connect
+    bridge = _code(KOTLIN / "WebBridge.kt")
+    assert '"wifi_host_in_subnet" -> JSONObject()' in bridge
+
+
+def test_same_apk_already_on_head_unit_is_not_reinstalled():
+    # Владелец, 2026-09-27: после «Файл не скачан»/обрыва уже поставленное ставилось заново (№1347). ПК — tests/
+    # test_same_apk_skip.py; здесь Android: проверка до заливки файла, сравнение SHA-256 с base.apk на магнитоле.
+    engine = _code(KOTLIN / "usb/InstallEngine.kt")
+    same = _function(engine, "private fun sameApkInstalled(")
+    assert 'AdbSession.shell("pm path $pkg", log)' in same and "sha256sum ${paths[0]}" in same
+    assert "paths.size != 1" in same and "remote == sha256Hex(apk)" in same and "catch (_: Exception)" in same
+    loop = engine[engine.index("for ((index, path) in apkPaths.withIndex())"):]
+    assert loop.index("if (sameApkInstalled(currentPackageName, signedFile, log))") < loop.index("if (confirmedMethod != null)")
+    assert "на магнитоле уже стоит этот же файл — установку пропускаю" in loop
+
+
+def test_launch_app_reports_what_really_happened():
+    # Geely Preface (владелец, 2026-09-27): «не срабатывает запуск приложений», а в журнале — «Готово.» по десять раз
+    # (лог #1348). Поведение — как у ПК (tests/test_launch_app_result.py, ответы с эмулятора).
+    permissions = _code(KOTLIN / "usb/AdbPermissions.kt")
+    launch = _function(permissions, "fun launchMainActivity(")
+    assert launch.index('monkey.contains("No activities found")') < launch.index('!monkey.contains("Events injected: 1")')
+    assert "cmd package resolve-activity --brief" in launch and 'shellText("am start -n $component", log)' in launch
+    assert "Thread.sleep(1500)" in launch and "onScreen(pkg, log)" in launch
+    screen = _function(permissions, "private fun onScreen(")
+    assert "dumpsys activity activities | grep -E 'Display #|ResumedActivity'" in screen
+    assert 'line.contains("topResumedActivity")' in screen and 'component.startsWith("$pkg/")' in screen

@@ -118,6 +118,14 @@ class AppInstallFailed(RuntimeError):
     должен стоить техникам всей остальной, уже сделанной работы."""
 
 
+def _file_sha256(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 class NewerVersionInstalled(RuntimeError):
     """На магнитоле уже стоит версия новее, чем в сборке (INSTALL_FAILED_VERSION_DOWNGRADE). Раньше это
     останавливало весь этап, и после перезапуска техник заново ставил всё, что уже встало (лог #968:
@@ -373,13 +381,7 @@ class InstallContext:
             if len(files) < 2:
                 continue
             try:
-                digests = set()
-                for f in files:
-                    h = hashlib.sha256()
-                    with open(f, "rb") as fh:
-                        for chunk in iter(lambda: fh.read(1 << 20), b""):
-                            h.update(chunk)
-                    digests.add(h.digest())
+                digests = {_file_sha256(f) for f in files}
             except OSError:
                 continue
             if len(digests) > 1:
@@ -415,6 +417,13 @@ class InstallContext:
         for index, apk in enumerate(self.selected_apks):
             self._last_diff_package = None
             self._on_apk_progress(str(apk), index, total, "running", "install")
+            if self._same_apk_already_installed(apk):
+                # Этап повторяют после «Файл не скачан» или обрыва связи — уже поставленное не ставим заново
+                # (владелец, 2026-09-27); разрешения выдаём, как и после установки.
+                self.log(f"«{apk.name}»: на магнитоле уже стоит этот же файл — установку пропускаю.")
+                self._on_apk_progress(str(apk), index + 1, total, "done", None)
+                self._after_app_installed(apk, apk == mock_target, installed_now=False)
+                continue
             try:
                 self.install_apk_auto(apk, extra_args=extra_args)
             except NewerVersionInstalled:
@@ -442,6 +451,27 @@ class InstallContext:
         if self.failed_apps:
             self.log("Не установлено (пропущено, остальные приложения из списка "
                       "установлены): " + "; ".join(self.failed_apps))
+
+    def _same_apk_already_installed(self, apk: Path) -> bool:
+        """На магнитоле уже стоит РОВНО этот файл: SHA-256 base.apk установленного пакета совпадает с нашим.
+        Раньше после «Файл не скачан» или обрыва связи этап повторяли, и все уже поставленные приложения
+        ставились заново (лог #1347: WiFi Manager и Back Button — по три раза). Сравниваем файл, а не
+        versionCode: у модов номер версии обычно как у оригинала, и совпадение по версии оставило бы на
+        магнитоле не ту сборку. Любая неясность (нет sha256sum на старой прошивке, приложение из нескольких
+        файлов, pm не отвечает) — ставим, как раньше."""
+        package = read_package_name(apk)
+        if not package:
+            return False
+        try:
+            listed = self.shell(f"pm path {package}", check=False, timeout=30).stdout or ""
+            paths = [line.strip()[len("package:"):] for line in listed.splitlines()
+                     if line.strip().startswith("package:")]
+            if len(paths) != 1 or not paths[0] or any(ch.isspace() for ch in paths[0]):
+                return False
+            remote = (self.shell(f"sha256sum {paths[0]}", check=False, timeout=120).stdout or "").split()
+            return bool(remote) and remote[0].lower() == _file_sha256(apk)
+        except (AdbError, OSError):
+            return False
 
     def _mock_location_target(self) -> Path | None:
         """Приложение, которому после установки нужно выдать фиктивное

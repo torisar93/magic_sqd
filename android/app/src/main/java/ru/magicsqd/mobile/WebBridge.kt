@@ -279,6 +279,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "auth_refresh_subscriber" -> { authRefreshSubscriber(); "{}" }
                 "auth_forgot_password" -> { authForgotPassword(args.getString("email")); "{}" }
                 "scan_hosts" -> { scanHosts(args.optInt("port", 5555)); "{}" }
+                // Окно подключения: подставлять ли адрес прошлой магнитолы (см. app.js: lastHostForThisNetwork).
+                "wifi_host_in_subnet" -> JSONObject()
+                    .put("inSubnet", NetworkScan.inWifiSubnet(context, args.optString("host", "")) ?: JSONObject.NULL)
+                    .toString()
                 "scan_adb_service" -> { scanAdbService(); "{}" }
                 "adb_ask_input_response" -> {
                     AskInputBroker.resolve(args.getString("requestId"), args.getString("value"))

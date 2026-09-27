@@ -58,6 +58,29 @@ object NetworkScan {
         emptySet()
     }
 
+    /** Адрес — из Wi-Fi-сети, в которой сейчас телефон. null — не понять (Wi-Fi-сети нет, адрес не IPv4-число).
+     * Техники переходили к следующей машине, не закрывая программу, и подключались к адресу прошлой магнитолы —
+     * таймаут и окно «не отвечает по сети» (8 логов, №1226, №1339). */
+    fun inWifiSubnet(context: Context, host: String): Boolean? {
+        val (ownIp, prefixLen) = getLocalIPv4Subnet(context) ?: return null
+        val own = ipv4ToInt(ownIp) ?: return null
+        val target = ipv4ToInt(host) ?: return null
+        val mask = (-1L shl (32 - prefixLen.coerceIn(1, 32))).toInt()
+        return (own and mask) == (target and mask)
+    }
+
+    private fun ipv4ToInt(ip: String): Int? {
+        val parts = ip.trim().split(".")
+        if (parts.size != 4) return null
+        var value = 0
+        for (part in parts) {
+            val n = part.toIntOrNull() ?: return null
+            if (n !in 0..255) return null
+            value = (value shl 8) or n
+        }
+        return value
+    }
+
     /** «fe80::1%wlan0» → «fe80::1»; квадратные скобки и регистр — тоже прочь, для сравнения адресов. */
     fun withoutZone(host: String): String = host.trim('[', ']').substringBefore('%').lowercase()
 

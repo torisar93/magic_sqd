@@ -255,6 +255,35 @@ class InstallEngine(
     @Volatile var lastInstalled: List<InstalledApp> = emptyList()
         private set
 
+    private fun sha256Hex(file: File): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(1 shl 16)
+            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** На магнитоле уже стоит РОВНО этот файл: SHA-256 base.apk установленного пакета совпадает с нашим. Раньше
+     * после «Файл не скачан» или обрыва связи этап повторяли, и все уже поставленные приложения ставились заново
+     * (лог #1347: WiFi Manager и Back Button — по три раза). Файл, а не versionCode: у модов номер версии обычно как
+     * у оригинала, и совпадение по версии оставило бы не ту сборку. Любая неясность — ставим, как раньше. Хеш файла
+     * считаем, только если пакет на магнитоле есть, — новые установки не замедляются. Как ПК:
+     * install_context._same_apk_already_installed. */
+    private fun sameApkInstalled(pkg: String, apk: File, log: (String) -> Unit): Boolean {
+        if (pkg.isEmpty()) return false
+        return try {
+            val listed = (AdbSession.shell("pm path $pkg", log) as? AdbShellResult.Output)?.text.orEmpty()
+            val paths = listed.lines().map { it.trim() }.filter { it.startsWith("package:") }.map { it.removePrefix("package:") }
+            if (paths.size != 1 || paths[0].isEmpty() || paths[0].any { it.isWhitespace() }) return false
+            val out = (AdbSession.shell("sha256sum ${paths[0]}", log, 120_000) as? AdbShellResult.Output)?.text.orEmpty()
+            val remote = out.trim().split(Regex("\\s+")).firstOrNull()?.lowercase().orEmpty()
+            remote.length == 64 && remote == sha256Hex(apk)
+        } catch (_: Exception) {
+            false  // обрыв связи и прочее — дальше обычная установка сама разберётся (см. perform)
+        }
+    }
+
     /** Выбраны разные файлы с ОДНИМ именем пакета (например GLauncher.Link и 3screen — оба
      *  com.maxinf.car): они заменяют друг друга, второй не встанет из-за другой подписи, и
      *  техник остаётся с половиной списка. Останавливаем ДО установки. Одинаковые по
@@ -271,14 +300,7 @@ class InstallEngine(
         }
         for ((pkg, files) in byPackage) {
             if (files.size < 2) continue
-            val digests = files.map { file ->
-                val md = java.security.MessageDigest.getInstance("SHA-256")
-                file.inputStream().use { input ->
-                    val buf = ByteArray(1 shl 16)
-                    while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
-                }
-                md.digest().joinToString("") { "%02x".format(it) }
-            }.toSet()
+            val digests = files.map(::sha256Hex).toSet()
             if (digests.size > 1) {
                 return "Выбраны приложения с одним и тем же именем пакета ($pkg): " +
                     files.joinToString(", ") { "«${it.name}»" } +
@@ -513,6 +535,15 @@ class InstallEngine(
                 log("«${file.name}»: на магнитоле уже стоит версия новее — установку пропускаю.")
                 afterInstall(installedNow = false)
                 onProgress(path, index + 1, apkPaths.size, "done")
+            }
+
+            // Этот же файл уже стоит (этап повторяют после «Файл не скачан» или обрыва) — не заливаем и не ставим
+            // заново (владелец, 2026-09-27); разрешения выдаём, как после установки.
+            if (sameApkInstalled(currentPackageName, signedFile, log)) {
+                log("«${file.name}»: на магнитоле уже стоит этот же файл — установку пропускаю.")
+                afterInstall(installedNow = false)
+                onProgress(path, index + 1, apkPaths.size, "done")
+                continue
             }
 
             if (confirmedMethod != null) {

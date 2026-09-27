@@ -318,17 +318,79 @@ def set_mock_location_app(ctx, package: str) -> None:
     ctx.log("Готово.")
 
 
+_RESUMED_COMPONENT_RE = re.compile(r"u\d+ (\S+/\S+)")
+_DISPLAY_HEADER_RE = re.compile(r"Display #(\d+)")
+
+
+def _shell_text(ctx, command: str) -> str:
+    result = ctx.shell(command, check=False)
+    return ((result.stdout or "") + (result.stderr or "")).strip()
+
+
+def _on_screen(ctx, package: str) -> tuple[int | None, list[str]] | None:
+    """Что сейчас на экранах магнитолы: (номер экрана с нашим приложением или None, приложения на основном экране).
+    None — магнитола не ответила (нечего проверять). «Display #N» — заголовок экрана, строки mResumedActivity
+    (Android 9) / ResumedActivity (10+) — приложение на нём; topResumedActivity не берём — он печатается после
+    всех экранов и приписался бы последнему."""
+    out = _shell_text(ctx, "dumpsys activity activities | grep -E 'Display #|ResumedActivity'")
+    if not out:
+        return None
+    display, ours, main = 0, None, []
+    for line in out.splitlines():
+        header = _DISPLAY_HEADER_RE.search(line)
+        if header:
+            display = int(header.group(1))
+            continue
+        if "ResumedActivity" not in line or "topResumedActivity" in line:
+            continue
+        found = _RESUMED_COMPONENT_RE.search(line)
+        if not found:
+            continue
+        component = found.group(1)
+        if display == 0 and component not in main:
+            main.append(component)
+        if ours is None and component.startswith(package + "/"):
+            ours = display
+    return ours, main
+
+
 def launch_main_activity(ctx, package: str) -> None:
-    """Запускает главную activity приложения (как обычный тап по иконке в
-    лаунчере) — "monkey -p ... -c android.intent.category.LAUNCHER 1", тот
-    же приём, что уже используется после каждой автоматической установки
-    (см. install_context.py: install_apk_dex_shell и соседние методы) — сам
-    находит launcher-activity приложения, не требует знать её имя заранее.
-    Полезно проверить, что уже стоявшее (или только что установленное)
-    приложение вообще запускается, не листая иконки на самой магнитоле."""
+    """Запускает главную activity приложения (как тап по иконке в лаунчере) —
+    "monkey -p ... -c android.intent.category.LAUNCHER 1": сам находит launcher-activity. Раньше здесь всегда
+    писалось «Готово.», что бы ни ответила магнитола: у техника на Geely Preface приложения «не запускались»,
+    а в журнале — «Готово.» по десять раз (лог #1348: GInputBridge четыре раза подряд; у MicroG значка для
+    запуска нет вовсе). Теперь: нет значка — так и пишем; monkey не сработал — запускаем activity напрямую
+    (am start); через полторы секунды смотрим, есть ли приложение на экране, и если нет — что там вместо него."""
     ctx.log(f"Запускаю приложение: {package}")
-    ctx.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1", check=False)
-    ctx.log("Готово.")
+    monkey = _shell_text(ctx, f"monkey -p {package} -c android.intent.category.LAUNCHER 1")
+    if "No activities found" in monkey:
+        ctx.log("Не удалось запустить: у приложения нет значка для запуска — оно работает в фоне "
+                "или открывается из другого приложения.")
+        return
+    if "Events injected: 1" not in monkey:
+        resolved = _shell_text(ctx, "cmd package resolve-activity --brief -a android.intent.action.MAIN "
+                                    f"-c android.intent.category.LAUNCHER {package}")
+        component = next((line.strip() for line in reversed(resolved.splitlines())
+                          if "/" in line and " " not in line.strip()), None)
+        if not component:
+            answer = (monkey.splitlines() or ["магнитола не ответила"])[-1][:200]
+            ctx.log(f"Не удалось запустить: {answer}")
+            return
+        started = _shell_text(ctx, f"am start -n {component}")
+        if "Error" in started:
+            ctx.log(f"Не удалось запустить: {started.splitlines()[-1][:200]}")
+            return
+    ctx.sleep(1.5)
+    screen = _on_screen(ctx, package)
+    if screen is None or screen[0] == 0:
+        ctx.log("Готово.")
+    elif screen[0] is not None:
+        ctx.log(f"Готово: приложение открылось на дополнительном экране магнитолы (экран {screen[0]}), "
+                "а не на основном.")
+    else:
+        now = f" (на экране: {', '.join(screen[1][:2])})" if screen[1] else ""
+        ctx.log(f"Команда запуска прошла, но через полторы секунды приложения на экране нет{now}. Если оно не "
+                "открылось — его закрывает прошивка магнитолы или у него нет окна.")
 
 
 def _is_system_package(ctx, package: str) -> bool:

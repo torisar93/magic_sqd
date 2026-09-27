@@ -118,7 +118,12 @@ object AdbSession {
             // фикс для скана сети, реальный баг пользователя с NekoBox).
             Socket().apply { NetworkScan.bindToWifi(context, this); connect(InetSocketAddress(host, port), 5000) }
         } catch (e: Exception) {
-            return AdbHandshakeResult.Failed("Не удалось подключиться по TCP к $host:$port: ${e.javaClass.simpleName}: ${e.message}")
+            // Адрес не из сети телефона — чаще всего магнитола из прошлой машины (см. NetworkScan.inWifiSubnet).
+            val otherNetwork = if (NetworkScan.inWifiSubnet(context, host) == false) {
+                " — адрес не из сети телефона: похоже, это магнитола из прошлой машины. Выберите магнитолу из найденных устройств."
+            } else ""
+            return AdbHandshakeResult.Failed(
+                "Не удалось подключиться по TCP к $host:$port: ${e.javaClass.simpleName}: ${e.message}$otherNetwork")
         }
         val tcpTransport = TcpAdbTransport(socket)
         val result = performCnxnHandshake(tcpTransport, context, log)
