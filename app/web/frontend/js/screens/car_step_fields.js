@@ -250,6 +250,7 @@
       enable_app: "Включить приложение",
       launch_activity: "Запустить приложение",
       uninstall_app: "Удалить приложение",
+      grant_system_apps: "Выдать разрешения приложениям из системной папки",
     };
 
     const ACTION_COMMAND_HELP_TEXT =
@@ -367,6 +368,13 @@
             text: "Во время установки техник выберет приложение из полного списка на магнитоле "
               + "(включая системные) — оно будет удалено ПОЛНОСТЬЮ (не как «Отключить приложение» — "
               + "это стирает сам APK). Для системных приложений без root обычно не сработает.",
+          }));
+        } else if (action.kind === "grant_system_apps") {
+          card.appendChild(el("p", {
+            class: "app-desc", style: "margin-top: 4px",
+            text: "Без выбора: все разрешения сразу всем приложениям, которые программа записала в системную "
+              + "папку (способ установки «В системную папку»). Ставьте отдельным этапом после перезагрузки "
+              + "магнитолы — до неё Android этих приложений не видит.",
           }));
         }
         wrap.appendChild(card);
@@ -644,7 +652,10 @@
       dex_shell_install: "app_process + dex-хелпер (PackageInstaller.Session, Geely OneOS)",
       adb_install_haval_revived: "adb install -g -t -d --install-reason 64 (Haval, «revived» ГУ)",
       jdwp_whitelist: "JDWP-патч белого списка + pm install (Desay x9h — Haval Jolion 2026)",
+      system_app: "В системную папку /system/app: adb root + remount (BAIC U5 Plus)",
     };
+    // Только этот способ, без перебора остальных (install_context.py: _EXCLUSIVE_METHODS).
+    const EXCLUSIVE_INSTALL_METHODS = ["system_app"];
 
     // Подсказка "начни перебор способов установки APK с этого" — не
     // отменяет перебор остальных, только меняет порядок (см. car_generator.py:
@@ -657,13 +668,19 @@
       container.appendChild(el("span", { class: "field-label", text: "Способ установки APK" }));
       const select = el("select", {}, Object.entries(APPS_INSTALL_METHOD_LABELS).map(([value, text]) =>
         el("option", { value, text, selected: value === (step.apps_install_method || "") ? "" : null })));
-      select.addEventListener("change", () => { step.apps_install_method = select.value; });
+      const hint = el("p", { style: "font-size: 12px; color: var(--text-dim); margin: 4px 0 0;" });
+      function updateHint() {
+        hint.textContent = EXCLUSIVE_INSTALL_METHODS.includes(select.value)
+          ? "Только этот способ: программа откроет системный раздел на запись и положит приложения в /system/app. "
+            + "Они появятся после перезагрузки магнитолы — разрешения выдаёт отдельный этап после неё (кнопка "
+            + "«Выдать разрешения приложениям из системной папки»). Другие способы не пробуются."
+          : "Если заранее известно, какой способ работает на этой магнитоле — программа попробует его первым; "
+            + "остальные всё равно пробуются по порядку следом, если он не сработает.";
+      }
+      select.addEventListener("change", () => { step.apps_install_method = select.value; updateHint(); });
       container.appendChild(select);
-      container.appendChild(el("p", {
-        style: "font-size: 12px; color: var(--text-dim); margin: 4px 0 0;",
-        text: "Если заранее известно, какой способ работает на этой магнитоле — программа попробует его первым; "
-          + "остальные всё равно пробуются по порядку следом, если он не сработает.",
-      }));
+      updateHint();
+      container.appendChild(hint);
     }
 
     // «Обязательных» APK больше нет (решение владельца, 2026-09-23): есть

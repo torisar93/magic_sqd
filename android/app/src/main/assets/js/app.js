@@ -1946,8 +1946,11 @@
         disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: true },
         enable_app: { bridgeMethod: "actions_enable_app", thirdPartyOnly: false },
       };
-      const supported = !action.kind || ["command", ...Object.keys(PACKAGE_PICKER_ACTIONS)].includes(action.kind);
-      const card = flowCard(action.label || action.kind || "Действие", supported ? "" : "Доступно только в версии для Windows.", action.kind === "grant_permissions" ? "shield" : action.kind === "mock_location" ? "location" : "terminal");
+      // Без выбора приложения — готовая команда для InstallEngine.runAdbCommands (как ПК: generated install.py).
+      // grant_system_apps — все разрешения приложениям, записанным программой в /system/app (BAIC U5 Plus).
+      const DIRECT_ACTIONS = { grant_system_apps: [{ kind: "grant_system_apps" }] };
+      const supported = !action.kind || ["command", ...Object.keys(PACKAGE_PICKER_ACTIONS), ...Object.keys(DIRECT_ACTIONS)].includes(action.kind);
+      const card = flowCard(action.label || action.kind || "Действие", supported ? "" : "Доступно только в версии для Windows.", ["grant_permissions", "grant_system_apps"].includes(action.kind) ? "shield" : action.kind === "mock_location" ? "location" : "terminal");
       card.classList.add('flow-action-card');
       const btn = usbStageButton("Выполнить", "play", () => {}, supported);
       btn.disabled = !supported;
@@ -1986,14 +1989,14 @@
           catch(error){pendingPackagesCallback=null;btn.disabled=false;note.textContent=error.message||'Не удалось получить список приложений.';log(note.textContent);}
           return;
         }
-        if (action.kind && action.kind !== "command") {
+        if (action.kind && action.kind !== "command" && !DIRECT_ACTIONS[action.kind]) {
           log(`Действие "${action.label}" (${action.kind}) пока не поддерживается в мобильной версии.`);
           return;
         }
         if (!adbConnected) { showNoAdbNotice(); return; }
         log(`Выполняю действие: ${action.label}`);
         runStageOperation("adb_run_stage", {
-          index: stage.index, commands: action.commands || [],
+          index: stage.index, commands: DIRECT_ACTIONS[action.kind] || action.commands || [],
           filesByName: filesByNameFrom(action.files),
           skipDownload: allPrefetched(action.files),
         }, page, card, actionIndex);

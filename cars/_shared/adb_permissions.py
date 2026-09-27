@@ -124,18 +124,76 @@ _COMPONENT_NAME_RE = re.compile(r"name=([\w.]+)")
 _SHORT_COMPONENT_RE = re.compile(r"([\w.]+)/([\w.$]+)")
 
 
-def list_installed_packages(ctx, third_party_only=True):
-    """Список пакетов, установленных на магнитоле (для диалога выбора
-    приложения — ctx.ask_choice). third_party_only=True (по умолчанию) —
-    без системных пакетов производителя/Android, иначе список из сотен
-    записей неудобно листать ради обычно нужных технику сторонних APK."""
-    flag = "-3" if third_party_only else ""
+# Метка «поставлено программой» в /system/app/<пакет>/ (app/install_context.py: SYSTEM_APP_MARKER): одна строка,
+# «magicsqd» или «magicsqd mock_location» — приложению нужно фиктивное местоположение (GPS-приложение с пометкой).
+_SYSTEM_APP_MARKERS_COMMAND = 'for f in /system/app/*/.magicsqd; do [ -f "$f" ] && echo "$f $(cat "$f")"; done'
+_OUR_SYSTEM_APP_RE = re.compile(r"^/system/app/([\w.]+)/\.magicsqd(?:[ \t]+(.*))?$", re.MULTILINE)
+
+
+def _pm_packages(ctx, flag: str = "") -> list[str]:
     result = ctx.shell(f"pm list packages {flag}".strip(), check=False)
     packages = []
     for line in (result.stdout or "").splitlines():
         line = line.strip()
         if line.startswith("package:"):
             packages.append(line[len("package:"):].strip())
+    return packages
+
+
+def _system_app_markers(ctx) -> dict[str, str]:
+    """Приложения, которые программа сама положила в /system/app (способ «в системную папку», BAIC U5 Plus):
+    пакет → текст метки. Android считает их системными, но это не штатные приложения магнитолы: их можно
+    запускать, выдавать им разрешения, отключать и удалять, как сторонние."""
+    result = ctx.shell(_SYSTEM_APP_MARKERS_COMMAND, check=False)
+    return {m.group(1): (m.group(2) or "").strip() for m in _OUR_SYSTEM_APP_RE.finditer(result.stdout or "")}
+
+
+def _system_apps_by_us(ctx) -> set[str]:
+    return set(_system_app_markers(ctx))
+
+
+def grant_system_apps_permissions(ctx) -> None:
+    """Все разрешения приложениям, которые программа положила в /system/app, — всем сразу, без выбора. Android
+    видит их только после перезагрузки магнитолы, а ADB на BAIC U5 Plus перезагрузку не переживает (владелец,
+    2026-09-27): поэтому это отдельный этап — после перезагрузки и повторного включения ADB. Приложению с
+    пометкой GPS (метка «mock_location») — ещё и фиктивное местоположение, как после обычной установки."""
+    markers = _system_app_markers(ctx)
+    if not markers:
+        raise _stop("На магнитоле нет приложений, записанных программой в системную папку — сначала этап установки.")
+    known = set(_pm_packages(ctx, "-s"))
+    waiting = sorted(package for package in markers if package not in known)
+    for package in sorted(markers):
+        if package in waiting:
+            continue
+        grant_all_permissions(ctx, package)
+        if "mock_location" in markers[package].split():
+            set_mock_location_app(ctx, package)
+    if waiting:
+        raise _stop("Android ещё не видит " + ", ".join(waiting) + " — приложения появятся после перезагрузки "
+                    "магнитолы. Перезагрузите её, снова включите ADB в инженерном меню и повторите.")
+
+
+def _stop(message: str) -> Exception:
+    """Понятный итог этапа без «Ошибка установки:» — InstallCancelled программы (ПК); вне её — RuntimeError."""
+    try:
+        from app.install_context import InstallCancelled
+    except ImportError:
+        return RuntimeError(message)
+    return InstallCancelled(message)
+
+
+def list_installed_packages(ctx, third_party_only=True):
+    """Список пакетов, установленных на магнитоле (для диалога выбора
+    приложения — ctx.ask_choice). third_party_only=True (по умолчанию) —
+    без системных пакетов производителя/Android, иначе список из сотен
+    записей неудобно листать ради обычно нужных технику сторонних APK.
+    Поставленные программой в /system/app — в списке (см. _system_apps_by_us),
+    если Android их уже видит (после перезагрузки)."""
+    packages = _pm_packages(ctx, "-3" if third_party_only else "")
+    if third_party_only:
+        ours = _system_apps_by_us(ctx)
+        if ours:
+            packages += sorted((ours & set(_pm_packages(ctx, "-s"))) - set(packages))
     return sorted(packages)
 
 
@@ -399,7 +457,33 @@ def _is_system_package(ctx, package: str) -> bool:
     а это — на случай ручного ввода имени («Ввести вручную...») и старых моделей. Раньше техники так
     отключили сам «android» (лог #1013 — pm ответил «new state: disabled-user»)."""
     result = ctx.shell("pm list packages -s", check=False)
-    return f"package:{package}" in {line.strip() for line in (result.stdout or "").splitlines()}
+    if f"package:{package}" not in {line.strip() for line in (result.stdout or "").splitlines()}:
+        return False
+    return package not in _system_apps_by_us(ctx)
+
+
+def _adb_output(ctx, *args) -> str:
+    result = ctx.adb(*args, check=False, timeout=60)
+    return " ".join(((result.stdout or "") + " " + (result.stderr or "")).split())
+
+
+def _remove_system_app(ctx, package: str) -> None:
+    """Удаляет приложение, поставленное программой в /system/app: pm uninstall системное не удаляет — нужны
+    root и запись в системный раздел, как при установке. Android забудет приложение после перезагрузки."""
+    root = _adb_output(ctx, "root")
+    if "cannot run as root" in root.lower():
+        ctx.log(f"Не удалось удалить: магнитола не дала права root ({root}).")
+        return
+    ctx.wait_for_device(timeout=60)
+    remount = _adb_output(ctx, "remount")
+    if "remount succeeded" not in remount.lower():
+        ctx.log(f"Не удалось удалить: системный раздел не открылся на запись (adb remount: {remount or 'нет ответа'}).")
+        return
+    ctx.shell(f"rm -rf /system/app/{package}", check=False)
+    if "LEFT" in (ctx.shell(f"[ -e /system/app/{package} ] && echo LEFT", check=False).stdout or ""):
+        ctx.log("Не удалось удалить: файлы приложения остались в /system/app.")
+        return
+    ctx.log("Готово: приложение удалено из системной папки — оно исчезнет с магнитолы после перезагрузки.")
 
 
 def uninstall_app(ctx, package: str) -> None:
@@ -413,6 +497,9 @@ def uninstall_app(ctx, package: str) -> None:
     [...]") — тот же приём, что и install_context.py:_check_pm_install_result
     на десктопе."""
     ctx.log(f"Удаляю приложение: {package}")
+    if package in _system_apps_by_us(ctx):
+        _remove_system_app(ctx, package)
+        return
     if _is_system_package(ctx, package):
         ctx.log("Не удалось удалить: это штатное приложение магнитолы — удалять его через программу нельзя.")
         return

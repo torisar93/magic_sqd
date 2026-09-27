@@ -36,6 +36,11 @@ const CASES = [
   ["Флешка перестала отвечать при подключении (could not claim interface!)", "flash_io"],
   ["Не удалось прочитать флешку (Index 8 out of bounds for length 8)", "flash_unreadable"],
   ["Не удалось записать magic_sqd.apk: сбой файловой системы флешки — отформатируйте флешку («Параметры флешки» → «Форматировать флешку») и запишите файлы заново.", "flash_unreadable"],
+  // Способ «в системную папку» (BAIC U5 Plus) — про память магнитолы, не про флешку
+  ["«HUR_7.2.1.apk» не установлено: на системном разделе магнитолы не хватает места для «HUR_7.2.1.apk»: нужно 58 МБ, свободно 12 МБ", "system_no_space"],
+  ["«Yandex.apk» не установлено: не удалось записать в системный раздел «Yandex.apk»: adb: error: failed to copy 'x' to '/system/app/ru.yandex/ru.yandex.apk': remote couldn't create file: Read-only file system", "system_read_only"],
+  ["«DuduAutoUi.apk» не установлено: системный раздел не открылся на запись (adb remount: remount of /system failed: Permission denied remount failed)", "system_read_only"],
+  ["«DuduAutoUi.apk» не установлено: магнитола не дала права root (adb root: adbd cannot run as root in production builds)", "system_read_only"],
   ["Ошибка: [Errno 28] No space left on device: 'E:\\\\update.zip'", "no_space"],
   ["Ошибка: [WinError 19] Носитель защищен от записи", "write_protected"],
   // QR ADB (логи #754, #766, #774, #675, #695)

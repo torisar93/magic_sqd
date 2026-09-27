@@ -1483,7 +1483,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     private fun actionsUninstallApp(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
-        AdbPermissions.uninstallApp(pkg, ::pushAdbLog)
+        AdbPermissions.uninstallApp(context, pkg, ::pushAdbLog)
     }
 
     private fun actionsDisableApp(pkg: String) = runExclusive(::onBusy) {

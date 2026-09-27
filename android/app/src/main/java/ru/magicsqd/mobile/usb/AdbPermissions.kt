@@ -218,15 +218,75 @@ object AdbPermissions {
      * — без системных пакетов производителя/Android (иначе список из сотен
      * записей неудобно листать ради обычно нужных технику сторонних APK). */
     fun listInstalledPackages(thirdPartyOnly: Boolean, log: (String) -> Unit): List<String> {
-        val flag = if (thirdPartyOnly) "-3" else ""
-        val output = shellText("pm list packages $flag".trim(), log)
-        return output.lineSequence()
+        val packages = pmPackages(if (thirdPartyOnly) "-3" else "", log).toMutableList()
+        if (thirdPartyOnly) {
+            // Поставленные программой в /system/app — тоже в списке, если Android их уже видит (после перезагрузки).
+            val ours = systemAppsByUs(log)
+            if (ours.isNotEmpty()) {
+                val system = pmPackages("-s", log).toSet()
+                packages += ours.filter { it in system && it !in packages }
+            }
+        }
+        return packages.sorted()
+    }
+
+    private fun pmPackages(flag: String, log: (String) -> Unit): List<String> =
+        shellText("pm list packages $flag".trim(), log).lineSequence()
             .map { it.trim() }
             .filter { it.startsWith("package:") }
             .map { it.removePrefix("package:").trim() }
             .filter { it.isNotEmpty() }
-            .sorted()
             .toList()
+
+    // Метка в /system/app/<пакет>/ — одна строка: «magicsqd» или «magicsqd mock_location» (GPS-приложение).
+    private const val SYSTEM_APP_MARKERS_COMMAND =
+        "for f in /system/app/*/$SYSTEM_APP_MARKER; do [ -f \"\$f\" ] && echo \"\$f \$(cat \"\$f\")\"; done"
+    private val OUR_SYSTEM_APP = Regex("^/system/app/([\\w.]+)/\\.magicsqd(?:[ \\t]+(.*))?$", RegexOption.MULTILINE)
+
+    /** Приложения, которые программа сама положила в /system/app (способ «в системную папку», BAIC U5 Plus): пакет →
+     * текст метки. Android считает их системными, но это не штатные приложения магнитолы: их можно запускать,
+     * выдавать разрешения, отключать и удалять. Как ПК: adb_permissions._system_app_markers. */
+    private fun systemAppMarkers(log: (String) -> Unit): Map<String, String> =
+        OUR_SYSTEM_APP.findAll(shellText(SYSTEM_APP_MARKERS_COMMAND, log, 30_000))
+            .associate { it.groupValues[1] to it.groupValues[2].trim() }
+
+    fun systemAppsByUs(log: (String) -> Unit): Set<String> = systemAppMarkers(log).keys
+
+    /** Все разрешения сразу всем приложениям, записанным программой в /system/app. Android видит их только после
+     * перезагрузки, а ADB на BAIC U5 Plus её не переживает — поэтому это отдельный этап после перезагрузки и повторного
+     * включения ADB. GPS-приложению с меткой mock_location — ещё и фиктивное местоположение. null — готово, иначе
+     * причина. Как ПК: adb_permissions.grant_system_apps_permissions. */
+    fun grantSystemApps(log: (String) -> Unit): String? {
+        val markers = systemAppMarkers(log)
+        if (!AdbSession.isConnected) return "Связь с магнитолой потеряна — переподключитесь и повторите."
+        if (markers.isEmpty()) {
+            return "На магнитоле нет приложений, записанных программой в системную папку — сначала этап установки."
+        }
+        val known = pmPackages("-s", log).toSet()
+        val waiting = markers.keys.filter { it !in known }.sorted()
+        for (pkg in markers.keys.sorted()) {
+            if (pkg in waiting) continue
+            grantAllPermissions(pkg, log)
+            if ("mock_location" in markers.getValue(pkg).split(" ")) setMockLocationApp(pkg, log)
+        }
+        if (waiting.isNotEmpty()) {
+            return "Android ещё не видит ${waiting.joinToString(", ")} — приложения появятся после перезагрузки " +
+                "магнитолы. Перезагрузите её, снова включите ADB в инженерном меню и повторите."
+        }
+        return null
+    }
+
+    /** pm uninstall системное не удаляет — для поставленного программой в /system/app нужны root и запись в
+     * системный раздел, как при установке. Android забудет приложение после перезагрузки. */
+    private fun removeSystemAppByUs(context: android.content.Context, pkg: String, log: (String) -> Unit) {
+        AdbSession.rootAndReconnect(context, log)?.let { log("Не удалось удалить: $it."); return }
+        AdbSession.remountSystem(log)?.let { log("Не удалось удалить: $it."); return }
+        safeShell("rm -rf /system/app/$pkg", log, 60_000)
+        if (shellText("[ -e /system/app/$pkg ] && echo LEFT", log).contains("LEFT")) {
+            log("Не удалось удалить: файлы приложения остались в /system/app.")
+            return
+        }
+        log("Готово: приложение удалено из системной папки — оно исчезнет с магнитолы после перезагрузки.")
     }
 
     /** Назначает приложение "приложением для фиктивных местоположений"
@@ -316,8 +376,9 @@ object AdbPermissions {
      * — ядро системы, заведомо защищено — тоже отчиталось "Готово.", хотя
      * pm его отклонила). Настоящий результат — по тексту ("Success"/
      * "Failure [...]"), тот же приём, что и на десктопе. */
-    fun uninstallApp(pkg: String, log: (String) -> Unit) {
+    fun uninstallApp(context: android.content.Context, pkg: String, log: (String) -> Unit) {
         log("Удаляю приложение: $pkg")
+        if (pkg in systemAppsByUs(log)) { removeSystemAppByUs(context, pkg, log); return }
         when (val r = removePackage(pkg, log)) {
             Removal.Removed -> log("Готово.")
             Removal.Blocked -> log("Не удалось удалить: $MANUAL_REMOVAL")

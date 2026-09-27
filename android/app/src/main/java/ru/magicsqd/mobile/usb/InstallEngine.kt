@@ -12,6 +12,30 @@ import java.util.concurrent.TimeUnit
 // Сколько ждём возвращения магнитолы после обрыва связи посреди установки.
 private const val LINK_RECOVERY_TIMEOUT_MS = 45_000L
 
+// Способ «в системную папку» (system_app): метка «поставлено программой» в /system/app/<пакет>/ (по ней кнопки
+// «Доп. действий» отличают такие приложения от штатных — AdbPermissions), имя пакета, подпапки библиотек.
+const val SYSTEM_APP_MARKER = ".magicsqd"
+private val PACKAGE_NAME = Regex("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")
+private val ABI_TO_ISA = mapOf("arm64-v8a" to "arm64", "armeabi-v7a" to "arm", "armeabi" to "arm", "x86" to "x86",
+    "x86_64" to "x86_64", "mips" to "mips", "mips64" to "mips64")
+
+/** Свободное место из ответа df на магнитоле: toybox — «Filesystem 1K-blocks Used Available Use% Mounted on»
+ * (числа в КБ), старый toolbox — «Filesystem Size Used Free Blksize» (1.9G, 120.5M). null — формат не узнан.
+ * Как ПК: install_context.parse_df_free_bytes. */
+internal fun parseDfFreeBytes(text: String): Long? {
+    val rows = text.trim().lines().filter { it.isNotBlank() }.map { it.trim().split(Regex("\\s+")) }
+    if (rows.size < 2) return null
+    val header = rows[0].map { it.lowercase() }
+    val column = listOf("available", "avail", "free").firstNotNullOfOrNull { key -> header.indexOf(key).takeIf { it >= 0 } }
+        ?: return null
+    val value = rows.last().getOrNull(column) ?: return null
+    val match = Regex("(\\d+(?:\\.\\d+)?)([KMGTkmgt]?)").matchEntire(value) ?: return null
+    val number = match.groupValues[1].toDouble()
+    val unit = match.groupValues[2].uppercase()
+    val multiplier = if (unit.isEmpty()) 1024.0 else Math.pow(1024.0, ("KMGT".indexOf(unit) + 1).toDouble())
+    return (number * multiplier).toLong()
+}
+
 sealed class StageRunResult {
     object Success : StageRunResult()
     data class Failed(val reason: String) : StageRunResult()
@@ -120,6 +144,10 @@ class InstallEngine(
                     lastAsk = value
                 }
 
+                // Способ «в системную папку»: разрешения всем приложениям, записанным программой в /system/app,
+                // — отдельным этапом после перезагрузки (см. AdbPermissions.grantSystemApps).
+                "grant_system_apps" -> AdbPermissions.grantSystemApps(log)?.let { return StageRunResult.Failed(it) }
+
                 "root" -> logResult(AdbSession.service("root:", log))
                 "disable_verity" -> logResult(AdbSession.service("disable-verity:", log))
                 "remount" -> logResult(AdbSession.service("remount:", log))
@@ -225,6 +253,10 @@ class InstallEngine(
     private var currentApkName: String = "install.apk"
     // Имя пакета текущего APK (из getPackageArchiveInfo) — нужно способу jdwp_whitelist ДО установки.
     private var currentPackageName: String = "" 
+    // Файл текущего APK на телефоне — способу system_app, чтобы достать из него библиотеки.
+    private var currentApkFile: File? = null
+    // Способ system_app: системный раздел уже открыт на запись в этом запуске (до перезагрузки).
+    private var systemPartitionReady = false
 
     /** Отказ, причина которого не в СПОСОБЕ установки, а в самом APK: перебор остальных
      *  способов бесполезен (на Monji/Geely OneOS они и так закрываются) — сразу понятное
@@ -341,7 +373,199 @@ class InstallEngine(
         "jdwp_whitelist" to { apk, staged, methodLog ->
             AdbSession.installApkJdwpWhitelist(apk, currentPackageName, methodLog, staged, currentApkName)
         },
+        "system_app" to { apk, staged, methodLog -> installSystemApp(apk, staged, methodLog) },
     )
+
+    /** Способы только по выбору модели, без перебора и без запасных (как ПК: install_context._EXCLUSIVE_METHODS):
+     *  на других магнитолах программа не должна открывать системный раздел на запись. */
+    private val EXCLUSIVE_METHODS = setOf("system_app")
+
+    /** BAIC U5 Plus (владелец, 2026-09-27): приложение кладётся в системную папку — adb root, disable-verity,
+     * remount, файл в /system/app, chmod 644. Своя папка /system/app/<пакет>/<пакет>.apk (повторная установка
+     * заменяет её целиком), сжатые нативные библиотеки — рядом в lib/<arm|arm64>/ (системному приложению Android их
+     * из APK не распаковывает), метка .magicsqd — «поставлено программой». APK уже залит движком в /data/local/tmp —
+     * копируем его на магнитоле, без второй передачи. Android увидит приложение только после перезагрузки —
+     * разрешения выдаёт отдельный этап (AdbPermissions.grantSystemApps). Как ПК: install_context.install_apk_system_app. */
+    private fun installSystemApp(apk: PushSource, staged: String?, log: (String) -> Unit): AdbInstallResult {
+        val pkg = currentPackageName
+        val file = currentApkFile ?: return AdbInstallResult.Failed("нет файла APK на телефоне")
+        if (!PACKAGE_NAME.matches(pkg)) {
+            return AdbInstallResult.Failed("не удалось прочитать имя пакета ${file.name} — без него некуда положить файл в /system/app")
+        }
+        if (!systemPartitionReady) {
+            AdbSession.openSystemPartition(context, log)?.let { return AdbInstallResult.Failed(it) }
+            systemPartitionReady = true
+        }
+        val folder = "/system/app/$pkg"
+        log("Установка APK в системную папку: ${file.name} → $folder")
+        val libs = try {
+            extractNativeLibs(file, log)
+        } catch (e: Exception) {
+            return AdbInstallResult.Failed(e.message ?: "не удалось прочитать библиотеки из «${file.name}»")
+        }
+        try {
+            // Старая копия этого пакета, положенная раньше вручную прямо в /system/app (так ставили .bat-файлом).
+            val flat = flatSystemCopy(pkg, log)
+            shellText("rm -rf $folder" + (flat?.let { " '$it'" } ?: ""), log, 60_000)
+            val need = file.length() + (libs?.third ?: 0L)
+            val free = parseDfFreeBytes(shellText("df /system/app", log, 30_000))
+            if (free != null && free < need + (1L shl 20)) {
+                return AdbInstallResult.Failed("на системном разделе магнитолы не хватает места для «${file.name}»: " +
+                    "нужно ${need shr 20} МБ, свободно ${free shr 20} МБ")
+            }
+            val target = "$folder/$pkg.apk"
+            if (staged != null) {
+                val out = shellText("mkdir -p $folder && cat $staged > $target && echo MSQD_OK", log, 300_000)
+                if (!out.contains("MSQD_OK")) return AdbInstallResult.Failed(systemWriteError(file.name, out))
+            } else {
+                AdbInstallProgress.beginTransfer(apk.size)
+                when (val r = AdbSession.push(apk, target, log)) {
+                    is AdbPushResult.Failed -> return AdbInstallResult.Failed(systemWriteError(file.name, r.reason))
+                    AdbPushResult.Success -> {}
+                }
+            }
+            val dirs = mutableListOf(folder)
+            val files = mutableListOf(target)
+            if (libs != null) {
+                val (isa, libDir, _) = libs
+                dirs += listOf("$folder/lib", "$folder/lib/$isa")
+                for (so in libDir.listFiles().orEmpty().sortedBy { it.name }) {
+                    val remote = "$folder/lib/$isa/${so.name}"
+                    when (val r = AdbSession.push(PushSource.of(so), remote, log)) {
+                        is AdbPushResult.Failed -> return AdbInstallResult.Failed(systemWriteError(so.name, r.reason))
+                        AdbPushResult.Success -> files += remote
+                    }
+                }
+            }
+            val marker = "$folder/$SYSTEM_APP_MARKER"
+            val out = shellText("chmod 755 ${dirs.joinToString(" ")} && chmod 644 ${files.joinToString(" ")} && " +
+                "echo magicsqd > $marker && chmod 644 $marker && echo MSQD_OK", log, 60_000)
+            if (!out.contains("MSQD_OK")) {
+                return AdbInstallResult.Failed("не удалось выставить права файлам в $folder: ${out.ifBlank { "нет ответа" }}")
+            }
+            log("Записано в $folder" + (libs?.let { " (с библиотеками lib/${it.first})" } ?: "") + ", права 644.")
+            return AdbInstallResult.Success("system_app")
+        } finally {
+            libs?.second?.parentFile?.deleteRecursively()
+        }
+    }
+
+    private fun shellText(command: String, log: (String) -> Unit, timeoutMs: Int): String =
+        when (val r = AdbSession.shell(command, log, timeoutMs)) {
+            is AdbShellResult.Output -> r.text
+            is AdbShellResult.Rejected -> "команда отклонена: ${r.reason}"
+            is AdbShellResult.Failed -> "ошибка: ${r.reason}"
+        }
+
+    /** «No space left» и «Read-only file system» здесь — про память магнитолы, а не про флешку (окно «что
+     *  сделать» узнаёт эти фразы, см. user_errors.js). */
+    private fun systemWriteError(name: String, reason: String): String {
+        val short = reason.split(Regex("\\s+")).joinToString(" ").trim().take(200)
+        return if (short.contains("no space left", ignoreCase = true)) "на системном разделе магнитолы не хватает места для «$name» ($short)"
+        else "не удалось записать в системный раздел «$name»: ${short.ifBlank { "нет ответа" }}"
+    }
+
+    /** Путь уже стоящего этого пакета, если это файл прямо в /system/app (не наша папка и не штатная). */
+    private fun flatSystemCopy(pkg: String, log: (String) -> Unit): String? {
+        val paths = shellText("pm path $pkg", log, 30_000).lines().map { it.trim() }
+            .filter { it.startsWith("package:") }.map { it.removePrefix("package:") }
+        return paths.singleOrNull()?.takeIf { Regex("/system/app/[^/\\s']+\\.apk").matches(it) }
+    }
+
+    private var deviceAbis: List<String>? = null
+
+    private fun deviceAbiList(log: (String) -> Unit): List<String> {
+        deviceAbis?.let { return it }
+        var abis = shellText("getprop ro.product.cpu.abilist", log, 30_000).trim().split(",").map { it.trim() }
+            .filter { it.isNotEmpty() && !it.contains(" ") }
+        if (abis.isEmpty()) {
+            abis = listOf(shellText("getprop ro.product.cpu.abi", log, 30_000).trim()).filter { it.isNotEmpty() && !it.contains(" ") }
+        }
+        return abis.ifEmpty { listOf("arm64-v8a", "armeabi-v7a", "armeabi") }.also { deviceAbis = it }
+    }
+
+    /** Сжатые .so из APK под процессор магнитолы → (isa, папка на телефоне, размер). null — библиотек нет или все
+     *  лежат несжатыми и выровненными (их Android грузит прямо из APK). Набор — как выбирает сам Android: первый из
+     *  ro.product.cpu.abilist, который есть в APK. */
+    private fun extractNativeLibs(apk: File, log: (String) -> Unit): Triple<String, File, Long>? {
+        java.util.zip.ZipFile(apk).use { zip ->
+            val byAbi = linkedMapOf<String, MutableList<java.util.zip.ZipEntry>>()
+            for (entry in zip.entries()) {
+                val parts = entry.name.split("/")
+                if (parts.size == 3 && parts[0] == "lib" && parts[2].endsWith(".so")) byAbi.getOrPut(parts[1]) { mutableListOf() }.add(entry)
+            }
+            if (byAbi.isEmpty()) return null
+            val abis = deviceAbiList(log)
+            val abi = abis.firstOrNull { it in byAbi }
+                ?: throw IllegalStateException("в «${apk.name}» нет библиотек под процессор магнитолы (${abis.joinToString(", ")}), " +
+                    "есть только ${byAbi.keys.sorted().joinToString(", ")}")
+            val entries = byAbi.getValue(abi)
+            if (entries.all { storedPageAligned(apk, it) }) return null
+            val isa = ABI_TO_ISA[abi] ?: abi
+            val root = File(context.cacheDir, "system_app_libs").apply { deleteRecursively() }
+            val libDir = File(root, isa).apply { mkdirs() }
+            var total = 0L
+            for (entry in entries) {
+                val target = File(libDir, entry.name.substringAfterLast('/'))
+                zip.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it, 1 shl 16) } }
+                total += target.length()
+            }
+            return Triple(isa, libDir, total)
+        }
+    }
+
+    /** .so лежит в APK несжатым и с данными на границе страницы 4096 — Android загрузит его прямо из APK. */
+    private fun storedPageAligned(apk: File, entry: java.util.zip.ZipEntry): Boolean {
+        if (entry.method != java.util.zip.ZipEntry.STORED) return false
+        return try {
+            java.io.RandomAccessFile(apk, "r").use { raf ->
+                val offset = localHeaderOffset(raf, entry.name) ?: return false
+                raf.seek(offset)
+                val header = ByteArray(30)
+                raf.readFully(header)
+                if (header[0] != 0x50.toByte() || header[1] != 0x4b.toByte() || header[2] != 3.toByte() || header[3] != 4.toByte()) return false
+                val nameLen = (header[26].toInt() and 0xff) or ((header[27].toInt() and 0xff) shl 8)
+                val extraLen = (header[28].toInt() and 0xff) or ((header[29].toInt() and 0xff) shl 8)
+                (offset + 30 + nameLen + extraLen) % 4096 == 0L
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Смещение локального заголовка файла из центрального каталога zip (java.util.zip его не отдаёт). */
+    private fun localHeaderOffset(raf: java.io.RandomAccessFile, name: String): Long? {
+        val len = raf.length()
+        val tailSize = minOf(len, 65_557L).toInt()
+        val tail = ByteArray(tailSize)
+        raf.seek(len - tailSize)
+        raf.readFully(tail)
+        fun u16(b: ByteArray, i: Int) = (b[i].toInt() and 0xff) or ((b[i + 1].toInt() and 0xff) shl 8)
+        fun u32(b: ByteArray, i: Int) = u16(b, i).toLong() or (u16(b, i + 2).toLong() shl 16)
+        var eocd = -1
+        for (i in tailSize - 22 downTo 0) {
+            if (tail[i] == 0x50.toByte() && tail[i + 1] == 0x4b.toByte() && tail[i + 2] == 5.toByte() && tail[i + 3] == 6.toByte()) { eocd = i; break }
+        }
+        if (eocd < 0) return null
+        val count = u16(tail, eocd + 10)
+        val cdSize = u32(tail, eocd + 12)
+        val cdOffset = u32(tail, eocd + 16)
+        if (cdOffset + cdSize > len) return null
+        val cd = ByteArray(cdSize.toInt())
+        raf.seek(cdOffset)
+        raf.readFully(cd)
+        var pos = 0
+        repeat(count) {
+            if (pos + 46 > cd.size || u32(cd, pos) != 0x02014b50L) return null
+            val nameLen = u16(cd, pos + 28)
+            val extraLen = u16(cd, pos + 30)
+            val commentLen = u16(cd, pos + 32)
+            val entryName = String(cd, pos + 46, nameLen, Charsets.UTF_8)
+            if (entryName == name) return u32(cd, pos + 42)
+            pos += 46 + nameLen + extraLen + commentLen
+        }
+        return null
+    }
 
     /** Устанавливает список APK (по абсолютным локальным путям) по очереди,
      * автоматически подбирая рабочий способ — как desktop (см.
@@ -367,9 +591,17 @@ class InstallEngine(
         // Приложения, которые не встали уже ПОСЛЕ того, как способ подтвердился на этой магнитоле, — пропущены,
         // очередь идёт дальше (см. ветку confirmedMethod ниже).
         val skipped = mutableListOf<String>()
-        val baseOrder = INSTALL_METHODS.indices.let { indices ->
+        // system_app — только по выбору модели и без перебора остальных (см. EXCLUSIVE_METHODS).
+        val exclusive = preferredMethod in EXCLUSIVE_METHODS
+        systemPartitionReady = false
+        var systemAppsWritten = 0
+        val baseOrder = INSTALL_METHODS.indices.filter { INSTALL_METHODS[it].first !in EXCLUSIVE_METHODS }.let { indices ->
             val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
-            if (preferredIndex >= 0) listOf(preferredIndex) + indices.filter { it != preferredIndex } else indices.toList()
+            when {
+                exclusive -> listOf(preferredIndex)
+                preferredIndex >= 0 -> listOf(preferredIndex) + indices.filter { it != preferredIndex }
+                else -> indices
+            }
         }
         // Память «какой способ сработал на ЭТОЙ магнитоле» (по ro.product.model из баннера подключения) —
         // впереди даже подсказки модели: реальный опыт с этим устройством важнее настройки в каталоге
@@ -377,7 +609,8 @@ class InstallEngine(
         // по 246 МБ). Только порядок: если запомненный способ не сработает, перебор идёт дальше.
         val deviceModel = AdbSession.deviceModel
         val methodPrefs = context.getSharedPreferences("install_methods", Context.MODE_PRIVATE)
-        val remembered = deviceModel?.let { methodPrefs.getString(it, null) }
+        val remembered = if (exclusive) null
+            else deviceModel?.let { methodPrefs.getString(it, null) }?.takeIf { it !in EXCLUSIVE_METHODS }
         val rememberedIndex = INSTALL_METHODS.indexOfFirst { it.first == remembered }
         val order = if (rememberedIndex >= 0) listOf(rememberedIndex) + baseOrder.filter { it != rememberedIndex } else baseOrder
         if (rememberedIndex >= 0) log("Для этой магнитолы ($deviceModel) в прошлый раз сработал способ «$remembered» — начинаю с него.")
@@ -473,6 +706,7 @@ class InstallEngine(
             currentPackageName = try {
                 context.packageManager.getPackageArchiveInfo(path, 0)?.packageName ?: ""
             } catch (_: Exception) { "" }
+            currentApkFile = signedFile
             fun stagedPath(): String? {
                 if (stagedValid) return stagedRemote
                 if (stagingFailed) return null   // заранее залить не вышло — способы заливают сами, как раньше
@@ -506,6 +740,17 @@ class InstallEngine(
             // установки (у большинства способов имени нет). Сбой выдачи не должен
             // срывать установку — приложение уже стоит.
             fun afterInstall(installedNow: Boolean = true) {
+                if (installedNow && confirmedMethod?.let { INSTALL_METHODS[it].first } == "system_app") {
+                    // Приложение из /system/app Android увидит только после перезагрузки, до неё разрешения не выдать
+                    // («Unknown package»), а ADB на BAIC U5 Plus перезагрузку не переживает — разрешения выдаёт
+                    // отдельный этап после неё (AdbPermissions.grantSystemApps); фиктивное местоположение он возьмёт
+                    // из метки. В «Откатить в сток» не попадает: pm uninstall системное не удаляет.
+                    systemAppsWritten++
+                    if (path == mockLocationPath && PACKAGE_NAME.matches(currentPackageName)) {
+                        shellText("echo 'magicsqd mock_location' > /system/app/$currentPackageName/$SYSTEM_APP_MARKER", log, 30_000)
+                    }
+                    return
+                }
                 val pkg = try {
                     context.packageManager.getPackageArchiveInfo(signedFile.path, 0)?.packageName
                 } catch (e: Exception) { null }
@@ -589,10 +834,10 @@ class InstallEngine(
                     }
                     is AdbInstallResult.Success -> {
                         confirmedMethod = methodIndex
-                        if (methodIndex != 0) {
+                        if (methodIndex != 0 && !exclusive) {
                             log("Сработал способ установки APK: $label — дальше буду использовать его же для остальных приложений.")
                         }
-                        if (deviceModel != null && methodPrefs.getString(deviceModel, null) != label) {
+                        if (deviceModel != null && !exclusive && methodPrefs.getString(deviceModel, null) != label) {
                             methodPrefs.edit().putString(deviceModel, label).apply()
                             log("Запомнил: для магнитолы $deviceModel работает способ «$label» — в следующий раз начну с него.")
                         }
@@ -607,10 +852,16 @@ class InstallEngine(
             dropStaged()
             if (keptNewer) { keepNewer(); continue }
             if (!done) {
+                // Один способ без перебора — его причина и есть итог (без списка «ни одним из способов»).
+                if (exclusive) return failed("«${file.name}» не установлено: " + errors.last().substringAfter(": "))
                 return failed(
                     "Не удалось установить ${file.name} ни одним из способов:\n" + errors.joinToString("\n")
                 )
             }
+        }
+        if (systemAppsWritten > 0) {
+            log("Приложения записаны в системную папку. Android увидит их после перезагрузки магнитолы — тогда им " +
+                "можно выдать разрешения (кнопка «Выдать разрешения установленным приложениям»).")
         }
         if (skipped.isNotEmpty()) {
             log("Не установлено (пропущено, остальные приложения из списка установлены): " + skipped.joinToString("; "))

@@ -3,8 +3,12 @@ from __future__ import annotations
 import hashlib
 import re
 import shlex
+import shutil
+import struct
 import sys
+import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 from .adb_utils import Adb, AdbError
@@ -22,7 +26,8 @@ _INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm
                           "adb push + pm install -i (подмена установщика, Geely OneOS/NewEra)",
                           "app_process + dex-хелпер (PackageInstaller.Session, Geely OneOS)",
                           "adb install -g -t -d --install-reason 64 (Haval, «revived» ГУ)",
-                          "JDWP-патч белого списка + pm install (Desay x9h — Haval Jolion 2026)")
+                          "JDWP-патч белого списка + pm install (Desay x9h — Haval Jolion 2026)",
+                          "в системную папку /system/app (adb root + remount, BAIC U5 Plus)")
 # Те же способы, но короткими устойчивыми ключами — хранятся в
 # StepSpec.apps_install_method/_wizard_spec.json/stages.py (см.
 # car_generator.py) как явная подсказка "начни перебор с этого способа",
@@ -30,7 +35,22 @@ _INSTALL_METHOD_LABELS = ("adb install", "adb push + pm install", "adb push + pm
 # (не жёсткая привязка — если он всё-таки не сработает, install_apk_auto
 # просто пойдёт дальше по остальным способам в обычном порядке).
 INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "localinstall", "pm_install_spoofed",
-                        "dex_shell_install", "adb_install_haval_revived", "jdwp_whitelist")
+                        "dex_shell_install", "adb_install_haval_revived", "jdwp_whitelist", "system_app")
+
+# «В системную папку» (BAIC U5 Plus, владелец 2026-09-27): APK не ставится через PackageManager, а кладётся в
+# /system/app после adb root + disable-verity + remount (см. install_apk_system_app). Только если модель выбрала
+# его сама и без запасных способов: на других магнитолах программа не должна открывать системный раздел на
+# запись, а обычная установка на этой не даст того, что нужно модели.
+_SYSTEM_APP_METHOD = INSTALL_METHOD_KEYS.index("system_app")
+_EXCLUSIVE_METHODS = frozenset({_SYSTEM_APP_METHOD})
+# Метка в /system/app/<пакет>/ — «поставлено программой»: по ней кнопки «Доп. действий» отличают такие
+# приложения от штатных (cars/_shared/adb_permissions.py).
+SYSTEM_APP_MARKER = ".magicsqd"
+# Подпапка библиотек системного приложения — по набору команд процессора, как у Android (lib/arm64, lib/arm).
+_ABI_TO_ISA = {"arm64-v8a": "arm64", "armeabi-v7a": "arm", "armeabi": "arm", "x86": "x86", "x86_64": "x86_64",
+               "mips": "mips", "mips64": "mips64"}
+_PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
+_REBOOT_NEEDED_RE = re.compile(r"reboot your device|now reboot", re.IGNORECASE)
 
 # Платформа Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
 # блокирует обычный "pm install" на уровне прошивки; единственный найденный
@@ -124,6 +144,37 @@ def _file_sha256(path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def parse_df_free_bytes(text: str) -> int | None:
+    """Свободное место из ответа df на магнитоле: toybox — «Filesystem 1K-blocks Used Available Use% Mounted on»
+    (числа в КБ), старый toolbox — «Filesystem Size Used Free Blksize» (1.9G, 120.5M). None — формат не узнан."""
+    rows = [line.split() for line in text.strip().splitlines() if line.strip()]
+    if len(rows) < 2:
+        return None
+    header = [word.lower() for word in rows[0]]
+    column = next((header.index(k) for k in ("available", "avail", "free") if k in header), None)
+    if column is None or len(rows[-1]) <= column:
+        return None
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)([KMGT]?)", rows[-1][column], re.IGNORECASE)
+    if not match:
+        return None
+    number, unit = float(match.group(1)), match.group(2).upper()
+    if not unit:
+        return int(number * 1024)  # и у toybox, и у toolbox без суффикса — килобайты
+    return int(number * 1024 ** "KMGT".index(unit) * 1024)
+
+
+def _stored_page_aligned(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> bool:
+    """.so лежит в APK несжатым и с данными на границе страницы 4096 — Android загрузит его прямо из APK."""
+    if info.compress_type != zipfile.ZIP_STORED:
+        return False
+    zf.fp.seek(info.header_offset)
+    header = zf.fp.read(30)
+    if len(header) != 30 or header[:4] != b"PK\x03\x04":
+        return False
+    name_len, extra_len = struct.unpack("<HH", header[26:30])
+    return (info.header_offset + 30 + name_len + extra_len) % 4096 == 0
 
 
 class NewerVersionInstalled(RuntimeError):
@@ -267,6 +318,11 @@ class InstallContext:
         # Магнитола уже подтверждена на связи в этом запуске (check_device перед этапом — см.
         # runner.py — или require_device ниже): тогда «нет устройства» дальше значит «отключилась».
         self._device_confirmed = device_confirmed
+        # Способ «в системную папку» (install_apk_system_app): раздел уже открыт на запись в этом запуске;
+        # сколько приложений записано (им разрешения — после перезагрузки, отдельным этапом); ABI магнитолы.
+        self._system_rw_ready = False
+        self._system_apps_written = 0
+        self._device_abis: list[str] | None = None
 
     # --- служебное -------------------------------------------------
     def log(self, message):
@@ -448,6 +504,9 @@ class InstallContext:
             # Приложение уже стоит; разрешения ниже установку не срывают (см. _after_app_installed).
             self._on_apk_progress(str(apk), index + 1, total, "done", None)
             self._after_app_installed(apk, apk == mock_target)
+        if self._system_apps_written:
+            self.log("Приложения записаны в системную папку. Android увидит их после перезагрузки магнитолы — "
+                     "тогда им можно выдать разрешения (кнопка «Выдать разрешения установленным приложениям»).")
         if self.failed_apps:
             self.log("Не установлено (пропущено, остальные приложения из списка "
                       "установлены): " + "; ".join(self.failed_apps))
@@ -496,6 +555,16 @@ class InstallContext:
         срывать установку: приложение уже стоит, разрешения можно выдать
         вручную на этапе «Доп. действия» — поэтому любой сбой (кроме
         «Стоп» от техника) только пишется в лог."""
+        if installed_now and self._install_method == _SYSTEM_APP_METHOD:
+            # Приложение из /system/app Android увидит только после перезагрузки, до неё разрешения не выдать
+            # («Unknown package»). А ADB на BAIC U5 Plus перезагрузку не переживает — разрешения выдаёт
+            # отдельный этап после неё (adb_permissions.grant_system_apps_permissions); фиктивное
+            # местоположение он возьмёт из метки. В «Откатить в сток» не попадает: pm uninstall системное не удаляет.
+            self._system_apps_written += 1
+            package = read_package_name(apk)
+            if give_mock_location and package:
+                self.shell(f"echo 'magicsqd mock_location' > /system/app/{package}/{SYSTEM_APP_MARKER}", check=False)
+            return
         package = read_package_name(apk) or self._last_diff_package
         if not package:
             self.log(f"Не удалось определить имя пакета «{apk.name}» — разрешения автоматически не выданы.")
@@ -553,9 +622,12 @@ class InstallContext:
                 raise AppInstallFailed(f"{Path(path).name}: {_short_reason(exc, 150)}") from exc
             return
         errors = []
-        order = range(len(_INSTALL_METHOD_LABELS))
-        if self._preferred_method is not None:
-            order = [self._preferred_method, *(m for m in order if m != self._preferred_method)]
+        if self._preferred_method in _EXCLUSIVE_METHODS:
+            order = [self._preferred_method]
+        else:
+            order = [m for m in range(len(_INSTALL_METHOD_LABELS)) if m not in _EXCLUSIVE_METHODS]
+            if self._preferred_method is not None:
+                order = [self._preferred_method, *(m for m in order if m != self._preferred_method)]
         for method in order:
             try:
                 self._install_with_method(method, path, extra_args)
@@ -581,10 +653,14 @@ class InstallContext:
                     raise InstallCancelled(gone) from exc
                 continue
             self._install_method = method
-            if method > 0:
+            if method > 0 and method not in _EXCLUSIVE_METHODS:
                 self.log(f"Сработал способ установки APK: {_INSTALL_METHOD_LABELS[method]} — "
                          "дальше буду использовать его же для остальных приложений.")
             return
+        if self._preferred_method in _EXCLUSIVE_METHODS:
+            # Один способ без перебора — его причина и есть итог (без списка «ни одним из способов»).
+            raise InstallCancelled(f"«{Path(path).name}» не установлено: "
+                                   + _short_reason(errors[-1].split(": ", 1)[-1], 400))
         raise InstallCancelled(
             f"Не удалось установить {Path(path).name} ни одним из способов "
             "(adb install / pm install / pm install -S / localinstall.apk):\n" + "\n".join(errors)
@@ -656,6 +732,8 @@ class InstallContext:
             self.install_apk_haval_revived(path, extra_args=extra_args)
         elif method == 7:
             self.install_apk_jdwp_whitelist(path, extra_args=extra_args)
+        elif method == _SYSTEM_APP_METHOD:
+            self.install_apk_system_app(path)
         else:
             self.install_apk_localinstall(path)
 
@@ -797,6 +875,189 @@ class InstallContext:
                 self._adb.run("forward", "--remove", f"tcp:{port}", check=False, timeout=15)
             except AdbError as exc:
                 self.log(f"  JDWP: не удалось снять проброс порта {port}: {_short_reason(exc, 160)}")
+
+    def install_apk_system_app(self, path) -> None:
+        """BAIC U5 Plus (владелец, 2026-09-27): приложения не ставятся через PackageManager, а кладутся в системную
+        папку — adb root, adb disable-verity, adb remount, файл в /system/app, chmod 644. Своя папка
+        /system/app/<пакет>/<пакет>.apk: повторная установка заменяет её целиком, дублей пакета нет. Сжатые
+        нативные библиотеки — рядом, в lib/<arm|arm64>/: системному приложению Android их из APK не распаковывает,
+        и без этого не запустились бы, например, Яндекс Навигатор и Кинопоиск из каталога. Метка
+        SYSTEM_APP_MARKER — «поставлено программой». Android увидит приложение только после перезагрузки —
+        разрешения выдаёт отдельный этап после неё (adb_permissions.grant_system_apps_permissions)."""
+        self.check_cancelled()
+        path = Path(path)
+        package = read_package_name(path)
+        if not package or not _PACKAGE_NAME_RE.fullmatch(package):
+            raise AdbError(f"не удалось прочитать имя пакета {path.name} — без него некуда положить файл в /system/app")
+        self._open_system_partition()
+        folder = f"/system/app/{package}"
+        self.log(f"Установка APK в системную папку: {path.name} → {folder}")
+        libs = self._extract_native_libs(path)
+        try:
+            # Старая копия этого же пакета, положенная раньше вручную прямо в /system/app (так ставили .bat-файлом),
+            # иначе после перезагрузки у Android было бы два приложения с одним именем.
+            flat = self._flat_system_copy(package)
+            self.shell(f"rm -rf {folder}" + (f" {shlex.quote(flat)}" if flat else ""), check=False)
+            need = path.stat().st_size + (libs[2] if libs else 0)
+            free = self._system_free_bytes()
+            if free is not None and free < need + (1 << 20):
+                raise AdbError(f"на системном разделе магнитолы не хватает места для «{path.name}»: нужно "
+                               f"{need / (1 << 20):.0f} МБ, свободно {free / (1 << 20):.0f} МБ")
+            self._push_to_system(path, f"{folder}/{package}.apk", timeout=900)
+            dirs, files = [folder], [f"{folder}/{package}.apk"]
+            if libs:
+                isa, lib_dir, _ = libs
+                dirs += [f"{folder}/lib", f"{folder}/lib/{isa}"]
+                for so in sorted(lib_dir.iterdir()):
+                    self._push_to_system(so, f"{folder}/lib/{isa}/{so.name}", timeout=300)
+                    files.append(f"{folder}/lib/{isa}/{so.name}")
+        finally:
+            if libs:
+                shutil.rmtree(libs[1].parent, ignore_errors=True)
+        marker = f"{folder}/{SYSTEM_APP_MARKER}"
+        result = self.shell(f"chmod 755 {' '.join(dirs)} && chmod 644 {' '.join(files)} && echo magicsqd > {marker} "
+                            f"&& chmod 644 {marker} && echo MSQD_OK", check=False, timeout=60)
+        if "MSQD_OK" not in (result.stdout or ""):
+            text = ((result.stdout or "") + (result.stderr or "")).strip()
+            raise AdbError(f"не удалось выставить права файлам в {folder}: {text or 'нет ответа'}")
+        self.log(f"Записано в {folder}" + (f" (с библиотеками lib/{libs[0]})" if libs else "") + ", права 644.")
+
+    def _push_to_system(self, local: Path, remote: str, timeout: int) -> None:
+        """push в /system с понятной причиной: «No space left» и «Read-only file system» здесь — про память
+        магнитолы, а не про флешку (окно «что сделать» узнаёт эти фразы, см. user_errors.js)."""
+        try:
+            self.push(local, remote, timeout=timeout)
+        except AdbError as exc:
+            reason = _short_reason(exc, 200)
+            if "no space left" in reason.lower():
+                raise AdbError(f"на системном разделе магнитолы не хватает места для «{local.name}» ({reason})") from exc
+            raise AdbError(f"не удалось записать в системный раздел «{local.name}»: {reason}") from exc
+
+    def _adb_text(self, *args, timeout=60) -> str:
+        """Вывод adb-команды (stdout+stderr) — для root/disable-verity/remount, где итог только в тексте.
+        Магнитолы нет — AdbError с ответом adb: install_apk_auto превратит его в «Магнитола отключилась…»."""
+        self.check_cancelled()
+        result = self._adb.run(*args, check=False, timeout=timeout)
+        text = " ".join(((result.stdout or "") + " " + (result.stderr or "")).split())
+        if device_unavailable_message(text):
+            raise AdbError(text)
+        return text
+
+    def _open_system_partition(self) -> None:
+        """adb root → adb disable-verity → adb remount — один раз за запуск. Если disable-verity только что
+        выключил проверку раздела, она перестанет действовать лишь после перезагрузки (remount тогда пишет
+        «remount succeeded», но записать в /system ничего нельзя). Перезагрузить сама программа не может: ADB на
+        BAIC U5 Plus перезагрузку не переживает (владелец, 2026-09-27) — просим техника."""
+        if self._system_rw_ready:
+            return
+        self.log("Открываю системный раздел на запись: adb root → adb disable-verity → adb remount.")
+        self._adb_root()
+        verity = self._adb_text("disable-verity")
+        self.log(f"  adb disable-verity: {verity or '(пусто)'}")
+        if _REBOOT_NEEDED_RE.search(verity):
+            raise InstallCancelled(
+                "Проверка системного раздела отключена, но начнёт действовать только после перезагрузки. "
+                "Перезагрузите магнитолу, снова включите ADB в инженерном меню и запустите этап ещё раз.")
+        remount = self._adb_text("remount")
+        self.log(f"  adb remount: {remount or '(пусто)'}")
+        if "remount succeeded" not in remount.lower():
+            raise AdbError("системный раздел не открылся на запись (adb remount: "
+                           f"{_short_reason(remount or 'нет ответа', 200)})")
+        self._system_rw_ready = True
+
+    def _adb_root(self) -> None:
+        out = self._adb_text("root")
+        self.log(f"  adb root: {out or '(пусто)'}")
+        if "cannot run as root" in out.lower() or "root access is disabled" in out.lower():
+            raise AdbError(f"магнитола не дала права root (adb root: {out})")
+        # adbd перезапускается от root — ждём, пока магнитола снова на связи.
+        self._wait_device(60)
+
+    def _wait_device(self, timeout: int) -> None:
+        """adb wait-for-device короткими шагами — чтобы «Стоп» срабатывал сразу, а не по истечении ожидания.
+        Магнитола по Wi-Fi после перезапуска adbd сама не переподключается — зовём adb connect."""
+        deadline = time.time() + timeout
+        while True:
+            self.check_cancelled()
+            if ":" in (self.device or ""):
+                try:
+                    Adb(self._adb.adb_path).run("connect", self.device, check=False, timeout=10)
+                except AdbError:
+                    pass
+            try:
+                if self._adb.run("wait-for-device", check=False, timeout=10).returncode == 0:
+                    return
+            except AdbError:
+                pass  # не дождались за 10 с — следующий шаг
+            if time.time() >= deadline:
+                raise AdbError(f"магнитола не вернулась по ADB за {timeout} с")
+            self.sleep(1)
+
+    def _flat_system_copy(self, package: str) -> str | None:
+        """Путь уже стоящего этого пакета, если это файл прямо в /system/app (не наша папка и не штатная)."""
+        listed = self.shell(f"pm path {package}", check=False, timeout=30).stdout or ""
+        paths = [line.strip()[len("package:"):] for line in listed.splitlines() if line.strip().startswith("package:")]
+        if len(paths) == 1 and re.fullmatch(r"/system/app/[^/\s]+\.apk", paths[0]):
+            return paths[0]
+        return None
+
+    def _system_free_bytes(self) -> int | None:
+        """Свободное место на разделе с /system/app (df); None — не разобрать ответ, тогда не проверяем."""
+        text = self.shell("df /system/app", check=False, timeout=30).stdout or ""
+        return parse_df_free_bytes(text)
+
+    def _device_abi_list(self) -> list[str]:
+        if self._device_abis is None:
+            out = self.shell("getprop ro.product.cpu.abilist", check=False, timeout=30).stdout or ""
+            abis = [a.strip() for a in out.strip().split(",") if a.strip()]
+            if not abis:
+                one = (self.shell("getprop ro.product.cpu.abi", check=False, timeout=30).stdout or "").strip()
+                abis = [one] if one else []
+            self._device_abis = abis or ["arm64-v8a", "armeabi-v7a", "armeabi"]
+        return self._device_abis
+
+    def _extract_native_libs(self, apk: Path) -> tuple[str, Path, int] | None:
+        """Сжатые .so из APK под процессор магнитолы → (isa, локальная папка с файлами, размер). None — библиотек
+        нет или все лежат несжатыми и выровненными (их Android грузит прямо из APK). Какой набор взять — как у
+        самого Android: первый из ro.product.cpu.abilist, который есть в APK."""
+        try:
+            with zipfile.ZipFile(apk) as zf:
+                by_abi: dict[str, list[zipfile.ZipInfo]] = {}
+                for info in zf.infolist():
+                    parts = info.filename.split("/")
+                    if len(parts) == 3 and parts[0] == "lib" and parts[2].endswith(".so"):
+                        by_abi.setdefault(parts[1], []).append(info)
+                if not by_abi:
+                    return None
+                abis = self._device_abi_list()
+                abi = next((a for a in abis if a in by_abi), None)
+                if abi is None:
+                    raise AdbError(f"в «{apk.name}» нет библиотек под процессор магнитолы ({', '.join(abis)}), "
+                                   f"есть только {', '.join(sorted(by_abi))}")
+                entries = by_abi[abi]
+                if all(_stored_page_aligned(zf, info) for info in entries):
+                    return None
+                isa = _ABI_TO_ISA.get(abi, abi)
+                lib_dir = self._scratch_dir("system_app_libs") / isa
+                lib_dir.mkdir()
+                total = 0
+                for info in entries:
+                    target = lib_dir / info.filename.rsplit("/", 1)[-1]
+                    with zf.open(info) as src, open(target, "wb") as dst:
+                        shutil.copyfileobj(src, dst, 1 << 20)
+                    total += info.file_size
+                return isa, lib_dir, total
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise AdbError(f"не удалось прочитать библиотеки из «{apk.name}»: {exc}") from exc
+
+    def _scratch_dir(self, name: str) -> Path:
+        """Пустая рабочая папка под base_dir (рядом с resign_cache — путь без не-ASCII имени пользователя
+        Windows, который не всегда переваривает adb), в тестах — во временной."""
+        base = self.shared_dir.parent.parent if self.shared_dir is not None else Path(tempfile.gettempdir())
+        root = base / name
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
     def _installed_packages(self) -> set[str]:
         result = self.shell("pm list packages", check=False)

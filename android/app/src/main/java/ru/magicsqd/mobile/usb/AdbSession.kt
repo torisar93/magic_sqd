@@ -272,6 +272,65 @@ object AdbSession {
         else AdbInstallResult.Failed("pm install не вернул Success: ${pmOutput.trim()}")
     }
 
+    private val REBOOT_NEEDED = Regex("reboot your device|now reboot", RegexOption.IGNORE_CASE)
+
+    /** Текст ответа сервиса adbd (root:, disable-verity:, remount:) одной строкой. */
+    private fun serviceText(name: String, log: (String) -> Unit, timeoutMs: Int): String = try {
+        when (val r = service(name, log, timeoutMs)) {
+            is AdbShellResult.Output -> r.text.split(Regex("\\s+")).joinToString(" ").trim()
+            is AdbShellResult.Rejected -> "сервис отклонён: ${r.reason}"
+            is AdbShellResult.Failed -> "ошибка: ${r.reason}"
+        }
+    } catch (e: AdbLinkLostException) {
+        markLinkLost()
+        "ошибка: ${e.message}"
+    }
+
+    /** Способ «в системную папку» (BAIC U5 Plus): adb root → adb disable-verity → adb remount. null — раздел открыт
+     * на запись, иначе причина. Если disable-verity только что выключил проверку раздела, она перестанет действовать
+     * лишь после перезагрузки (remount ответит «succeeded», но записать будет нельзя). Перезагрузить сама программа
+     * не может: ADB на BAIC U5 Plus перезагрузку не переживает — просим техника. Как ПК:
+     * install_context._open_system_partition. */
+    fun openSystemPartition(context: Context, log: (String) -> Unit): String? {
+        log("Открываю системный раздел на запись: adb root → adb disable-verity → adb remount.")
+        rootAndReconnect(context, log)?.let { return it }
+        val verity = serviceText("disable-verity:", log, 30_000)
+        log("  adb disable-verity: ${verity.ifBlank { "(пусто)" }}")
+        if (REBOOT_NEEDED.containsMatchIn(verity)) {
+            return "Проверка системного раздела отключена, но начнёт действовать только после перезагрузки. " +
+                "Перезагрузите магнитолу, снова включите ADB в инженерном меню и запустите этап ещё раз."
+        }
+        return remountSystem(log)
+    }
+
+    /** adb remount (нужен root) — null, если системный раздел открыт на запись, иначе причина. */
+    fun remountSystem(log: (String) -> Unit): String? {
+        val remount = serviceText("remount:", log, 60_000)
+        log("  adb remount: ${remount.ifBlank { "(пусто)" }}")
+        if (!remount.contains("remount succeeded", ignoreCase = true)) {
+            return "системный раздел не открылся на запись (adb remount: ${remount.ifBlank { "нет ответа" }.take(200)})"
+        }
+        return null
+    }
+
+    /** adb root: adbd перезапускается от root и связь рвётся — переподключаемся тем же транспортом (по USB телефон
+     * может снова спросить доступ к устройству). null — готово, иначе причина. */
+    fun rootAndReconnect(context: Context, log: (String) -> Unit): String? {
+        val out = serviceText("root:", log, 15_000)
+        log("  adb root: ${out.ifBlank { "(пусто)" }}")
+        if (out.contains("cannot run as root", ignoreCase = true) || out.contains("root access is disabled", ignoreCase = true) ||
+            out.startsWith("сервис отклонён")) {
+            return "магнитола не дала права root (adb root: $out)"
+        }
+        if (out.contains("already running as root", ignoreCase = true)) return null
+        disconnect()
+        Thread.sleep(1500)
+        log("Жду магнитолу после перезапуска adb (если на телефоне появится запрос доступа к USB — разрешите)…")
+        val back = waitForDeviceAndReconnect(context, 60_000, log)
+        return if (back is AdbHandshakeResult.Connected) null
+        else "магнитола не вернулась после adb root: ${(back as? AdbHandshakeResult.Failed)?.reason ?: "нет ответа"}"
+    }
+
     private fun requireTransport(): AdbTransport =
         transport ?: error("ADB не подключён — сначала нужно установить соединение с устройством")
 

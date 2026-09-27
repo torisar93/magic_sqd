@@ -8,6 +8,25 @@
     ]
   },
   "brands": {
+    "baic": {
+      "src": "brands/baic.webp",
+      "size": [
+        532,
+        434
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        532,
+        434
+      ],
+      "approved": true,
+      "vector": false,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "https://commons.wikimedia.org/wiki/File:BAIC_logo.png",
+      "sourceSha256": "64be4e376d74eb2c0fb5e68153affbc2cfbf3da3f5928772cb45c5f9b115b1b7"
+    },
     "belgee": {
       "src": "brands/belgee.svg",
       "size": [

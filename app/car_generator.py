@@ -125,6 +125,10 @@ class ActionSpec:
     # "uninstall_app" — выбор из сторонних (как disable_app), дальше
     # adb_permissions.py.uninstall_app (pm uninstall) — в отличие от
     # disable_app стирает приложение полностью.
+    # "grant_system_apps" — без выбора: все разрешения сразу всем приложениям,
+    # которые программа записала в /system/app (способ установки system_app,
+    # BAIC U5 Plus). Отдельным этапом после перезагрузки: до неё Android таких
+    # приложений не видит, а ADB там перезагрузку не переживает.
     kind: str = "command"
     commands: list[str] = field(default_factory=list)
     # Файлы, прикреплённые к ЭТОМУ действию — на них ссылаются #push/
@@ -1534,6 +1538,10 @@ def _render_install_py(spec: NewCarSpec) -> str:
             "launch_main_activity, list_installed_packages, set_mock_location_app, "
             "uninstall_app  # noqa: E402"
         )
+    # Своей строкой, только там, где кнопка есть: остальные модели при пересохранении не зависят от новой
+    # функции в cars/_shared (урок 1.0.24 — ImportError у модели, пересохранённой раньше деплоя _shared).
+    if any(step.type == "actions" and a.kind == "grant_system_apps" for step in spec.steps for a in step.actions):
+        lines.append("from adb_permissions import grant_system_apps_permissions  # noqa: E402")
 
     for i, step in enumerate(spec.steps, start=1):
         if step.type == "adb":
@@ -1578,6 +1586,8 @@ def _render_install_py(spec: NewCarSpec) -> str:
                     lines.append(
                         f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
                     lines.append("    uninstall_app(ctx, package)")
+                elif action.kind == "grant_system_apps":
+                    lines.append("    grant_system_apps_permissions(ctx)")
                 else:
                     lines += _render_command_body(action.commands, f"actions_{i}_{j}")
         elif step.type == "usb":
