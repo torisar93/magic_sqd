@@ -54,6 +54,11 @@ def _active_interface_name_mac() -> str | None:
     return None
 
 
+# Холодный старт PowerShell на медленном ПК бывает дольше 15 с — тогда этап «Включить кнопку ADB (Telnet)»
+# падал с сырым «Command '[…powershell.exe …]' timed out after 15 seconds» (лог #1310, ПК 1.0.43).
+_POWERSHELL_TIMEOUT = 30
+
+
 def get_active_interface_index() -> str:
     """ifIndex (Windows) или имя интерфейса (macOS, "en0" — на BSD/macOS
     zone id для link-local адреса это ИМЯ интерфейса, а не число, см.
@@ -67,12 +72,17 @@ def get_active_interface_index() -> str:
                 "шлюзом по умолчанию). Подключитесь к Wi-Fi-сети магнитолы и повторите."
             )
         return iface
-    result = subprocess.run(
-        [_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
-         "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
-         "| Select-Object -First 1 -ExpandProperty InterfaceIndex)"],
-        capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
-    )
+    try:
+        result = subprocess.run(
+            [_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
+             "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
+             "| Select-Object -First 1 -ExpandProperty InterfaceIndex)"],
+            capture_output=True, text=True, timeout=_POWERSHELL_TIMEOUT, creationflags=CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            "Не удалось определить сетевой адаптер: PowerShell не ответил вовремя. Повторите этап."
+        ) from exc
     index = (result.stdout or "").strip()
     if not index:
         raise RuntimeError(
@@ -115,7 +125,7 @@ def _scan_ipv6_neighbors_mac() -> list[tuple[str, str]]:
     return pairs
 
 
-def scan_ipv6_neighbors() -> list[tuple[str, str]]:
+def scan_ipv6_neighbors() -> list[tuple[str, str]] | None:
     """Link-local IPv6-соседи (fe80::...) активного сетевого адаптера в
     состоянии Reachable/Stale/Permanent (см. Get-NetNeighbor) — кандидаты на
     IP магнитолы, чтобы не искать его вручную (например на телефоне через
@@ -124,17 +134,20 @@ def scan_ipv6_neighbors() -> list[tuple[str, str]]:
     на что ориентироваться при выборе из списка, раз самого имени хоста
     ("Android", как в PingTools) Windows тут не даёт. Пустой список —
     соседей не нашлось (или адаптер/сеть не определились), вызывающий сам
-    решает, что делать дальше."""
+    решает, что делать дальше. None — PowerShell не ответил вовремя (Windows)."""
     if sys.platform != "win32":
         return _scan_ipv6_neighbors_mac()
-    result = subprocess.run(
-        [_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
-         "Get-NetNeighbor -AddressFamily IPv6 -ErrorAction SilentlyContinue "
-         "| Where-Object { $_.State -in 'Reachable','Stale','Permanent' -and $_.IPAddress -like 'fe80:*' } "
-         "| ForEach-Object { \"$($_.IPAddress)|$($_.LinkLayerAddress)\" } "
-         "| Select-Object -Unique"],
-        capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW,
-    )
+    try:
+        result = subprocess.run(
+            [_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
+             "Get-NetNeighbor -AddressFamily IPv6 -ErrorAction SilentlyContinue "
+             "| Where-Object { $_.State -in 'Reachable','Stale','Permanent' -and $_.IPAddress -like 'fe80:*' } "
+             "| ForEach-Object { \"$($_.IPAddress)|$($_.LinkLayerAddress)\" } "
+             "| Select-Object -Unique"],
+            capture_output=True, text=True, timeout=_POWERSHELL_TIMEOUT, creationflags=CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     seen = []
     pairs = []
     for line in (result.stdout or "").splitlines():
@@ -174,6 +187,9 @@ def enable_adb_via_telnet(
         recommended_ip = mdns_scan.resolve_android_local_ipv6(_active_interface_name_mac()) \
             if sys.platform != "win32" else None
         candidates = scan_ipv6_neighbors()
+        if candidates is None:
+            ctx.log("Поиск устройств в сети не ответил вовремя — введите IPv6-адрес магнитолы вручную.")
+            candidates = []
         if recommended_ip:
             candidates = [(ip, mac) for ip, mac in candidates if ip != recommended_ip]
             candidates.insert(0, (recommended_ip, None))

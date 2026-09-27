@@ -243,8 +243,8 @@ def seal_abandoned_session(base_dir, platform: str, pending: dict | None) -> Pat
     app/web/bridge.py:seal_abandoned_install_log) — только локальные файлы,
     без сети. pending — бэкендовый буфер строк (InstallApi.
     pending_session_log(), None — бэкенд ничего не логировал): он первый,
-    но текст берётся из журнала той же сессии на диске, если тот полнее
-    (см. _fuller_journal); если буфера нет или токен уже не совпал —
+    но текст — журнал той же сессии на диске плюс строки действий, которых
+    там нет (см. _fuller_journal); если буфера нет или токен уже не совпал —
     прочный журнал на диске (seal_abandoned_current)."""
     path = None
     if pending is not None:
@@ -259,12 +259,13 @@ def seal_abandoned_session(base_dir, platform: str, pending: dict | None) -> Pat
 
 
 def _fuller_journal(base_dir, token: str, backend_text: str, active_text: str | None = None) -> str:
-    """Журнал той же сессии на диске, если в нём есть все бэкендовые строки действий, — он полнее: там и
-    строка версии, и то, что пишет только интерфейс (запись на флешку, QR ADB, показанные окна). Раньше при
-    закрытии окна уходил бэкендовый буфер — 81 лог с ПК без версии программы и без этих строк (№1144,
-    №1163, №1188…). Фоновую докачку (active_text её не содержит) не сверяем: при открытии модели она идёт
-    раньше, чем интерфейс узнаёт токен, и на диск не попадает. Если на диске нет какого-то действия
-    (интерфейс завис раньше) — прежний буфер."""
+    """Журнал той же сессии на диске — он полнее бэкендового буфера: там и строка версии, и то, что пишет только
+    интерфейс (запись на флешку, QR ADB, показанные окна). Раньше при закрытии окна уходил бэкендовый буфер —
+    81 лог с ПК без версии программы и без этих строк (№1144, №1163, №1188…). Строки действий, которых на диске
+    нет, дописываются в конец: окно закрыли сразу после установки, и последние события не успели дойти до
+    интерфейса (№1327, 1.0.43 — лог снова ушёл без версии, пока здесь было «всё или ничего»). Фоновую докачку
+    (active_text её не содержит) не дописываем: при открытии модели она идёт раньше, чем интерфейс узнаёт
+    токен, и на диск не попадает — это не действия."""
     base_dir = Path(base_dir)
     with _LOCK:
         meta = _read_current_meta(base_dir)
@@ -275,9 +276,9 @@ def _fuller_journal(base_dir, token: str, backend_text: str, active_text: str | 
         except OSError:
             return backend_text
     required = backend_text if active_text is None else active_text
-    if set(required.splitlines()) <= set(journal.splitlines()):
-        return journal.rstrip("\n")
-    return backend_text
+    lines = journal.rstrip("\n").splitlines()
+    present = set(lines)
+    return "\n".join(lines + [line for line in required.splitlines() if line not in present])
 
 
 def list_queue(base_dir) -> list[Path]:

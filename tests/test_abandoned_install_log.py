@@ -52,7 +52,7 @@ def test_js_only_activity_is_sent_at_close_not_left_for_crash_recovery(tmp_path)
     assert not pil.list_queue(tmp_path)
 
 
-def test_backend_buffer_still_used_first(tmp_path):
+def test_backend_lines_missing_on_disk_are_appended(tmp_path):
     token = pil.start_session(tmp_path, "Haval", "M6", "до 04.2026")
     pil.append_current(tmp_path, token, "строка с диска", True)
     pending = {"brand": "Haval", "model": "M6", "modification": "до 04.2026",
@@ -60,7 +60,7 @@ def test_backend_buffer_still_used_first(tmp_path):
 
     calls = flush(tmp_path, "macos", pending)
 
-    assert [c["log_text"] for c in calls] == ["Установка APK: EdgeScreenS9Pro.apk"]
+    assert [c["log_text"] for c in calls] == ["строка с диска\nУстановка APK: EdgeScreenS9Pro.apk"]
     assert not (tmp_path / "pending_install_logs" / "_current.log").exists()
 
 
@@ -154,8 +154,9 @@ def test_journal_preferred_even_without_early_download_lines(tmp_path):
     assert [c["log_text"] for c in calls] == ["Magic SQD v1.0.42 (x64) · client=\nУстановлено: WiFi.apk"]
 
 
-def test_backend_buffer_kept_when_journal_misses_an_action(tmp_path):
-    # Интерфейс завис раньше бэкенда — на диске нет последнего действия: шлём бэкендовый буфер, как раньше.
+def test_actions_missing_on_disk_are_appended_to_journal(tmp_path):
+    # Окно закрыли сразу после установки — последнее событие не дошло до интерфейса (лог #1327, 1.0.43):
+    # журнал с версией программы остаётся, недостающее действие дописывается в конец.
     token = pil.start_session(tmp_path, "Haval", "Jolion", "2026")
     pil.append_current(tmp_path, token, "Magic SQD v1.0.42 (x64) · client=", False)
     pil.append_current(tmp_path, token, "Установлено: WiFi.apk", True)
@@ -165,7 +166,8 @@ def test_backend_buffer_kept_when_journal_misses_an_action(tmp_path):
 
     calls = flush(tmp_path, "windows", pending)
 
-    assert [c["log_text"] for c in calls] == ["Установлено: WiFi.apk\nУстановлено: Dock.apk"]
+    assert [c["log_text"] for c in calls] == [
+        "Magic SQD v1.0.42 (x64) · client=\nУстановлено: WiFi.apk\nУстановлено: Dock.apk"]
 
 
 def test_install_api_marks_download_lines_as_not_actions(tmp_path, monkeypatch):
