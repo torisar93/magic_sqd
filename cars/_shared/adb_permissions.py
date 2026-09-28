@@ -325,6 +325,25 @@ def grant_all_permissions(ctx, package: str) -> None:
     requested = _parse_requested_permissions(dumpsys_output)
     if not requested:
         requested = list(_COMMON_DANGEROUS_PERMISSIONS)
+    to_grant = [perm for perm in requested if perm not in _APPOPS]  # _APPOPS выдаются ниже через appops
+
+    # Ход по шагам — в кольцо окна установки («Разрешение N из M»): у крупных приложений тут десятки команд,
+    # и без хода окно выглядело зависшим (владелец, 2026-09-28). ctx.permission_progress есть у программы
+    # 1.0.47+; у старых его нет — выдаём как раньше, без хода.
+    report = getattr(ctx, "permission_progress", None)
+    # dumpsys; pm grant; appops (+ --uid для MANAGE_EXTERNAL_STORAGE); доп. appops; WRITE_SECURE_SETTINGS, Doze,
+    # спецвозможности, уведомления — ровно столько вызовов step() ниже.
+    steps_total = (1 + len(to_grant) + len(_APPOPS) + list(_APPOPS.values()).count(_MANAGE_EXTERNAL_STORAGE_OP)
+                   + len(_EXTRA_APPOPS) + 4)
+    steps_done = 0
+
+    def step():
+        nonlocal steps_done
+        steps_done += 1
+        if report is not None:
+            report(steps_done, steps_total)
+
+    step()  # dumpsys
 
     # pm grant молча ничего не делает для разрешения, которое приложение не
     # запрашивало (обычное дело для запасного списка _COMMON_DANGEROUS_
@@ -332,26 +351,32 @@ def grant_all_permissions(ctx, package: str) -> None:
     # отличие от остальных вызовов ниже) стоит посчитать реальный итог, а
     # не просто отрапортовать "выдано" вслепую.
     granted = failed = 0
-    for perm in requested:
-        if perm in _APPOPS:
-            continue  # выдаётся ниже через appops, не pm grant
+    for perm in to_grant:
         result = ctx.shell(f"pm grant {package} {perm}", check=False)
         if result.returncode == 0:
             granted += 1
         else:
             failed += 1
+        step()
 
     for op in _APPOPS.values():
         ctx.shell(f"appops set {package} {op} allow", check=False)
+        step()
         if op == _MANAGE_EXTERNAL_STORAGE_OP:
             ctx.shell(f"appops set --uid {package} {op} allow", check=False)
+            step()
     for op in _EXTRA_APPOPS:
         ctx.shell(f"appops set {package} {op} allow", check=False)
+        step()
     ctx.shell(f"pm grant {package} {_WRITE_SECURE_SETTINGS}", check=False)
+    step()
     ctx.shell(f"dumpsys deviceidle whitelist +{package}", check=False)
+    step()
 
     _enable_accessibility_service(ctx, package, dumpsys_output)
+    step()
     _enable_notification_listener(ctx, package, dumpsys_output)
+    step()
     if failed:
         # "Внимание" в начале — сознательно (см. app/web/frontend/js/
         # log_format.js: classifyLogLevel), чтобы эта строка красилась как

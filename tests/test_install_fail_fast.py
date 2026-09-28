@@ -24,7 +24,7 @@ def _ctx(tmp_path, names, log, create=True):
         apks.append(path)
     ctx = InstallContext(adb_path="fake-adb", device_serial="fake-device", model_dir=tmp_path,
                          selected_apks=apks, log_fn=log.append, cancel_flag=threading.Event(), shared_dir=None)
-    ctx._after_app_installed = lambda apk, mock: None
+    ctx._after_app_installed = lambda apk, mock, installed_now=True: None
     return ctx, apks
 
 

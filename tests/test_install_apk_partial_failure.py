@@ -76,7 +76,7 @@ def test_install_selected_apks_skips_one_and_continues(tmp_path):
 
     ctx._install_with_method = fake_install
     processed = []
-    ctx._after_app_installed = lambda apk, mock: processed.append(apk.name)
+    ctx._after_app_installed = lambda apk, mock, installed_now=True: processed.append(apk.name)
 
     ctx.install_selected_apks()  # не должно бросить исключение
 
@@ -91,7 +91,7 @@ def test_install_selected_apks_all_succeed_no_failures(tmp_path):
     log = []
     ctx, apks = _make_ctx(tmp_path, ["a.apk", "b.apk"], log)
     ctx._install_with_method = lambda method, path, extra_args: None
-    ctx._after_app_installed = lambda apk, mock: None
+    ctx._after_app_installed = lambda apk, mock, installed_now=True: None
 
     ctx.install_selected_apks()
 

@@ -184,3 +184,24 @@ def test_qr_adb_api_get_password_reaches_real_mount_path_on_macos(tmp_path, monk
     assert result["ok"] is True
     assert result["sn"] == "MACSN1"
     assert "debug_copy" not in result and not (tmp_path / "qr_adb_debug").exists()
+
+
+def test_damaged_report_says_it_is_unfinished(tmp_path):
+    """Лог #1521 (ПК 1.0.46, Monjaro SE): архив открывается, но данные внутри битые — «Error -3 while decompressing
+    data» уходило технику как есть, без окна. Теперь — понятный текст, его ловит окно «Магнитола не успела записать
+    отчёт» (user_errors.js: qr_no_bugreport)."""
+    import pytest
+    zip_path = tmp_path / "bugreport-x9h.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("bugreport-dump.txt", "".join(f"строка {i} " * 20 + "\n" for i in range(400)))
+    raw = bytearray(zip_path.read_bytes())
+    with zipfile.ZipFile(zip_path) as zf:
+        info = zf.getinfo("bugreport-dump.txt")
+    data_start = info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+    for i in range(data_start + 10, data_start + 200):
+        raw[i] ^= 0xFF  # «недописанный» поток deflate: заголовки целы, данные — нет
+    zip_path.write_bytes(bytes(raw))
+
+    with pytest.raises(qap.QrAdbError) as err:
+        qap._extract_fields(zip_path)
+    assert str(err.value).startswith("Отчёт bugreport-x9h.zip на флешке повреждён или недописан (")

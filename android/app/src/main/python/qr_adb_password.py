@@ -13,6 +13,7 @@ import io
 import json
 import re
 import zipfile
+import zlib
 from ast import literal_eval
 
 _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -113,5 +114,10 @@ def get_password_from_zip_b64(zip_b64: str) -> str:
                 "ok": False,
                 "error": "Поля salt/password/sn не найдены ни в одном .txt внутри bugreport-zip",
             })
+    except (zipfile.BadZipFile, zlib.error, EOFError) as exc:
+        # Недописанный отчёт: флешку вынули раньше, чем магнитола закончила запись. Раньше технику шло сырое
+        # «Bad magic number for central directory» / «Corrupt extra field …» без окна (лог #1553); теперь —
+        # окно «Магнитола не успела записать отчёт» (user_errors.js: qr_no_bugreport), как на ПК.
+        return json.dumps({"ok": False, "error": f"Отчёт bugreport-zip на флешке повреждён или недописан ({exc})"})
     except Exception as exc:  # noqa: BLE001 - показать техническую причину как есть, дальше некому её разобрать
         return json.dumps({"ok": False, "error": str(exc)})

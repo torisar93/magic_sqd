@@ -32,7 +32,7 @@ def make_ctx(tmp_path, names, events, outcomes):
             raise outcome
 
     ctx.install_apk_auto = install
-    ctx._after_app_installed = lambda apk, give_mock_location: None
+    ctx._after_app_installed = lambda apk, give_mock_location, installed_now=True: None
     return ctx, paths
 
 

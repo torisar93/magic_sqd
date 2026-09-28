@@ -41,9 +41,9 @@ class InstallRunner:
         on_apk_download_progress(путь, скачано, всего) — байты текущего
         докачиваемого APK (см. content_sync.ensure_apks_downloaded:
         on_file_progress) — для кольца окна установки.
-        on_apk_install_progress(путь, готово, всего, состояние, фаза) — установка
+        on_apk_install_progress(путь, готово, всего, состояние, фаза[, шаги]) — установка
         каждого выбранного APK (см. InstallContext.install_selected_apks) — для
-        очереди того же окна.
+        очереди того же окна; шаги (сделано, всего) — у фазы grant (выдача разрешений).
         """
         self.adb_path = adb_path
         self.on_log = on_log

@@ -761,7 +761,11 @@ class InstallEngine(
                 if (installedNow && installed.none { it.packageName == pkg }) installed.add(InstalledApp(pkg, file.name, path))
                 if (!AdbPermissions.grantedSince(pkg, startedAt)) {
                     try {
-                        AdbPermissions.grantAllPermissions(pkg, log)
+                        // Ход выдачи — в кольцо этой строки (фаза grant), как у выдачи внутри localinstall/dex_shell,
+                        // которая идёт ещё в области perform. Остановкой не прерываем: приложение уже стоит.
+                        AdbInstallProgress.observe({ onDetail(path, index, apkPaths.size, it) }, { false }) {
+                            AdbPermissions.grantAllPermissions(pkg, log)
+                        }
                     } catch (e: Exception) {
                         log("Не удалось выдать разрешения $pkg: ${e.message}. Приложение установлено — разрешения можно выдать вручную на этапе «Доп. действия».")
                     }

@@ -18,6 +18,7 @@ import hmac
 import io
 import re
 import zipfile
+import zlib
 from ast import literal_eval
 from pathlib import Path
 
@@ -150,8 +151,14 @@ def _extract_fields(zip_path: Path) -> tuple[bytes, bytes, str]:
         for name in txt_names:
             # Последнее совпадение, не первое встречное — 1:1 с эталонным скриптом поставщика
             # (см. комментарий у _SN_RE).
-            with zf.open(name) as stream:
-                salt_raw, password_raw, sn = _last_fields(stream)
+            try:
+                with zf.open(name) as stream:
+                    salt_raw, password_raw, sn = _last_fields(stream)
+            except (zipfile.BadZipFile, zlib.error, EOFError) as exc:
+                # Недописанный отчёт: флешку вынули раньше, чем магнитола закончила запись. Раньше технику шло
+                # сырое «Error -3 while decompressing data: invalid block type» без окна (лог #1521); теперь —
+                # окно «Магнитола не успела записать отчёт» (user_errors.js: qr_no_bugreport).
+                raise QrAdbError(f"Отчёт {zip_path.name} на флешке повреждён или недописан ({exc})") from exc
             if salt_raw is not None and password_raw is not None and sn is not None:
                 salt = bytes(b & 0xFF for b in _parse_int_list(salt_raw))
                 password = bytes(b & 0xFF for b in _parse_int_list(password_raw))

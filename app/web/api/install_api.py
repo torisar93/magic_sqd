@@ -100,8 +100,8 @@ class InstallApi:
             on_sync_progress=self._on_sync_progress,
             on_apk_download_progress=lambda path, done, total: self._push_apk_download(
                 self._pending_stage_index, path, done, total),
-            on_apk_install_progress=lambda path, completed, total, state, phase: self._push_apk_install(
-                self._pending_stage_index, path, completed, total, state, phase),
+            on_apk_install_progress=lambda path, completed, total, state, phase, steps=None: self._push_apk_install(
+                self._pending_stage_index, path, completed, total, state, phase, steps),
         )
         self._pending_stage_index: int | None = None
         # Остановка предварительной докачки (prefetch_apks) — у самого InstallRunner флаг создаётся только
@@ -1169,16 +1169,20 @@ class InstallApi:
 
     @staticmethod
     def _push_apk_install(stage_index: int | None, path: str, completed: int, total: int, state: str,
-                          phase: str | None) -> None:
+                          phase: str | None, steps: tuple[int, int] | None = None) -> None:
         """Установка одного APK (InstallContext.install_selected_apks) — в очередь окна «Установка
         приложений»: те же поля, что у Android (WebBridge.kt: pushApkProgress). Фаза install без
-        процента — adb не сообщает ход установки, кольцо крутится."""
+        процента — adb не сообщает ход установки, кольцо крутится; у фазы grant (выдача разрешений)
+        процент — по шагам (steps = (сделано, всего))."""
         if stage_index is None:
             return
         event = {"kind": "apk_progress", "stage_index": stage_index, "path": path,
                  "completed": completed, "total": total, "state": state}
         if phase:
             event.update(phase=phase, determinate=False)
+        if steps:
+            done, steps_total = steps
+            event.update(determinate=steps_total > 0, steps_done=done, steps_total=steps_total)
         event_bridge.push(event)
 
     def _on_sync_progress(self, done: int, total: int, files_done: int | None = None,

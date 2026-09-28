@@ -90,7 +90,7 @@ def test_confirmed_head_unit_is_not_checked_again(tmp_path):
     ctx = _ctx(tmp_path, log, device_confirmed=True)
     ctx._adb = _FakeAdb(error=AssertionError("уже проверено перед этапом — второй get-state не нужен"))
     ctx.install_apk_auto = lambda path, extra_args=None: installed.append(path.name)
-    ctx._after_app_installed = lambda apk, mock: None
+    ctx._after_app_installed = lambda apk, mock, installed_now=True: None
 
     ctx.install_selected_apks()
     assert installed == ["a.apk", "b.apk"]

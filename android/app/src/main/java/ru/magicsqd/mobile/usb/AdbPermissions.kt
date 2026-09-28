@@ -453,6 +453,9 @@ object AdbPermissions {
     fun grantAllPermissions(pkg: String, log: (String) -> Unit) {
         lastGrantAt[pkg] = System.currentTimeMillis()
         log("Выдаю разрешения: $pkg")
+        // Кольцо окна установки — «Выдача разрешений», дальше ход по шагам: у крупных приложений тут десятки
+        // команд, и под надписью «Установка приложения» окно выглядело зависшим (владелец, 2026-09-28).
+        AdbInstallProgress.granting()
         // dumpsys package у крупных приложений выдаёт сотни КБ и не укладывается
         // в общие 5 с AdbSession.shell — вывод обрывается, и список запрошенных
         // разрешений получается неполным.
@@ -461,28 +464,43 @@ object AdbPermissions {
         // было «Разрешения выданы.» (логи #721, #910, #966 — после переустановки Podpratel Pro).
         if (!AdbSession.isConnected) { lastGrantAt.remove(pkg); log(linkLostMessage(pkg)); return }
         val requested = parseRequestedPermissions(dumpsysOutput).ifEmpty { COMMON_DANGEROUS_PERMISSIONS }
+        val toGrant = requested.filter { it !in APPOPS_BY_PERMISSION } // APPOPS_BY_PERMISSION — ниже через appops
+        // dumpsys; pm grant; appops (+ --uid для MANAGE_EXTERNAL_STORAGE); доп. appops; WRITE_SECURE_SETTINGS, Doze,
+        // спецвозможности, уведомления — ровно столько вызовов step() ниже (как cars/_shared/adb_permissions.py).
+        val stepsTotal = 1 + toGrant.size + APPOPS_BY_PERMISSION.size +
+            APPOPS_BY_PERMISSION.values.count { it == MANAGE_EXTERNAL_STORAGE_OP } + EXTRA_APPOPS.size + 4
+        var stepsDone = 0
+        fun step() = AdbInstallProgress.granting(++stepsDone, stepsTotal)
+        step() // dumpsys
 
-        for (perm in requested) {
-            if (perm in APPOPS_BY_PERMISSION) continue // выдаётся ниже через appops
+        for (perm in toGrant) {
             safeShell("pm grant $pkg $perm", log)
+            step()
         }
         for (op in APPOPS_BY_PERMISSION.values) {
             safeShell("appops set $pkg $op allow", log)
+            step()
             if (op == MANAGE_EXTERNAL_STORAGE_OP) {
                 // См. cars/_shared/adb_permissions.py — на части прошивок
                 // (Geely Cityray/Monji) обычная форма выше молча не
                 // применяется, --uid (не стандартный AOSP-флаг, добавлен
                 // этим OEM) реально резолвит uid заново.
                 safeShell("appops set --uid $pkg $op allow", log)
+                step()
             }
         }
         for (op in EXTRA_APPOPS) {
             safeShell("appops set $pkg $op allow", log)
+            step()
         }
         safeShell("pm grant $pkg $WRITE_SECURE_SETTINGS", log)
+        step()
         safeShell("dumpsys deviceidle whitelist +$pkg", log)
+        step()
         enableAccessibilityService(pkg, dumpsysOutput, log)
+        step()
         enableNotificationListener(pkg, dumpsysOutput, log)
+        step()
         if (AdbSession.isConnected) {
             log("Разрешения выданы.")
         } else {

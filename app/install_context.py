@@ -262,9 +262,14 @@ class InstallContext:
     def __init__(self, adb_path, device_serial, model_dir: Path, selected_apks,
                  log_fn, cancel_flag, ask_input_fn=None, shared_dir: Path | None = None,
                  preferred_install_method: str = "", on_apk_progress=None, device_confirmed: bool = False):
-        # on_apk_progress(путь, готово, всего, "running"/"done"/"error", фаза|None) — ход установки
-        # каждого выбранного APK для очереди окна установки (см. install_selected_apks).
-        self._on_apk_progress = on_apk_progress or (lambda path, completed, total, state, phase: None)
+        # on_apk_progress(путь, готово, всего, "running"/"done"/"error", фаза|None[, (шаг, шагов)]) — ход
+        # установки каждого выбранного APK для очереди окна установки (см. install_selected_apks); шаги —
+        # только у фазы grant (выдача разрешений, см. permission_progress).
+        self._on_apk_progress = on_apk_progress or (lambda path, completed, total, state, phase, steps=None: None)
+        # Строка окна установки, которую сейчас обрабатывает install_selected_apks: (путь, индекс, всего).
+        # Выдача разрешений (в том числе внутри localinstall/dex_shell) показывает по ней фазу «Выдача
+        # разрешений»; вне очереди (кнопка «Выдать разрешения» в «Доп. действиях») — None, окна установки нет.
+        self._progress_item: tuple[str, int, int] | None = None
         self.model_dir = Path(model_dir)
         self.files_dir = self.model_dir / "files"
         # cars/_shared/ — общие для МНОГИХ моделей файлы (не только Python-
@@ -470,46 +475,58 @@ class InstallContext:
         # (index + 1) или «ошибка». Раньше десктоп слал только скачивание, и после него окно так и
         # оставалось на «Скачивание приложений» с «Готово 0 из N» (жалоба владельца, 2026-09-23).
         total = len(self.selected_apks)
-        for index, apk in enumerate(self.selected_apks):
-            self._last_diff_package = None
-            self._on_apk_progress(str(apk), index, total, "running", "install")
-            if self._same_apk_already_installed(apk):
-                # Этап повторяют после «Файл не скачан» или обрыва связи — уже поставленное не ставим заново
-                # (владелец, 2026-09-27); разрешения выдаём, как и после установки.
-                self.log(f"«{apk.name}»: на магнитоле уже стоит этот же файл — установку пропускаю.")
-                self._on_apk_progress(str(apk), index + 1, total, "done", None)
-                self._after_app_installed(apk, apk == mock_target, installed_now=False)
-                continue
-            try:
-                self.install_apk_auto(apk, extra_args=extra_args)
-            except NewerVersionInstalled:
-                # Приложение на магнитоле уже есть (версия новее) — не стоп, а пропуск; разрешения
-                # выдаём уже стоящей версии, как после установки (владелец, 2026-09-25).
-                self.log(f"«{apk.name}»: на магнитоле уже стоит версия новее — установку пропускаю.")
-                self._on_apk_progress(str(apk), index + 1, total, "done", None)
-                self._after_app_installed(apk, apk == mock_target, installed_now=False)
-                continue
-            except AppInstallFailed as exc:
-                # Способ установки уже подтверждён рабочим на этой магнитоле —
-                # сбой именно этого apk не должен стоить техникам остальных,
-                # уже успешно установленных приложений (см. AppInstallFailed).
-                self.failed_apps.append(str(exc))
-                self._on_apk_progress(str(apk), index, total, "error", None)
-                continue
-            except BaseException:
-                # Стоп, ни один способ не подошёл и т.п. — этап заканчивается, строка не должна
-                # остаться на «Установка…».
-                self._on_apk_progress(str(apk), index, total, "error", None)
-                raise
-            # Приложение уже стоит; разрешения ниже установку не срывают (см. _after_app_installed).
-            self._on_apk_progress(str(apk), index + 1, total, "done", None)
-            self._after_app_installed(apk, apk == mock_target)
+        try:
+            for index, apk in enumerate(self.selected_apks):
+                self._last_diff_package = None
+                self._progress_item = (str(apk), index, total)
+                self._on_apk_progress(str(apk), index, total, "running", "install")
+                if self._same_apk_already_installed(apk):
+                    # Этап повторяют после «Файл не скачан» или обрыва связи — уже поставленное не ставим заново
+                    # (владелец, 2026-09-27); разрешения выдаём, как и после установки.
+                    self.log(f"«{apk.name}»: на магнитоле уже стоит этот же файл — установку пропускаю.")
+                    self._finish_app(apk, index, total, apk == mock_target, installed_now=False)
+                    continue
+                try:
+                    self.install_apk_auto(apk, extra_args=extra_args)
+                except NewerVersionInstalled:
+                    # Приложение на магнитоле уже есть (версия новее) — не стоп, а пропуск; разрешения
+                    # выдаём уже стоящей версии, как после установки (владелец, 2026-09-25).
+                    self.log(f"«{apk.name}»: на магнитоле уже стоит версия новее — установку пропускаю.")
+                    self._finish_app(apk, index, total, apk == mock_target, installed_now=False)
+                    continue
+                except AppInstallFailed as exc:
+                    # Способ установки уже подтверждён рабочим на этой магнитоле —
+                    # сбой именно этого apk не должен стоить техникам остальных,
+                    # уже успешно установленных приложений (см. AppInstallFailed).
+                    self.failed_apps.append(str(exc))
+                    self._on_apk_progress(str(apk), index, total, "error", None)
+                    continue
+                except BaseException:
+                    # Стоп, ни один способ не подошёл и т.п. — этап заканчивается, строка не должна
+                    # остаться на «Установка…».
+                    self._on_apk_progress(str(apk), index, total, "error", None)
+                    raise
+                # Приложение уже стоит; разрешения ниже установку не срывают (см. _after_app_installed).
+                self._finish_app(apk, index, total, apk == mock_target)
+        finally:
+            self._progress_item = None
         if self._system_apps_written:
             self.log("Приложения записаны в системную папку. Android увидит их после перезагрузки магнитолы — "
                      "тогда им можно выдать разрешения (кнопка «Выдать разрешения установленным приложениям»).")
         if self.failed_apps:
             self.log("Не установлено (пропущено, остальные приложения из списка "
                       "установлены): " + "; ".join(self.failed_apps))
+
+    def _finish_app(self, apk: Path, index: int, total: int, give_mock_location: bool,
+                    installed_now: bool = True) -> None:
+        """Разрешения — ещё часть строки окна установки: «Готово» только после них. Раньше строка закрывалась
+        до выдачи, и на последнем приложении кольцо показывало «Все приложения установлены», пока разрешения
+        ещё шли — техник не понимал, зависла ли программа (владелец, 2026-09-28). Стоп посреди выдачи — строка
+        всё равно «Готово»: приложение уже стоит."""
+        try:
+            self._after_app_installed(apk, give_mock_location, installed_now=installed_now)
+        finally:
+            self._on_apk_progress(str(apk), index + 1, total, "done", None)
 
     def _same_apk_already_installed(self, apk: Path) -> bool:
         """На магнитоле уже стоит РОВНО этот файл: SHA-256 base.apk установленного пакета совпадает с нашим.
@@ -1203,6 +1220,9 @@ class InstallContext:
         if module is None:
             return
         self._granted_packages.add(package)
+        # Кольцо окна установки — «Выдача разрешений» (ход по шагам присылает сам модуль, см. permission_progress;
+        # модуль старше 1.0.47 его не шлёт — тогда просто крутится).
+        self._report_grant(None)
         try:
             module.grant_all_permissions(self, package)
         except InstallCancelled:
@@ -1210,6 +1230,20 @@ class InstallContext:
         except Exception as exc:  # noqa: BLE001 - выдача разрешений не должна ронять установку
             self.log(f"Не удалось выдать разрешения {package}: {exc}. Приложение установлено — "
                      "разрешения можно выдать вручную на этапе «Доп. действия».")
+
+    def permission_progress(self, done: int, total: int) -> None:
+        """Ход выдачи разрешений: cars/_shared/adb_permissions.py (grant_all_permissions) зовёт после каждого
+        шага, если у ctx есть этот метод — в кольцо окна установки «Разрешение N из M»."""
+        self._report_grant((done, total))
+
+    def _report_grant(self, steps: tuple[int, int] | None) -> None:
+        if self._progress_item is None:
+            return  # не очередь установки (кнопка «Выдать разрешения») — окна с кольцом нет
+        path, index, total = self._progress_item
+        if steps is None:
+            self._on_apk_progress(path, index, total, "running", "grant")
+        else:
+            self._on_apk_progress(path, index, total, "running", "grant", steps)
 
     def _set_mock_location_if_available(self, package: str) -> None:
         module = self._load_shared_module("adb_permissions")

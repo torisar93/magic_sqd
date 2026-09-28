@@ -1232,6 +1232,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             event.put("phase", detail.phase).put("determinate", detail.determinate)
             detail.bytesDone?.let { event.put("bytes_done", it) }
             detail.bytesTotal?.let { event.put("bytes_total", it) }
+            detail.stepsDone?.let { event.put("steps_done", it) }
+            detail.stepsTotal?.let { event.put("steps_total", it) }
         }
         pushEvent(event)
     }

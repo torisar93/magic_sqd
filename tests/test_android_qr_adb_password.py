@@ -73,3 +73,14 @@ def test_reports_error_when_fields_truly_missing(qap_android):
     result = json.loads(qap_android.get_password_from_zip_b64(_make_zip_b64(content)))
     assert result["ok"] is False
     assert "salt/password/sn" in result["error"]
+
+
+def test_damaged_report_says_it_is_unfinished(qap_android):
+    """Лог #1553 (Android 1.0.46, Jolion 2026): «Bad magic number for central directory» / «Corrupt extra field …»
+    уходили технику как есть, без окна. Теперь — тот же текст, что на ПК: его ловит окно «Магнитола не успела
+    записать отчёт» (user_errors.js: qr_no_bugreport)."""
+    full = base64.b64decode(_make_zip_b64("salt = [1] password = [2] sn=X\n" * 50))
+    truncated = base64.b64encode(full[:-40]).decode("ascii")  # оборван конец — central directory
+    result = json.loads(qap_android.get_password_from_zip_b64(truncated))
+    assert result["ok"] is False
+    assert result["error"].startswith("Отчёт bugreport-zip на флешке повреждён или недописан (")

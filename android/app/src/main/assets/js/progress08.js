@@ -4,13 +4,16 @@
   const icon=name=>window.AppIcons?AppIcons.icon(name):LabUI.symbol(name);
   const normalize=path=>String(path||'').split('\\').join('/').toLowerCase();
   // remove — «Откатить в сток» (stage_run.js: openRollback): та же очередь, но удаляем поставленное.
-  const phaseNames={download:'Скачивание приложений',transfer:'Передача приложения',install:'Установка приложения',remove:'Удаление приложений',prepare:'Подготовка',done:'Готово'};
+  // grant — разрешения только что поставленному приложению: строка «Готово» только после них, иначе на последнем
+  // приложении кольцо закрывалось галочкой, а разрешения ещё шли (владелец, 2026-09-28: «не понятно, зависла ли»).
+  const phaseNames={download:'Скачивание приложений',transfer:'Передача приложения',install:'Установка приложения',grant:'Выдача разрешений',remove:'Удаление приложений',prepare:'Подготовка',done:'Готово'};
   const stateLabels={running:'Установка…',done:'Готово',error:'Ошибка'},removeLabels={running:'Удаление…',done:'Удалено',error:'Не удалось'};
   function setProgress(box, measurement) {
     const graphic=box.querySelector('.install-graphic'),bar=box.querySelector('.run-progress'),count=box.querySelector('.install-count');
     const phase=measurement.phase||'install';
     let percent=Number(measurement.percent);
     if(Number(measurement.bytes_total)>0)percent=Number(measurement.bytes_done)/Number(measurement.bytes_total)*100;
+    else if(Number(measurement.steps_total)>0)percent=Number(measurement.steps_done)/Number(measurement.steps_total)*100;
     const known=measurement.determinate===true&&Number.isFinite(percent);
     box.dataset.phase=phase;box.dataset.determinate=String(known);
     const title=box.querySelector('h2');
@@ -27,7 +30,8 @@
     if(known&&Number(measurement.bytes_total)>0){
       const megabytes=value=>(Number(value)/1048576).toLocaleString('ru-RU',{maximumFractionDigits:1});
       hint.textContent=`${megabytes(measurement.bytes_done)} из ${megabytes(measurement.bytes_total)} МБ`;
-    }else hint.textContent=phase==='install'?'Ожидаем подтверждение устройства':phase==='remove'?'Удаляем то, что поставили сейчас':known?'':'Получаем данные о ходе операции';
+    }else if(known&&Number(measurement.steps_total)>0)hint.textContent=`Разрешение ${measurement.steps_done} из ${measurement.steps_total}`;
+    else hint.textContent=phase==='install'?'Ожидаем подтверждение устройства':phase==='grant'?'Выдаём приложению разрешения':phase==='remove'?'Удаляем то, что поставили сейчас':known?'':'Получаем данные о ходе операции';
   }
   LabUI.busy=(root,label,items=[])=>{
     root.querySelector('.run-status')?.remove();
@@ -83,7 +87,7 @@
     const summary=box.querySelector('.queue-summary');if(summary)summary.textContent=`${removing?'Удалено':'Готово'} ${completed} из ${rows.length}`;
     if(e.phase){
       setProgress(box,e);
-      if(row){const label={download:'Скачивание…',transfer:'Передача…',install:'Установка…',remove:'Удаление…'}[e.phase];if(row.dataset.state==='running'&&label)row.querySelector('small').textContent=label;}
+      if(row){const label={download:'Скачивание…',transfer:'Передача…',install:'Установка…',grant:'Разрешения…',remove:'Удаление…'}[e.phase];if(row.dataset.state==='running'&&label)row.querySelector('small').textContent=label;}
     }else if(e.state==='running')setProgress(box,{phase:'install',determinate:false});
     if(row)box.querySelector('.run-event').textContent=row.querySelector('.run-app-name').textContent;
     if(rows.length&&completed===rows.length){
