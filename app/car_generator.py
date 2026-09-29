@@ -70,6 +70,9 @@ class StandardApkSpec:
     path: Path
     name: str = ""
     description: str = ""
+    # «Только одно из группы» (как у общей библиотеки apk/): приложения модели с одной группой техник не отметит
+    # вместе — MonGuard и Monji, один пакет (владелец, 2026-09-29). В спеке и сайдкаре; пусто — без группы.
+    exclusive_group: str = ""
 
 
 @dataclass
@@ -595,7 +598,8 @@ def _parse_apk_entry(item, base_dir: Path) -> StandardApkSpec:
     if isinstance(item, str):
         return StandardApkSpec(path=base_dir / item)
     return StandardApkSpec(path=base_dir / item["filename"],
-                            name=item.get("name", ""), description=item.get("description", ""))
+                            name=item.get("name", ""), description=item.get("description", ""),
+                            exclusive_group=str(item.get("exclusive_group") or "").strip())
 
 
 def _merge_required_into_optional(required: list[StandardApkSpec],
@@ -965,10 +969,11 @@ def _copy_apk(apk: StandardApkSpec, dst: Path, keep_paths: set[Path]) -> None:
         shutil.copy2(apk.path, dst)
     keep_paths.add(dst)
     meta_path = dst.with_suffix(".json")
-    if apk.name or apk.description:
-        meta_path.write_text(
-            json.dumps({"name": apk.name, "description": apk.description}, ensure_ascii=False),
-            encoding="utf-8")
+    if apk.name or apk.description or apk.exclusive_group:
+        meta = {"name": apk.name, "description": apk.description}
+        if apk.exclusive_group:
+            meta["exclusive_group"] = apk.exclusive_group  # его читает список выбора на ПК (scanner.py)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         keep_paths.add(meta_path)
     elif meta_path.exists():
         meta_path.unlink()
@@ -1249,7 +1254,10 @@ def _write_version_file(model_dir: Path, changelog: str, status: str = "ok") -> 
 # _wizard_spec.json — снимок NewCarSpec для повторного открытия в редакторе
 # ----------------------------------------------------------------------
 def _apk_entry_to_json(apk: StandardApkSpec) -> dict:
-    return {"filename": apk.path.name, "name": apk.name, "description": apk.description}
+    data = {"filename": apk.path.name, "name": apk.name, "description": apk.description}
+    if apk.exclusive_group:
+        data["exclusive_group"] = apk.exclusive_group  # Android берёт группу отсюда (wizard_spec._apk_entry)
+    return data
 
 
 def _flash_block_to_json(block: FlashBlockSpec) -> dict:

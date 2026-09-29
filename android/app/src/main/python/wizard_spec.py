@@ -152,8 +152,14 @@ def _apk_entry(item, base_dir: Path) -> dict:
     есть прямо в _wizard_spec.json — читать оттуда надёжнее и не требует
     сети/локального файла."""
     if isinstance(item, dict):
-        return {"path": str(base_dir / item["filename"]),
-                "name": item.get("name") or "", "description": item.get("description") or ""}
+        entry = {"path": str(base_dir / item["filename"]),
+                 "name": item.get("name") or "", "description": item.get("description") or ""}
+        # «Только одно из группы» (MonGuard/Monji — один пакет, владелец 2026-09-29), как у общей библиотеки
+        # (apk_library.py), только из спеки: сайдкара на телефоне ещё может не быть.
+        group = str(item.get("exclusive_group") or "").strip()
+        if group:
+            entry["exclusive_group"] = group
+        return entry
     return {"path": str(base_dir / item), "name": "", "description": ""}
 
 

@@ -494,6 +494,11 @@ def scan_apk_dir_with_remote(folder: Path, remote_catalog: list[dict] | None = N
             continue
         apk_path = folder / filename
         name, description = _read_apk_meta(apk_path)
+        # Сайдкар уже здесь (install_api.standard_apks подтягивает их до списка) — те же поля, что у скачанного
+        # APK: раньше у нескачанного терялась группа «только одно» (MonGuard/Monji, владелец 2026-09-29).
         apks[filename] = ApkInfo(path=apk_path, name=name, description=description,
-                                  remote_only=True, size=entry.get("size", -1))
+                                  remote_only=True, size=entry.get("size", -1),
+                                  mock_location=read_apk_mock_location(apk_path),
+                                  hidden_models=read_apk_hidden_models(apk_path),
+                                  exclusive_group=read_apk_exclusive_group(apk_path))
     return sorted(apks.values(), key=lambda a: a.name.lower())

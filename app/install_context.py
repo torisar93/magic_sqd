@@ -43,6 +43,7 @@ INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "locali
 # запись, а обычная установка на этой не даст того, что нужно модели.
 _SYSTEM_APP_METHOD = INSTALL_METHOD_KEYS.index("system_app")
 _EXCLUSIVE_METHODS = frozenset({_SYSTEM_APP_METHOD})
+_LOCALINSTALL_METHOD = INSTALL_METHOD_KEYS.index("localinstall")
 # Метка в /system/app/<пакет>/ — «поставлено программой»: по ней кнопки «Доп. действий» отличают такие
 # приложения от штатных (cars/_shared/adb_permissions.py).
 SYSTEM_APP_MARKER = ".magicsqd"
@@ -84,6 +85,11 @@ _DEX_SHELL_HELPER_NAME = "dex_shell_helper.dex"
 _DEX_SHELL_REMOTE_HELPER = "/data/local/tmp/dex_shell_helper.dex"
 _DEX_SHELL_ENTRY_CLASS = "MonjiShellInstaller"  # см. пояснение выше — имя из самого .dex
 _DEX_SHELL_INSTALL_FLAGS = 0x116
+# Часть прошивок не даёт shell флаг INSTALL_GRANT_RUNTIME_PERMISSIONS (Changan CS75 Plus, лог #1689: сессия не
+# создаётся, «You need the android.permission.INSTALL_GRANT_RUNTIME_PERMISSIONS permission to use …») — тогда
+# хелпер запускается ещё раз без него (0x16); разрешения программа и так выдаёт сама после установки.
+_INSTALL_GRANT_RUNTIME_PERMISSIONS = 0x100
+_GRANT_FLAG_DENIED = "INSTALL_GRANT_RUNTIME_PERMISSIONS permission to use"
 
 # Некоторые новые магнитолы Haval (прошивка "headunit revived", моделей пока
 # нет в программе — способ добавлен заранее, чтобы можно было на него
@@ -295,6 +301,10 @@ class InstallContext:
         # Строка «переподпись не используется» пишется один раз за запуск
         # (см. _maybe_resign), а не на каждый APK.
         self._resign_skip_logged = False
+        # Уже переподписанные в этом запуске: исходник → (копия, её размер и mtime_ns). Проверка «этот же файл
+        # уже стоит» переподписывает раньше установки — install_apk_auto берёт готовую копию, если её с тех пор
+        # не перезаписал другой APK с тем же именем файла.
+        self._resigned: dict[Path, tuple[Path, int, int]] = {}
         # Подсказка "начни перебор с этого способа" (см. StepSpec.
         # apps_install_method в car_generator.py) — только меняет ПОРЯДОК
         # попыток в install_apk_auto, не пропускает остальные способы, если
@@ -534,7 +544,12 @@ class InstallContext:
         ставились заново (лог #1347: WiFi Manager и Back Button — по три раза). Сравниваем файл, а не
         versionCode: у модов номер версии обычно как у оригинала, и совпадение по версии оставило бы на
         магнитоле не ту сборку. Любая неясность (нет sha256sum на старой прошивке, приложение из нескольких
-        файлов, pm не отвечает) — ставим, как раньше."""
+        файлов, pm не отвечает) — ставим, как раньше.
+
+        У моделей с переподписью (Changan) на магнитоле стоит переподписанная копия — сравниваем с ней (apksigner с
+        RSA-ключом каждый раз даёт один и тот же файл; Android так и делал). Раньше сравнивался исходник, совпадения
+        не было, и повтор этапа ставил приложение заново: localinstall поверх установленного не ставит, и на
+        CS75 Plus всё кончалось «ни одним из способов» (лог #1689)."""
         package = read_package_name(apk)
         if not package:
             return False
@@ -545,7 +560,7 @@ class InstallContext:
             if len(paths) != 1 or not paths[0] or any(ch.isspace() for ch in paths[0]):
                 return False
             remote = (self.shell(f"sha256sum {paths[0]}", check=False, timeout=120).stdout or "").split()
-            return bool(remote) and remote[0].lower() == _file_sha256(apk)
+            return bool(remote) and remote[0].lower() == _file_sha256(self._maybe_resign(apk))
         except (AdbError, OSError):
             return False
 
@@ -716,6 +731,15 @@ class InstallContext:
                 self.log("Переподпись APK для этой модели не используется "
                          "(сертификата files/resign_cert нет).")
             return path
+        cached = self._resigned.get(path)
+        if cached is not None:
+            copy, size, mtime_ns = cached
+            try:
+                stat = copy.stat()
+                if (stat.st_size, stat.st_mtime_ns) == (size, mtime_ns):
+                    return copy
+            except OSError:
+                pass
         base_dir = self.shared_dir.parent.parent
         # Своя папка вне cars/ и apk/, а не <имя>_resigned.apk рядом с
         # исходником: оттуда копию при следующем запуске этапа подхватывал
@@ -732,6 +756,8 @@ class InstallContext:
         except ApkSignError as exc:
             raise AdbError(str(exc))
         self.log(f"Подписано: {path.name}")
+        stat = out_path.stat()
+        self._resigned[path] = (out_path, stat.st_size, stat.st_mtime_ns)
         return out_path
 
     def _install_with_method(self, method: int, path, extra_args) -> None:
@@ -1115,12 +1141,33 @@ class InstallContext:
         new_packages = after - before
         if len(new_packages) != 1:
             text = ((result.stdout or "") + (result.stderr or "")).strip()
+            package = None if new_packages else read_package_name(path)
+            if package and package in before and self._install_method == _LOCALINSTALL_METHOD:
+                self._update_with_dex_shell(path, package)
+                return
             raise AdbError(text or "localinstall не подтвердил успех (пакет не появился в списке)")
         package = next(iter(new_packages))
         self._last_diff_package = package
         self._grant_all_permissions_if_available(package)
         self.shell(f"am force-stop {package}", check=False)
         self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1", check=False)
+
+    def _update_with_dex_shell(self, path: Path, package: str) -> None:
+        """Chery-хелпер ставит только новые приложения: флагов сессии он не задаёт, а вызывающему от shell
+        PackageManager «заменить существующее» сам не добавляет — поверх установленного отказ «Attempt to
+        re-install … without first uninstalling» (проверено на эмуляторе), причём в logcat, а не в вывод, и в
+        логе причина пустая. На Haval sa8155 штатный VK Video так пропускался, пока не пошёл dex-хелпер (лог
+        #1670). Когда localinstall на этой магнитоле уже сработал, а приложение уже стоит (обновление, штатное
+        приложение), ставим его dex-хелпером — у него флаг замены есть. Отказ из-за версии или подписи уходит
+        дальше как есть (пропуск «версия новее» / стоп)."""
+        self.log(f"«{path.name}»: {package} уже стоит на магнитоле, а localinstall ставит только новые "
+                 "приложения — обновляю через dex-хелпер.")
+        try:
+            self.install_apk_dex_shell(path)
+        except VersionDowngradeError:
+            raise
+        except AdbError as exc:
+            raise AdbError(f"{package} уже стоит, localinstall поверх не ставит, dex-хелпер не обновил: {exc}") from exc
 
     def install_apk_dex_shell(self, path) -> None:
         """Установка через helper cars/_shared/dex_shell_helper.dex — см.
@@ -1154,10 +1201,18 @@ class InstallContext:
         self.shell(f"chmod 644 {quoted_remote_apk}", check=False)
         self.push(helper, _DEX_SHELL_REMOTE_HELPER)
         self.shell(f"chmod 644 {_DEX_SHELL_REMOTE_HELPER}", check=False)
-        result = self.shell(
-            f"CLASSPATH={_DEX_SHELL_REMOTE_HELPER} app_process /data/local/tmp {_DEX_SHELL_ENTRY_CLASS} "
-            f"{quoted_remote_apk} --flags {hex(_DEX_SHELL_INSTALL_FLAGS)}",
-            check=False)
+
+        def run_helper(flags: int):
+            return self.shell(
+                f"CLASSPATH={_DEX_SHELL_REMOTE_HELPER} app_process /data/local/tmp {_DEX_SHELL_ENTRY_CLASS} "
+                f"{quoted_remote_apk} --flags {hex(flags)}",
+                check=False)
+
+        result = run_helper(_DEX_SHELL_INSTALL_FLAGS)
+        if _GRANT_FLAG_DENIED in (result.stdout or "") + (result.stderr or ""):
+            self.log("Прошивка не даёт хелперу выдавать разрешения при установке — повторяю без этого "
+                     "(разрешения выдам после установки).")
+            result = run_helper(_DEX_SHELL_INSTALL_FLAGS & ~_INSTALL_GRANT_RUNTIME_PERMISSIONS)
         self.sleep(2)
         after = self._installed_packages()
         self.shell(f"rm -f {quoted_remote_apk} {_DEX_SHELL_REMOTE_HELPER}", check=False)

@@ -1311,8 +1311,9 @@
     });
     syncSelection();
     // «Только одно из группы» (apps_tabs.js): отметили второе из группы — первое снимается само. Слушатель
-    // после syncSelection — к этому моменту выбор уже обновлён.
-    window.AppTabs.exclusiveGroups(tree, shared, (path) => !!selection[path]);
+    // после syncSelection — к этому моменту выбор уже обновлён. Группы есть и у приложений самой модели
+    // (MonGuard/Monji — один пакет, владелец 2026-09-29), не только у библиотеки.
+    window.AppTabs.exclusiveGroups(tree, [...standard.required, ...standard.optional, ...shared], (path) => !!selection[path]);
     return tree;
   }
 

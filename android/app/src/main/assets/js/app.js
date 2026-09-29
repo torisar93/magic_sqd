@@ -2173,8 +2173,10 @@
     }
 
     // «Только одно из группы» (apps_tabs.js): отметили второе из группы — первое снимается само; строки
-    // остаются в page и после раскладки по вкладкам.
-    window.AppTabs.exclusiveGroups(page, apkLibrary, (path) => selectedApks.has(path));
+    // остаются в page и после раскладки по вкладкам. Группы есть и у приложений самой модели (MonGuard/Monji —
+    // один пакет, владелец 2026-09-29), не только у библиотеки.
+    window.AppTabs.exclusiveGroups(page, [...rawLists.required, ...rawLists.optional, ...apkLibrary],
+      (path) => selectedApks.has(path));
     return lists;
   }
 

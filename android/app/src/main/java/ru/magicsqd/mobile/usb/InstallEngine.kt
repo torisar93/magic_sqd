@@ -316,6 +316,17 @@ class InstallEngine(
         }
     }
 
+    /** Пакет уже стоит на магнитоле (pm path что-то вернул). Любая неясность — false. */
+    private fun packageInstalled(pkg: String, log: (String) -> Unit): Boolean {
+        if (pkg.isEmpty()) return false
+        return try {
+            (AdbSession.shell("pm path $pkg", log) as? AdbShellResult.Output)?.text.orEmpty()
+                .lineSequence().any { it.trim().startsWith("package:") }
+        } catch (_: Exception) {
+            false  // обрыв связи — следующий шаг установки сам разберётся (см. perform)
+        }
+    }
+
     /** Выбраны разные файлы с ОДНИМ именем пакета (например GLauncher.Link и 3screen — оба
      *  com.maxinf.car): они заменяют друг друга, второй не встанет из-за другой подписи, и
      *  техник остаётся с половиной списка. Останавливаем ДО установки. Одинаковые по
@@ -797,7 +808,22 @@ class InstallEngine(
 
             if (confirmedMethod != null) {
                 val (label, install) = INSTALL_METHODS[confirmedMethod]
-                when (val r = perform(install, apk, { stagedPath() })) {
+                var result = perform(install, apk, { stagedPath() })
+                // localinstall (Chery-хелпер) ставит только новые приложения: поверх установленного PackageManager
+                // отказывает («Attempt to re-install … without first uninstalling», в logcat — в выводе пусто). На
+                // Haval sa8155 штатный VK Video так пропускался, пока не пошёл dex-хелпер (лог #1670). Уже стоящее
+                // приложение обновляем dex-хелпером — у него флаг замены есть. Как ПК: install_context._update_with_dex_shell.
+                if (result is AdbInstallResult.Failed && label == "localinstall" && packageInstalled(currentPackageName, log)) {
+                    log("«${file.name}»: $currentPackageName уже стоит на магнитоле, а localinstall ставит только новые " +
+                        "приложения — обновляю через dex-хелпер.")
+                    val dexShell = INSTALL_METHODS.first { it.first == "dex_shell_install" }.second
+                    result = when (val update = perform(dexShell, apk, { stagedPath() })) {
+                        is AdbInstallResult.Failed -> AdbInstallResult.Failed(
+                            "$currentPackageName уже стоит, localinstall поверх не ставит, dex-хелпер не обновил: ${update.reason}")
+                        else -> update
+                    }
+                }
+                when (val r = result) {
                     is AdbInstallResult.Failed -> {
                         dropStaged()
                         if (newerVersionInstalled(r.reason)) { keepNewer(); continue }

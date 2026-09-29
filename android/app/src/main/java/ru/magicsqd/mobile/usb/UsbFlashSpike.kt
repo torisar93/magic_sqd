@@ -48,7 +48,11 @@ fun requestUsbPermission(context: Context, device: UsbDevice, onResult: (granted
         }
     }
 
-    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    // С Android 12 (S) флаг изменяемости обязателен, иначе IllegalArgumentException «Targeting S+ requires
+    // FLAG_IMMUTABLE or FLAG_MUTABLE». Раньше здесь стояло TIRAMISU (13): на Android 12/12L разрешение на флешку и
+    // на ADB по проводу не запрашивалось вовсе (логи #1678–#1687). MUTABLE, а не IMMUTABLE: UsbManager дописывает в
+    // интент EXTRA_PERMISSION_GRANTED.
+    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         PendingIntent.FLAG_MUTABLE
     } else {
         0

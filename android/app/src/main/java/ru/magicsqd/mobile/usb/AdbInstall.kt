@@ -478,6 +478,11 @@ fun installApkViaLocalinstall(
  * в оригинале.
  */
 private const val DEX_SHELL_ENTRY_CLASS = "MonjiShellInstaller"
+private const val DEX_SHELL_INSTALL_FLAGS = 0x116
+// Часть прошивок не даёт shell флаг INSTALL_GRANT_RUNTIME_PERMISSIONS (Changan CS75 Plus, лог #1689: сессия не
+// создаётся) — тогда второй запуск без него (0x16); разрешения программа и так выдаёт сама после установки.
+private const val INSTALL_GRANT_RUNTIME_PERMISSIONS = 0x100
+private const val GRANT_FLAG_DENIED = "INSTALL_GRANT_RUNTIME_PERMISSIONS permission to use"
 
 fun installApkViaDexShell(
     transport: AdbTransport,
@@ -509,12 +514,18 @@ fun installApkViaDexShell(
 
     log("Устанавливаю через dex-хелпер (app_process, Geely OneOS)...")
     AdbInstallProgress.installing()
-    val installResult = runAdbShellCommand(
+    fun runHelper(flags: Int) = runAdbShellCommand(
         transport,
-        "CLASSPATH=$remoteHelper app_process /data/local/tmp $DEX_SHELL_ENTRY_CLASS $quotedRemoteApk --flags 0x116",
+        "CLASSPATH=$remoteHelper app_process /data/local/tmp $DEX_SHELL_ENTRY_CLASS $quotedRemoteApk " +
+            "--flags 0x${flags.toString(16)}",
         log,
         timeoutMs = 120000,
     )
+    var installResult = runHelper(DEX_SHELL_INSTALL_FLAGS)
+    if ((installResult as? AdbShellResult.Output)?.text?.contains(GRANT_FLAG_DENIED) == true) {
+        log("Прошивка не даёт хелперу выдавать разрешения при установке — повторяю без этого (разрешения выдам после установки).")
+        installResult = runHelper(DEX_SHELL_INSTALL_FLAGS and INSTALL_GRANT_RUNTIME_PERMISSIONS.inv())
+    }
     Thread.sleep(2000) // helper коммитит сессию установки асинхронно — даём системе время дописать пакет
 
     val after = installedPackages(transport, log)
