@@ -113,8 +113,20 @@
   let sessionLog = [];
   let sessionHasActivity = false;
   let sessionSent = false;
+  // Паузы между строками — отдельной строкой в журнал сессии (на экран не выводим): по логу видно, где техник ждал
+  // и где программа молчала. Без времени нельзя было отличить «ждал пять минут» от «ушёл через десять секунд»
+  // (Belgee S50, 28.09).
+  const LOG_PAUSE_MS = 15000;
+  let lastLogAt = 0;
 
-  function log(text) {
+  function pauseText(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return `${s} с`;
+    if (s < 3600) return `${Math.floor(s / 60)} мин ${s % 60} с`;
+    return `${Math.floor(s / 3600)} ч ${Math.floor(s % 3600 / 60)} мин`;
+  }
+
+  function recordLine(text) {
     sessionLog.push(text);
     // Дозапись в прочный журнал сессии на диске (см. WebBridge.kt/
     // InstallLogQueue.kt) — переживает и обрыв сети (Wi-Fi ADB — телефон
@@ -122,6 +134,43 @@
     // вызов (Bridge.call блокирует JS-поток до возврата из Kotlin), но это
     // всего лишь один open/write/close — дешевле, чем кажется.
     Bridge.call("install_log_append", { line: text, activity: sessionHasActivity });
+  }
+
+  // Шапка журнала: версия, client_id и телефон — client_id новый после каждой переустановки, по нему телефон не
+  // узнать (Belgee S50, 28.09: десять «разных» клиентов за вечер).
+  function sessionHeaderLines() {
+    try {
+      const info = Bridge.call("app_version", {});
+      const lines = [`Magic SQD v${info.version} (Android) · client=${info.client_id}`];
+      if (info.device) lines.push(`Телефон: ${info.device} · Android ${info.android} (API ${info.sdk}) · ${new Date().toLocaleString("ru-RU")}`);
+      return lines;
+    } catch (e) { return []; /* не критично для установки — просто не будет диагностических строк */ }
+  }
+
+  // Лог этой модели уже ушёл (все этапы пройдены), а работа продолжается — продолжение отдельной сессией. Раньше
+  // строки после отправки дописывались мимо сервера.
+  function continueSession() {
+    sessionLog = [];
+    sessionHasActivity = false;
+    sessionSent = false;
+    lastLogAt = 0;
+    Bridge.call("install_log_session_start", {
+      brand: model.brand, model: model.display_label || model.name, modification: model.modification || "",
+    });
+    recordLine(`Продолжение работы с моделью: ${model.display_label} (начало этой сессии ушло отдельным логом)`);
+    sessionHeaderLines().forEach(recordLine);
+  }
+
+  // activity — реальное действие Kotlin-стороны (см. onAdbLog): только такие сессии уходят на сервер. quiet — только
+  // в журнал, без строки на экране (служебные пометки: пауза, свёрнута программа, нажатая кнопка).
+  function log(text, activity = false, quiet = false) {
+    if (sessionSent && model) continueSession();
+    if (activity) sessionHasActivity = true;
+    const now = Date.now();
+    if (lastLogAt && now - lastLogAt >= LOG_PAUSE_MS) recordLine(`… прошло ${pauseText(now - lastLogAt)} …`);
+    lastLogAt = now;
+    recordLine(text);
+    if (quiet) return;
     const level = classifyLogLevel(text);
     const line = el("div", { class: `log-line log-line-${level}` });
     line.innerHTML = highlightKeywords(text);
@@ -944,6 +993,7 @@
     sessionLog = [];
     sessionHasActivity = false;
     sessionSent = false;
+    lastLogAt = 0;
     // Новая сессия прочного журнала на диске (см. InstallLogQueue.kt) — model
     // уже присвоена вызывающим кодом (см. selectModel выше: сначала
     // scanner_select_model, потом openWizard()). Старая сессия (если была
@@ -1005,13 +1055,8 @@
     // Диагностическая шапка лога установки (та же причина, что у десктопной
     // версии — см. app/web/frontend/js/screens/stage_wizard.js: без версии
     // программы и client_id в присылаемом на сервер логе установки
-    // невозможно понять, с какой сборки пришла жалоба техника). На Android
-    // раньше этой строки не было вовсе — версия/id только тут появились в
-    // "app_version" (см. WebBridge.kt).
-    try {
-      const info = Bridge.call("app_version", {});
-      log(`Magic SQD v${info.version} (Android) · client=${info.client_id}`);
-    } catch (e) { /* не критично для установки — просто не будет диагностической строки */ }
+    // невозможно понять, с какой сборки пришла жалоба техника) — и телефон (см. sessionHeaderLines).
+    sessionHeaderLines().forEach((line) => log(line));
     Bridge.call("sync_model_payload", { model_key: model.key });
     pollSyncProgress("model", modelSyncLabel, "Скачиваю файлы модели с сервера...", modelSyncBar, modelSyncFill);
     Bridge.call("scanner_list_apks", {});
@@ -1222,8 +1267,7 @@
   }
 
   function onAdbLog(event) {
-    sessionHasActivity = true;
-    log(event.line);
+    log(event.line, true);
     const status=document.querySelector('.run-event');if(status&&!status.closest('.progress08'))status.textContent=event.line;
     const usbStatus=document.querySelector('.usb-operation-detail');if(usbStatus)usbStatus.textContent=event.line;
     const operationStatus=document.querySelector('.flow-operation-detail');if(operationStatus&&!operationStatus.closest('.flow-action-card'))operationStatus.textContent=event.line;
@@ -1618,27 +1662,39 @@
     });
   }
 
+  // Свернули программу (MainActivity.kt: onStop/onStart) — только строки в журнал. Раньше здесь лог сессии
+  // отправлялся и запечатывался, и всё, что было потом (докачка, запись, итог), на сервер не попадало (Belgee S50,
+  // 28.09: логи обрывались на «Скачиваю …»). Сессия живёт дальше и уходит целиком, когда закончится; если систему
+  // программу выгрузила в фоне — при следующем запуске (InstallLogQueue.recoverStaleCurrent: HIDDEN_LINE/SHOWN_LINE
+  // — те же начала строк).
+  let hiddenAt = 0;
+  window.__onAppHidden = function () {
+    if (!model || !screenWizard.classList.contains("active")) return;  // вне мастера сессии нет
+    hiddenAt = Date.now();
+    log("Программа свёрнута (погас экран или открыто другое приложение).", false, true);
+  };
+  window.__onAppShown = function () {
+    if (!hiddenAt) return;
+    const away = Date.now() - hiddenAt;
+    hiddenAt = 0;
+    lastLogAt = Date.now();  // пауза уже в самой строке
+    log(`Программа снова на экране (была свёрнута ${pauseText(away)}).`, false, true);
+  };
+
   // Системный жест/кнопка "назад" (см. MainActivity.kt: onBackPressedDispatcher
   // зовёт это через evaluateJavascript) — всё состояние в JS, поэтому решение
   // тоже тут: закрыть модалку/лог, если открыты; иначе на шаг назад по
   // мастеру или пикеру; и только если деться больше некуда — реально выйти
   // из приложения (Kotlin делает это по возврату "exit").
-  // Best-effort на случай, если техник свернул/закрыл приложение, не
-  // долистав мастер до конца и не нажав "Назад" явно (см. MainActivity.kt:
-  // onStop) — WebView в этот момент ещё жив, в отличие от полного убийства
-  // процесса системой, которое поймать вообще нечем.
-  window.__flushInstallLogOnStop = function () {
-    flushSessionLog(false);
-  };
-
   window.__handleBackPress = function () {
     if (document.querySelector("dialog[open]")) { document.querySelector("dialog[open]").dispatchEvent(new Event("cancel", {cancelable:true})); const d=document.querySelector("dialog[open]"); if(d && !d.querySelector(".accent:disabled")) d.close(); return "handled"; }
     if (closePhotoLightbox()) return "handled";
     if (closeDismissibleModal()) return "handled";
     if (logOverlayEl.classList.contains("open")) { setLogOpen(false); return "handled"; }
     if (screenWizard.classList.contains("active")) {
-      if(labInstallBusy){showLabBusyNotice();return "handled";}
+      if(labInstallBusy){log("Нажата «Назад» во время операции — программа попросила дождаться её окончания.",false,true);showLabBusyNotice();return "handled";}
       if (historyStack.length) { goBack(); return "handled"; }
+      log("Техник вышел из модели (кнопка «Назад»).", false, true);
       flushSessionLog(false);
       showScreen("picker");
       return "handled";
@@ -2585,14 +2641,19 @@
   }
 
   // block — номер блока этапа «Флешка» (renderFlashBlocksStage), итог уходит в flashBlockResults.
-  function beginUsbOperation(kind, stage, card, items = [], block = null) {
-    if (labInstallBusy) return false;
+  // note — подробности для журнала (что пишем). Нажатие и причина, по которой операция не началась, — строкой в
+  // журнал: раньше по логу было не понять, жал ли техник кнопку вообще (Belgee S50, 28.09).
+  function beginUsbOperation(kind, stage, card, items = [], block = null, note = "") {
+    const title = { files: "Запись файлов на флешку", flag: "Запись файла на флешку", prep_flag: "Запись файла на флешку", password: "Получение пароля ADB" }[kind] || "Работа с флешкой";
+    if (labInstallBusy) { log(`«${title}» не началась: ещё идёт другая операция.`, false, true); return false; }
     if (!usbConnected) {
+      log(`«${title}» не началась: флешка не подключена.`, false, true);
       usbStatusEl.textContent = "Сначала подключите флешку к телефону";
       usbConnectBtn.focus({ preventScroll: true });
       usbBarEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
       return false;
     }
+    log(`Нажато: «${title}»${note ? ` — ${note}` : ""}.`, false, true);
     usbOperation = { kind, index: stage.index, block };
     labInstallBusy = true;
     renderNav();
@@ -2601,7 +2662,7 @@
     const button = card.querySelector(":scope > .usb-step-action");
     button.querySelector("span:not(.ui-icon)").textContent = kind === "password" ? "Получаем пароль…" : "Записываем…";
     openStageRun({
-      title: { files: "Запись файлов на флешку", flag: "Запись файла на флешку", prep_flag: "Запись файла на флешку", password: "Получение пароля ADB" }[kind] || "Работа с флешкой",
+      title,
       stageIndex: stage.index, icon: kind === "password" ? "key" : "usb",
       tag: kind === "files" ? "stage" : `qr-${kind}`,
       // Список файлов — только у "files" (см. вызов ниже, usb_list_items);
@@ -2624,6 +2685,10 @@
       },
     });
     return true;
+  }
+
+  function usbWriteNote(files, selectedApks, sharedFolder) {
+    return `файлы этапа: ${files.length}, приложения: ${selectedApks.length}` + (sharedFolder ? `, комплект «${sharedFolder}»` : "");
   }
 
   function sendUsbOperation(method, args, stage) {
@@ -2678,7 +2743,7 @@
         const itemsResult = Bridge.call("usb_list_items", { files, sharedFolder, selectedApks });
         if (itemsResult?.ok && Array.isArray(itemsResult.items)) items = itemsResult.items;
       } catch { /* см. комментарий выше */ }
-      if (!beginUsbOperation("files", stage, writeCard, items)) return;
+      if (!beginUsbOperation("files", stage, writeCard, items, null, usbWriteNote(files, selectedApks, sharedFolder))) return;
       sendUsbOperation("usb_run_stage", {
         index: stage.index,
         files,
@@ -2920,7 +2985,7 @@
             const itemsResult = Bridge.call("usb_list_items", { files, sharedFolder, selectedApks });
             if (itemsResult && itemsResult.ok && Array.isArray(itemsResult.items)) items = itemsResult.items;
           } catch { /* сводка не должна мешать самой записи */ }
-          if (!beginUsbOperation("files", stage, card, items, k)) return;
+          if (!beginUsbOperation("files", stage, card, items, k, usbWriteNote(files, selectedApks, sharedFolder))) return;
           sendUsbOperation("usb_run_stage", { index: stage.index, files, sharedFolder, selectedApks, apksDest: block.apks_dest || "" }, stage);
         }, state === "active"));
         if (result) card.append(el("p", { class: "usb-step-feedback", role: "status", text: result.ok ? "Записано. Можно извлечь флешку." : result.error }));

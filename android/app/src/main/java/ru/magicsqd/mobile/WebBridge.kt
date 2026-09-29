@@ -182,6 +182,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "app_version" -> JSONObject()
                     .put("version", context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?")
                     .put("client_id", getOrCreateClientId())
+                    // Для журнала сессии: какой телефон — по client_id не понять (он новый после каждой переустановки).
+                    .put("device", "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}")
+                    .put("android", android.os.Build.VERSION.RELEASE ?: "?")
+                    .put("sdk", android.os.Build.VERSION.SDK_INT)
                     .toString()
                 "settings_info" -> settingsInfo().toString()
                 "settings_preferences" -> settingsPreferences().toString()
@@ -638,12 +642,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * использованием отмеченных техником/прикреплённых в этапе путей
      * (модель больше не докачивается целиком при открытии, см.
      * mobile_bridge.sync_payload). */
-    private fun ensureApksDownloaded(paths: List<String>, progress: ApkDownloadProgress? = null) {
+    private fun ensureApksDownloaded(paths: List<String>, progress: ApkDownloadProgress? = null,
+                                     sink: DownloadSink? = null) {
         if (paths.isEmpty()) return
         val pathsArr = JSONArray(paths)
         val resultJson = try {
             pyModule("mobile_bridge").callAttr(
-                "ensure_apks_downloaded", apkDir, carsDir, BASE_URL, pathsArr.toString(), progress
+                "ensure_apks_downloaded", apkDir, carsDir, BASE_URL, pathsArr.toString(), progress, sink
             ).toString()
         } catch (e: Exception) {
             if (progress == null) return
@@ -673,10 +678,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     /** cars/_shared/<folderName>/ целиком (см. mobile_bridge.sync_shared_folder_for)
      * — вызывается прямо перед записью usb-этапа с usb_shared_folder, а не
      * при открытии модели (см. usbRunStage). */
-    private fun syncSharedFolder(folderName: String) {
+    private fun syncSharedFolder(folderName: String, sink: DownloadSink? = null) {
         if (folderName.isBlank()) return
         val resultJson = try {
-            pyModule("mobile_bridge").callAttr("sync_shared_folder_for", carsDir, BASE_URL, folderName).toString()
+            pyModule("mobile_bridge").callAttr("sync_shared_folder_for", carsDir, BASE_URL, folderName, sink).toString()
         } catch (e: Exception) {
             return
         }
@@ -1334,19 +1339,38 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     // Файлы этапа (files/usb_files/step_N/...) и отмеченные
                     // техником APK качаются точечно прямо здесь — модель
                     // больше не докачивается целиком при открытии (см.
-                    // mobile_bridge.sync_payload).
-                    ensureApksDownloaded(files + selectedApks)
-                    if (sharedFolder.isNotBlank()) syncSharedFolder(sharedFolder)
+                    // mobile_bridge.sync_payload). Ход скачивания — сразу в журнал и в кольцо окна записи (см.
+                    // DownloadSink): раньше тут было тихо до конца скачивания.
+                    val sink = DownloadSink(::pushAdbLog) { done, total ->
+                        pushApkProgress(stageIndex, "", 0, 0, "running", ApkOperationProgress("download", done, total))
+                    }
+                    ensureApksDownloaded(files + selectedApks, sink = sink)
+                    if (sharedFolder.isNotBlank()) syncSharedFolder(sharedFolder, sink)
+                    sink.finish()
+                    val plan = scanUsbStageItems(files, sharedFolderDir, selectedApks)
+                    val writeStartedAt = System.currentTimeMillis()
+                    var filesWritten = 0
                     // "transfer" — та же фаза, что уже использует установка
                     // приложений для байтов, переданных по проводу (см.
                     // ApkOperationProgress) — для записи на флешку это
                     // ближайший существующий аналог байтового прогресса
                     // ВНУТРИ файла; отдельной фазы заводить не стали.
-                    writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog,
+                    val written = writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog,
                         onProgress = { path, bytesDone, bytesTotal, filesDone, filesTotal, state ->
+                            filesWritten = filesDone
                             pushApkProgress(stageIndex, path, filesDone, filesTotal, state,
                                 ApkOperationProgress("transfer", bytesDone, bytesTotal))
                         })
+                    val took = DownloadSink.durationText(System.currentTimeMillis() - writeStartedAt)
+                    pushAdbLog(
+                        if (written is StageRunResult.Success) {
+                            "Запись на флешку закончена: ${DownloadSink.files(plan.size)}, " +
+                                "${DownloadSink.megabytes(plan.sumOf { it.size })} за $took."
+                        } else {
+                            "Запись на флешку прервалась: записано $filesWritten из ${DownloadSink.ofFiles(plan.size)} за $took."
+                        }
+                    )
+                    written
                 }
             } catch (e: Exception) {
                 StageRunResult.Failed((e.message ?: "неизвестная ошибка"))

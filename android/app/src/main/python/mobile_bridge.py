@@ -352,14 +352,16 @@ def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
     return json.dumps({"downloaded": downloaded, "log": lines})
 
 
-def sync_shared_folder_for(cars_dir: str, base_url: str, folder_name: str) -> str:
+def sync_shared_folder_for(cars_dir: str, base_url: str, folder_name: str, sink=None) -> str:
     """cars/_shared/<folder_name>/ целиком (см. content_sync.sync_shared_folder)
     — вызывается прямо перед записью usb-этапа с usb_shared_folder (см.
-    WebBridge.kt: usbRunStage), а не при открытии модели."""
+    WebBridge.kt: usbRunStage), а не при открытии модели. sink (WebBridge.kt: DownloadSink) — строки журнала
+    сразу, а не списком после всего скачивания, и байты по мере прихода; без него — как раньше."""
     lines = []
-    log = lambda m: lines.append(m)
+    log = sink.line if sink is not None else lines.append
+    on_bytes = (lambda done, total: sink.progress(done, total)) if sink is not None else None
     downloaded = sync_shared_folder(base_url, Path(cars_dir), folder_name, log=log,
-                                     on_progress=_progress_cb("model"))
+                                     on_progress=_progress_cb("model"), on_bytes=on_bytes)
     return json.dumps({"downloaded": downloaded, "log": lines})
 
 
@@ -384,20 +386,26 @@ def list_apks(apk_dir: str, base_url: str) -> str:
 
 
 def ensure_apks_downloaded(apk_dir: str, cars_dir: str, base_url: str, paths_json: str,
-                           progress=None) -> str:
+                           progress=None, sink=None) -> str:
     """Докачивает то, чего ещё нет на диске, из paths_json — общую
     библиотеку (apk/) И "свои" файлы конкретной модели (files/pack*/...,
     files/adb_N/..., files/actions_i_j/...) теперь одинаково — см.
     apk_library.ensure_apks_downloaded. Вызывается перед adb_run_stage/
     adb_install_apks/usb_run_stage, для любых путей, которые этап реально
     использует. paths_json — JSON-массив абсолютных локальных путей (как и
-    весь остальной мост, строка, не нативный список — см. WebBridge.kt)."""
+    весь остальной мост, строка, не нативный список — см. WebBridge.kt). sink — как у sync_shared_folder_for:
+    строки журнала сразу и байты текущего файла (запись на флешку, где окна скачивания приложений нет)."""
     lines = []
     paths = json.loads(paths_json)
+    if progress is not None:
+        on_file_progress = lambda path, done, total: progress.update(path, done, total)
+    elif sink is not None:
+        on_file_progress = lambda path, done, total: sink.progress(done, total)
+    else:
+        on_file_progress = None
     downloaded = _ensure_apks_downloaded(Path(apk_dir), Path(cars_dir), base_url, paths,
-                                          log=lambda m: lines.append(m),
-                                          on_file_progress=(lambda path, done, total: progress.update(path, done, total))
-                                          if progress is not None else None,
+                                          log=sink.line if sink is not None else lines.append,
+                                          on_file_progress=on_file_progress,
                                           check_cancelled=(lambda: progress.checkCancelled())
                                           if progress is not None else lambda: None)
     return json.dumps({"downloaded": downloaded, "log": lines})

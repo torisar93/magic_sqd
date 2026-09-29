@@ -193,7 +193,11 @@
     async function onStart() {
       if (running || preparing || refreshing || !dialog.open || !opts) return;
       const drive = drives.find((d) => d.letter === driveSelect.value);
+      // Что нажал техник и почему запись не началась — строкой в журнал сессии (opts.log, stage_wizard.js): раньше
+      // там была одна итоговая строка, и по логу было не понять, что происходило (ПК 1.0.46, 28.09).
+      const journal = (line) => { try { opts.log?.(line); } catch { /* журнал не должен мешать записи */ } };
       if (!drive) {
+        journal("Запись на флешку не началась: не выбран накопитель.");
         setStatus("ready", "Выберите USB-накопитель", "Перед записью нужно выбрать флешку из списка.");
         return;
       }
@@ -213,13 +217,16 @@
             `Накопитель: ${drive.display || drive.letter}\nДиск: ${drive.letter} · ${drive.label || "без метки"} · ${sizeGb}\nФайловая система: ${fs}\n\nВсе данные на этом диске будут удалены безвозвратно, после чего на него будут записаны файлы установки.\n\nФорматировать именно этот накопитель?`,
             { title: "Форматирование накопителя" }
           );
+          if (!confirmed) journal("Техник отказался от форматирования — запись не начата.");
           if (!confirmed || revision !== runRevision || !dialog.open) return;
         }
+        journal(`Нажато «Записать на флешку»: ${drive.display || drive.letter}, `
+          + (shouldFormat ? `с форматированием в ${fs}.` : "без форматирования."));
         // Список файлов заранее — как на установке приложений, чтобы окно
         // прогресса сразу открылось с кольцом и очередью, а не пустым.
         // Это чисто визуальная сводка (см. usb_api.py:_scan_usb_items):
-        // ошибка/пустой список не должны мешать самой записи — тогда просто
-        // остаёмся на старой индетерминированной полосе, как раньше.
+        // ошибка/пустой список не должны мешать самой записи. Кольцо — всегда: в нём и докачка перед записью
+        // (usb_api.py: _DownloadMeter), а файлов, которые ещё не скачаны, в списке пока и нет.
         let items = [];
         try {
           const itemsResult = await window.pywebview.api.usb_list_items(
@@ -231,11 +238,9 @@
         if (revision !== runRevision || !dialog.open) return;
         running = true;
         preparing = false;
-        if (items.length) {
-          ringEl.dataset.stageIndex = String(launchOpts.stageIndex);
-          window.LabUI.busy(ringEl, "Запись на флешку", items);
-          ringEl.hidden = false;
-        }
+        ringEl.dataset.stageIndex = String(launchOpts.stageIndex);
+        window.LabUI.busy(ringEl, "Запись на флешку", items);
+        ringEl.hidden = false;
         updateControls();
         setStatus("writing", "Записываем файлы на флешку", "Не отключайте накопитель. Время зависит от скорости флешки и размера файлов.");
         // block — номер блока этапа «Флешка»: пишутся только его файлы (см. usb_api.py).
@@ -252,6 +257,7 @@
         clear(ringEl);
         delete ringEl.dataset.stageIndex;
         const message = error?.message || String(error);
+        journal(`Запись на флешку не началась: ${message}`);
         setStatus("error", "Запись не началась", message);
         log(message);
         logDetails.open = true;

@@ -20,6 +20,7 @@ from .api.qr_adb_api import QrAdbApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
 from .api.settings_api import DEBUG_LOG_ALL_MARKER, SettingsApi, is_under_program_files
+from ..os_info import os_description
 from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
@@ -116,6 +117,7 @@ class WebApi:
             "auth_email": self.auth_email,
             "auth_subscriber": self.auth_subscriber,
             "app_version": APP_VERSION,
+            "os": os_description(),
         }
 
     def client_log_error(self, message: str, stack: str = "") -> None:
@@ -310,6 +312,11 @@ class WebApi:
         должно ничего показывать технику при сбое — как и остальная
         best-effort телеметрия здесь."""
         append_current(self.base_dir, token, line, bool(has_activity))
+
+    def install_log_continue(self) -> str:
+        """Новый прочный журнал для продолжения сессии той же модели (stage_wizard.js: continueSession) — лог уже
+        ушёл (все этапы пройдены), а техник работает дальше; раньше эти строки на сервер не попадали."""
+        return self._install.continue_log_session()
 
     def install_log_send(self, brand: str, model: str, modification: str,
                           success: bool, log_text: str, token: str = "") -> None:

@@ -1,7 +1,8 @@
 // ПК: запись на флешку показывает то же кольцо с процентом/очередью файлов, что и установка приложений
 // (жалоба клиента, 2026-09-21 — видно только окно с анимацией, реального прогресса нет). Проверяем, что
 // app/web/frontend/js/screens/dialogs.js: usb зовёт usb_list_items ПЕРЕД usb_start и передаёт очередь в
-// window.LabUI.busy, а при пустом списке/ошибке сводки тихо остаётся на старой индетерминированной полосе.
+// window.LabUI.busy (кольцо — всегда, даже без списка: в нём и докачка перед записью), а что нажал техник и почему
+// запись не началась — пишет в журнал сессии (opts.log).
 "use strict";
 const { read, slice, assert, run, sleep } = require("./_util");
 
@@ -94,15 +95,16 @@ module.exports = async function () {
   assert(els["usb06-ring"].hidden === true, "кольцо скрыто после завершения записи");
   assert(els["usb06-ring"].children.length === 0, "кольцо очищено после завершения записи");
 
-  // 2) Пустой список файлов -> кольцо не показывается, старое поведение (индетерминированная полоса) как раньше.
+  // 2) Пустой список файлов (свежая установка: файлы ещё не скачаны) -> кольцо всё равно показано: в нём докачка перед
+  //    записью (usb_api.py: _DownloadMeter). Раньше тут была индетерминированная полоса, и всё скачивание окно стояло.
   pywebviewCalls.length = 0; labUiBusyCalls.length = 0;
   listItemsResult = { ok: true, items: [] };
   await startWriting({ modelKey: "Test/Model", stageIndex: 0, variant: null, selectedApkPaths: [] });
 
-  assert(labUiBusyCalls.length === 0, "LabUI.busy НЕ вызван при пустом списке файлов");
-  assert(els["usb06-ring"].hidden === true, "кольцо остаётся скрытым без списка файлов");
-  assert(els["usb-progress"].hidden === false, "старая индетерминированная полоса показана как раньше");
-  assert(pywebviewCalls.some((c) => c[0] === "usb_start"), "запись всё равно стартовала без списка файлов");
+  assert(labUiBusyCalls.length === 1 && labUiBusyCalls[0][2].length === 0, "кольцо без очереди файлов");
+  assert(els["usb06-ring"].hidden === false, "кольцо показано и без списка файлов");
+  assert(els["usb-progress"].hidden === true, "индетерминированная полоса не дублирует кольцо");
+  assert(pywebviewCalls.some((c) => c[0] === "usb_start"), "запись стартовала без списка файлов");
   eventHandlers.usb_finished({ success: true, message: "Готово" }); // сбросить running перед следующим open()
 
   // 3) usb_list_items падает с ошибкой -> сводка молча пропускается, сама запись не блокируется.
@@ -112,8 +114,7 @@ module.exports = async function () {
   await startWriting({ modelKey: "Test/Model", stageIndex: 0, variant: null, selectedApkPaths: [] });
   ctx.window.pywebview.api.usb_list_items = okListItems;
 
-  assert(labUiBusyCalls.length === 0, "ошибка сводки списка файлов не показывает кольцо");
-  assert(els["usb06-ring"].hidden === true, "кольцо остаётся скрытым при ошибке сводки");
+  assert(labUiBusyCalls.length === 1 && labUiBusyCalls[0][2].length === 0, "сбой сводки — кольцо без очереди");
   assert(pywebviewCalls.some((c) => c[0] === "usb_start"), "запись всё равно стартовала несмотря на сбой сводки");
   eventHandlers.usb_finished({ success: true, message: "Готово" });
 
@@ -139,4 +140,36 @@ module.exports = async function () {
   assert(finished.length === 1 && finished[0][0] === false, "onFinished вызван с неудачей: " + JSON.stringify(finished));
   assert(finished[0][1].message === "Флешка E: не найдена." && finished[0][1].cancelled === false,
     "причина и признак отмены переданы: " + JSON.stringify(finished[0][1]));
+
+  // 6) Журнал сессии (opts.log): что нажал техник и почему запись не началась — раньше там была одна итоговая строка
+  //    (ПК 1.0.46, 28.09: техники останавливали запись, а по логу было не понять, что происходило).
+  const journal = [];
+  const withLog = { modelKey: "Test/Model", stageIndex: 0, variant: null, selectedApkPaths: [], log: (line) => journal.push(line) };
+  await startWriting(withLog);
+  assert(journal.at(-1) === "Нажато «Записать на флешку»: USB (E:), без форматирования.", journal.at(-1));
+  await eventHandlers.usb_finished({ success: true, message: "Готово" });
+
+  journal.length = 0;
+  ctx.window.confirmDialog = async () => false;
+  usbApi.open(withLog);
+  await sleep(0);
+  els["usb-drive"].value = "E:";
+  els["usb-format"].checked = true;
+  await els["usb-start"].listeners.click();
+  assert(journal.join("|") === "Техник отказался от форматирования — запись не начата.", journal.join("|"));
+  ctx.window.confirmDialog = async () => true;
+
+  journal.length = 0;
+  const okStart = ctx.window.pywebview.api.usb_start;
+  ctx.window.pywebview.api.usb_start = async () => ({ ok: false, error: "Копирование уже выполняется." });
+  await startWriting(withLog);
+  ctx.window.pywebview.api.usb_start = okStart;
+  assert(journal.at(-1) === "Запись на флешку не началась: Копирование уже выполняется.", journal.join("|"));
+
+  journal.length = 0;
+  usbApi.open(withLog);
+  await sleep(0);
+  els["usb-drive"].value = "";
+  await els["usb-start"].listeners.click();
+  assert(journal.join("|") === "Запись на флешку не началась: не выбран накопитель.", journal.join("|"));
 };

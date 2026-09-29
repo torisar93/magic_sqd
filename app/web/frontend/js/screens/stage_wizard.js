@@ -114,14 +114,68 @@
   // прочного журнала на диске (app/pending_install_logs.py): install_log_append
   // на каждую строку лога, install_log_send с этим же токеном при завершении.
   let sessionToken = "";
+  // Паузы между строками — отдельной строкой только в журнал сессии (в панели лога её нет): по логу видно, где
+  // техник ждал и где программа молчала (как на Android — app.js: LOG_PAUSE_MS).
+  const LOG_PAUSE_MS = 15000;
+  let lastLogAt = 0;
 
-  function log(message) {
+  function pauseText(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return `${s} с`;
+    if (s < 3600) return `${Math.floor(s / 60)} мин ${s % 60} с`;
+    return `${Math.floor(s / 3600)} ч ${Math.floor(s % 3600 / 60)} мин`;
+  }
+
+  function recordLine(message) {
     sessionLog.push(message);
-    logFn(`[${model.display_label}] ${message}`);
     // Дозапись на диск (см. app/web/bridge.py: install_log_append) — переживает
     // и обрыв сети, и вылет процесса; не ждём промис (best-effort, как и
     // остальная телеметрия здесь).
     window.pywebview.api.install_log_append(sessionToken, message, sessionHasActivity).catch(() => {});
+  }
+
+  // Шапка журнала: версия программы и компьютер (система) — по client_id его не понять.
+  function sessionHeaderLines() {
+    const info = window.appInfo;
+    if (!info) return [];
+    const build = info.is_win7 ? "Win7/x86" : "x64";
+    const warn = info.under_program_files ? " · ВНИМАНИЕ: установлено в Program Files" : "";
+    const lines = [`Magic SQD v${info.app_version} (${build}) · client=${info.client_id}${warn}`];
+    if (info.os) lines.push(`Компьютер: ${info.os} · ${new Date().toLocaleString("ru-RU")}`);
+    return lines;
+  }
+
+  // Лог этой модели уже ушёл (все этапы пройдены), а работа продолжается — продолжение отдельной сессией; раньше
+  // строки после отправки дописывались мимо сервера. Токен прочного журнала приходит асинхронно — строки, набранные
+  // до него, уходят в журнал на диске одним куском.
+  function continueSession() {
+    sessionLog = [];
+    sessionHasActivity = false;
+    sessionSent = false;
+    lastLogAt = 0;
+    sessionToken = "";
+    const lines = sessionLog;
+    [`Продолжение работы с моделью: ${model.display_label} (начало этой сессии ушло отдельным логом)`,
+      ...sessionHeaderLines()].forEach((line) => lines.push(line));
+    window.pywebview.api.install_log_continue().then((token) => {
+      if (sessionLog !== lines || !token) return;  // модель уже сменили
+      sessionToken = token;
+      window.__installLogSessionToken = token;
+      window.pywebview.api.install_log_append(token, lines.join("\n"), sessionHasActivity).catch(() => {});
+    }).catch(() => {});
+  }
+
+  function log(message) {
+    if (sessionSent && model) {
+      const active = sessionHasActivity;  // взвели прямо перед этой строкой (после отправки флаг сброшен)
+      continueSession();
+      sessionHasActivity = active;
+    }
+    const now = Date.now();
+    if (lastLogAt && now - lastLogAt >= LOG_PAUSE_MS) recordLine(`… прошло ${pauseText(now - lastLogAt)} …`);
+    lastLogAt = now;
+    recordLine(message);
+    logFn(`[${model.display_label}] ${message}`);
   }
 
   // success=true — все этапы пройдены (см. advanceAfter); false — техник
@@ -135,6 +189,7 @@
       model.brand || "", model.display_label || model.name || "", model.modification || "",
       success, sessionLog.join("\n"), sessionToken,
     );
+    sessionHasActivity = false;  // дальше — только действия продолжения (см. log)
   }
 
   // -- инициализация экрана (один раз, до выбора модели) ------------------
@@ -467,6 +522,7 @@
     sessionLog = [];
     sessionHasActivity = false;
     sessionSent = false;
+    lastLogAt = 0;
     model = selectedModel;
     activeCommand = null; commandResults.clear();
     done.clear();
@@ -516,11 +572,7 @@
     // sessionHasActivity (см. её докстring выше), иначе КАЖДОЕ открытие
     // модели снова стало бы "реальной активностью", ту же ошибку недавно
     // уже чинили (v0.9.7).
-    if (window.appInfo) {
-      const build = window.appInfo.is_win7 ? "Win7/x86" : "x64";
-      const warn = window.appInfo.under_program_files ? " · ВНИМАНИЕ: установлено в Program Files" : "";
-      log(`Magic SQD v${window.appInfo.app_version} (${build}) · client=${window.appInfo.client_id}${warn}`);
-    }
+    sessionHeaderLines().forEach((line) => log(line));
     if (result.error) {
       loadError = result.error;
       loadErrorNeedsUpdate = Boolean(result.needs_update);
@@ -1546,6 +1598,7 @@
         selectedApkPaths: stage.usb_copy_selected_apks
           ? chooser.paths()
           : selectedApkPaths(), titleSuffix: `${model.display_label} — ${stage.title}`,
+        log,
         onFinished: (success, result) => {
           // Прежний usb-этап в журнал сессии не писал ничего — запись на флешку на ПК в логах не была видна.
           sessionHasActivity = true;
@@ -1997,6 +2050,7 @@
             modelKey: model.key, stageIndex: stage.index, variant: null, block: k, drive: drive?.current()?.letter,
             selectedApkPaths: block.copy_selected_apks ? chooser.paths() : [],
             titleSuffix: `${model.display_label} — ${block.title || stage.title}`,
+            log,
             onFinished: (success, result) => {
               // Как у прежнего QR-этапа: что и когда записали — в журнале сессии (разбор жалоб).
               sessionHasActivity = true;

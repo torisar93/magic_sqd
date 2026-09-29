@@ -8,6 +8,7 @@ concurrent.futures), поэтому переносится почти без и�
 import json
 import os
 import shutil
+import threading
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -152,10 +153,11 @@ def download_file(base_url: str, remote_path: str, dest: Path, chunk_size: int =
             pass
 
 
-def _download_one(base_url: str, remote_path: str, local_path: Path, log, mtime: float | None = None) -> bool:
+def _download_one(base_url: str, remote_path: str, local_path: Path, log, mtime: float | None = None,
+                  on_chunk=None) -> bool:
     log(f"Скачиваю {remote_path}...")
     try:
-        download_file(base_url, remote_path, local_path, mtime=mtime)
+        download_file(base_url, remote_path, local_path, mtime=mtime, on_progress=on_chunk)
         return True
     except ContentSyncError as exc:
         log(f"Не удалось скачать {remote_path}: {exc}")
@@ -163,12 +165,14 @@ def _download_one(base_url: str, remote_path: str, local_path: Path, log, mtime:
 
 
 def sync_tree(base_url: str, remote_subpath: str, local_dir: Path, manifest, log=lambda m: None,
-              skip_dirs=(), no_recurse_dirs=(), on_progress=lambda done, total: None) -> int:
+              skip_dirs=(), no_recurse_dirs=(), on_progress=lambda done, total: None, on_bytes=None) -> int:
     """Скачивает из manifest всё, чего в local_dir ещё нет (или отличается
     по размеру/mtime). on_progress(done, total) вызывается сразу с (0, N) —
     чтобы UI сразу знал общее число файлов, ещё до первой закачки — а затем
     после каждого завершённого файла (успешного или нет, чтобы бар всегда
-    дошёл до конца). Возвращает число скачанных файлов."""
+    дошёл до конца). on_bytes(получено, всего) — байты по всем файлам сразу, по мере прихода (из потоков
+    закачки): комплект для флешки бывает под полгигабайта, и без этого окно записи минутами просто крутилось
+    (Belgee S50, 28.09). Возвращает число скачанных файлов."""
     remote_subpath = remote_subpath.strip("/")
     items = filter_manifest(manifest, remote_subpath, skip_dirs=skip_dirs, no_recurse_dirs=no_recurse_dirs)
 
@@ -180,16 +184,33 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path, manifest, log
         local_path = local_dir / rel
         if not _is_stale(local_path, item):
             continue
-        to_download.append((item["path"], local_path, item.get("mtime")))
+        to_download.append((item["path"], local_path, item.get("mtime"), int(item.get("size") or 0)))
+
+    received: dict[str, int] = {}
+    received_lock = threading.Lock()
+    total_bytes = sum(size for *_rest, size in to_download)
+
+    def chunk_reporter(path: str):
+        if on_bytes is None:
+            return None
+
+        def report(done: int, _expected: int) -> None:
+            with received_lock:
+                received[path] = done
+                got = sum(received.values())
+            on_bytes(got, max(total_bytes, got))
+        return report
 
     total = len(to_download)
     on_progress(0, total)
     done_count = 0
     downloaded = 0
     if to_download:
+        if on_bytes is not None:
+            on_bytes(0, total_bytes)
         with ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as executor:
-            futures = [executor.submit(_download_one, base_url, path, local_path, log, mtime)
-                       for path, local_path, mtime in to_download]
+            futures = [executor.submit(_download_one, base_url, path, local_path, log, mtime, chunk_reporter(path))
+                       for path, local_path, mtime, _size in to_download]
             for future in futures:
                 if future.result():
                     downloaded += 1
@@ -201,7 +222,7 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path, manifest, log
 
 
 def sync_shared_folder(base_url: str, cars_dir: Path, folder_name: str, log=lambda m: None,
-                        on_progress=lambda done, total: None) -> int:
+                        on_progress=lambda done, total: None, on_bytes=None) -> int:
     """Скачивает cars/_shared/<folder_name>/ целиком — общие наборы файлов
     для "usb"-этапов многих моделей (StepSpec.usb_shared_folder), которые
     sync_scripts НЕ качает (no_recurse_dirs пропускает подпапки _shared/,
@@ -213,7 +234,7 @@ def sync_shared_folder(base_url: str, cars_dir: Path, folder_name: str, log=lamb
     # Без skip_dirs/no_recurse_dirs — тут нет вложенных files/usb_files-по-
     # модельному смыслу, качаем ВСЁ дерево общей папки как есть.
     return sync_tree(base_url, f"cars/_shared/{folder_name}", cars_dir / "_shared" / folder_name, manifest,
-                      log=log, on_progress=on_progress)
+                      log=log, on_progress=on_progress, on_bytes=on_bytes)
 
 
 def sync_scripts(base_url: str, cars_dir: Path, log=lambda m: None,

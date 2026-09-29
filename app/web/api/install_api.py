@@ -1131,6 +1131,17 @@ class InstallApi:
         self._session_log_lines.append(str(message))
         event_bridge.push({"kind": "install_log", "text": message, "passive": True})
 
+    def continue_log_session(self) -> str:
+        """Продолжение сессии той же модели после отправки её лога (см. WebApi.install_log_continue): новый прочный
+        журнал на диске и чистый аварийный буфер — при закрытии окна уйдёт только продолжение, не всё заново."""
+        meta = self._session_meta or {"brand": "", "model": "", "modification": ""}
+        self._session_log_lines = []
+        self._session_active_lines = []
+        self._session_flushed = True
+        self._session_log_token = start_pending_log_session(
+            self.base_dir, meta["brand"], meta["model"], meta["modification"])
+        return self._session_log_token
+
     def mark_install_log_sent(self) -> None:
         """Зовётся из WebApi.install_log_send сразу после того, как JS сама
         успешно/неуспешно ПОПЫТАЛАСЬ отправить лог этой сессии (успех

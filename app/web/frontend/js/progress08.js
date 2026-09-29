@@ -6,7 +6,7 @@
   // remove — «Откатить в сток» (stage_run.js: openRollback): та же очередь, но удаляем поставленное.
   // grant — разрешения только что поставленному приложению: строка «Готово» только после них, иначе на последнем
   // приложении кольцо закрывалось галочкой, а разрешения ещё шли (владелец, 2026-09-28: «не понятно, зависла ли»).
-  const phaseNames={download:'Скачивание приложений',transfer:'Передача приложения',install:'Установка приложения',grant:'Выдача разрешений',remove:'Удаление приложений',prepare:'Подготовка',done:'Готово'};
+  const phaseNames={download:'Скачивание файлов',transfer:'Передача приложения',install:'Установка приложения',grant:'Выдача разрешений',remove:'Удаление приложений',prepare:'Подготовка',done:'Готово'};
   const stateLabels={running:'Установка…',done:'Готово',error:'Ошибка'},removeLabels={running:'Удаление…',done:'Удалено',error:'Не удалось'};
   function setProgress(box, measurement) {
     const graphic=box.querySelector('.install-graphic'),bar=box.querySelector('.run-progress'),count=box.querySelector('.install-count');

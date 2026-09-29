@@ -30,6 +30,12 @@ object InstallLogQueue {
     private const val QUEUE_DIR_NAME = "queue"
     const val STALE_MARKER = "=== Предыдущий запуск программы не завершился штатно ==="
     const val CRASH_MARKER = "=== ПРИЛОЖЕНИЕ ЗАВЕРШИЛОСЬ С НЕОБРАБОТАННЫМ ИСКЛЮЧЕНИЕМ ==="
+    // Строки app.js (__onAppHidden/__onAppShown) и итог сессии, которую закрыли свёрнутой: смахнули из недавних
+    // или система выгрузила программу в фоне — это не вылет, и лог досылается целиком при следующем запуске.
+    const val HIDDEN_LINE = "Программа свёрнута"
+    const val SHOWN_LINE = "Программа снова на экране"
+    const val CLOSED_WHILE_HIDDEN_MARKER =
+        "=== Программу закрыли или система выгрузила её, пока она была свёрнута, — сессия не закончена ==="
 
     private fun pendingDir(filesDir: File) = File(filesDir, PENDING_DIR_NAME)
     private fun currentLogFile(filesDir: File) = File(pendingDir(filesDir), CURRENT_LOG_NAME)
@@ -123,8 +129,18 @@ object InstallLogQueue {
         val meta = try { JSONObject(metaFile.readText()) } catch (_: Exception) { JSONObject() }
         val logText = try { currentLogFile(filesDir).readText() } catch (_: Exception) { "" }
         writeQueueEntry(filesDir, platform, meta.optString("brand"), meta.optString("model"),
-            meta.optString("modification"), false, "$STALE_MARKER\n$logText")
+            meta.optString("modification"), false, recoveredText(logText))
         clearCurrent(filesDir)
+    }
+
+    /** Свёрнутая до конца сессия (после «Программа свёрнута» больше не было «снова на экране») — пометка в конце,
+     * что программу закрыли в фоне; иначе, как раньше, маркер незавершённого запуска в начале. */
+    internal fun recoveredText(logText: String): String {
+        val lines = logText.lines()
+        val hidden = lines.indexOfLast { it.startsWith(HIDDEN_LINE) }
+        val shown = lines.indexOfLast { it.startsWith(SHOWN_LINE) }
+        if (hidden >= 0 && hidden > shown) return logText.trimEnd('\n') + "\n" + CLOSED_WHILE_HIDDEN_MARKER
+        return "$STALE_MARKER\n$logText"
     }
 
     private fun listQueue(filesDir: File): List<File> {

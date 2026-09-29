@@ -174,17 +174,18 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    override fun onStart() {
+        super.onStart()
+        webView.evaluateJavascript("(window.__onAppShown && window.__onAppShown())", null)
+    }
+
     override fun onStop() {
         super.onStop()
-        // Лучшее из возможного на случай, если техник свернул/закрыл
-        // приложение, не долистав мастер до конца и не нажав "Назад" явно
-        // (window.__handleBackPress выше ловит только явный уход) — WebView
-        // ещё жив на onStop (в отличие от полного убийства процесса системой,
-        // которое поймать вообще нечем), так что JS успевает отправить лог
-        // сессии как брошенной, если было что слать (см. app.js:
-        // flushSessionLog/window.__flushInstallLogOnStop).
-        webView.evaluateJavascript(
-            "(window.__flushInstallLogOnStop && window.__flushInstallLogOnStop())", null
-        )
+        // Программу свернули (погас экран, открыли другое приложение). Раньше здесь лог сессии отправлялся и
+        // запечатывался — всё, что происходило потом (докачка, запись, итог), на сервер уже не попадало (Belgee S50,
+        // 28.09: логи обрывались на «Скачиваю …»). Теперь только строка в журнал: сессия живёт дальше в прочном
+        // журнале на диске и уходит целиком, когда закончится, — или при следующем запуске, если систему программу
+        // выгрузила (см. app.js: __onAppHidden, InstallLogQueue.recoverStaleCurrent).
+        webView.evaluateJavascript("(window.__onAppHidden && window.__onAppHidden())", null)
     }
 }

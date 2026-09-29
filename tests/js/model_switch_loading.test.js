@@ -32,6 +32,7 @@ module.exports = async function () {
     "let sessionLog=[], sessionHasActivity=false, sessionSent=false, sessionToken='', nextAction=null;",
     "const commandResults=new Map(), prefetchedStages=new Set(), failedStages=new Map(), done=new Set(), historyStack=[];",
     "function ensureMounted(){} function flushSessionLog(){} function log(){} function advanceAfter(){}",
+    "function sessionHeaderLines(){ return []; } let lastLogAt=0;",
     "function render(){ renders.push({ key: model.key, stages: stages.map((s) => s.title), loadError }); }",
     slice(src, "  function updateSyncProgress(", "  // -- построение разметки", file),
     slice(src, "  async function open(selectedModel) {", "  // -- навигация", file),
