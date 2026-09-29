@@ -258,9 +258,10 @@
     const status = window.LabUI.busy(host, options.title || "Выполняется этап", items);
     const liveDetail = !items.length;
     if (!items.length) {
-      // Без очереди приложений это простой «идёт процесс»: счётчик не нужен,
-      // подпись фазы — только если её задали.
-      status.querySelector(".install-count")?.remove();
+      // Без очереди приложений это простой «идёт процесс»: подпись фазы — только если её задали. Поле процента
+      // не убираем: пустое оно скрыто (progress08.css), а запись на флешку без списка файлов (свежая установка —
+      // файлы ещё не скачаны) показывает в нём ход. Раньше его убирали, и на Android кольцо всю докачку и запись
+      // стояло без процента и «X из Y МБ» (Belgee S50, лог №1718, 29.09).
       const glyph = status.querySelector(".install-center>.ui-icon");
       const custom = options.icon ? ringIcon(options.icon) : null;
       if (glyph && custom) glyph.replaceWith(custom);

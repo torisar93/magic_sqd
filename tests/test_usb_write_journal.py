@@ -79,6 +79,14 @@ def test_downloads_before_writing_move_the_ring(env):
     assert all(e["stage_index"] == 0 and e["path"] == "" for e in ring)
 
 
+def test_write_moves_the_ring_as_a_flash_write(env):
+    run(env)
+    ring = [e for e in env.events if e["kind"] == "apk_progress" and e.get("phase") != "download"]
+    # своя фаза: над кольцом «Запись на флешку», а не «Передача приложения» (progress08.js; владелец, 29.09)
+    assert ring and {e["phase"] for e in ring} == {"write"}
+    assert ring[-1]["state"] == "done" and ring[-1]["completed"] == ring[-1]["total"] == 3
+
+
 def test_stop_says_how_far_the_write_got(env, monkeypatch):
     def write_then_stop(ctx, block):
         ctx._on_progress("update.bin", 8, 8, 1, 3, "done")

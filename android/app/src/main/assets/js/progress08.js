@@ -6,7 +6,9 @@
   // remove — «Откатить в сток» (stage_run.js: openRollback): та же очередь, но удаляем поставленное.
   // grant — разрешения только что поставленному приложению: строка «Готово» только после них, иначе на последнем
   // приложении кольцо закрывалось галочкой, а разрешения ещё шли (владелец, 2026-09-28: «не понятно, зависла ли»).
-  const phaseNames={download:'Скачивание файлов',transfer:'Передача приложения',install:'Установка приложения',grant:'Выдача разрешений',remove:'Удаление приложений',prepare:'Подготовка',done:'Готово'};
+  // write — запись на флешку (usb_api.py, WebBridge.kt: usbRunStage): раньше шла фазой transfer, и над ходом записи
+  // стояло «Передача приложения», а под кольцом — «Ожидаем ответ устройства» (владелец, 2026-09-29).
+  const phaseNames={download:'Скачивание файлов',transfer:'Передача приложения',install:'Установка приложения',grant:'Выдача разрешений',remove:'Удаление приложений',write:'Запись на флешку',prepare:'Подготовка',done:'Готово'};
   const stateLabels={running:'Установка…',done:'Готово',error:'Ошибка'},removeLabels={running:'Удаление…',done:'Удалено',error:'Не удалось'};
   function setProgress(box, measurement) {
     const graphic=box.querySelector('.install-graphic'),bar=box.querySelector('.run-progress'),count=box.querySelector('.install-count');
@@ -22,9 +24,11 @@
       percent=Math.max(0,Math.min(100,percent));
       graphic.style.setProperty('--progress',percent/100);
       bar.max=100;bar.value=percent;bar.setAttribute('aria-valuetext',`${Math.floor(percent)}%, ${title.textContent}`);
-      count.textContent=`${Math.floor(percent)}%`;
+      // Поля процента может не быть (окно этапа до 1.0.50 его убирало): без проверки падали здесь, и подписи
+      // ниже («X из Y МБ», строка под кольцом) не обновлялись вовсе.
+      if(count)count.textContent=`${Math.floor(percent)}%`;
     }else{
-      graphic.style.removeProperty('--progress');bar.removeAttribute('value');bar.removeAttribute('aria-valuetext');count.textContent='';
+      graphic.style.removeProperty('--progress');bar.removeAttribute('value');bar.removeAttribute('aria-valuetext');if(count)count.textContent='';
     }
     const hint=box.querySelector('.install-phase-detail');
     if(known&&Number(measurement.bytes_total)>0){
@@ -87,12 +91,17 @@
     const summary=box.querySelector('.queue-summary');if(summary)summary.textContent=`${removing?'Удалено':'Готово'} ${completed} из ${rows.length}`;
     if(e.phase){
       setProgress(box,e);
-      if(row){const label={download:'Скачивание…',transfer:'Передача…',install:'Установка…',grant:'Разрешения…',remove:'Удаление…'}[e.phase];if(row.dataset.state==='running'&&label)row.querySelector('small').textContent=label;}
+      if(row){const label={download:'Скачивание…',transfer:'Передача…',install:'Установка…',grant:'Разрешения…',remove:'Удаление…',write:'Запись…'}[e.phase];if(row.dataset.state==='running'&&label)row.querySelector('small').textContent=label;}
     }else if(e.state==='running')setProgress(box,{phase:'install',determinate:false});
-    if(row)box.querySelector('.run-event').textContent=row.querySelector('.run-app-name').textContent;
+    const eventLine=box.querySelector('.run-event');
+    if(row)eventLine.textContent=row.querySelector('.run-app-name').textContent;
+    // Файла нет в очереди (запись на флешку после свежей установки — список пуст, файлы ещё качаются): что происходит —
+    // словами, а не заготовка «Ожидаем ответ устройства».
+    else if(e.phase==='download')eventLine.textContent='Скачиваем с сервера';
+    else if(e.path){const total=Number(e.total),done=Number(e.completed);const nth=total>0?` · файл ${Math.min(e.state==='done'?done:done+1,total)} из ${total}`:'';eventLine.textContent=String(e.path).split(/[\\/]/).pop()+nth;}
     if(rows.length&&completed===rows.length){
       setProgress(box,{phase:'done',determinate:true,percent:100});
-      box.querySelector('.install-phase-detail').textContent=removing?'Все приложения удалены':'Все приложения установлены';
+      box.querySelector('.install-phase-detail').textContent=removing?'Все приложения удалены':e.phase==='write'?'Все файлы записаны':'Все приложения установлены';
       box.querySelector('.install-center>.ui-icon').replaceWith(icon('check'));
     }
   };

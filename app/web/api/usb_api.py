@@ -350,7 +350,7 @@ class UsbApi:
         event_bridge.push({
             "kind": "apk_progress", "stage_index": stage_index, "path": path,
             "completed": completed, "total": total, "state": state,
-            "phase": "transfer", "determinate": bytes_total > 0,
+            "phase": "write", "determinate": bytes_total > 0,  # «Запись на флешку» (progress08.js), не «Передача приложения»
             "bytes_done": bytes_done, "bytes_total": bytes_total,
         })
 

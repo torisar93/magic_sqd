@@ -830,7 +830,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * именно сейчас. Фоновым daemon-потоком — не должно задерживать запуск. */
     private fun startInstallLogRecovery() {
         Thread {
-            InstallLogQueue.recoverAndDrainAtStartup(context.filesDir, "android", ::sendInstallLogViaChaquopy)
+            InstallLogQueue.recoverAndDrainAtStartup(context.filesDir, "android", ::sendInstallLogViaChaquopy) { lastLineAt ->
+                ProcessExitNote.describe(context, lastLineAt)
+            }
         }.apply { isDaemon = true; name = "magicsqd-install-log-recovery" }.start()
     }
 
@@ -1350,16 +1352,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     val plan = scanUsbStageItems(files, sharedFolderDir, selectedApks)
                     val writeStartedAt = System.currentTimeMillis()
                     var filesWritten = 0
-                    // "transfer" — та же фаза, что уже использует установка
-                    // приложений для байтов, переданных по проводу (см.
-                    // ApkOperationProgress) — для записи на флешку это
-                    // ближайший существующий аналог байтового прогресса
-                    // ВНУТРИ файла; отдельной фазы заводить не стали.
+                    // "write" — своя фаза записи на флешку в кольце (progress08.js: «Запись на флешку», под кольцом —
+                    // файл и «файл N из M»); раньше шла фазой установки "transfer", и над записью стояло «Передача
+                    // приложения».
                     val written = writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog,
                         onProgress = { path, bytesDone, bytesTotal, filesDone, filesTotal, state ->
                             filesWritten = filesDone
                             pushApkProgress(stageIndex, path, filesDone, filesTotal, state,
-                                ApkOperationProgress("transfer", bytesDone, bytesTotal))
+                                ApkOperationProgress("write", bytesDone, bytesTotal))
                         })
                     val took = DownloadSink.durationText(System.currentTimeMillis() - writeStartedAt)
                     pushAdbLog(

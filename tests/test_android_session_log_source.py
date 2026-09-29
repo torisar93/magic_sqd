@@ -32,11 +32,41 @@ def test_recovery_knows_the_session_ended_minimized():
     js = APP_JS.read_text(encoding="utf-8")
     hidden = re.search(r'HIDDEN_LINE = "([^"]+)"', queue).group(1)
     shown = re.search(r'SHOWN_LINE = "([^"]+)"', queue).group(1)
-    assert f'log("{hidden} (' in js and f"log(`{shown} (" in js  # те же начала строк, что пишет app.js
+    assert f"log(`{hidden}: " in js and f"log(`{shown} (" in js  # те же начала строк, что пишет app.js
     recovered = _block(queue, "internal fun recoveredText(")
     assert "indexOfLast { it.startsWith(HIDDEN_LINE) }" in recovered and "hidden > shown" in recovered
     assert "CLOSED_WHILE_HIDDEN_MARKER" in recovered and '"$STALE_MARKER\\n$logText"' in recovered
-    assert "recoveredText(logText)" in _block(queue, "private fun recoverStaleCurrent(")
+    # как Android закрыл программу — в самом конце, после маркера (лог №1718, 29.09: «само вылетело»)
+    assert 'text.trimEnd(\'\\n\') + "\\n" + exitNote' in recovered
+    assert "recoveredText(logText, exitNote(logFile.lastModified()))" in _block(queue, "private fun recoverStaleCurrent(")
+    assert "recoverStaleCurrent(filesDir, platform, exitNote)" in _block(queue, "fun recoverAndDrainAtStartup(")
+    bridge = _code(KOTLIN / "WebBridge.kt")
+    assert "ProcessExitNote.describe(context, lastLineAt)" in _block(bridge, "private fun startInstallLogRecovery(")
+
+
+def test_minimized_line_says_what_hid_the_program():
+    activity = _code(KOTLIN / "MainActivity.kt")
+    assert "__onAppHidden(${JSONObject.quote(hiddenReason())})" in _block(activity, "override fun onStop()")
+    reason = _block(activity, "private fun hiddenReason()")
+    assert "!power.isInteractive) return \"погас экран\"" in reason
+    assert "isKeyguardLocked == true) return \"телефон заблокирован\"" in reason
+    assert "открыто другое приложение или нажата «Домой»" in reason
+    js = APP_JS.read_text(encoding="utf-8")
+    assert "window.__onAppHidden = function (why)" in js
+
+
+def test_exit_note_names_android_reason_for_this_session_only():
+    note = _code(KOTLIN / "ProcessExitNote.kt")
+    describe = _block(note, "fun describe(")
+    assert "Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null" in describe  # ApplicationExitInfo — Android 11+
+    assert "getHistoricalProcessExitReasons(context.packageName, 0, 5)" in describe
+    assert "it.processName == context.packageName" in describe  # главный процесс, не отдельные
+    assert "info.timestamp + 60_000 < lastLineAt" in describe  # запись о закрытии раньше конца журнала — не эта сессия
+    reasons = _block(note, "internal fun reasonText(")
+    for code in ("REASON_LOW_MEMORY", "REASON_USER_REQUESTED", "REASON_CRASH", "REASON_CRASH_NATIVE", "REASON_ANR",
+                 "REASON_SIGNALED", "REASON_OTHER"):
+        assert f"ApplicationExitInfo.{code} ->" in reasons, code
+    assert 'const val PREFIX = "Как Android закрыл программу:"' in note
 
 
 def test_flash_write_reports_downloads_live_and_sums_up():

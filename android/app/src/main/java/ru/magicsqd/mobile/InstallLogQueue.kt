@@ -114,8 +114,9 @@ object InstallLogQueue {
      * достойной внимания (была реальная попытка установки), кладём в очередь
      * с success=false и текстовым маркером в начале лога; без маркера — была
      * просто открыта модель, слать нечего, как и сегодня. */
+    /** exitNote(время последней строки) — как Android закрыл прошлый запуск (ProcessExitNote), строкой в конец. */
     @Synchronized
-    private fun recoverStaleCurrent(filesDir: File, platform: String) {
+    private fun recoverStaleCurrent(filesDir: File, platform: String, exitNote: (Long) -> String?) {
         val metaFile = currentMetaFile(filesDir)
         if (!metaFile.isFile) {
             clearCurrent(filesDir)
@@ -127,20 +128,23 @@ object InstallLogQueue {
             return
         }
         val meta = try { JSONObject(metaFile.readText()) } catch (_: Exception) { JSONObject() }
-        val logText = try { currentLogFile(filesDir).readText() } catch (_: Exception) { "" }
+        val logFile = currentLogFile(filesDir)
+        val logText = try { logFile.readText() } catch (_: Exception) { "" }
         writeQueueEntry(filesDir, platform, meta.optString("brand"), meta.optString("model"),
-            meta.optString("modification"), false, recoveredText(logText))
+            meta.optString("modification"), false, recoveredText(logText, exitNote(logFile.lastModified())))
         clearCurrent(filesDir)
     }
 
     /** Свёрнутая до конца сессия (после «Программа свёрнута» больше не было «снова на экране») — пометка в конце,
-     * что программу закрыли в фоне; иначе, как раньше, маркер незавершённого запуска в начале. */
-    internal fun recoveredText(logText: String): String {
+     * что программу закрыли в фоне; иначе, как раньше, маркер незавершённого запуска в начале. exitNote — в самом
+     * конце: чем закончился процесс, уже после последней строки журнала. */
+    internal fun recoveredText(logText: String, exitNote: String? = null): String {
         val lines = logText.lines()
         val hidden = lines.indexOfLast { it.startsWith(HIDDEN_LINE) }
         val shown = lines.indexOfLast { it.startsWith(SHOWN_LINE) }
-        if (hidden >= 0 && hidden > shown) return logText.trimEnd('\n') + "\n" + CLOSED_WHILE_HIDDEN_MARKER
-        return "$STALE_MARKER\n$logText"
+        val text = if (hidden >= 0 && hidden > shown) logText.trimEnd('\n') + "\n" + CLOSED_WHILE_HIDDEN_MARKER
+        else "$STALE_MARKER\n$logText"
+        return if (exitNote.isNullOrBlank()) text else text.trimEnd('\n') + "\n" + exitNote
     }
 
     private fun listQueue(filesDir: File): List<File> {
@@ -195,8 +199,9 @@ object InstallLogQueue {
         platform: String,
         sendInstallLog: (platform: String, brand: String, model: String, modification: String,
                          success: Boolean, logText: String) -> String,
+        exitNote: (lastLineAt: Long) -> String? = { null },
     ) {
-        recoverStaleCurrent(filesDir, platform)
+        recoverStaleCurrent(filesDir, platform, exitNote)
         drainQueue(filesDir, sendInstallLog)
     }
 }

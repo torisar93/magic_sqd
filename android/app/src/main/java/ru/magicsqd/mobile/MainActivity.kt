@@ -1,10 +1,12 @@
 package ru.magicsqd.mobile
 
 import android.annotation.SuppressLint
+import android.app.KeyguardManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
 import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -17,6 +19,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
+import org.json.JSONObject
 
 /**
  * Главный экран — новый мобильный интерфейс с нуля (assets/index.html),
@@ -186,6 +189,18 @@ class MainActivity : AppCompatActivity() {
         // 28.09: логи обрывались на «Скачиваю …»). Теперь только строка в журнал: сессия живёт дальше в прочном
         // журнале на диске и уходит целиком, когда закончится, — или при следующем запуске, если систему программу
         // выгрузила (см. app.js: __onAppHidden, InstallLogQueue.recoverStaleCurrent).
-        webView.evaluateJavascript("(window.__onAppHidden && window.__onAppHidden())", null)
+        webView.evaluateJavascript("(window.__onAppHidden && window.__onAppHidden(${JSONObject.quote(hiddenReason())}))", null)
+    }
+
+    /** Что увело программу с экрана — в строку «Программа свёрнута: …». Раньше строка была общей («погас экран или
+     * открыто другое приложение»), и было не понять, что свернуло программу (Belgee S50, лог №1718, 29.09: «само
+     * вылетело, ничего не нажимал»). Какое именно приложение открылось, Android не говорит. */
+    private fun hiddenReason(): String {
+        if (isFinishing) return "окно программы закрыто"
+        val power = getSystemService(POWER_SERVICE) as? PowerManager
+        if (power != null && !power.isInteractive) return "погас экран"
+        val keyguard = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguard?.isKeyguardLocked == true) return "телефон заблокирован"
+        return "открыто другое приложение или нажата «Домой»"
     }
 }

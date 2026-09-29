@@ -55,15 +55,19 @@ module.exports = async function () {
   api.log("Нажато: «Запись файлов на флешку».", false, true);
   assert(panelLines === shown && appended().at(-1) === "Нажато: «Запись файлов на флешку».", "quiet — только журнал");
 
-  // 3) свернули программу — строка в журнал, лог НЕ отправляется; вернулись — сколько была свёрнута, без «прошло»
-  ctx.window.__onAppHidden();
+  // 3) свернули программу — строка в журнал с тем, что её свернуло (MainActivity.kt: hiddenReason), лог НЕ
+  //    отправляется; вернулись — сколько была свёрнута, без «прошло»
+  ctx.window.__onAppHidden("погас экран");
   assert(sent().length === 0, "при сворачивании лог больше не отправляется и не запечатывается");
   clock.t += 125_000;
   ctx.window.__onAppShown();
   const tail = appended().slice(-2);
-  assert(tail[0] === "Программа свёрнута (погас экран или открыто другое приложение)." &&
+  assert(tail[0] === "Программа свёрнута: погас экран." &&
     tail[1] === "Программа снова на экране (была свёрнута 2 мин 5 с).", "свёрнута/вернулась: " + tail.join("|"));
-  ctx.wizardActive = false; ctx.window.__onAppHidden(); ctx.wizardActive = true;
+  ctx.window.__onAppHidden();  // прежний MainActivity (без причины) — общая строка
+  assert(appended().at(-1) === "Программа свёрнута: погас экран или открыто другое приложение.", appended().at(-1));
+  ctx.window.__onAppShown();
+  ctx.wizardActive = false; ctx.window.__onAppHidden("погас экран"); ctx.wizardActive = true;
   assert(appended().at(-1).startsWith("Программа снова на экране"), "вне мастера сворачивание не пишется");
 
   // 4) лог ушёл (все этапы пройдены), а работа идёт дальше — продолжение отдельной сессией, не мимо сервера
@@ -81,7 +85,7 @@ module.exports = async function () {
   assert(sent().length === 2 && sent()[1].includes("Запускаю приложение"), "продолжение тоже ушло");
 
   // 5) продолжение без реальных действий — не шлём (как и раньше пустые сессии)
-  api.log("Программа свёрнута (погас экран или открыто другое приложение).", false, true);
+  api.log("Программа свёрнута: открыто другое приложение или нажата «Домой».", false, true);
   api.flushSessionLog(false);
   assert(sent().length === 2, "без действий — не отправляется");
 

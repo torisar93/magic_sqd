@@ -1667,11 +1667,13 @@
   // 28.09: логи обрывались на «Скачиваю …»). Сессия живёт дальше и уходит целиком, когда закончится; если систему
   // программу выгрузила в фоне — при следующем запуске (InstallLogQueue.recoverStaleCurrent: HIDDEN_LINE/SHOWN_LINE
   // — те же начала строк).
+  // why — что увело программу с экрана (MainActivity.kt: hiddenReason): «погас экран», «телефон заблокирован»,
+  // «открыто другое приложение или нажата «Домой»».
   let hiddenAt = 0;
-  window.__onAppHidden = function () {
+  window.__onAppHidden = function (why) {
     if (!model || !screenWizard.classList.contains("active")) return;  // вне мастера сессии нет
     hiddenAt = Date.now();
-    log("Программа свёрнута (погас экран или открыто другое приложение).", false, true);
+    log(`Программа свёрнута: ${why || "погас экран или открыто другое приложение"}.`, false, true);
   };
   window.__onAppShown = function () {
     if (!hiddenAt) return;
