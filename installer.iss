@@ -39,7 +39,13 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; вдруг не успеет — Restart Manager сам закроет magic_sqd.exe, держащий
 ; файлы, вместо ошибки "файл занят другим процессом". В /VERYSILENT диалог
 ; закрытия приложений не показывается, закрывает молча.
-CloseApplications=yes
+; force: в тихом автообновлении закрыть принудительно всё, что держит файлы программы. С «yes» Restart Manager
+; только просил закрыться, а программа без окна (после окна она ещё останавливает adb и досылает журнал) не
+; закрывалась: [InstallDelete] стирал незанятое, копирование спотыкалось о занятое, /SUPPRESSMSGBOXES отвечал
+; «Прервать» — и программа больше не запускалась («Cannot find win-arm64», Honor на Windows 11, 30.09). *.pyd —
+; модули Python из _internal, их тоже держит запущенная программа.
+CloseApplications=force
+CloseApplicationsFilter=*.exe,*.dll,*.pyd,*.chm
 RestartApplications=no
 
 [Languages]

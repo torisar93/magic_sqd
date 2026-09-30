@@ -171,17 +171,18 @@ fun writeFileToUsb(
 ) {
     val segments = destRelativePath.split("/").filter { it.isNotEmpty() }
     require(segments.isNotEmpty()) { "Пустой путь назначения" }
-
-    var dir: UsbFile = fs.rootDirectory
-    for (i in 0 until segments.size - 1) {
-        val name = segments[i]
-        dir = dir.search(name) ?: dir.createDirectory(name)
-    }
     val fileName = segments.last()
 
     val errors = mutableListOf<Exception>()
     for (attempt in 1..WRITE_RETRY_ATTEMPTS) {
         try {
+            // Папки — тоже внутри попытки: раньше их создание стояло до повторов, и сбой флешки на нём уходил наружу
+            // сырым «IOException: MAX_RECOVERY_ATTEMPTS…» без повторов и без подсказки (лог №1779, файл в magic_sqd/).
+            var dir: UsbFile = fs.rootDirectory
+            for (i in 0 until segments.size - 1) {
+                val name = segments[i]
+                dir = dir.search(name) ?: dir.createDirectory(name)
+            }
             // Свежий createFile на каждой попытке — предыдущая могла оставить
             // на флешке частично записанный (битый) файл того же имени.
             // РАНЬШЕ эти два вызова стояли ВНЕ try (см. ниже) — если шина ещё
@@ -225,6 +226,7 @@ fun writeFileToUsb(
             }
         }
     }
+    errors.forEach { UsbFlashSession.noteFailure(it.message) }  // следующая операция подключится к флешке заново
     throw UsbWriteFailedException(usbWriteFailureMessage(fileName, errors), errors.last())
 }
 
@@ -255,6 +257,9 @@ fun writeUsbStage(
     // _scan_usb_items ещё раз прямо перед созданием UsbContext).
     val filesTotal = scanUsbStageItems(files, sharedFolderDir, selectedApkPaths).size
     var filesDone = 0
+    // Всё ли скачано — ДО записи: без интернета часть файлов не скачивается, и раньше запись шла до первого
+    // недостающего — «записано 6 из 7», и только потом «Файл не скачан» (лог №1818, Coolray).
+    (files + selectedApkPaths).firstOrNull { !File(it).exists() }?.let { return StageRunResult.Failed("Файл не скачан: $it") }
     return try {
         // Пишем svlog.flag — со флешки уходит svengmode.flag прошлого шага (и наоборот), см. TRIGGER_FLAGS.
         removeOtherTriggerFlags(fs, files.map { File(it).name }, log)
@@ -282,6 +287,8 @@ fun writeUsbStage(
     } catch (e: UsbWriteFailedException) {
         StageRunResult.Failed(e.message.orEmpty())
     } catch (e: Exception) {
-        StageRunResult.Failed("${e.javaClass.simpleName}: ${e.message}")
+        UsbFlashSession.noteFailure(e.message)
+        // Сбой флешки вне записи одного файла — тем же понятным текстом, без имени класса («IOException: …», лог №1779).
+        StageRunResult.Failed(if (e is IOException) usbWriteFailureMessage("файлы", listOf(e)) else "${e.javaClass.simpleName}: ${e.message}")
     }
 }

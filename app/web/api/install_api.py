@@ -24,6 +24,7 @@ from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_mani
                              sync_model_subfolder, sync_shared_folder)
 from ...install_context import InstallCancelled
 from ...rollback import rollback
+from ...uninstall_helper import HELPER_NAME
 from ...pending_install_logs import start_session as start_pending_log_session
 from ...runner import InstallRunner
 from ...scanner import scan_apk_dir_with_remote
@@ -481,7 +482,7 @@ class InstallApi:
         # "Error type 3 / Error: Activity class {...} does not exist." —
         # returncode всё равно 0) — код возврата тут ненадёжен, поэтому
         # известные фразы ошибок ищем прямо в тексте, а не только через него.
-        translated = self._translate_console_error(f"{output}\n{error}")
+        translated = self._translate_console_error(error) or self._translate_console_error(output)
         if translated:
             self._console_log(translated)
             if output:
@@ -559,13 +560,20 @@ class InstallApi:
         "delete_failed_abort": "операция прервана системой",
     }
 
+    # Ошибку ищем только в первых строках ответа: настоящая ошибка — одна-две строки («cat: /x: No such file or
+    # directory», «Error: Activity class … does not exist», первая строка трассировки). В длинном выводе (логи,
+    # dumpsys) те же слова встречаются внутри текста, и над успешным выводом стояло «Ошибка: файл не найден» (лог
+    # №1773, 29.09 — то же на Android: AdbConsoleFormat.translateError).
+    _CONSOLE_ERROR_HEAD_LINES = 3
+
     @classmethod
     def _translate_console_error(cls, text: str) -> str | None:
-        lowered = text.lower()
+        head = "\n".join([line for line in text.splitlines() if line.strip()][:cls._CONSOLE_ERROR_HEAD_LINES])
+        lowered = head.lower()
         for needle, translation in cls._CONSOLE_ERROR_TRANSLATIONS:
             if needle in lowered:
                 return translation
-        match = re.search(r"failure\s*\[([\w_]+)]", text, re.IGNORECASE)
+        match = re.search(r"failure\s*\[([\w_]+)]", head, re.IGNORECASE)
         if match:
             code = match.group(1).lower()
             reason = cls._PM_FAILURE_REASONS.get(code, f"код {match.group(1)}")
@@ -1009,7 +1017,8 @@ class InstallApi:
         try:
             outcome = rollback(Adb(self.adb_path, device_serial), apps, self._on_log,
                                lambda path, done, total, state: self._push_apk_install(
-                                   stage_index, path, done, total, state, "remove"))
+                                   stage_index, path, done, total, state, "remove"),
+                               helper=self.base_dir / "cars" / "_shared" / HELPER_NAME)
         except Exception as exc:  # noqa: BLE001 - итог должен дойти до окна в любом случае
             self._on_log(f"Откат в сток прерван: {exc}")
         finally:

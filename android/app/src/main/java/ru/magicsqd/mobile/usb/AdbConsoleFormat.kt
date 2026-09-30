@@ -49,14 +49,21 @@ object AdbConsoleFormat {
 
     private val FAILURE_REGEX = Regex("failure\\s*\\[(\\w+)]", RegexOption.IGNORE_CASE)
 
+    /** Ошибку ищем только в начале ответа: настоящая ошибка — первые строки («cat: /x: No such file or directory»,
+     * «Error: Activity class … does not exist», первая строка трассировки). В длинном выводе (логи, dumpsys) те же
+     * слова встречаются внутри текста — раньше весь вывод подменялся «файл не найден» (лог №1773, 29.09: cat куска
+     * logcat на Jolion). */
+    private const val ERROR_HEAD_LINES = 3
+
     /** None, если известного случая нет — тогда используется исходный текст
      * (см. вызывающий код). */
     fun translateError(text: String): String? {
-        val lowered = text.lowercase()
+        val head = text.lineSequence().filter { it.isNotBlank() }.take(ERROR_HEAD_LINES).joinToString("\n")
+        val lowered = head.lowercase()
         for ((needle, translation) in ERROR_TRANSLATIONS) {
             if (lowered.contains(needle)) return translation
         }
-        FAILURE_REGEX.find(text)?.let { return "Ошибка: команда отклонена системой (код ${it.groupValues[1]})." }
+        FAILURE_REGEX.find(head)?.let { return "Ошибка: команда отклонена системой (код ${it.groupValues[1]})." }
         return null
     }
 

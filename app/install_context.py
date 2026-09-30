@@ -14,6 +14,7 @@ from pathlib import Path
 from .adb_utils import Adb, AdbError
 from .apk_package import read_package_name
 from .scanner import read_apk_mock_location
+from .uninstall_helper import HELPER_NAME as UNINSTALL_HELPER_NAME, uninstall_via_helper
 
 
 class InstallCancelled(RuntimeError):
@@ -52,6 +53,12 @@ _ABI_TO_ISA = {"arm64-v8a": "arm64", "armeabi-v7a": "arm", "armeabi": "arm", "x8
                "mips": "mips", "mips64": "mips64"}
 _PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
 _REBOOT_NEEDED_RE = re.compile(r"reboot your device|now reboot", re.IGNORECASE)
+
+
+def _completed_text(result) -> str:
+    """stdout+stderr ответа adb shell одной строкой (для хелперов, которые разбирают текст сами)."""
+    return (result.stdout or "") + (result.stderr or "")
+
 
 # Платформа Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
 # блокирует обычный "pm install" на уровне прошивки; единственный найденный
@@ -410,6 +417,21 @@ class InstallContext:
     def shell(self, command, **kwargs):
         self.check_cancelled()
         return self._adb.shell(command, **kwargs)
+
+    def uninstall_via_helper(self, package: str) -> bool:
+        """Для cars/_shared/adb_permissions.py: uninstall_app (кнопка «Удалить приложение») — прошивка не пускает
+        pm uninstall («error: closed»), удаляем dex-хелпером (app/uninstall_helper.py). True — удалено; причину отказа
+        пишет в лог. Файл adb_permissions.py приходит с сервера и в старые версии — там метода нет, он проверяет
+        его наличие сам."""
+        if self.shared_dir is None:
+            return False
+        self.log("Магнитола не пускает pm uninstall — удаляю через dex-хелпер...")
+        removed, reason = uninstall_via_helper(
+            self.push, lambda command: _completed_text(self.shell(command, check=False, timeout=90)),
+            self.shared_dir / UNINSTALL_HELPER_NAME, package)
+        if not removed:
+            self.log(f"dex-хелпер не удалил: {reason}")
+        return removed
 
     def shell_log(self, command, **kwargs):
         """Как shell(), но явно пишет в лог и саму команду, и её вывод

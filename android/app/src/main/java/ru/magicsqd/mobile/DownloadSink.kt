@@ -17,7 +17,14 @@ class DownloadSink(
     private var lastLogAt = startedAt
     private var sawBytes = false
 
-    fun line(text: String) = log(text)
+    private var failed = 0
+
+    /** Строки Python (mobile_bridge.py) — сразу в журнал; «Не удалось скачать …» ещё и считаем — для итога. */
+    @Synchronized
+    fun line(text: String) {
+        if (text.startsWith("Не удалось скачать")) failed++
+        log(text)
+    }
 
     @Synchronized
     fun progress(done: Long, total: Long) {
@@ -33,9 +40,12 @@ class DownloadSink(
         }
     }
 
-    /** Итог подготовки — только если что-то действительно качалось (иначе запись начинается сразу). */
+    /** Итог подготовки — только если что-то действительно качалось (иначе запись начинается сразу). Не скачалось
+     * что-то — так и пишем: раньше было «Файлы для записи скачаны за 7 мин», хотя 7 файлов не скачались (лог №1818). */
+    @Synchronized
     fun finish() {
-        if (sawBytes) log("Файлы для записи скачаны за ${durationText(System.currentTimeMillis() - startedAt)}.")
+        if (failed > 0) log("Скачано не всё: не скачались ${files(failed)} — проверьте интернет на телефоне.")
+        else if (sawBytes) log("Файлы для записи скачаны за ${durationText(System.currentTimeMillis() - startedAt)}.")
     }
 
     companion object {

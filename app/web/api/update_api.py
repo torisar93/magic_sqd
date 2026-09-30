@@ -196,6 +196,39 @@ echo "$(date) swap: готово"
 """.replace("__EXE__", MAC_EXE_NAME)
 
 
+# Сколько .bat обновления ждёт, пока программа закроется целиком, прежде чем запустить установщик (раз в ~1 с).
+UPDATE_WAIT_SECONDS = 60
+
+
+def update_bat_text(pid: int, installer_path: Path) -> str:
+    """.bat, который запускает установщик ТОЛЬКО после выхода нашей программы (pid). Раньше ждал 3 с (ping -n 4), а
+    после окна программа ещё останавливает adb (до 15 с) и досылает журнал — установщик приходил раньше. Его
+    [InstallDelete] стирает _internal, занятые процессом файлы остаются, копирование спотыкается о них, и в тихом
+    режиме (/SUPPRESSMSGBOXES → «Прервать») установка откатывается без стёртого: программа не запускалась —
+    «Cannot find win-arm64» (скриншот техника, Honor на Windows 11, 30.09; чистая переустановка помогла).
+    Не закрылась за UPDATE_WAIT_SECONDS — taskkill. Сначала, как раньше, 3 с: если проверка процесса не сработает,
+    хуже прежнего не станет. Системные утилиты — полным путём (в PATH бывает find из Git). Пауза — через ping, а не
+    timeout: у timeout.exe в процессе без консоли нет stdin («Input redirection is not supported»)."""
+    sys32 = r"%SystemRoot%\System32"
+    return (
+        "@echo off\r\n"
+        f"{sys32}\\ping.exe -n 4 127.0.0.1 >nul\r\n"
+        "set n=0\r\n"
+        ":wait\r\n"
+        f'{sys32}\\tasklist.exe /FI "PID eq {pid}" /NH | {sys32}\\find.exe "{pid}" >nul\r\n'
+        "if errorlevel 1 goto run\r\n"
+        "set /a n+=1\r\n"
+        f"if %n% geq {UPDATE_WAIT_SECONDS} goto kill\r\n"
+        f"{sys32}\\ping.exe -n 2 127.0.0.1 >nul\r\n"
+        "goto wait\r\n"
+        ":kill\r\n"
+        f"{sys32}\\taskkill.exe /F /PID {pid} >nul 2>&1\r\n"
+        f"{sys32}\\ping.exe -n 3 127.0.0.1 >nul\r\n"
+        ":run\r\n"
+        f'start "" "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
+    )
+
+
 class UpdateApi:
     def __init__(self, base_dir: Path, is_win7: bool = False):
         self.base_dir = base_dir
@@ -495,16 +528,7 @@ class UpdateApi:
         обёртке в кавычки — cmd.exe читает его как обычный текстовый скрипт
         построчно, а не как один аргумент командной строки."""
         bat_path = Path(tempfile.gettempdir()) / "magicsqd_update.bat"
-        # Пауза — через ping, а не timeout: timeout.exe завершается сразу с
-        # ошибкой "Input redirection is not supported", если у процесса нет
-        # настоящего stdin (у нашего GUI-процесса без консоли его нет), и
-        # тогда задержка пропадала бы вовсе. ping от stdin не зависит.
-        bat_path.write_text(
-            "@echo off\r\n"
-            "ping -n 4 127.0.0.1 >nul\r\n"
-            f'start "" "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n',
-            encoding="utf-8",
-        )
+        bat_path.write_text(update_bat_text(os.getpid(), installer_path), encoding="utf-8")
         # CREATE_NO_WINDOW, а не DETACHED_PROCESS: у DETACHED_PROCESS cmd.exe
         # вообще не получает консоли и заводит НОВОЕ ВИДИМОЕ окно под каждую
         # консольную команду внутри .bat (ping/timeout) — именно оно и

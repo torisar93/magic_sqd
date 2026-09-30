@@ -1,5 +1,7 @@
 package ru.magicsqd.mobile.usb
 
+import java.io.File
+
 /**
  * Порт cars/_shared/adb_permissions.py:grant_all_permissions на Kotlin —
  * нужен для installApkViaLocalinstall/installApkViaDexShell (см. AdbInstall.kt):
@@ -379,7 +381,7 @@ object AdbPermissions {
     fun uninstallApp(context: android.content.Context, pkg: String, log: (String) -> Unit) {
         log("Удаляю приложение: $pkg")
         if (pkg in systemAppsByUs(log)) { removeSystemAppByUs(context, pkg, log); return }
-        when (val r = removePackage(pkg, log)) {
+        when (val r = removePackage(pkg, log, uninstallHelper(context))) {
             Removal.Removed -> log("Готово.")
             Removal.Blocked -> log("Не удалось удалить: $MANUAL_REMOVAL")
             is Removal.Failed -> log("Не удалось удалить: ${r.reason}")
@@ -398,17 +400,57 @@ object AdbPermissions {
     const val MANUAL_REMOVAL = "эта магнитола не даёт удалять приложения через программу — " +
         "удалите штатно на самой магнитоле (Настройки → Приложения)."
 
-    /** pm uninstall без записи в лог итога — общий для кнопки «Удалить приложение» и «Откатить в сток». */
-    fun removePackage(pkg: String, log: (String) -> Unit): Removal =
+    /** pm uninstall без записи в лог итога — общий для кнопки «Удалить приложение» и «Откатить в сток». Прошивка не
+     * пускает pm (поток сразу закрывается: Geely OneOS/Monji, VOLGA/N155) — удаляем dex-хелпером (removeViaHelper),
+     * и только если не вышло — Blocked («удалите штатно»). helper — cars/_shared/uninstall_helper.dex. */
+    fun removePackage(pkg: String, log: (String) -> Unit, helper: File? = null): Removal =
         when (val r = safeShell("pm uninstall $pkg", log)) {
             is AdbShellResult.Output -> {
                 val text = r.text.trim()
                 if (text.contains("success", ignoreCase = true) && !text.contains("failure", ignoreCase = true)) Removal.Removed
                 else Removal.Failed(text.ifBlank { "устройство не ответило" })
             }
-            is AdbShellResult.Rejected -> Removal.Blocked
+            is AdbShellResult.Rejected -> if (helper != null) removeViaHelper(pkg, helper, log) else Removal.Blocked
             is AdbShellResult.Failed -> Removal.Failed(r.reason)
         }
+
+    const val UNINSTALL_HELPER = "uninstall_helper.dex"
+    private const val UNINSTALL_HELPER_REMOTE = "/data/local/tmp/uninstall_helper.dex"
+    private val PACKAGE_NAME = Regex("[A-Za-z0-9_.]+")
+
+    fun uninstallHelper(context: android.content.Context): File = File(context.filesDir, "cars/_shared/$UNINSTALL_HELPER")
+
+    /** Наш dex-хелпер удаления (исходник — helpers/uninstall_helper): app_process от имени shell →
+     * PackageInstaller.uninstall. Прошивки, закрывшие pm, пропускают app_process — так же ставит хелпер установки.
+     * Откат в сток на N155 упирался в «удалите штатно» (логи №797, №962, №1664, №1746). Проверено на эмуляторе
+     * Android 9: установленное — «Success», штатное — «Failure [DELETE_FAILED_INTERNAL_ERROR]». ПК —
+     * app/uninstall_helper.py. */
+    private fun removeViaHelper(pkg: String, helper: File, log: (String) -> Unit): Removal {
+        if (!PACKAGE_NAME.matches(pkg)) return Removal.Blocked
+        if (!helper.isFile) {
+            log("dex-хелпер не удалил: нет файла $UNINSTALL_HELPER — обновите каталог.")
+            return Removal.Blocked
+        }
+        log("Магнитола не пускает pm uninstall — удаляю через dex-хелпер...")
+        val pushed = try {
+            AdbSession.push(PushSource.of(helper), UNINSTALL_HELPER_REMOTE, log)
+        } catch (e: AdbLinkLostException) {
+            AdbSession.markLinkLost()
+            return Removal.Failed(e.message ?: "связь с магнитолой потеряна")
+        }
+        if (pushed is AdbPushResult.Failed) return Removal.Failed(pushed.reason)
+        safeShell("chmod 644 $UNINSTALL_HELPER_REMOTE", log)
+        val text = when (val r = safeShell(
+            "CLASSPATH=$UNINSTALL_HELPER_REMOTE app_process /data/local/tmp MagicSqdUninstaller $pkg", log, 90_000)) {
+            is AdbShellResult.Output -> r.text.trim()
+            is AdbShellResult.Rejected -> "команда отклонена: ${r.reason}"
+            is AdbShellResult.Failed -> return Removal.Failed(r.reason)
+        }
+        safeShell("rm -f $UNINSTALL_HELPER_REMOTE", log)
+        if (text.contains("success", ignoreCase = true) && !text.contains("failure", ignoreCase = true)) return Removal.Removed
+        log("dex-хелпер не удалил: ${text.ifBlank { "хелпер не ответил" }}")
+        return Removal.Blocked
+    }
 
     /** Отключить/включить приложение — то же, что desktop cars/_shared/
      * adb_permissions.py: disable_app/enable_app (до 2026-09-23 на Android

@@ -749,7 +749,7 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
 def _run_with_crash_log(admin_mode: bool, log_prefix: str, title: str) -> None:
     try:
         run(admin_mode, log_prefix, title)
-    except Exception:
+    except Exception as exc:
         import traceback
         text = traceback.format_exc()
         _log_step("EXCEPTION:\n" + text)
@@ -758,6 +758,19 @@ def _run_with_crash_log(admin_mode: bool, log_prefix: str, title: str) -> None:
             (base_dir / f"{log_prefix}crash.log").write_text(text, encoding="utf-8")
         except OSError:
             pass
+        # Повреждённая установка (прерванное обновление) — понятное окно «запустите установщик поверх» вместо
+        # трассировки PyInstaller (см. app/startup_errors.py). Только Windows: там такое и случалось.
+        from app.startup_errors import broken_install_message
+        friendly = broken_install_message(exc)
+        if friendly and sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(None, friendly, f"{title} — не удалось запустить", 0x10)  # MB_ICONERROR
+                sys.exit(1)
+            except SystemExit:
+                raise
+            except Exception:  # noqa: BLE001 — не вышло показать своё окно — прежнее ниже
+                pass
         try:
             import tkinter.messagebox as messagebox
             messagebox.showerror(

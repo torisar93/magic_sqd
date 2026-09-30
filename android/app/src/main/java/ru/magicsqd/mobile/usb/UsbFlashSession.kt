@@ -22,6 +22,16 @@ object UsbFlashSession {
 
     val isMounted: Boolean get() = fs != null
 
+    /** Флешка перестала отвечать посреди операции (libaums: MAX_RECOVERY_ATTEMPTS) — это подключение дальше падает
+     * сразу, даже если флешку не трогали: «записано 0 из 25 файлов за 0 с» трижды подряд (Belgee X70, лог №1779,
+     * 29.09). Следующая операция сначала подключается к флешке заново (WebBridge.remountIfReplugged). */
+    @Volatile var broken = false
+        private set
+
+    fun noteFailure(message: String?) {
+        if (device != null && message?.contains("MAX_RECOVERY_ATTEMPTS") == true) broken = true
+    }
+
     /** Смонтированная флешка всё ещё вставлена в телефон. Флешку для QR ADB и флагов Jolion носят в магнитолу
      * и обратно; заново вставленная — уже другое USB-устройство (новое имя /dev/bus/usb/…), а старое
      * подключение libaums на ней падает MAX_RECOVERY_ATTEMPTS. */
@@ -32,8 +42,12 @@ object UsbFlashSession {
     }
 
     fun disconnect() {
+        // Старое подключение закрываем: к той же флешке (её не вынимали) libaums иначе не подключится заново —
+        // интерфейс остаётся занят прежним соединением. Вынутую — закрыть не выйдет, это не страшно.
+        try { device?.close() } catch (_: Exception) { }
         device = null
         fs = null
+        broken = false
     }
 
     fun connectBlocking(context: Context, log: (String) -> Unit): Result<FileSystem> {

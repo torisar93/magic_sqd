@@ -895,7 +895,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             val (text, ok) = when (val r = AdbSession.shell(trimmed, ::pushAdbLog)) {
                 is AdbShellResult.Output -> {
                     val out = r.text.trim()
-                    (AdbConsoleFormat.translateError(out) ?: AdbConsoleFormat.formatOutput(trimmed, out) ?: out) to true
+                    // Перевод ошибки — над самим ответом, а не вместо него (как на ПК: install_api._log_console_result).
+                    (AdbConsoleFormat.translateError(out)?.let { "$it\n$out" }
+                        ?: AdbConsoleFormat.formatOutput(trimmed, out) ?: out) to true
                 }
                 is AdbShellResult.Rejected ->
                     (AdbConsoleFormat.translateError(r.reason) ?: "Команда отклонена устройством: ${r.reason}") to false
@@ -926,7 +928,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             when (val r = AdbSession.shell(trimmed, ::pushAdbLog)) {
                 is AdbShellResult.Output -> if (r.text.isNotBlank()) {
                     val text = r.text.trim()
-                    pushAdbLog(AdbConsoleFormat.translateError(text)
+                    // Перевод ошибки — над самим ответом, а не вместо него: раньше вывод пропадал целиком (лог №1773).
+                    pushAdbLog(AdbConsoleFormat.translateError(text)?.let { "$it\n$text" }
                         ?: AdbConsoleFormat.formatOutput(trimmed, text)
                         ?: text)
                 }
@@ -1177,7 +1180,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 val path = app.optString("path")
                 pushApkProgress(stageIndex, path, i, apps.size, "running", ApkOperationProgress("remove"))
                 pushAdbLog("Удаляю приложение: $pkg")
-                when (val r = AdbPermissions.removePackage(pkg, ::pushAdbLog)) {
+                when (val r = AdbPermissions.removePackage(pkg, ::pushAdbLog, AdbPermissions.uninstallHelper(context))) {
                     AdbPermissions.Removal.Removed -> {
                         pushAdbLog("Удалено: $name")
                         removed.put(pkg)
@@ -1268,10 +1271,16 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * подключение к уже отключённому устройству — запись и чтение на нём падали MAX_RECOVERY_ATTEMPTS, и техник
      * видел «Флешка перестала отвечать», хотя с флешкой всё в порядке (25–26.09: 16 из 19 таких сбоев — на
      * подключении, которое до этого уже поработало, логи #1052, #1106, #1154, #1205). Подключаемся к той, что
-     * вставлена сейчас. null — флешка готова (или не была подключена — это проверит сама операция). */
+     * вставлена сейчас. То же — если в прошлый раз флешка перестала отвечать (UsbFlashSession.broken): на старом
+     * подключении запись падала сразу, «0 из 25 файлов за 0 с» (лог №1779). null — флешка готова (или не была
+     * подключена — это проверит сама операция). */
     private fun remountIfReplugged(): String? {
-        if (!UsbFlashSession.isMounted || UsbFlashSession.isStillAttached(context)) return null
-        pushAdbLog("Флешку вынимали — подключаюсь к ней заново...")
+        if (!UsbFlashSession.isMounted) return null
+        pushAdbLog(when {
+            !UsbFlashSession.isStillAttached(context) -> "Флешку вынимали — подключаюсь к ней заново..."
+            UsbFlashSession.broken -> "Флешка перестала отвечать в прошлый раз — подключаюсь к ней заново..."
+            else -> return null
+        })
         return connectFlashAndReport().exceptionOrNull()?.let { it.message ?: "не удалось подключить флешку" }
     }
 
@@ -1460,10 +1469,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                             .callAttr("get_password_from_zip_b64", zipB64).toString()
                         JSONObject(resultJson)
                     },
-                    onFailure = { e -> JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")) },
+                    onFailure = { e ->
+                        UsbFlashSession.noteFailure(e.message)
+                        JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка"))
+                    },
                 )
             }
         } catch (e: Exception) {
+            UsbFlashSession.noteFailure(e.message)
             JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
         }
         // В журнал — только сам факт (тем же каналом, что и остальные ADB-действия, см. pushAdbLog/app.js:

@@ -50,7 +50,13 @@ WizardStyle=modern
 ; режим, который реально ставится и работает на настоящей 32-битной
 ; Windows 7 (см. installer_x86.iss за тем же выбором и полным обоснованием).
 MinVersion=6.1sp1
-CloseApplications=yes
+; force: в тихом автообновлении закрыть принудительно всё, что держит файлы программы. С «yes» Restart Manager
+; только просил закрыться, а программа без окна (после окна она ещё останавливает adb и досылает журнал) не
+; закрывалась: [InstallDelete] стирал незанятое, копирование спотыкалось о занятое, /SUPPRESSMSGBOXES отвечал
+; «Прервать» — и программа больше не запускалась («Cannot find win-arm64», Honor на Windows 11, 30.09). *.pyd —
+; модули Python из _internal, их тоже держит запущенная программа.
+CloseApplications=force
+CloseApplicationsFilter=*.exe,*.dll,*.pyd,*.chm
 RestartApplications=no
 
 [Languages]

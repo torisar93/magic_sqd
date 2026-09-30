@@ -533,10 +533,15 @@ def uninstall_app(ctx, package: str) -> None:
     if "success" in text.lower() and "failure" not in text.lower():
         ctx.log("Готово.")
     elif "error: closed" in text.lower():
-        # Geely OneOS/Monji, Jetour T2: pm закрыт прошивкой (логи #797, #962) — владелец (2026-09-25):
-        # пусть удаляют штатно на самой магнитоле.
-        ctx.log("Не удалось удалить: эта магнитола не даёт удалять приложения через программу — "
-                "удалите штатно на самой магнитоле (Настройки → Приложения).")
+        # Geely OneOS/Monji, VOLGA/N155, Jetour T2: pm закрыт прошивкой (логи #797, #962, №1746). С 1.0.51 программа
+        # удаляет dex-хелпером (InstallContext.uninstall_via_helper); у старых версий метода нет — как раньше,
+        # владелец (2026-09-25): пусть удаляют штатно на самой магнитоле.
+        via_helper = getattr(ctx, "uninstall_via_helper", None)
+        if via_helper is not None and via_helper(package):
+            ctx.log("Готово.")
+        else:
+            ctx.log("Не удалось удалить: эта магнитола не даёт удалять приложения через программу — "
+                    "удалите штатно на самой магнитоле (Настройки → Приложения).")
     else:
         ctx.log(f"Не удалось удалить: {text or 'устройство не ответило'}")
 
