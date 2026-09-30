@@ -203,6 +203,12 @@ class WebApi:
     def install_list_devices(self) -> list:
         return self._install.list_devices()
 
+    def install_device_fingerprint(self, serial: str) -> dict:
+        return self._install.device_fingerprint(serial)
+
+    def install_device_models(self) -> dict:
+        return self._install.device_models()
+
     def install_console_send(self, device, command: str) -> dict:
         return self._install.console_send(device, command)
 

@@ -141,6 +141,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         authSyncMyCars()
         startHeartbeat()
         startInstallLogRecovery()
+        startDeviceModelsRefresh()
         // До 1.0.41 при каждом «Получить пароль» сюда падала копия bugreport-zip (разбор жалоб «пароль
         // неверный»); сбор выключен — прежние копии убираем.
         Thread { File(context.filesDir, "qr_adb_debug").deleteRecursively() }.start()
@@ -179,6 +180,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 // чтобы диагностическая шапка лога установки (см. app.js:
                 // openModel) могла показать и версию, и id одним вызовом, как
                 // на десктопе (app/web/bridge.py: app_get_info).
+                "device_models" -> deviceModelsJson()
                 "app_version" -> JSONObject()
                     .put("version", context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?")
                     .put("client_id", getOrCreateClientId())
@@ -525,6 +527,26 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             }
             pushEvent(JSONObject().put("kind", "update_check_result").put("result", JSONObject(resultJson)))
         }.start()
+    }
+
+    /** Таблица «магнитола → модель» (mobile_bridge.device_models_refresh) — в фоне при запуске; для подсказки
+     * «Похоже, это другая машина» (app.js: suggestModel, device_hint.js). */
+    private val deviceModelsFile get() = File(context.filesDir, "device_models.json")
+
+    private fun startDeviceModelsRefresh() {
+        Thread {
+            try {
+                pyModule("mobile_bridge").callAttr("device_models_refresh", BASE_URL, deviceModelsFile.absolutePath)
+            } catch (_: Exception) {
+                // нет сети — остаётся прежняя копия
+            }
+        }.apply { isDaemon = true; name = "magicsqd-device-models" }.start()
+    }
+
+    private fun deviceModelsJson(): String = try {
+        deviceModelsFile.readText().let { JSONObject(it).toString() }
+    } catch (_: Exception) {
+        "{}"
     }
 
     /** Список «Спасибо вам» для окна «Всё готово» (см. mobile_bridge.supporters_fetch) — в фоне,

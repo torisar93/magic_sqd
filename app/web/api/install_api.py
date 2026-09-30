@@ -23,6 +23,7 @@ from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_de
 from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
                              sync_model_subfolder, sync_shared_folder)
 from ...install_context import InstallCancelled
+from ... import device_models
 from ...rollback import rollback
 from ...uninstall_helper import HELPER_NAME
 from ...pending_install_logs import start_session as start_pending_log_session
@@ -428,6 +429,24 @@ class InstallApi:
     # ------------------------------------------------------------------
     def list_devices(self) -> list[dict]:
         return list_devices(self.adb_path)
+
+    def device_models(self) -> dict:
+        """Копия таблицы «магнитола → модель» (app/device_models.py) — для подсказки «Похоже, это другая машина»."""
+        return device_models.load(self.base_dir) if self.base_dir else {}
+
+    def device_fingerprint(self, serial: str) -> dict:
+        """Отпечаток магнитолы — ro.product.name/model/device. stage_wizard.js пишет его в журнал сессии тем же текстом,
+        что Android («ADB подключён: device::…»): по нему сервер учится узнавать модель по магнитоле (на Android это
+        уже различало 14 из 17 магнитол, 30.09). {} — не удалось прочитать."""
+        try:
+            result = Adb(self.adb_path, serial).shell(
+                "getprop ro.product.name; getprop ro.product.model; getprop ro.product.device", check=False, timeout=10)
+        except Exception:  # noqa: BLE001 - отпечаток необязателен, работе не мешает
+            return {}
+        lines = [line.strip() for line in (result.stdout or "").splitlines()]
+        if len(lines) < 3 or not any(lines[:3]):
+            return {}
+        return {"name": lines[0], "model": lines[1], "device": lines[2]}
 
     # -- мини-консоль ADB под логом главного окна (была в tkinter-версии до
     # перехода на pywebview, см. app/gui.py:_send_console_command в истории

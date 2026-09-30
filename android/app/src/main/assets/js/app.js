@@ -756,7 +756,7 @@
       versions:group.has_modifications?group.modifications:[group.leaf],onOpen:selectModel}));
   }
 
-  function openModel(modelSummary) {
+  function openModel(modelSummary, options = {}) {
     // Флашим лог ПРЕДЫДУЩЕЙ модели (если была реальная активность и его ещё
     // не отправили) — обязательно ДО того, как model перезапишется новой,
     // иначе flushSessionLog отправит уже данные новой модели под старым
@@ -770,7 +770,7 @@
       name: modelSummary.name,
       modification: modelSummary.modification || "",
     });
-    openWizard();
+    openWizard(options);
   }
 
   // yellow ("черновой способ") — предупреждаем, но даём продолжить; red
@@ -989,7 +989,10 @@
   // одного мастера (аналог appsSelection). См. connectionModeFor.
   let appsConnectionChoice = {};
 
-  function openWizard() {
+  // options.keepConnections — переход по подсказке «Похоже, это другая машина»: та же магнитола, подключение не рвём;
+  // options.banner — её отпечаток, повторяем строкой в новой сессии.
+  function openWizard(options = {}) {
+    hinted.clear();
     sessionLog = [];
     sessionHasActivity = false;
     sessionSent = false;
@@ -1034,10 +1037,12 @@
     // Новая модель — потенциально другая физическая магнитола/флешка,
     // старое ADB/USB-соединение (если было) к ней уже не относится. Оставлять
     // статус "подключено" от предыдущей модели было бы вводящим в заблуждение.
-    setAdbStatus(false, "ADB: не подключено");
-    setUsbStatus(false, "Флешка: не подключена");
-    Bridge.call("adb_disconnect", {});
-    Bridge.call("usb_disconnect", {});
+    if (!options.keepConnections) {
+      setAdbStatus(false, "ADB: не подключено");
+      setUsbStatus(false, "Флешка: не подключена");
+      Bridge.call("adb_disconnect", {});
+      Bridge.call("usb_disconnect", {});
+    }
     showScreen("wizard");
     closePhotoLightbox();
     clear(wizardContentEl);
@@ -1057,6 +1062,7 @@
     // программы и client_id в присылаемом на сервер логе установки
     // невозможно понять, с какой сборки пришла жалоба техника) — и телефон (см. sessionHeaderLines).
     sessionHeaderLines().forEach((line) => log(line));
+    if (options.banner) log(`ADB подключён: ${options.banner}`);  // та же магнитола — отпечаток и в новой сессии
     Bridge.call("sync_model_payload", { model_key: model.key });
     pollSyncProgress("model", modelSyncLabel, "Скачиваю файлы модели с сервера...", modelSyncBar, modelSyncFill);
     Bridge.call("scanner_list_apks", {});
@@ -1241,6 +1247,7 @@
       adbStatusEl.title = banner || "ADB подключено";
       log(banner ? `ADB подключён: ${banner}` : "ADB подключён.");
       if (flow) { wifiInstallFlow = null; flow.proceed(); }
+      else if (banner) suggestModel(banner);
     } else {
       setAdbStatus(false, "ADB: не подключено");
       log(`ADB: не удалось подключиться — ${r.reason || "?"}`);
@@ -1264,6 +1271,50 @@
         log("Если это провод USB-C↔USB-C напрямую — попробуйте USB-A↔C кабель через OTG-переходник: с прямым C↔C телефон и магнитола могут не договориться, кто из них host, и тогда подключение вообще не происходит.");
       }
     }
+  }
+
+  // «Похоже, это другая машина» (device_hint.js, вариант 3 — окно с картинками моделей; владелец, 2026-09-30):
+  // магнитолу раньше успешно ставили в другой модели, а с открытой она ни разу не работала.
+  const hinted = new Set();  // по этой магнитоле подсказку в этой сессии уже показали
+  function findCatalogModel(path) {
+    for (const brand of (carsData && carsData.brands) || []) {
+      for (const group of brand.groups || []) {
+        for (const item of [group.leaf, ...(group.modifications || [])].filter(Boolean)) {
+          if (DeviceHint.modelPath(item) === path) return { model: item, group };
+        }
+      }
+    }
+    return null;
+  }
+  function suggestModel(banner) {
+    const fpKey = window.DeviceHint && DeviceHint.key(DeviceHint.fromBanner(banner));
+    if (!fpKey || hinted.has(fpKey) || !model) return;
+    let table = null;
+    try { table = Bridge.call("device_models", {}); } catch { return; }
+    const found = DeviceHint.suggest(table, fpKey, DeviceHint.modelPath(model));
+    const target = found && findCatalogModel(found.model);
+    if (!target) return;
+    hinted.add(fpKey);
+    const current = findCatalogModel(DeviceHint.modelPath(model));
+    const picture = (entry) => {
+      const path = entry && (entry.model.hero || entry.group.hero || entry.model.logo || entry.group.logo);
+      return path ? dataUrl(path) : "";
+    };
+    const targetLabel = target.model.display_label, currentLabel = model.display_label;
+    log(DeviceHint.lines.shown(targetLabel, currentLabel, found.ok), false, true);
+    let overlay;
+    overlay = showModal(DeviceHint.content({
+      current: { label: currentLabel, image: picture(current) },
+      suggested: { label: targetLabel, image: picture(target), ok: found.ok },
+      actionsClass: "modal-actions",
+      onStay: () => { overlay.remove(); log(DeviceHint.lines.stayed(currentLabel), false, true); },
+      onGo: () => {
+        overlay.remove();
+        log(DeviceHint.lines.went(targetLabel), false, true);
+        // Та же машина — подключение не рвём; отпечаток повторяем в новой сессии, чтобы статистика её учла.
+        openModel(target.model, { keepConnections: true, banner });
+      },
+    }), { dismissible: false });
   }
 
   function onAdbLog(event) {

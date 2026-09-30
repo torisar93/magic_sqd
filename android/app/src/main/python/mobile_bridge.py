@@ -2,6 +2,7 @@
 простые типы (строки), отдаёт JSON-строки (проще и надёжнее гонять через
 Chaquopy, чем сложные dict/dataclass через границу Kotlin<->Python)."""
 import json
+import os
 import re
 import threading
 import urllib.error
@@ -73,6 +74,29 @@ def _parse_version(text: str) -> tuple:
         match = re.match(r"\d+", chunk)
         parts.append(int(match.group()) if match else 0)
     return tuple(parts) or (0,)
+
+
+def device_models_refresh(base_url: str, cache_path: str) -> bool:
+    """Таблица «магнитола → модель» для подсказки «Похоже, это другая машина» (content/device_models.json, см.
+    server/device_models.py и desktop app/device_models.py) — копия в файлах приложения: при подключении по Wi-Fi ADB
+    телефон в сети магнитолы, без интернета. Сбой — остаётся прежняя копия."""
+    try:
+        with urllib.request.urlopen(f"{base_url}/device_models.json", timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+            raw = resp.read()
+        data = json.loads(raw.decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
+            json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(data, dict) or not isinstance(data.get("devices"), dict):
+        return False
+    tmp = cache_path + ".part"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(raw)
+        os.replace(tmp, cache_path)
+    except OSError:
+        return False
+    return True
 
 
 def supporters_fetch(base_url: str) -> str:

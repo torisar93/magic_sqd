@@ -15,7 +15,7 @@ import threading
 import time
 
 from ..events import event_bridge
-from ... import update_tracker
+from ... import device_models, update_tracker
 from ...content_config import get_base_url
 from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
                               list_shared_apk_catalog, prune_removed_apks, prune_removed_models,
@@ -66,6 +66,8 @@ class SyncApi:
         changes: list[dict] = []
         base_url = get_base_url(self.base_dir)
         if base_url:
+            # Таблица «магнитола → модель» для подсказки «Похоже, это другая машина» — в фоне, запуск не ждёт.
+            threading.Thread(target=device_models.refresh, args=(self.base_dir,), daemon=True).start()
             # Один манифест на весь запуск (см. content_sync.fetch_manifest/
             # server/backend.py: write_manifest) — раньше и cars/, и apk/
             # обходились отдельными рекурсивными сериями HTTP-запросов через

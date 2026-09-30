@@ -441,8 +441,22 @@
     return data ? data.brands.map((brand) => brand.name) : [];
   }
 
+  // Модель каталога по пути «Марка/Модель[/Модификация]» (как в таблице «магнитола → модель») — для подсказки
+  // «Похоже, это другая машина» (stage_wizard.js): {model, group} или null.
+  function findModelByPath(path) {
+    for (const brand of (data && data.brands) || []) {
+      for (const group of brand.groups || []) {
+        for (const model of [group.leaf, ...(group.modifications || [])].filter(Boolean)) {
+          if ([model.brand, model.name, model.modification].filter(Boolean).join("/") === path) return { model, group };
+        }
+      }
+    }
+    return null;
+  }
+
   window.mainPicker = {
     init, reload, getBrands, showHome: showBrandStep, showModelListFor, goBack:goBackOneStep, canGoBack:()=>step!=="brand",
+    findModelByPath, openModel: selectModel,
     showStartupLoading, setStartupProgress, hideStartupLoading, setAdminMode,
   };
 })();

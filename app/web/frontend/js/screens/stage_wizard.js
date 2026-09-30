@@ -178,6 +178,52 @@
     logFn(`[${model.display_label}] ${message}`);
   }
 
+  // Отпечаток магнитолы — в журнал сессии тем же текстом, что пишет Android («ADB подключён: device::…»): по нему
+  // сервер учится узнавать модель по магнитоле (подсказка «похоже, это другая машина»). Раз на магнитолу за сессию.
+  const fingerprinted = new Set();
+  const hinted = new Set();  // подсказку по этой магнитоле в этой сессии уже показали
+  async function noteDeviceFingerprint(serial) {
+    if (!serial || fingerprinted.has(serial)) return;
+    fingerprinted.add(serial);
+    try {
+      const fp = await window.pywebview.api.install_device_fingerprint(serial);
+      if (fp && (fp.name || fp.model || fp.device)) {
+        log(`ADB подключён: device::ro.product.name=${fp.name};ro.product.model=${fp.model};ro.product.device=${fp.device}`);
+        await suggestModel(fp);
+      }
+    } catch { /* отпечаток и подсказка необязательны */ }
+  }
+
+  // «Похоже, это другая машина» (components/device_hint.js, вариант 3 — окно с картинками моделей): магнитолу
+  // раньше успешно ставили в другой модели, а с открытой она ни разу не работала.
+  async function suggestModel(fp) {
+    const hint = window.DeviceHint, picker = window.mainPicker;
+    const fpKey = hint && hint.key(fp);
+    if (!fpKey || hinted.has(fpKey) || !model || !picker || !picker.findModelByPath) return;
+    const found = hint.suggest(await window.pywebview.api.install_device_models(), fpKey, hint.modelPath(model));
+    const target = found && picker.findModelByPath(found.model);
+    if (!target) return;
+    hinted.add(fpKey);
+    const current = picker.findModelByPath(hint.modelPath(model));
+    const picture = (entry) => (entry && (entry.model.hero || entry.group.hero || entry.model.logo || entry.group.logo)) || "";
+    const targetLabel = target.model.display_label, currentLabel = model.display_label;
+    log(hint.lines.shown(targetLabel, currentLabel, found.ok));
+    const dialog = document.createElement("dialog");
+    dialog.className = "dialog-info device-hint";
+    const finish = (line, then) => { dialog.close(); dialog.remove(); log(line); if (then) then(); };
+    dialog.append(...hint.content({
+      current: { label: currentLabel, image: picture(current) },
+      suggested: { label: targetLabel, image: picture(target), ok: found.ok },
+      actionsClass: "dialog-actions",
+      onStay: () => finish(hint.lines.stayed(currentLabel)),
+      onGo: () => finish(hint.lines.went(targetLabel), () => picker.openModel(target.model)),
+    }));
+    // Esc — «Остаться», чтобы в журнале был итог.
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(hint.lines.stayed(currentLabel)); });
+    document.body.append(dialog);
+    dialog.showModal();
+  }
+
   // success=true — все этапы пройдены (см. advanceAfter); false — техник
   // явно ушёл из мастера (см. app.js: returnToCatalog) или открыл другую
   // модель, не долистав эту. Не шлём, если реальной активности не было
@@ -523,6 +569,8 @@
     sessionHasActivity = false;
     sessionSent = false;
     lastLogAt = 0;
+    fingerprinted.clear();
+    hinted.clear();
     model = selectedModel;
     activeCommand = null; commandResults.clear();
     done.clear();
@@ -899,6 +947,7 @@
       // Первой в списке — готовая магнитола, а не «[unauthorized]»/«[offline]» (иначе getDevice() даёт null).
       const ready = [...select.options].find((option) => deviceByLabel[option.value]);
       if (ready) select.value = ready.value;
+      devices.filter((d) => d.state === "device").forEach((d) => noteDeviceFingerprint(d.serial));
       return devices;
     }
     refreshBtn.addEventListener("click", refreshDevices);
@@ -930,7 +979,7 @@
           scan:p=>window.pywebview.api.install_scan_wifi(p),
           connect:async(ip,port)=>{
             const result=await window.pywebview.api.install_wifi_connect(port,ip);
-            if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;settle(wifiSerial);}
+            if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;noteDeviceFingerprint(wifiSerial);settle(wifiSerial);}
             else {wifiSerial=null;wifiStatus.textContent='Wi-Fi: не подключено';}
             return result;
           },
@@ -942,7 +991,7 @@
         scan:p=>window.pywebview.api.install_scan_wifi(p),
         connect:async(ip,port)=>{
           const result=await window.pywebview.api.install_wifi_connect(port,ip);
-          if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;}
+          if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;noteDeviceFingerprint(wifiSerial);}
           else {wifiSerial=null;wifiStatus.textContent='Wi-Fi: не подключено';}
           return result;
         }

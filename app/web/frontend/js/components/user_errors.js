@@ -268,8 +268,11 @@
     {
       id: "no_internet", icon: "download",
       title: "Нет интернета — файлы не скачались",
+      // «The read operation timed out» — сеть оборвалась посреди скачивания (Python, лог №1829, Jolion 2026): раньше
+      // техник видел сырое «TimeoutError» и «отправьте лог разработчику», а через 2 минуты повтор прошёл.
       match: [/Не скачаны приложения/i, /Не удалось скачать/i, /Файл не скачан/i, /getaddrinfo failed/i,
-        /Temporary failure in name resolution/i, /Unable to resolve host/i],
+        /Temporary failure in name resolution/i, /Unable to resolve host/i, /The read operation timed out/i,
+        /urlopen error timed out/i, /TimeoutError: timed out/i],
       // Ответ сервера с кодом ошибки — не интернет техника, а наша проблема (файла нет на сервере и т.п.).
       unless: [/HTTP Error [45]\d\d/i, /\bHTTP [45]\d\d\b/],
       text: {

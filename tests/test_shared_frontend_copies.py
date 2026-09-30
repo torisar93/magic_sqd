@@ -20,6 +20,9 @@ SHARED = [
     ("css/progress08.css", "css/progress08.css"),
     ("js/apps_tabs.js", "js/apps_tabs.js"),
     ("css/apps_tabs.css", "css/apps_tabs.css"),
+    # Подсказка «Похоже, это другая машина» по отпечатку магнитолы (2026-09-30).
+    ("js/components/device_hint.js", "js/device_hint.js"),
+    ("css/device_hint.css", "css/device_hint.css"),
     # Шрифт пароля ADB по QR (см. tests/test_password_font.py) — один файл на обе платформы.
     ("fonts/JetBrainsMono-Bold.ttf", "fonts/JetBrainsMono-Bold.ttf"),
     ("fonts/JetBrainsMono-OFL.txt", "fonts/JetBrainsMono-OFL.txt"),
@@ -51,3 +54,12 @@ def test_user_errors_is_loaded_before_stage_run(index, user_errors, stage_run):
     html = index.read_text(encoding="utf-8")
     assert f'src="{user_errors}"' in html
     assert html.index(f'src="{user_errors}"') < html.index(f'src="{stage_run}"')
+
+
+@pytest.mark.parametrize("index, css, js", [
+    (DESKTOP / "index.html", "css/device_hint.css", "js/components/device_hint.js"),
+    (ANDROID / "index.html", "css/device_hint.css", "js/device_hint.js"),
+])
+def test_device_hint_is_included_on_both_platforms(index, css, js):
+    html = index.read_text(encoding="utf-8")
+    assert f'href="{css}"' in html and f'src="{js}"' in html
