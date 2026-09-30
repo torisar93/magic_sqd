@@ -43,6 +43,34 @@ def _took(seconds: float) -> str:
     return f"{s // 3600} ч {s % 3600 // 60} мин"
 
 
+def _drive_writable(root: Path) -> bool:
+    """Можно ли уже писать в корень флешки: создаём и удаляем крошечный файл-пробу. Сразу после форматирования
+    том иногда ещё не примонтирован, и первый настоящий файл падает с «[WinError 2] … не найден» (лог №1865,
+    Windows 11, Emgrand — первая запись 0 из 24 за 0 с, вторая через минуту прошла)."""
+    probe = root / ".magicsqd_ready"
+    try:
+        probe.write_bytes(b"")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _await_drive_ready(root: Path, log=lambda m: None, attempts: int = 30, delay: float = 0.5,
+                       is_ready=_drive_writable, sleep=time.sleep) -> bool:
+    """Ждёт, пока в корень флешки можно писать (до attempts×delay ≈ 15 с). Пишет строку в журнал, только если
+    пришлось подождать. Не готова к сроку — не срываем запись (вернём False), пусть падает как раньше с понятной
+    ошибкой файла."""
+    for i in range(max(1, attempts)):
+        if is_ready(root):
+            if i:
+                log(f"Флешка готова к записи (ждали {_took(i * delay)} после форматирования).")
+            return True
+        sleep(delay)
+    log("Флешка всё ещё не отвечает после форматирования — пробую писать как есть.")
+    return False
+
+
 class _DownloadMeter:
     """Докачка перед записью (файлы модели, выбранные APK, общая папка — по очереди) — в кольцо окна записи (фаза
     download, «X из Y МБ») и итог в журнал. Раньше ход докачки уходил только в полосу мастера под окном записи, и
@@ -268,6 +296,13 @@ class UsbApi:
                 drive_root = Path(f"{drive_letter}\\")
             else:
                 drive_root = Path(drive_letter)
+
+            # После форматирования том иногда не сразу готов к записи — ждём (см. _await_drive_ready, лог №1865).
+            if do_format:
+                _await_drive_ready(drive_root, log=self._log)
+                if self._cancel_flag.is_set():
+                    self._finish(False, "Остановлено пользователем после форматирования.")
+                    return
 
             # Пересчитываем список файлов (тот же, что list_items() уже
             # отдал фронтенду до старта, см. её докстринг) — только чтобы
