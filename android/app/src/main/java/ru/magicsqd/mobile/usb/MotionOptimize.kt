@@ -16,11 +16,21 @@ import java.io.File
  * Строки лога — те же, что на ПК (их знают правила разбора логов на сервере).
  */
 object MotionOptimize {
+    /** Папка ключа в cars/_shared. Скачивается при запуске (content_sync.STARTUP_SHARED_FOLDERS), а если запуск был
+     *  без интернета — перед нажатием (WebBridge.actionsMotionOptimize). До 1.0.54 не скачивалась вовсе (лог №1985). */
+    const val CERT_FOLDER = "motion_cert"
+
+    private fun certDirOf(context: Context) = File(context.filesDir, "cars/_shared/$CERT_FOLDER")
+
+    fun certReady(context: Context): Boolean =
+        File(certDirOf(context), "private.pk8").isFile && File(certDirOf(context), "certificate.crt").isFile
+
     fun run(context: Context, pkg: String, engine: InstallEngine, cancelled: () -> Boolean, log: (String) -> Unit) {
         if (!AdbSession.isConnected) { log("ADB не подключён — команда не выполнена."); return }
-        val certDir = File(context.filesDir, "cars/_shared/motion_cert")
-        if (!File(certDir, "private.pk8").isFile || !File(certDir, "certificate.crt").isFile) {
-            log("Не удалось включить работу в движении: нет ключа подписи (обновите программу).")
+        val certDir = certDirOf(context)
+        if (!certReady(context)) {
+            log("Не удалось включить работу в движении: нет ключа подписи — не удалось скачать его с сервера. " +
+                "Проверьте интернет на телефоне и повторите.")
             return
         }
         log("Работа в движении: снимаю $pkg с магнитолы...")

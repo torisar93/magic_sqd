@@ -1564,6 +1564,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     private fun actionsMotionOptimize(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
         labCancelInstall = false
+        if (!MotionOptimize.certReady(context)) syncSharedFolder(MotionOptimize.CERT_FOLDER)
         MotionOptimize.run(context, pkg, installEngine(), { labCancelInstall }, ::pushAdbLog)
     }
 

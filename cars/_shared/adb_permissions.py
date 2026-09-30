@@ -589,4 +589,22 @@ def optimize_for_motion(ctx, package: str) -> None:
     if run is None:
         ctx.log("Не удалось: эта версия программы не умеет включать работу в движении — обновите программу.")
         return
+    _fetch_motion_cert(ctx)
     run(package)
+
+
+def _fetch_motion_cert(ctx) -> None:
+    """ПК 1.0.53 не скачивал ключ подписи cars/_shared/motion_cert (подпапки _shared качались только перед usb-этапом)
+    и сразу писал «нет ключа подписи» (лог №1985) — докачиваем ключ здесь. С 1.0.54 программа делает это сама.
+    Android эту функцию не вызывает: кнопка там встроена в программу."""
+    shared = getattr(ctx, "shared_dir", None)
+    if shared is None:
+        return
+    cert = shared / "motion_cert"
+    if (cert / "private.pk8").is_file() and (cert / "certificate.crt").is_file():
+        return
+    try:
+        from app.content_sync import sync_shared_folder
+        sync_shared_folder(shared.parent.parent, "motion_cert", log=ctx.log)
+    except Exception:  # noqa: BLE001 — не мешаем самой кнопке: без ключа она честно скажет, что его нет
+        pass

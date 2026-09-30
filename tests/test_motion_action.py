@@ -39,11 +39,12 @@ class _Result:
 
 class _FakeCtx:
     """Минимальный двойник InstallContext для optimize_for_motion: записывает shell/pull/установку."""
-    def __init__(self, tmp_path, apk_paths):
+    def __init__(self, tmp_path, apk_paths, with_cert=True):
         self.shared_dir = tmp_path / "cars" / "_shared"
         (self.shared_dir / "motion_cert").mkdir(parents=True)
-        (self.shared_dir / "motion_cert" / "private.pk8").write_bytes(b"key")
-        (self.shared_dir / "motion_cert" / "certificate.crt").write_bytes(b"cert")
+        if with_cert:
+            (self.shared_dir / "motion_cert" / "private.pk8").write_bytes(b"key")
+            (self.shared_dir / "motion_cert" / "certificate.crt").write_bytes(b"cert")
         self._apk_paths = apk_paths
         self._install_method = None
         self._granted_packages = set()
@@ -143,12 +144,54 @@ def test_already_marked_app_changes_nothing(tmp_path, monkeypatch):
     assert any("уже все окна помечены" in m for m in ctx.logs)
 
 
-def test_shared_wrapper_delegates_and_warns_on_old_client():
+def _serve_cert(server, tmp_path):
+    server.add("cars/_shared/motion_cert/private.pk8", b"server-key")
+    server.add("cars/_shared/motion_cert/certificate.crt", b"server-cert")
+    server.write_manifest()
+    (tmp_path / "server.json").write_text('{"base_url": "%s"}' % server.url, encoding="utf-8")
+
+
+def test_missing_cert_is_downloaded_before_patching(tmp_path, content_server, patched_signing):
+    # Лог №1985 (Dargo, 1.0.53): ключ лежит в подпапке cars/_shared, программа его не скачивала — кнопка сразу
+    # писала «нет ключа подписи». Теперь, если ключа нет, кнопка докачивает его сама и работает дальше.
+    _serve_cert(content_server, tmp_path)
+    ctx = _FakeCtx(tmp_path, ["/data/app/com.example.video/base.apk"], with_cert=False)
+    ctx.optimize_for_motion("com.example.video")
+    assert (ctx.shared_dir / "motion_cert" / "private.pk8").read_bytes() == b"server-key"
+    assert ctx.installed == ["com.example.video.signed.apk"]
+
+
+def test_missing_cert_without_internet_says_so(tmp_path, patched_signing):
+    ctx = _FakeCtx(tmp_path, ["/data/app/com.example.video/base.apk"], with_cert=False)  # server.json нет
+    ctx.optimize_for_motion("com.example.video")
+    assert not ctx.installed and not any(c.startswith("pm uninstall") for c in ctx.shell_calls)
+    assert any("нет ключа подписи" in m and "интернет" in m for m in ctx.logs)
+
+
+def _load_shared_wrapper():
     from importlib import util
     spec = util.spec_from_file_location("adb_permissions_motion",
                                         Path(__file__).resolve().parents[1] / "cars/_shared/adb_permissions.py")
     mod = util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod
+
+
+def test_shared_wrapper_fetches_cert_for_old_desktop(tmp_path, content_server):
+    # ПК 1.0.53 сам ключ не докачивает — это делает обёртка из cars/_shared (приходит с сервера при запуске).
+    _serve_cert(content_server, tmp_path)
+    shared = tmp_path / "cars" / "_shared"
+    shared.mkdir(parents=True)
+    seen = []
+    ctx = types.SimpleNamespace(shared_dir=shared, log=lambda m: None,
+                                optimize_for_motion=lambda pkg: seen.append(
+                                    (pkg, (shared / "motion_cert" / "certificate.crt").is_file())))
+    _load_shared_wrapper().optimize_for_motion(ctx, "com.x")
+    assert seen == [("com.x", True)]  # к вызову программы ключ уже на месте
+
+
+def test_shared_wrapper_delegates_and_warns_on_old_client():
+    mod = _load_shared_wrapper()
     seen = []
     mod.optimize_for_motion(types.SimpleNamespace(optimize_for_motion=lambda pkg: seen.append(pkg)), "com.x")
     assert seen == ["com.x"]

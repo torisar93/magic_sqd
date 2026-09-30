@@ -808,8 +808,16 @@ class InstallContext:
             self.log("Не удалось включить работу в движении: не найдена папка cars/_shared.")
             return
         cert_dir = self.shared_dir / "motion_cert"
-        if not (cert_dir / "private.pk8").is_file() or not (cert_dir / "certificate.crt").is_file():
-            self.log("Не удалось включить работу в движении: нет ключа подписи (обновите программу).")
+        def cert_ready() -> bool:
+            return (cert_dir / "private.pk8").is_file() and (cert_dir / "certificate.crt").is_file()
+        if not cert_ready():
+            # Обычно ключ скачан при запуске (content_sync.STARTUP_SHARED_FOLDERS); если программа запускалась без
+            # интернета — докачиваем сейчас (лог №1985: до 1.0.54 он не скачивался вовсе).
+            from .content_sync import sync_shared_folder
+            sync_shared_folder(self.shared_dir.parent.parent, "motion_cert", log=self.log)
+        if not cert_ready():
+            self.log("Не удалось включить работу в движении: нет ключа подписи — не удалось скачать его с сервера. "
+                     "Проверьте интернет и повторите.")
             return
         self.log(f"Работа в движении: снимаю {package} с магнитолы...")
         paths = self._installed_apk_paths(package)

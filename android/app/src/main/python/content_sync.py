@@ -249,9 +249,18 @@ def sync_scripts(base_url: str, cars_dir: Path, log=lambda m: None,
     if manifest is None:
         log("Не удалось получить manifest.json с сервера — работаем с тем, что уже скачано локально.")
         return 0
-    return sync_tree(base_url, "cars", cars_dir, manifest, log=log,
-                      skip_dirs=("files", "usb_files"), no_recurse_dirs=("cars/_shared",),
-                      on_progress=on_progress)
+    downloaded = sync_tree(base_url, "cars", cars_dir, manifest, log=log,
+                           skip_dirs=("files", "usb_files"), no_recurse_dirs=("cars/_shared",),
+                           on_progress=on_progress)
+    for name in STARTUP_SHARED_FOLDERS:
+        downloaded += sync_tree(base_url, f"cars/_shared/{name}", cars_dir / "_shared" / name, manifest, log=log)
+    return downloaded
+
+
+# Служебные подпапки cars/_shared для кнопок «Доп. действий» (не payload usb-этапов) — качаем при каждом запуске:
+# у кнопки телефон может быть уже в Wi-Fi магнитолы без интернета. Лог №1985 (Dargo, 1.0.53): ключ «Работы в
+# движении» не доходил — no_recurse_dirs пропускал его. Копия desktop app/content_sync.py:STARTUP_SHARED_FOLDERS.
+STARTUP_SHARED_FOLDERS = ("motion_cert",)
 
 
 _KNOWN_MODELS_FILENAME = "known_models.json"

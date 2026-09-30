@@ -573,9 +573,20 @@ def sync_scripts(base_dir: Path, cars_dir: Path, log=lambda m: None,
     url = get_base_url(base_dir)
     if not url:
         return 0
-    return sync_tree(url, "cars", cars_dir, log=log, skip_dirs=("files", "usb_files"),
-                      no_recurse_dirs=("cars/_shared",), manifest=manifest, on_progress=on_progress,
-                      skip_prefixes=tuple(_locally_edited_prefixes(cars_dir, manifest)))
+    downloaded = sync_tree(url, "cars", cars_dir, log=log, skip_dirs=("files", "usb_files"),
+                           no_recurse_dirs=("cars/_shared",), manifest=manifest, on_progress=on_progress,
+                           skip_prefixes=tuple(_locally_edited_prefixes(cars_dir, manifest)))
+    for name in STARTUP_SHARED_FOLDERS:
+        downloaded += sync_tree(url, f"cars/_shared/{name}", cars_dir / "_shared" / name, log=log,
+                                manifest=manifest)
+    return downloaded
+
+
+# Служебные подпапки cars/_shared, без которых не работают кнопки «Доп. действий» (не payload usb-этапов): их
+# качаем при каждом запуске вместе со скриптами — перед нажатием кнопки программа может быть уже без интернета
+# (в Wi-Fi магнитолы). Лог №1985 (Dargo, 1.0.53): ключ «Работы в движении» не доходил до программы — no_recurse_dirs
+# пропускал его, как любую подпапку _shared. Копия — android/.../python/content_sync.py.
+STARTUP_SHARED_FOLDERS = ("motion_cert",)
 
 
 _KNOWN_MODELS_FILENAME = "known_models.json"
