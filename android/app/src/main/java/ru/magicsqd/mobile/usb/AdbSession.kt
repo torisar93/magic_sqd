@@ -198,6 +198,10 @@ object AdbSession {
     fun push(source: PushSource, remotePath: String, log: (String) -> Unit): AdbPushResult =
         syncPush(requireTransport(), source, remotePath, log)
 
+    // Снять файл с устройства (sync RECV) — нужно кнопке «работа в движении» (MotionOptimize.kt).
+    fun pull(remotePath: String, dest: java.io.File, log: (String) -> Unit): AdbPullResult =
+        syncPull(requireTransport(), remotePath, dest, log)
+
     // stagedPath != null — APK уже залит движком по этому пути один раз для всех способов (см.
     // InstallEngine.installApksWithProgress / AdbInstall.stageApkIfNeeded).
     fun installApk(apk: PushSource, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =

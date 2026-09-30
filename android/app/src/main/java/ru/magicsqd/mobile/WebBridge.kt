@@ -20,6 +20,7 @@ import ru.magicsqd.mobile.usb.ApkOperationProgress
 import ru.magicsqd.mobile.usb.AdbShellResult
 import ru.magicsqd.mobile.usb.AskInputBroker
 import ru.magicsqd.mobile.usb.InstallEngine
+import ru.magicsqd.mobile.usb.MotionOptimize
 import ru.magicsqd.mobile.usb.InstalledApp
 import ru.magicsqd.mobile.usb.MdnsResolve
 import ru.magicsqd.mobile.usb.NetworkScan
@@ -317,6 +318,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "apps_rollback" -> { appsRollback(args); "{}" }
                 "actions_disable_app" -> { actionsDisableApp(args.getString("pkg")); "{}" }
                 "actions_enable_app" -> { actionsEnableApp(args.getString("pkg")); "{}" }
+                "actions_motion_optimize" -> { actionsMotionOptimize(args.getString("pkg")); "{}" }
                 "pick_personal_apks" -> { pickPersonalApks(); "{}" }
                 // Видео-кнопка нав-бара мастера (см. app.js: playStageVideo) —
                 // тот же общий "докачай, чего нет" хелпер, что и перед
@@ -1555,6 +1557,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     private fun actionsEnableApp(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
         AdbPermissions.enableApp(pkg, ::pushAdbLog)
+    }
+
+    // «Разрешить работу в движении» — снять APK, пометить distractionOptimized, переподписать, поставить заново
+    // (MotionOptimize.kt, порт InstallContext.optimize_for_motion). labCancelInstall — та же «Стоп», что у установки.
+    private fun actionsMotionOptimize(pkg: String) = runExclusive(::onBusy) {
+        if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        labCancelInstall = false
+        MotionOptimize.run(context, pkg, installEngine(), { labCancelInstall }, ::pushAdbLog)
     }
 
     /** "Добавить свой APK..." на apps/usb-этапах (см. app.js: renderApkTree) —

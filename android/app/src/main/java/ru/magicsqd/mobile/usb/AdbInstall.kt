@@ -40,6 +40,59 @@ sealed class AdbPushResult {
 }
 
 /**
+ * sync-pull (RECV) файла с устройства в dest — обратное syncPush, тот же под-протокол SYNC поверх потока "sync:"
+ * (RECV + len32(path) + path, затем DATA/len/данные несколько раз, DONE в конце или FAIL с сообщением; формат из
+ * system/core/adb/SYNC.TXT). Данные пишутся в файл кусками по мере прихода — в памяти одновременно не больше одного
+ * WRTE (APK бывают по сотне мегабайт). Нужно кнопке «работа в движении»: снять установленный APK, пометить и
+ * поставить заново (см. MotionOptimize.kt). На Android до этого pull не было — только push.
+ */
+fun syncPull(transport: AdbTransport, remotePath: String, dest: File, log: (String) -> Unit): AdbPullResult {
+    val syncService = "sync:".toByteArray(Charsets.UTF_8) + byteArrayOf(0)
+    val localId = newLocalStreamId()
+    if (!sendMessage(transport, AdbProtocol.A_OPEN, localId, 0, syncService)) {
+        return AdbPullResult.Failed("Не удалось отправить OPEN для sync:")
+    }
+    val (openResp, _) = readMessageForStream(transport, localId, log)
+    if (openResp.command != AdbProtocol.A_OKAY) {
+        return AdbPullResult.Failed("sync: не открылся (0x${openResp.command.toUInt().toString(16)})")
+    }
+    val remoteId = openResp.arg0
+    var streamClosed = false
+    return try {
+        val pathBytes = remotePath.toByteArray(Charsets.UTF_8)
+        val recv = ByteBuffer.allocate(8 + pathBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+        recv.put("RECV".toByteArray(Charsets.US_ASCII)).putInt(pathBytes.size).put(pathBytes)
+        if (!sendMessage(transport, AdbProtocol.A_WRTE, localId, remoteId, recv.array(), 20000)) {
+            return AdbPullResult.Failed("Не удалось отправить RECV")
+        }
+        val (recvAck, _) = readMessageForStream(transport, localId, log)
+        if (recvAck.command != AdbProtocol.A_OKAY) return AdbPullResult.Failed("RECV не подтверждён")
+        dest.parentFile?.mkdirs()
+        dest.outputStream().buffered(1 shl 16).use out@{ out ->
+            val parser = SyncRecvParser(out)
+            while (true) {
+                val (msg, payload) = readMessageForStream(transport, localId, log, 20000)
+                if (msg.command == AdbProtocol.A_CLSE) { streamClosed = true; return@out AdbPullResult.Failed("Устройство закрыло поток раньше конца файла") }
+                if (msg.command != AdbProtocol.A_WRTE) return@out AdbPullResult.Failed("Неожиданный ответ sync (0x${msg.command.toUInt().toString(16)})")
+                sendMessage(transport, AdbProtocol.A_OKAY, localId, remoteId, ByteArray(0))
+                when (val status = parser.feed(payload)) {
+                    is SyncRecvParser.Status.More -> {}
+                    is SyncRecvParser.Status.Done -> return@out AdbPullResult.Success(status.bytes)
+                    is SyncRecvParser.Status.Fail -> return@out AdbPullResult.Failed(status.reason)
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            AdbPullResult.Failed("поток кончился без DONE")
+        }
+    } finally {
+        if (!streamClosed) {
+            try { sendMessage(transport, AdbProtocol.A_CLSE, localId, remoteId, ByteArray(0)) }
+            catch (_: Exception) { /* сохраняем исходную ошибку */ }
+        }
+    }
+}
+
+/**
  * Что заливать на устройство. Файл с диска читается кусками прямо во время передачи — в памяти
  * одновременно не больше одного DATA-пакета, и размер файла роли не играет (APK бывают по 500 МБ
  * и больше). Раньше APK читался в память целиком (readBytes) — и на 166-мегабайтном MonjaroMOD

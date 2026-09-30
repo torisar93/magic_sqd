@@ -2054,6 +2054,9 @@
         uninstall_app: { bridgeMethod: "actions_uninstall_app", thirdPartyOnly: true },
         disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: true },
         enable_app: { bridgeMethod: "actions_enable_app", thirdPartyOnly: false },
+        // «Разрешить работу в движении» — техник выбирает установленное приложение, дальше MotionOptimize.kt
+        // (порт InstallContext.optimize_for_motion): пометить окна distractionOptimized, переподписать, поставить заново.
+        motion_optimize: { bridgeMethod: "actions_motion_optimize", thirdPartyOnly: true },
       };
       // Без выбора приложения — готовая команда для InstallEngine.runAdbCommands (как ПК: generated install.py).
       // grant_system_apps — все разрешения приложениям, записанным программой в /system/app (BAIC U5 Plus).
