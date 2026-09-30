@@ -782,6 +782,94 @@ class InstallContext:
         self._resigned[path] = (out_path, stat.st_size, stat.st_mtime_ns)
         return out_path
 
+    def _installed_apk_paths(self, package: str) -> list[str]:
+        """Пути установленного APK на устройстве (pm path). У обычного приложения — один base.apk, у собранного
+        из частей (split) — несколько."""
+        out = (self.shell(f"pm path {package}", check=False, timeout=30).stdout or "")
+        return [line.strip()[len("package:"):] for line in out.splitlines()
+                if line.strip().startswith("package:") and line.strip() != "package:"]
+
+    def _log_motion_verdict(self, package: str) -> None:
+        """Приняла ли магнитола пометку — по dumpsys car_service (см. motion_patch.car_service_verdict)."""
+        from . import motion_patch
+        dump = self.shell("dumpsys car_service", check=False, timeout=60).stdout or ""
+        self.log(motion_patch.verdict_line(motion_patch.car_service_verdict(dump, package), package))
+
+    def optimize_for_motion(self, package: str) -> None:
+        """«Работа в движении» (владелец, 2026-09-30: на Haval Dargo 2026 не работает видео в движении). Снимает
+        установленный APK с магнитолы, вписывает во все его окна пометку distractionOptimized=true (motion_patch),
+        переподписывает нашим ключом (cars/_shared/motion_cert) и ставит заново — служба машины Android Automotive
+        пускает на экран в движении только окна с этой пометкой. Подпись после правки другая, поверх не встанет,
+        поэтому старое приложение удаляется, а при неудаче возвращается исходное (данные приложения при этом
+        теряются — техник ставит это при настройке). У приложения из нескольких частей (split) так не сработает."""
+        from . import motion_patch
+        self.check_cancelled()
+        if self.shared_dir is None:
+            self.log("Не удалось включить работу в движении: не найдена папка cars/_shared.")
+            return
+        cert_dir = self.shared_dir / "motion_cert"
+        if not (cert_dir / "private.pk8").is_file() or not (cert_dir / "certificate.crt").is_file():
+            self.log("Не удалось включить работу в движении: нет ключа подписи (обновите программу).")
+            return
+        self.log(f"Работа в движении: снимаю {package} с магнитолы...")
+        paths = self._installed_apk_paths(package)
+        if not paths:
+            self.log(f"Не удалось: приложение {package} не установлено на магнитоле.")
+            return
+        if len(paths) > 1:
+            self.log("Не удалось: приложение собрано из нескольких частей (split APK) — включить работу "
+                     "в движении для него нельзя.")
+            return
+        base_dir = self.shared_dir.parent.parent
+        work = base_dir / "motion_cache"
+        work.mkdir(parents=True, exist_ok=True)
+        original = work / f"{package}.apk"
+        patched = work / f"{package}.motion.apk"
+        signed = work / f"{package}.signed.apk"
+        for stale in (original, patched, signed):
+            stale.unlink(missing_ok=True)
+        try:
+            self.pull(paths[0], original)
+            if not original.is_file() or original.stat().st_size == 0:
+                self.log("Не удалось: не получилось скопировать приложение с магнитолы.")
+                return
+            marked = motion_patch.patch_apk(original, patched)
+        except (AdbError, OSError) as exc:
+            self.log(f"Не удалось снять приложение с магнитолы: {_short_reason(exc)}")
+            return
+        except motion_patch.MotionPatchError as exc:
+            self.log(f"Не удалось пометить приложение: {exc}. Оно оставлено как было.")
+            return
+        if marked == 0:
+            self.log("У приложения уже все окна помечены — менять ничего не нужно.")
+            self._log_motion_verdict(package)
+            return
+        self.log(f"Помечено окон: {marked}. Переподписываю и ставлю заново...")
+        from .apk_signer import ApkSignError, resign_apk
+        try:
+            resign_apk(base_dir, patched, cert_dir, signed)
+        except ApkSignError as exc:
+            self.log(f"Не удалось переподписать приложение: {exc}. Оно оставлено как было.")
+            return
+        # Подпись изменилась — поверх старого приложения не встанет, поэтому сначала удаляем его.
+        self.shell(f"pm uninstall {package}", check=False, timeout=120)
+        self._install_method = None  # заново подобрать способ для этой установки
+        try:
+            self.install_apk_auto(signed)
+        except (InstallCancelled, AppInstallFailed, NewerVersionInstalled, AdbError) as exc:
+            self.log(f"Не удалось поставить помеченную версию: {_short_reason(exc)}. Возвращаю исходную...")
+            self._install_method = None
+            try:
+                self.install_apk_auto(original)
+                self.log("Исходное приложение возвращено — работа в движении не включена.")
+            except (InstallCancelled, AppInstallFailed, NewerVersionInstalled, AdbError):
+                self.log(f"Не удалось вернуть исходную версию — установите {package} заново из каталога.")
+            return
+        self._granted_packages.discard(package)
+        self._grant_all_permissions_if_available(package)
+        self.log("Приложение переустановлено — если оно просит вход, войдите в него заново на магнитоле.")
+        self._log_motion_verdict(package)
+
     def _install_with_method(self, method: int, path, extra_args) -> None:
         if method == 0:
             self.install_apk(path, extra_args=extra_args)

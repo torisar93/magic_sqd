@@ -1538,7 +1538,7 @@ def _render_install_py(spec: NewCarSpec) -> str:
         lines.append("from telnet_adb import enable_adb_via_telnet  # noqa: E402")
     _ACTION_KINDS_NEEDING_ADB_PERMISSIONS = (
         "grant_permissions", "mock_location", "disable_app", "enable_app",
-        "launch_activity", "uninstall_app")
+        "launch_activity", "uninstall_app", "motion_optimize")
     if any(step.type == "actions" and a.kind in _ACTION_KINDS_NEEDING_ADB_PERMISSIONS
            for step in spec.steps for a in step.actions):
         lines.append(
@@ -1550,6 +1550,8 @@ def _render_install_py(spec: NewCarSpec) -> str:
     # функции в cars/_shared (урок 1.0.24 — ImportError у модели, пересохранённой раньше деплоя _shared).
     if any(step.type == "actions" and a.kind == "grant_system_apps" for step in spec.steps for a in step.actions):
         lines.append("from adb_permissions import grant_system_apps_permissions  # noqa: E402")
+    if any(step.type == "actions" and a.kind == "motion_optimize" for step in spec.steps for a in step.actions):
+        lines.append("from adb_permissions import optimize_for_motion  # noqa: E402")
 
     for i, step in enumerate(spec.steps, start=1):
         if step.type == "adb":
@@ -1594,6 +1596,11 @@ def _render_install_py(spec: NewCarSpec) -> str:
                     lines.append(
                         f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
                     lines.append("    uninstall_app(ctx, package)")
+                elif action.kind == "motion_optimize":
+                    lines.append("    packages = list_installed_packages(ctx)")
+                    lines.append(
+                        f"    package = ctx.ask_choice('Выберите приложение', packages, title={action_title!r})")
+                    lines.append("    optimize_for_motion(ctx, package)")
                 elif action.kind == "grant_system_apps":
                     lines.append("    grant_system_apps_permissions(ctx)")
                 else:

@@ -577,3 +577,16 @@ def enable_app(ctx, package: str) -> None:
     """Обратное disable_app — включает ранее отключённое приложение."""
     ctx.log(f"Включаю приложение: {package}")
     _set_enabled_state(ctx, f"pm enable {package}", "включить")
+
+
+def optimize_for_motion(ctx, package: str) -> None:
+    """«Работа в движении» (владелец, 2026-09-30: на Haval Dargo 2026 не работает видео в движении). Помечает окна
+    приложения distractionOptimized=true и ставит его заново — служба машины пускает в движении только помеченные
+    окна. Вся работа (снять APK, пометить, переподписать, поставить) — на стороне программы (InstallContext.
+    optimize_for_motion на ПК, AdbPermissions.motionOptimize на Android): формат APK и переподпись у каждой
+    платформы свои. У старых версий программы метода нет — тогда честно об этом говорим (как uninstall_via_helper)."""
+    run = getattr(ctx, "optimize_for_motion", None)
+    if run is None:
+        ctx.log("Не удалось: эта версия программы не умеет включать работу в движении — обновите программу.")
+        return
+    run(package)
