@@ -1301,7 +1301,7 @@
       return path ? dataUrl(path) : "";
     };
     const targetLabel = target.model.display_label, currentLabel = model.display_label;
-    log(DeviceHint.lines.shown(targetLabel, currentLabel, found.ok), false, true);
+    log(DeviceHint.lines.shown(targetLabel, currentLabel, found.ok, found.manual), false, true);
     let overlay;
     overlay = showModal(DeviceHint.content({
       current: { label: currentLabel, image: picture(current) },

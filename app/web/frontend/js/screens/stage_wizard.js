@@ -207,7 +207,7 @@
     const current = picker.findModelByPath(hint.modelPath(model));
     const picture = (entry) => (entry && (entry.model.hero || entry.group.hero || entry.model.logo || entry.group.logo)) || "";
     const targetLabel = target.model.display_label, currentLabel = model.display_label;
-    log(hint.lines.shown(targetLabel, currentLabel, found.ok));
+    log(hint.lines.shown(targetLabel, currentLabel, found.ok, found.manual));
     const dialog = document.createElement("dialog");
     dialog.className = "dialog-info device-hint";
     const finish = (line, then) => { dialog.close(); dialog.remove(); log(line); if (then) then(); };

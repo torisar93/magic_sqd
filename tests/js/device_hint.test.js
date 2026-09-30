@@ -10,6 +10,8 @@ const TABLE = { version: 1, devices: {
   "few|x|y": [{ model: "VOLGA/C50", ok: 4, phones: 1 }],
   "split|x|y": [{ model: "A/B", ok: 5, phones: 3 }, { model: "A/C", ok: 4, phones: 2 }],
   "both|x|y": [{ model: "A/B", ok: 30, phones: 5 }, { model: "A/C", ok: 3, phones: 2 }],
+  // Владелец закрепил модель в админке («Магнитолы», 30.09) — без успехов, но советуем.
+  "pinned|x|y": [{ model: "A/C", ok: 0, phones: 0, manual: true }],
 } };
 
 function load(file) {
@@ -40,6 +42,14 @@ module.exports = async function () {
     assert(DeviceHint.suggest(TABLE, "split|x|y", "Haval/H3") === null, `${file}: лидер меньше 80% — не уверены`);
     assert(DeviceHint.suggest(TABLE, "unknown", "Haval/H3") === null && DeviceHint.suggest(null, FX11, "Haval/H3") === null,
       `${file}: нет таблицы или магнитолы`);
+    assert(DeviceHint.suggest(TABLE, "pinned|x|y", "Haval/H3").model === "A/C", `${file}: закреплённая модель без порогов`);
+    assert(DeviceHint.suggest(TABLE, "pinned|x|y", "A/C") === null, `${file}: закреплённая модель уже открыта`);
+    assert(DeviceHint.lines.shown("A / C", "Haval / H3", 0, true)
+      === "Подсказка: магнитола похожа на «A / C» (закреплено в админке), открыта «Haval / H3».", `${file}: строка закрепления`);
+    assert(DeviceHint.lines.shown("A / C", "Haval / H3", 19, true)
+      === "Подсказка: магнитола похожа на «A / C» (19 успешных установок, закреплено в админке), открыта «Haval / H3».", file);
+    const [, pinnedCards] = DeviceHint.content({ current: { label: "Haval / H3" }, suggested: { label: "A / C", ok: 0 } });
+    assert(pinnedCards.children[1].textContent === "Магнитола как у этой моделиA / C", `${file}: без «✓ 0 успешных» — ${pinnedCards.children[1].textContent}`);
     assert(DeviceHint.installs(1) === "1 успешная установка" && DeviceHint.installs(3) === "3 успешные установки"
       && DeviceHint.installs(19) === "19 успешных установок" && DeviceHint.installs(21) === "21 успешная установка", file);
 

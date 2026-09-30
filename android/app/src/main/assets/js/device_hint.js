@@ -40,11 +40,14 @@
     return model ? [model.brand, model.name, model.modification].filter(Boolean).join("/") : "";
   }
 
-  // Совет из таблицы или null. Сервер сортирует модели по убыванию успехов.
+  // Совет из таблицы или null. Сервер сортирует модели по убыванию успехов. manual — владелец закрепил модель за
+  // магнитолой в админке («Магнитолы» → «Всегда предлагать модель»): советуем её без порогов статистики.
   function suggest(table, fpKey, currentPath) {
     const entries = (table && table.devices && fpKey && table.devices[fpKey]) || [];
     const top = entries[0], mine = entries.find((entry) => entry.model === currentPath);
-    if (!top || top.model === currentPath || (mine && mine.ok >= MIN_OK)) return null;
+    if (!top || top.model === currentPath) return null;
+    if (top.manual) return top;
+    if (mine && mine.ok >= MIN_OK) return null;
     const total = entries.reduce((sum, entry) => sum + (Number(entry.ok) || 0), 0);
     if (top.ok < MIN_OK || top.phones < MIN_PHONES || top.ok < MIN_SHARE * total) return null;
     return top;
@@ -70,12 +73,14 @@
     return box;
   }
 
-  // Содержимое окна: заголовок, две карточки, кнопки. current/suggested — {label, image}; suggested.ok — успехи.
+  // Содержимое окна: заголовок, две карточки, кнопки. current/suggested — {label, image}; suggested.ok — успехи
+  // (у закреплённой в админке модели их может не быть — тогда без строки с галочкой).
   function content({ current, suggested, actionsClass, onStay, onGo }) {
     const cards = n("div", "hint-cards");
     cards.append(
       card("current", "Сейчас открыта", current.label, current.image),
-      card("suggested", "Магнитола как у этой модели", suggested.label, suggested.image, `✓ ${installs(suggested.ok)}`));
+      card("suggested", "Магнитола как у этой модели", suggested.label, suggested.image,
+        suggested.ok > 0 ? `✓ ${installs(suggested.ok)}` : ""));
     const actions = n("div", actionsClass || "dialog-actions");
     const stay = n("button", "", "Остаться");
     stay.type = "button";
@@ -89,7 +94,8 @@
 
   // Строки журнала сессии — одинаковые на обеих платформах (их знают правила разбора логов на сервере).
   const lines = {
-    shown: (target, current, ok) => `Подсказка: магнитола похожа на «${target}» (${installs(ok)}), открыта «${current}».`,
+    shown: (target, current, ok, manual) => `Подсказка: магнитола похожа на «${target}» (${
+      [ok > 0 ? installs(ok) : "", manual ? "закреплено в админке" : ""].filter(Boolean).join(", ")}), открыта «${current}».`,
     went: (target) => `Техник перешёл к «${target}» по подсказке.`,
     stayed: (current) => `Техник остался в «${current}».`,
   };
