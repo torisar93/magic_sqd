@@ -1,0 +1,178 @@
+"""Файл, который не встанет никаким способом, — сразу понятная причина вместо перебора способов (владелец,
+2026-10-01). Правила — app/apk_check.py (та же копия на Android); строки отказов — из настоящих логов."""
+from __future__ import annotations
+import re
+import threading
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from app import apk_check, install_context
+from app.install_context import InstallContext, UnsuitableApk
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _zip(path: Path, names: list[str]) -> Path:
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in names:
+            archive.writestr(name, b"x")
+    return path
+
+
+def test_file_problem(tmp_path):
+    assert apk_check.file_problem(_zip(tmp_path / "ok.apk", ["AndroidManifest.xml", "classes.dex"])) is None
+    broken = tmp_path / "Spotify signed.apk"
+    broken.write_bytes(b"\x00" * 4096)  # не архив (как самодельная пересборка, лог №1986)
+    assert "не APK: файл повреждён или недокачан" in apk_check.file_problem(broken)
+    xapk = _zip(tmp_path / "Settings+App_2.0_APKPure.xapk", ["manifest.json", "base.apk", "config.arm64_v8a.apk"])
+    assert "пакет из нескольких частей (XAPK/APKS)" in apk_check.file_problem(xapk)  # лог №2099
+    renamed = _zip(tmp_path / "app.apk", ["manifest.json", "base.apk"])  # XAPK, переименованный в .apk
+    assert "пакет из нескольких частей" in apk_check.file_problem(renamed)
+    empty = _zip(tmp_path / "x.apk", ["readme.txt"])
+    assert "внутри нет AndroidManifest.xml" in apk_check.file_problem(empty)
+    assert apk_check.file_problem(xapk).startswith("«Settings+App_2.0_APKPure.xapk»")
+    assert apk_check.file_problem(tmp_path / "нет-такого.apk") is None  # не скачан — своё сообщение у программы
+
+
+@pytest.mark.parametrize("reason, expected", [
+    # №1942: YouTube Morphe под x86
+    ("Failure [INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]", "другой процессор"),
+    # №2087: ContraCam на магнитоле с Android 12 (API 31)
+    ("Exception occurred while executing 'install': java.lang.IllegalArgumentException: Error: Failed to parse APK "
+     "file: /data/local/tmp/ContraCam_4.0.107-Google.apk: Requires newer sdk version #32 (current version is #31)",
+     "требует Android новее, чем на магнитоле (нужен API 32, на магнитоле 31)"),
+    ("Failure [INSTALL_FAILED_OLDER_SDK: Failed parse during installPackageLI]", "требует Android новее"),
+    # №1986: самодельная пересборка Spotify
+    ("monji: wrote 151844495 bytes Failure status=4 message=INSTALL_PARSE_FAILED_NOT_APK: Failed to parse "
+     "/data/app/vmdl780809347.tmp/base.apk", "не может прочитать"),
+    # №2099: .xapk через pm install -S
+    ("Failure [INSTALL_PARSE_FAILED_UNEXPECTED_EXCEPTION: Failed to parse /data/app/vmdl1078287920.tmp/base.apk: "
+     "AndroidManifest.xml]", "не может прочитать"),
+    ("Failure [INSTALL_FAILED_MISSING_SPLIT: Missing split for com.x]", "только часть приложения"),
+    ("Failure [INSTALL_PARSE_FAILED_NO_CERTIFICATES: Package /data/app/x/base.apk has no certificates]",
+     "не подписан"),
+    # localinstall: причина — итог хелпера из logcat (install_context.localinstall_status)
+    ("localinstall не подтвердил успех (новых пакетов: нет): install status=1 INSTALL_FAILED_NO_MATCHING_ABIS: x",
+     "другой процессор"),
+])
+def test_rejections_that_mean_the_file_itself(reason, expected):
+    text = apk_check.rejection_message("app.apk", reason)
+    assert text and expected in text and text.startswith("«app.apk»")
+
+
+@pytest.mark.parametrize("reason", [
+    "pm install не вернул Success: ",                                           # способ закрыт прошивкой
+    "localinstall не подтвердил успех (новых пакетов: нет): ",
+    "Failure [INSTALL_FAILED_VERSION_DOWNGRADE]",                               # своя обработка — пропуск
+    "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package x signatures do not match]",
+    "Failure [INSTALL_FAILED_CONFLICTING_PROVIDER: Can't install because provider name x is already used]",
+    "Error: Unable to open file: /sdcard/Download/x.apk Consider using a file under /data/local/tmp/",
+    "Exception occurred while executing: java.lang.IllegalArgumentException: Unknown option --install-reason",
+    "jdwp_whitelist: не удалось прочитать имя пакета — нужно для JDWP-патча",
+])
+def test_ordinary_method_failures_keep_trying(reason):
+    assert apk_check.rejection_message("app.apk", reason) is None
+
+
+def test_android_copy_matches():
+    android = ROOT / "android/app/src/main/python/apk_check.py"
+    assert android.read_bytes() == (ROOT / "app/apk_check.py").read_bytes()
+
+
+# --- ПК: пропуск без перебора способов, остальные ставятся, честный итог -------------------------------------------
+
+@pytest.fixture()
+def make_ctx(tmp_path, monkeypatch):
+    def make(apks: list[Path], method_errors: dict[str, str] | None = None):
+        log = []
+        ctx = InstallContext(adb_path="fake-adb", device_serial="fake", model_dir=tmp_path, selected_apks=apks,
+                             log_fn=log.append, cancel_flag=threading.Event(), shared_dir=None)
+        ctx.require_device = lambda: None
+        ctx._after_app_installed = lambda *args, **kwargs: None
+        tried = []
+
+        def install_with_method(method, path, extra_args):
+            tried.append((Path(path).name, method))
+            error = (method_errors or {}).get(Path(path).name)
+            if error:
+                raise install_context.AdbError(error)
+        ctx._install_with_method = install_with_method
+        ctx.test_log, ctx.tried = log, tried
+        return ctx
+    return make
+
+
+def test_unsuitable_file_is_skipped_before_any_method_and_the_rest_installs(tmp_path, make_ctx):
+    xapk = _zip(tmp_path / "Settings+App_2.0_APKPure.xapk", ["manifest.json", "base.apk"])
+    good = _zip(tmp_path / "good.apk", ["AndroidManifest.xml"])
+    ctx = make_ctx([xapk, good])
+    ctx.install_selected_apks()
+    assert [name for name, _ in ctx.tried] == ["good.apk"]  # XAPK ни одним способом не пробовали
+    assert len(ctx.failed_apps) == 1 and "пакет из нескольких частей" in ctx.failed_apps[0]
+    assert ctx.apps_ok == 1
+    assert any("остальные приложения из списка установлены" in line for line in ctx.test_log)
+
+
+def test_device_rejection_of_the_file_stops_the_method_search(tmp_path, make_ctx):
+    x86 = _zip(tmp_path / "YouTube_Morphe-x86.apk", ["AndroidManifest.xml"])
+    abi = "Failure [INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]"
+    ctx = make_ctx([x86], {"YouTube_Morphe-x86.apk": abi})
+    ctx.install_selected_apks()
+    assert len(ctx.tried) == 1  # раньше — все способы подряд с той же ошибкой (лог №1942)
+    assert ctx.apps_ok == 0 and "другой процессор" in ctx.failed_apps[0]
+    assert any(line.startswith("Не установлено: «YouTube_Morphe-x86.apk» собран") for line in ctx.test_log)
+
+
+def test_locked_method_rejection_gets_the_clear_reason(tmp_path, make_ctx):
+    first = _zip(tmp_path / "first.apk", ["AndroidManifest.xml"])
+    contra = _zip(tmp_path / "ContraCam.apk", ["AndroidManifest.xml"])
+    sdk = "Error: Failed to parse APK file: /data/local/tmp/ContraCam.apk: Requires newer sdk version #32 (current version is #31)"
+    ctx = make_ctx([first, contra], {"ContraCam.apk": sdk})
+    ctx.install_selected_apks()
+    assert ctx.apps_ok == 1
+    assert ctx.failed_apps == [apk_check.rejection_message("ContraCam.apk", sdk)]
+
+
+def test_unsuitable_is_a_skippable_app_failure():
+    assert issubclass(UnsuitableApk, install_context.AppInstallFailed)  # install_selected_apks пропускает и идёт дальше
+
+
+def test_runner_reports_nothing_installed_as_an_error(tmp_path):
+    from app.runner import InstallRunner
+    results = []
+    runner = InstallRunner(adb_path="fake-adb", on_log=lambda m: None,
+                           on_finished=lambda ok, msg, **kw: results.append((ok, msg)))
+
+    class FakeModel:
+        dir = tmp_path
+
+    def run_fn(ctx):  # единственный файл техника не годится — встало ноль приложений
+        ctx.failed_apps.append("«x.xapk» — не APK, а пакет из нескольких частей (XAPK/APKS)")
+
+    runner._run(FakeModel(), "fake-device", [], run_fn, [], "", True)
+    assert results == [(False, "Не установлено: «x.xapk» — не APK, а пакет из нескольких частей (XAPK/APKS)")]
+
+
+# --- Android: то же поведение (Kotlin-тестов нет — проверяем исходник движка) ---------------------------------------
+
+def _kotlin(path: str) -> str:
+    text = (ROOT / "android/app/src/main/java/ru/magicsqd/mobile" / path).read_text(encoding="utf-8")
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return "\n".join(line.split("//")[0] for line in text.splitlines())
+
+
+def test_android_engine_uses_the_same_rules():
+    engine = _kotlin("usb/InstallEngine.kt")
+    assert 'Python.getInstance().getModule("apk_check")' in engine
+    assert 'apkCheck.callAttr("file_problem", path, name)' in engine
+    assert 'apkCheck.callAttr("rejection_message", name, reason)' in engine
+    loop = engine[engine.index("for ((index, path) in apkPaths.withIndex())"):]
+    # проверка файла — до заливки на магнитолу
+    assert loop.index("val problem = fileProblem(path, file.name)") < loop.index("AdbSession.push(apk, stagedRemote, log)")
+    # в переборе отказ «сам файл» обрывает перебор и пропускает приложение
+    assert "unsuitable = unsuitableFile(file.name, r.reason)\n                        if (unsuitable != null) break" in loop
+    assert "if (unsuitable != null) { skipUnsuitable(unsuitable); continue }" in loop
+    assert 'if (skipped.isNotEmpty() && okCount == 0) {' in engine
+    assert 'return StageRunResult.Failed("Не установлено: " + skipped.joinToString("; "))' in engine

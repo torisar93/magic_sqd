@@ -76,6 +76,15 @@ def app_base(tmp_path, content_server):
     return base
 
 
+def fake_apk(path: Path) -> Path:
+    """Пустышка APK для тестов установки: настоящий архив с AndroidManifest.xml (иначе app/apk_check.py честно скажет
+    «не APK» и до способов установки дело не дойдёт), но манифест пустой — имя пакета не читается (read_package_name → None)."""
+    import zipfile
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("AndroidManifest.xml", b"")
+    return path
+
+
 def wait_until(predicate, timeout: float = 10.0, step: float = 0.01) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

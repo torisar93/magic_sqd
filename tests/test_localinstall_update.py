@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import fake_apk
 from app import install_context
 from app.install_context import (AppInstallFailed, InstallContext, NewerVersionInstalled, _LOCALINSTALL_METHOD)
 
@@ -78,7 +79,7 @@ def make_ctx(tmp_path, monkeypatch):
     model_dir = tmp_path / "app/cars/Haval/F7/New (F7x New)"
     model_dir.mkdir(parents=True)
     apk = tmp_path / "VK_Video_Rustore_Updated_030726.apk"
-    apk.write_bytes(b"apk")
+    fake_apk(apk)
     monkeypatch.setattr(install_context, "read_package_name", lambda path: PKG)
 
     def make(device: FakeHeadUnit, locked: bool):

@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 from .adb_utils import Adb, AdbError
+from .apk_check import file_problem, rejection_message
 from .apk_package import read_package_name
 from .scanner import read_apk_mock_location
 from .uninstall_helper import HELPER_NAME as UNINSTALL_HELPER_NAME, uninstall_via_helper
@@ -176,6 +177,12 @@ class AppInstallFailed(RuntimeError):
     готовых приложений следом в списке). install_selected_apks ловит это
     исключение и продолжает со следующим файлом — единичный сбой ОДНОГО apk не
     должен стоить техникам всей остальной, уже сделанной работы."""
+
+
+class UnsuitableApk(AppInstallFailed):
+    """Сам файл не встанет никаким способом: не APK, XAPK/APKS, сборка под другой процессор, нужен Android новее
+    (app/apk_check.py). Перебор остальных способов бесполезен — install_selected_apks пропускает это приложение
+    с понятной причиной и ставит остальные (владелец, 2026-10-01: «сразу сообщать вместо перебора способов»)."""
 
 
 def _file_sha256(path) -> str:
@@ -361,6 +368,7 @@ class InstallContext:
         # упомянуло пропуски, а не просто отрапортовало "успешно", раз стадия
         # в целом не упала (см. install_selected_apks/AppInstallFailed).
         self.failed_apps: list[str] = []
+        self.apps_ok = 0  # сколько приложений списка встало или уже стояло — для итога «не установлено ничего»
         # Приложения, поставленные в этом запуске ({"package", "name", "path"}): окно итога предлагает
         # «Откатить в сток» — удалить ровно их (владелец, 2026-09-25). Пропущенные «уже стоит новее» — не наши.
         self.installed_apps: list[dict] = []
@@ -572,7 +580,9 @@ class InstallContext:
         if self._system_apps_written:
             self.log("Приложения записаны в системную папку. Android увидит их после перезагрузки магнитолы — "
                      "тогда им можно выдать разрешения (кнопка «Выдать разрешения установленным приложениям»).")
-        if self.failed_apps:
+        if self.failed_apps and not self.apps_ok:
+            self.log("Не установлено: " + "; ".join(self.failed_apps))
+        elif self.failed_apps:
             self.log("Не установлено (пропущено, остальные приложения из списка "
                       "установлены): " + "; ".join(self.failed_apps))
 
@@ -582,6 +592,7 @@ class InstallContext:
         до выдачи, и на последнем приложении кольцо показывало «Все приложения установлены», пока разрешения
         ещё шли — техник не понимал, зависла ли программа (владелец, 2026-09-28). Стоп посреди выдачи — строка
         всё равно «Готово»: приложение уже стоит."""
+        self.apps_ok += 1
         try:
             self._after_app_installed(apk, give_mock_location, installed_now=installed_now)
         finally:
@@ -685,6 +696,12 @@ class InstallContext:
         такой сбой поднимается как AppInstallFailed — install_selected_apks его
         ловит и пропускает только этот файл, не роняя оставшийся список."""
         self.check_cancelled()
+        name = Path(path).name  # исходное имя — после переподписи файл называется «…_resigned.apk»
+        problem = file_problem(path, name)
+        if problem:
+            # Файл не APK — ни заливать на магнитолу, ни перебирать способы смысла нет (логи №1986, №2099).
+            self.log(problem)
+            raise UnsuitableApk(problem)
         path = self._maybe_resign(path)
         if self._install_method is not None:
             try:
@@ -700,6 +717,10 @@ class InstallContext:
                 gone = device_unavailable_message(str(exc), during=True)
                 if gone:
                     raise InstallCancelled(gone) from exc
+                unsuitable = rejection_message(name, str(exc))
+                if unsuitable:
+                    self.log(unsuitable)
+                    raise UnsuitableApk(unsuitable) from exc
                 raise AppInstallFailed(f"{Path(path).name}: {_short_reason(exc, 150)}") from exc
             return
         errors = []
@@ -732,6 +753,12 @@ class InstallContext:
                 gone = device_unavailable_message(str(exc), during=self._device_confirmed)
                 if gone:
                     raise InstallCancelled(gone) from exc
+                # Отказ из-за самого файла (другой процессор, нужен Android новее, файл не читается) — остальные
+                # способы упрутся в то же самое: сразу понятная причина, приложение пропускаем (логи №1942, №2087).
+                unsuitable = rejection_message(name, str(exc))
+                if unsuitable:
+                    self.log(unsuitable)
+                    raise UnsuitableApk(unsuitable) from exc
                 continue
             self._install_method = method
             if method > 0 and method not in _EXCLUSIVE_METHODS:

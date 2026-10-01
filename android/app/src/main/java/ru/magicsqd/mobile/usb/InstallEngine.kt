@@ -1,6 +1,7 @@
 package ru.magicsqd.mobile.usb
 
 import android.content.Context
+import com.chaquo.python.Python
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -262,6 +263,17 @@ class InstallEngine(
      *  способов бесполезен (на Monji/Geely OneOS они и так закрываются) — сразу понятное
      *  сообщение технику вместо сырого «Failure status=5 …». null — обычный отказ.
      *  «Версия новее уже стоит» сюда не входит — это пропуск (см. newerVersionInstalled). */
+    /** «Сам файл не годится» (не APK, XAPK/APKS, другой процессор, нужен Android новее) — общий Python-модуль
+     *  apk_check, та же копия, что на ПК: строки журнала одни. Перебор остальных способов бесполезен — приложение
+     *  пропускается с понятной причиной (владелец, 2026-10-01: «сразу сообщать вместо перебора способов»). */
+    private val apkCheck by lazy { Python.getInstance().getModule("apk_check") }
+
+    private fun fileProblem(path: String, name: String): String? =
+        try { apkCheck.callAttr("file_problem", path, name)?.toString() } catch (_: Exception) { null }
+
+    private fun unsuitableFile(name: String, reason: String): String? =
+        try { apkCheck.callAttr("rejection_message", name, reason)?.toString() } catch (_: Exception) { null }
+
     private fun definitiveRejection(apkName: String, reason: String): String? {
         val upper = reason.uppercase()
         return when {
@@ -602,6 +614,7 @@ class InstallEngine(
         // Приложения, которые не встали уже ПОСЛЕ того, как способ подтвердился на этой магнитоле, — пропущены,
         // очередь идёт дальше (см. ветку confirmedMethod ниже).
         val skipped = mutableListOf<String>()
+        var okCount = 0  // встало или уже стояло — если 0, итог «Не установлено», а не «остальные установлены»
         // system_app — только по выбору модели и без перебора остальных (см. EXCLUSIVE_METHODS).
         val exclusive = preferredMethod in EXCLUSIVE_METHODS
         systemPartitionReady = false
@@ -693,6 +706,15 @@ class InstallEngine(
             }
             val file = File(path)
             if (!file.exists()) return failed("Файл не скачан: $path")
+            fun skipUnsuitable(message: String) {
+                log(message)
+                skipped.add(message)
+                onProgress(path, index, apkPaths.size, "error")
+            }
+            // Файл, который не встанет никаким способом (не APK, XAPK/APKS, повреждён), — сразу понятная причина,
+            // без заливки на магнитолу и перебора способов (логи №1986, №2099).
+            val problem = fileProblem(path, file.name)
+            if (problem != null) { skipUnsuitable(problem); continue }
             log("Устанавливаю ${file.name}...")
             var signedFile = file
             if (certDir != null) {
@@ -751,6 +773,7 @@ class InstallEngine(
             // установки (у большинства способов имени нет). Сбой выдачи не должен
             // срывать установку — приложение уже стоит.
             fun afterInstall(installedNow: Boolean = true) {
+                okCount++
                 if (installedNow && confirmedMethod?.let { INSTALL_METHODS[it].first } == "system_app") {
                     // Приложение из /system/app Android увидит только после перезагрузки, до неё разрешения не выдать
                     // («Unknown package»), а ADB на BAIC U5 Plus перезагрузку не переживает — разрешения выдаёт
@@ -834,6 +857,8 @@ class InstallEngine(
                         // на нём (лог #764: Settings.apk с INSTALL_FAILED_CONFLICTING_PROVIDER, остальное — вторым запуском).
                         val reason = r.reason.split(Regex("\\s+")).joinToString(" ")
                         log("  ↳ не сработало ($label): ${reason.take(300)}")
+                        val unsuitable = unsuitableFile(file.name, r.reason)
+                        if (unsuitable != null) { skipUnsuitable(unsuitable); continue }
                         skipped.add("${file.name}: ${reason.take(150)}")
                         onProgress(path, index, apkPaths.size, "error")
                         continue
@@ -851,6 +876,7 @@ class InstallEngine(
             val errors = mutableListOf<String>()
             var done = false
             var keptNewer = false
+            var unsuitable: String? = null
             for (methodIndex in order) {
                 val (label, install) = INSTALL_METHODS[methodIndex]
                 when (val r = perform(install, apk, { stagedPath() })) {
@@ -861,6 +887,9 @@ class InstallEngine(
                         // До PackageManager способ дошёл, отказ — из-за версии: остальные способы упрутся в то же.
                         if (newerVersionInstalled(r.reason)) { keptNewer = true; break }
                         definitiveRejection(file.name, r.reason)?.let { dropStaged(); return failed(it) }
+                        // Отказ из-за самого файла — остальные способы упрутся в то же самое (логи №1942, №2087).
+                        unsuitable = unsuitableFile(file.name, r.reason)
+                        if (unsuitable != null) break
                     }
                     is AdbInstallResult.Success -> {
                         confirmedMethod = methodIndex
@@ -881,6 +910,7 @@ class InstallEngine(
             }
             dropStaged()
             if (keptNewer) { keepNewer(); continue }
+            if (unsuitable != null) { skipUnsuitable(unsuitable); continue }
             if (!done) {
                 // Один способ без перебора — его причина и есть итог (без списка «ни одним из способов»).
                 if (exclusive) return failed("«${file.name}» не установлено: " + errors.last().substringAfter(": "))
@@ -892,6 +922,10 @@ class InstallEngine(
         if (systemAppsWritten > 0) {
             log("Приложения записаны в системную папку. Android увидит их после перезагрузки магнитолы — тогда им " +
                 "можно выдать разрешения (кнопка «Выдать разрешения установленным приложениям»).")
+        }
+        if (skipped.isNotEmpty() && okCount == 0) {
+            log("Не установлено: " + skipped.joinToString("; "))
+            return StageRunResult.Failed("Не установлено: " + skipped.joinToString("; "))
         }
         if (skipped.isNotEmpty()) {
             log("Не установлено (пропущено, остальные приложения из списка установлены): " + skipped.joinToString("; "))

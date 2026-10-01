@@ -155,7 +155,11 @@ class InstallRunner:
         # просто "успешно": иначе технику узнать об пропуске неоткуда, кроме
         # как долистать полный лог до нужной строки.
         failed_apps = getattr(ctx, "failed_apps", None)
-        if failed_apps:
+        if failed_apps and getattr(ctx, "apps_ok", 1) == 0:
+            # Не встало ни одно — обычно свой файл техника, который не годится (apk_check.py): не «остальные
+            # приложения установлены», а честная ошибка с причиной.
+            self.on_finished(False, "Не установлено: " + "; ".join(failed_apps), installed=_installed(ctx))
+        elif failed_apps:
             self.on_finished(True, "Установка завершена, но не всё встало — пропущено: "
                                     + "; ".join(failed_apps) + ". Остальные приложения установлены.", partial=True,
                              installed=_installed(ctx))

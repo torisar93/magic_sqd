@@ -13,6 +13,7 @@ import threading
 
 import pytest
 
+from conftest import fake_apk
 from app.adb_utils import AdbError
 from app.install_context import AppInstallFailed, InstallCancelled, InstallContext
 from app.runner import InstallRunner
@@ -22,7 +23,7 @@ def _make_ctx(tmp_path, apk_names, log):
     apks = []
     for name in apk_names:
         path = tmp_path / name
-        path.write_bytes(b"")  # невалидный APK — read_package_name должен тихо вернуть None
+        fake_apk(path)  # имя пакета не читается — read_package_name должен тихо вернуть None
         apks.append(path)
     return InstallContext(
         adb_path="fake-adb",
@@ -202,6 +203,7 @@ def test_runner_reports_partial_failure_in_final_message(tmp_path):
         dir = tmp_path
 
     def run_fn(ctx):
+        ctx.apps_ok = 2  # остальные приложения встали (ничего не встало — отдельный итог, см. test_apk_check.py)
         ctx.failed_apps.append("x.apk: причина")
 
     runner._run(FakeModel(), "fake-device", [], run_fn, [], "", True)

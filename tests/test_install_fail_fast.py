@@ -11,6 +11,7 @@ import threading
 
 import pytest
 
+from conftest import fake_apk
 from app.adb_utils import AdbError
 from app.install_context import AppInstallFailed, InstallCancelled, InstallContext
 
@@ -20,7 +21,7 @@ def _ctx(tmp_path, names, log, create=True):
     for name in names:
         path = tmp_path / name
         if create:
-            path.write_bytes(b"")
+            fake_apk(path)
         apks.append(path)
     ctx = InstallContext(adb_path="fake-adb", device_serial="fake-device", model_dir=tmp_path,
                          selected_apks=apks, log_fn=log.append, cancel_flag=threading.Event(), shared_dir=None)

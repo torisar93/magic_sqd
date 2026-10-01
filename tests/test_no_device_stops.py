@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import fake_apk
 from app import runner as runner_module
 from app.adb_utils import AdbError
 from app.install_context import (InstallCancelled, InstallContext, INSTALL_METHOD_KEYS, check_device,
@@ -68,7 +69,7 @@ def test_lost_during_install_is_worded_as_disconnect():
 def _ctx(tmp_path, log, names=("a.apk", "b.apk"), **kwargs):
     apks = []
     for name in names:
-        (tmp_path / name).write_bytes(b"")
+        fake_apk(tmp_path / name)
         apks.append(tmp_path / name)
     return InstallContext(adb_path="fake-adb", device_serial="R58N12ABCDE", model_dir=tmp_path, selected_apks=apks,
                           log_fn=log.append, cancel_flag=threading.Event(), shared_dir=None, **kwargs)
