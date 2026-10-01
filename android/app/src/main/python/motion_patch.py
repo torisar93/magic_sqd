@@ -379,9 +379,11 @@ def patch_apk(src, dst) -> int:
 
 # --------------------------------------------------------------------------------------------------------------------
 # Приняла ли магнитола пометку — по «dumpsys car_service»: пакеты с разрешёнными в движении окнами служба машины
-# показывает в разделе «**System whitelist**» (Android 12+: «allowlist»).
+# показывает в разделе «**System white list**» (Android 9 — с пробелом; лог №2084, Haval Dargo: проверка его не узнавала),
+# «**System whitelist**» (Android 10–11) или «**System allowlist**» (Android 12+).
 # --------------------------------------------------------------------------------------------------------------------
-_ALLOWLIST_HEADER = re.compile(r"^\s*\*\*\s*System (?:white|allow)list\s*\*\*", re.I | re.M)
+_ALLOWLIST_HEADER = re.compile(r"^\s*\*\*\s*System (?:white|allow) ?list\s*\*\*", re.I | re.M)
+_SECTION_HEADER = re.compile(r"^\s*(\*\*[^*\n]{1,60}\*\*)\s*$", re.M)
 
 
 def car_service_verdict(dump: str, package: str) -> str:
@@ -400,12 +402,22 @@ def car_service_verdict(dump: str, package: str) -> str:
     return "accepted" if found else "rejected"
 
 
-def verdict_line(verdict: str, package: str) -> str:
-    """Строка журнала — одинаковая на ПК и Android (её знают правила разбора логов на сервере)."""
-    return {
+def verdict_line(verdict: str, package: str, dump: str = "") -> str:
+    """Строка журнала — одинаковая на ПК и Android (её знают правила разбора логов на сервере). Если вывод службы
+    не разобрать — коротко, что она ответила (первая строка и заголовки разделов), чтобы узнать формат по логу."""
+    line = {
         "accepted": f"Работа в движении: магнитола приняла пометку — окна {package} разрешены в движении.",
         "rejected": f"Работа в движении: магнитола не приняла пометку {package} — его нет в списке разрешённых "
                     "в движении (прошивка пускает только приложения из своего магазина или системные).",
         "no_car_service": "Работа в движении: службы машины Android Automotive на магнитоле нет — пометка ни на что "
                           "не влияет.",
-    }.get(verdict, f"Работа в движении: не удалось проверить, приняла ли магнитола пометку {package}.")
+    }.get(verdict)
+    if line is not None:
+        return line
+    line = f"Работа в движении: не удалось проверить, приняла ли магнитола пометку {package}."
+    first = next((s.strip() for s in (dump or "").splitlines() if s.strip()), "")
+    if first:
+        headers = _SECTION_HEADER.findall(dump)[:6]
+        line += f" Служба машины ответила: «{first[:100]}»"
+        line += f"; разделы: {', '.join(headers)}." if headers else "; разделов со списками нет."
+    return line

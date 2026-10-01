@@ -104,6 +104,42 @@ def test_car_service_verdict_reads_allowlist():
     assert motion_patch.car_service_verdict("какой-то другой дамп без списка", "com.x") == "unknown"
 
 
+_PIE_DUMP = """*Dump car service*
+*PackageManagementService*
+mEnableActivityBlocking:true
+ActivityRestricted:false
+**System white list**
+AppBlockingPackageInfoWrapper [info=AppBlockingPackageInfo [packageName=com.spotify.music, flags=0, minRevisionCode=0, \
+maxRevisionCode=0, signatures=null, activities=[com.spotify.music.MainActivity, com.spotify.music.VideoActivity]], \
+isMatching=true]
+AppBlockingPackageInfoWrapper [info=AppBlockingPackageInfo [packageName=com.android.settings, flags=1, \
+minRevisionCode=0, maxRevisionCode=0, signatures=null, activities=null], isMatching=true]
+**System Black list**
+AppBlockingPackageInfoWrapper [info=AppBlockingPackageInfo [packageName=ru.blocked.app, flags=0, minRevisionCode=0, \
+maxRevisionCode=0, signatures=null, activities=null], isMatching=true]
+**Client Policies**
+**Unprocessed policy services**
+"""
+
+
+def test_car_service_verdict_reads_android9_white_list():
+    # Лог №2084 (Haval Dargo, Android 9): заголовок «**System white list**» с пробелом — проверка его не узнавала и
+    # писала «не удалось проверить», хотя пометка могла сработать. Формат — AOSP pie CarPackageManagerService.dump.
+    assert motion_patch.car_service_verdict(_PIE_DUMP, "com.spotify.music") == "accepted"
+    assert motion_patch.car_service_verdict(_PIE_DUMP, "ru.blocked.app") == "rejected"  # только в чёрном списке
+    assert motion_patch.car_service_verdict(_PIE_DUMP, "com.spotify") == "rejected"  # не подстрокой имени окна
+    assert motion_patch.car_service_verdict(_PIE_DUMP, "com.missing") == "rejected"
+
+
+def test_unknown_verdict_quotes_what_the_car_service_said():
+    dump = "*Dump car service*\n**Client Policies**\nClient:x\n**Unprocessed policy services**\n"
+    line = motion_patch.verdict_line(motion_patch.car_service_verdict(dump, "com.x"), "com.x", dump)
+    assert "не удалось проверить" in line
+    assert "«*Dump car service*»" in line and "**Client Policies**, **Unprocessed policy services**" in line
+    assert motion_patch.verdict_line("unknown", "com.x").endswith("пометку com.x.")  # без вывода — как раньше
+    assert "приняла пометку" in motion_patch.verdict_line("accepted", "com.x", dump)  # выдержка только для unknown
+
+
 def test_verdict_line_wording():
     assert "разрешены в движении" in motion_patch.verdict_line("accepted", "com.x")
     assert "не приняла" in motion_patch.verdict_line("rejected", "com.x")

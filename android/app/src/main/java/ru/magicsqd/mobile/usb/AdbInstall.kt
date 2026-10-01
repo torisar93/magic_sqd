@@ -441,6 +441,29 @@ private fun installedPackages(transport: AdbTransport, log: (String) -> Unit): S
         .toSet()
 }
 
+internal val PACKAGE_NAME_RE = Regex("^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$")
+
+/** Сколько ждать, пока магнитола допишет пакет после localinstall: 15 с + 1 с на каждые 3 МБ, не больше 2 мин
+ *  (FreeZona 20 МБ — 21 с, VK Видео 167 МБ — 68 с). Копия ПК: install_context.localinstall_wait_seconds. */
+internal fun localinstallWaitSeconds(apkSize: Long): Int = (15 + apkSize / (3L * 1024 * 1024)).coerceIn(15L, 120L).toInt()
+
+/** Одна команда на магнитолу: раз в 2 с проверяет «pm path», пока пакет не встанет или не выйдет время. */
+internal fun waitForPackageCommand(pkg: String, seconds: Int): String {
+    val tries = (seconds + 1) / 2
+    return "i=0; while [ \$i -lt $tries ]; do pm path $pkg 2>/dev/null | grep -q '^package:' && break; " +
+        "sleep 2; i=\$((i+1)); done"
+}
+
+/** Итог установки из logcat Chery-хелпера (тег LocalInstall): «install status=…» после последней «created session».
+ *  В выводе самой команды хелпер ничего не пишет — причина отказа была пустой. Копия ПК: localinstall_status. */
+internal fun localinstallStatus(logcat: String): String {
+    val lines = logcat.lines()
+    val start = lines.indexOfLast { "created session" in it }
+    if (start < 0) return ""  // своей сессии хелпер не записал — чужой старый итог не подставляем
+    val line = lines.drop(start + 1).lastOrNull { "install status=" in it } ?: return ""
+    return "install status=" + line.substringAfter("install status=").trim()
+}
+
 /**
  * Установка через helper-APK cars/_shared/chery_localinstall.apk — на
  * платформе Chery DesaySV (Jaecoo/Exeed/Chery/Tenet — общий поставщик ГУ)
@@ -463,6 +486,7 @@ fun installApkViaLocalinstall(
     log: (String) -> Unit,
     remoteApk: String = "/data/local/tmp/desaysv-install-target.apk",
     prePushed: Boolean = false,
+    expectedPackage: String = "",
 ): AdbInstallResult {
     AdbInstallProgress.beginTransfer((if (prePushed) 0L else apk.size) + helperBytes.size)
     val remoteHelper = "/data/local/tmp/desaysv-localinstall.apk"
@@ -492,22 +516,38 @@ fun installApkViaLocalinstall(
     )
     Thread.sleep(2000) // helper коммитит сессию установки асинхронно — даём системе время дописать пакет
 
-    val after = installedPackages(transport, log)
+    var after = installedPackages(transport, log)
+    val waitFor = expectedPackage.takeIf { it.isNotEmpty() && it !in before && PACKAGE_NAME_RE.matches(it) }
+    if (waitFor != null && waitFor !in after) {
+        // Пакет система дописывает сама уже после выхода хелпера: крупное приложение на Haval sa8155 встаёт ~10 с
+        // (лог №2042, FreeZona 20 МБ). Раньше через 2 с его считали «не вставшим», а позднее появление засчитывалось
+        // следующему приложению (разрешения и запуск free.zona под видом Rutube). Ждём именно его — на самой
+        // магнитоле, одной командой. Как ПК: install_context.install_apk_localinstall.
+        val waitSec = localinstallWaitSeconds(apk.size)
+        log("Магнитола ещё дописывает $waitFor — жду до $waitSec с...")
+        runAdbShellCommand(transport, waitForPackageCommand(waitFor, waitSec), log, timeoutMs = (waitSec + 30) * 1000)
+        after = installedPackages(transport, log)
+    }
     runAdbShellCommand(transport, if (prePushed) "rm -f $remoteHelper" else "rm -f $remoteApk $remoteHelper", log)
 
     val newPackages = after - before
-    if (newPackages.size != 1) {
-        val text = when (installResult) {
-            is AdbShellResult.Output -> installResult.text
-            is AdbShellResult.Rejected -> installResult.reason
-            is AdbShellResult.Failed -> installResult.reason
+    val pkg = when {
+        waitFor != null && waitFor in after -> waitFor  // встал именно он; чужое позднее появление не засчитываем
+        waitFor == null && newPackages.size == 1 -> newPackages.first()
+        else -> {
+            val text = when (installResult) {
+                is AdbShellResult.Output -> installResult.text
+                is AdbShellResult.Rejected -> installResult.reason
+                is AdbShellResult.Failed -> installResult.reason
+            }
+            val logcat = runAdbShellCommand(transport, "logcat -d -s LocalInstall", log)
+            val status = localinstallStatus((logcat as? AdbShellResult.Output)?.text ?: "")
+            val candidates = if (newPackages.isEmpty()) "нет" else newPackages.joinToString(", ")
+            return AdbInstallResult.Failed(
+                "localinstall не подтвердил успех (новых пакетов: $candidates): ${listOf(text.trim(), status).filter { it.isNotEmpty() }.joinToString(" ")}"
+            )
         }
-        val candidates = if (newPackages.isEmpty()) "нет" else newPackages.joinToString(", ")
-        return AdbInstallResult.Failed(
-            "localinstall не подтвердил успех (новых пакетов: $candidates): ${text.trim()}"
-        )
     }
-    val pkg = newPackages.first()
     AdbPermissions.grantAllPermissions(pkg, log)
     runAdbShellCommand(transport, "am force-stop $pkg", log)
     runAdbShellCommand(transport, "monkey -p $pkg -c android.intent.category.LAUNCHER 1", log)

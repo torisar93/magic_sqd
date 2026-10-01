@@ -73,6 +73,33 @@ def _completed_text(result) -> str:
 _LOCALINSTALL_HELPER_NAME = "chery_localinstall.apk"
 _LOCALINSTALL_REMOTE_APK = "/data/local/tmp/desaysv-install-target.apk"
 _LOCALINSTALL_REMOTE_HELPER = "/data/local/tmp/desaysv-localinstall.apk"
+_PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
+
+
+def localinstall_wait_seconds(apk_size: int) -> int:
+    """Сколько ждать, пока магнитола допишет пакет после localinstall: 15 с + 1 с на каждые 3 МБ, не больше 2 мин
+    (FreeZona 20 МБ — 21 с, VK Видео 167 МБ — 68 с). Копия — android AdbInstall.kt:localinstallWaitSeconds."""
+    return max(15, min(120, 15 + apk_size // (3 * 1024 * 1024)))
+
+
+def wait_for_package_command(package: str, seconds: int) -> str:
+    """Одна команда на магнитолу: раз в 2 с проверяет «pm path», пока пакет не встанет или не выйдет время."""
+    tries = (seconds + 1) // 2
+    return (f"i=0; while [ $i -lt {tries} ]; do pm path {package} 2>/dev/null | grep -q '^package:' && break; "
+            f"sleep 2; i=$((i+1)); done")
+
+
+def localinstall_status(logcat: str) -> str:
+    """Итог установки из logcat Chery-хелпера (тег LocalInstall): строка «install status=…» после последней
+    «created session» — в выводе самой команды хелпер ничего не пишет, причина отказа была пустой."""
+    lines = (logcat or "").splitlines()
+    start = max((i for i, line in enumerate(lines) if "created session" in line), default=-1)
+    if start < 0:
+        return ""  # своей сессии хелпер не записал — чужой старый итог не подставляем
+    for line in reversed(lines[start + 1:]):
+        if "install status=" in line:
+            return "install status=" + line.split("install status=", 1)[1].strip()
+    return ""
 
 # Тот же приём (app_process + helper через PackageInstaller.Session), что и
 # localinstall выше, но для платформы Geely OneOS (Atlas/CityRay/Preface) —
@@ -793,7 +820,7 @@ class InstallContext:
         """Приняла ли магнитола пометку — по dumpsys car_service (см. motion_patch.car_service_verdict)."""
         from . import motion_patch
         dump = self.shell("dumpsys car_service", check=False, timeout=60).stdout or ""
-        self.log(motion_patch.verdict_line(motion_patch.car_service_verdict(dump, package), package))
+        self.log(motion_patch.verdict_line(motion_patch.car_service_verdict(dump, package), package, dump))
 
     def optimize_for_motion(self, package: str) -> None:
         """«Работа в движении» (владелец, 2026-09-30: на Haval Dargo 2026 не работает видео в движении). Снимает
@@ -1254,17 +1281,31 @@ class InstallContext:
             check=False)
         self.sleep(2)
         after = self._installed_packages()
+        expected = read_package_name(path)
+        wait_for = expected if expected and expected not in before and _PACKAGE_NAME_RE.match(expected) else None
+        if wait_for and wait_for not in after:
+            # Хелпер коммитит сессию и сразу выходит, пакет система дописывает сама: крупное приложение на Haval
+            # sa8155 встаёт ~10 с (лог №2042, FreeZona 20 МБ). Раньше через 2 с его считали «не вставшим», а позднее
+            # появление засчитывалось следующему приложению. Ждём именно этот пакет — на самой магнитоле.
+            wait = localinstall_wait_seconds(path.stat().st_size)
+            self.log(f"Магнитола ещё дописывает {wait_for} — жду до {wait} с...")
+            self.shell(wait_for_package_command(wait_for, wait), check=False, timeout=wait + 30)
+            after = self._installed_packages()
         self.shell(f"rm -f {_LOCALINSTALL_REMOTE_APK} {_LOCALINSTALL_REMOTE_HELPER}", check=False)
 
         new_packages = after - before
-        if len(new_packages) != 1:
+        if wait_for and wait_for in after:
+            package = wait_for  # встал именно он; чужое позднее появление не засчитываем
+        elif not wait_for and len(new_packages) == 1:
+            package = next(iter(new_packages))
+        else:
             text = ((result.stdout or "") + (result.stderr or "")).strip()
-            package = None if new_packages else read_package_name(path)
-            if package and package in before and self._install_method == _LOCALINSTALL_METHOD:
-                self._update_with_dex_shell(path, package)
+            if expected and expected in before and self._install_method == _LOCALINSTALL_METHOD:
+                self._update_with_dex_shell(path, expected)
                 return
-            raise AdbError(text or "localinstall не подтвердил успех (пакет не появился в списке)")
-        package = next(iter(new_packages))
+            status = localinstall_status(_completed_text(self.shell("logcat -d -s LocalInstall", check=False)))
+            reason = " ".join(part for part in (text, status) if part)
+            raise AdbError(reason or "localinstall не подтвердил успех (пакет не появился в списке)")
         self._last_diff_package = package
         self._grant_all_permissions_if_available(package)
         self.shell(f"am force-stop {package}", check=False)

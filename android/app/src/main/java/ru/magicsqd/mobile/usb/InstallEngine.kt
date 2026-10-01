@@ -369,7 +369,7 @@ class InstallEngine(
             if (!helper.exists()) {
                 AdbInstallResult.Failed("chery_localinstall.apk не найден в cars/_shared (ещё не синхронизирован?)")
             } else {
-                AdbSession.installApkLocalinstall(apk, helper.readBytes(), methodLog, staged)
+                AdbSession.installApkLocalinstall(apk, helper.readBytes(), methodLog, staged, currentPackageName)
             }
         },
         "dex_shell_install" to { apk, staged, methodLog ->

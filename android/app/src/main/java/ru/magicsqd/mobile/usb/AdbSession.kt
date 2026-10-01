@@ -220,9 +220,12 @@ object AdbSession {
         if (stagedPath == null) installApkHavalRevivedOverAdb(requireTransport(), apk, log = log)
         else installApkHavalRevivedOverAdb(requireTransport(), apk, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkLocalinstall(apk: PushSource, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
-        if (stagedPath == null) installApkViaLocalinstall(requireTransport(), apk, helperBytes, log = log)
-        else installApkViaLocalinstall(requireTransport(), apk, helperBytes, log = log, remoteApk = stagedPath, prePushed = true)
+    /** expectedPackage — имя пакета из самого APK: его и ждём после хелпера (тот ставит асинхронно, лог №2042). */
+    fun installApkLocalinstall(apk: PushSource, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null,
+                               expectedPackage: String = ""): AdbInstallResult =
+        if (stagedPath == null) installApkViaLocalinstall(requireTransport(), apk, helperBytes, log = log, expectedPackage = expectedPackage)
+        else installApkViaLocalinstall(requireTransport(), apk, helperBytes, log = log, remoteApk = stagedPath, prePushed = true,
+                                       expectedPackage = expectedPackage)
 
     /** stagedPath, если задан, обязан быть "/data/local/tmp/<apkName>" — dex-хелпер работает именно с этим путём. */
     fun installApkDexShell(apk: PushSource, apkName: String, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =

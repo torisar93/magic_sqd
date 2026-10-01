@@ -91,6 +91,6 @@ object MotionOptimize {
         val dump = (AdbSession.shell("dumpsys car_service", log, 60000) as? AdbShellResult.Output)?.text ?: ""
         val py = Python.getInstance().getModule("motion_patch")
         val verdict = py.callAttr("car_service_verdict", dump, pkg).toString()
-        log(py.callAttr("verdict_line", verdict, pkg).toString())
+        log(py.callAttr("verdict_line", verdict, pkg, dump).toString())
     }
 }
