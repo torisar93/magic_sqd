@@ -21,7 +21,8 @@ from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_de
                            list_devices, normalize_console_command, scan_network_for_wifi_adb,
                            split_top_level_command)
 from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, model_on_server,
-                             sync_model_apk_metadata, sync_model_subfolder, sync_shared_folder)
+                             prune_model_stale_files, sync_model_apk_metadata, sync_model_subfolder,
+                             sync_shared_folder)
 from ...install_context import InstallCancelled
 from ... import device_models
 from ...rollback import rollback
@@ -203,6 +204,12 @@ class InstallApi:
         # "usb"/"adb"/"exe" — свои файлы качаются по клику на соответствующем
         # этапе, не здесь.
         manifest = self._get_manifest()
+        # Опубликованная модель — сначала сверка с сервером: старые и чужие версии файлов прошлой инструкции
+        # убираются, нужные скачаются заново (content_sync.prune_model_stale_files). Своя модель и правка — не трогаем.
+        try:
+            prune_model_stale_files(self.base_dir, model.dir, manifest, log=self._on_log_passive)
+        except Exception as exc:  # noqa: BLE001 - сверка не должна мешать открыть модель
+            self._on_log(f"Не удалось сверить модель с сервером: {exc}")
         # PermissionError отдельно от прочих сбоев (сеть/сервер недоступен —
         # обычное дело, тихо логируем и работаем со старым содержимым) —
         # это значит, что программа стоит в папке, куда у неё самой нет

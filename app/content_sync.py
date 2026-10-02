@@ -248,6 +248,29 @@ def _is_stale(local_path: Path, item: dict) -> bool:
     return False
 
 
+def local_copy_is_current(path: Path, item: dict) -> bool:
+    """Локальная копия — та же версия, что на сервере (item — запись манифеста): тот же размер и время изменения. Время
+    сервера ставится при скачивании (download_file(mtime=…)); APK, докачанные до 1.0.56, его не получали — у них время
+    скачивания: скачан ПОСЛЕ последней правки файла на сервере — та же версия (время сервера ставим, дальше сверка
+    точная), раньше — устарел. Сервер времени не знает — сверяем только размер."""
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    if st.st_size != item.get("size", -1):
+        return False
+    remote_mtime = item.get("mtime")
+    if remote_mtime is None or abs(st.st_mtime - remote_mtime) <= 2:
+        return True
+    if st.st_mtime > remote_mtime:
+        try:
+            os.utime(path, (st.st_atime, remote_mtime))
+        except OSError:
+            pass
+        return True
+    return False
+
+
 def _replace_with_retry(tmp_dest: Path, dest: Path, attempts: int = 6, delay: float = 0.4) -> None:
     """Подменяет dest скачанным .part. На Windows файл-приёмник, который в этот
     момент открыт (окно с инструкцией показывает картинку, антивирус или
@@ -764,59 +787,45 @@ _KNOWN_MODEL_FILES_FILENAME = "_known_files.json"
 
 def prune_model_stale_files(base_dir: Path, model_dir: Path, manifest: dict[str, dict] | None,
                              log=lambda m: None) -> list[str]:
-    """Тот же приём, что prune_removed_apks, но для files/ и usb_files/
-    ОДНОЙ модели — install_api.py:standard_apks() (через
-    scanner.scan_apk_dir_with_remote) точно так же отдаёт предпочтение уже
-    скачанному локальному файлу: APK, убранный из "обязательных"/
-    "необязательных" уже опубликованной модели, у техника, который его уже
-    когда-то скачивал, продолжал бы показываться в списке навсегда.
-
-    Снимок — скрытый model_dir/_known_files.json (рядом с _local_edit.json)
-    — своя папка, а не общий файл в base_dir, как у моделей/apk/. Пропускаем
-    целиком при активном маркере локальной правки (см. _has_local_edit) —
-    та же защита, что уже есть у sync_model_files (включая авто-снятие
-    устаревшего маркера, если сервер уже ушёл вперёд, см.
-    _local_edit_superseded)."""
-    if manifest is None or _has_local_edit(model_dir, base_dir / "cars", manifest):
+    """Сверка опубликованной модели с сервером — при КАЖДОМ открытии модели (install_api.load_stages) и при полной
+    докачке (sync_model_files). Владелец, 2026-10-02: «при открытии программа должна всегда сверяться с сервером,
+    удалять локально всякие старые апк, если они были скачаны в прошлой версии инструкции, и быть готовой загрузить
+    новые; файлы не должны дублироваться». Из files/ и usb_files/ убирается всё, чего на сервере нет (переименовано
+    или убрано в админке), и то, что отличается от серверного (старая версия, local_copy_is_current), — нужное
+    скачается заново прямо перед использованием. Своя модель техника (её нет на сервере), его неотправленная правка
+    (_local_edit.json) и работа без сети — не трогаем (model_on_server).
+    Раньше — снимок _known_files.json: убиралось только то, что пропало с сервера после прошлой сверки, и только при
+    полной докачке (редактор, флешка), а старая версия того же файла оставалась и ставилась."""
+    if not model_on_server(base_dir, model_dir, manifest):
         return []
-    try:
-        remote_base = "cars/" + model_dir.relative_to(base_dir / "cars").as_posix()
-    except ValueError:
-        return []
-    prefix = remote_base + "/"
-
-    def _relevant(path: str) -> str | None:
-        if not path.startswith(prefix):
-            return None
-        rel = path[len(prefix):]
-        return rel if rel.startswith("files/") or rel.startswith("usb_files/") else None
-
-    current = {path for path in manifest if _relevant(path) is not None}
-    marker_path = model_dir / _KNOWN_MODEL_FILES_FILENAME
-    try:
-        previous = set(json.loads(marker_path.read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError):
-        previous = set()
+    remote_base = "cars/" + model_dir.relative_to(base_dir / "cars").as_posix()
     removed: list[str] = []
-    if previous:
-        for path in sorted(previous - current):
-            rel = _relevant(path)
-            if not rel:
+    for subfolder in ("files", "usb_files"):
+        root = model_dir / subfolder
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            # .part — идущая сейчас докачка: download_file сам её подменит или перезапишет
+            if not path.is_file() or path.name.endswith(".part"):
                 continue
-            local_path = model_dir / rel
-            if not local_path.is_file():
+            # Переподписанная копия (у Android рядом с APK: X_resigned.apk) живёт, пока жив свой исходный APK
+            if path.name.endswith("_resigned.apk") and path.with_name(path.name[:-len("_resigned.apk")] + ".apk").is_file():
                 continue
-            log(f"Файл удалён на сервере, убираю локальную копию: {path}")
+            rel = path.relative_to(model_dir).as_posix()
+            item = manifest.get(f"{remote_base}/{rel}")
+            if item is not None and local_copy_is_current(path, item):
+                continue
             try:
-                local_path.unlink()
+                path.unlink()
             except OSError:
                 continue
-            removed.append(path)
-            _prune_empty_ancestors(local_path.parent, model_dir)
-    try:
-        marker_path.write_text(json.dumps(sorted(current), ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+            removed.append(rel)
+            _prune_empty_ancestors(path.parent, model_dir)
+    (model_dir / _KNOWN_MODEL_FILES_FILENAME).unlink(missing_ok=True)  # снимок прежней схемы больше не нужен
+    if removed:
+        names = ", ".join(rel.rsplit("/", 1)[-1] for rel in removed[:5])
+        more = f" и ещё {len(removed) - 5}" if len(removed) > 5 else ""
+        log(f"Модель сверена с сервером: убраны устаревшие файлы ({names}{more}) — нужные скачаются заново.")
     return removed
 
 
@@ -1145,22 +1154,21 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
                 remote_path = f"cars/{rel.as_posix()}"
             except ValueError:
                 continue
-        size = (manifest or {}).get(remote_path, {}).get("size", 0)
+        item = (manifest or {}).get(remote_path)
+        size = (item or {}).get("size", 0)
         if path.exists():
-            # Не просто "уже есть" — реальный случай: обрыв интернета на
-            # середине скачивания оставлял обрубленный .apk, который потом
-            # никогда не перекачивался (только факт существования и
-            # проверялся) и раз за разом проваливал установку на магнитоле.
-            if not size or path.stat().st_size == size:
+            # Не просто "уже есть": обрыв на середине скачивания оставлял обрубленный .apk, а замена файла на сервере —
+            # старую версию, которая потом и ставилась. Сверяем размер и время (local_copy_is_current); файла нет в
+            # манифесте или сети нет — берём, что есть.
+            if item is None or local_copy_is_current(path, item):
                 continue
-            log(f"{path.name}: на диске {path.stat().st_size} байт, на сервере {size} — "
-                f"докачиваю заново (обрыв в прошлый раз)")
-        pending.append((path, remote_path, rel, size, str(raw_path)))
+            log(f"{path.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
+        pending.append((path, remote_path, rel, size, str(raw_path), (item or {}).get("mtime")))
 
     if not pending:
         return 0
     total_files = len(pending)
-    total_bytes = sum(size for _, _, _, size, _ in pending)
+    total_bytes = sum(size for _, _, _, size, _, _ in pending)
     byte_progress = total_bytes > 0
     if byte_progress:
         on_progress(0, total_bytes, 0, total_files)
@@ -1168,7 +1176,7 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
         on_progress(0, total_files, 0, total_files)
     downloaded = 0
     completed_bytes = 0
-    for done, (path, remote_path, rel, size, raw_path) in enumerate(pending, start=1):
+    for done, (path, remote_path, rel, size, raw_path, mtime) in enumerate(pending, start=1):
         check_cancelled()
         try:
             def report(file_done: int, file_total: int, *, base=completed_bytes, file_size=size,
@@ -1178,7 +1186,7 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
                     on_progress(base + min(file_done, file_size), total_bytes, done - 1, total_files)
 
             download_file(url, remote_path, path, log=log, check_cancelled=check_cancelled,
-                          on_progress=report)
+                          mtime=mtime, on_progress=report)  # время сервера — для сверки в следующий раз
             downloaded += 1
         except ContentSyncError as exc:
             log(f"Не удалось скачать {rel.as_posix()}: {exc}")

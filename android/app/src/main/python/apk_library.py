@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from content_sync import ContentSyncError, _encode_path, download_file, fetch_manifest, open_url
+from content_sync import ContentSyncError, _encode_path, download_file, fetch_manifest, local_copy_is_current, open_url
 
 _META_FETCH_WORKERS = 8
 
@@ -177,18 +177,20 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
                 remote_path = f"cars/{rel}"
             except ValueError:
                 continue
+        item = manifest.get(remote_path) if manifest else None
         if local_path.exists():
-            expected_size = manifest.get(remote_path, {}).get("size") if manifest else None
-            if expected_size is None or local_path.stat().st_size == expected_size:
+            # Размер И время (local_copy_is_current): обрыв на середине оставлял обрубленный файл, а замена файла на
+            # сервере — старую версию, которая потом и ставилась. Файла нет в манифесте или сети нет — берём, что есть.
+            if item is None or local_copy_is_current(local_path, item):
                 continue
-            log(f"{local_path.name}: на диске {local_path.stat().st_size} байт, "
-                f"на сервере {expected_size} — докачиваю заново (обрыв в прошлый раз)")
+            log(f"{local_path.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
         log(f"Скачиваю {local_path.name}...")
         try:
             # Путь в прогрессе — ровно та строка, что пришла в paths (как на ПК, content_sync.
             # ensure_apks_downloaded): по ней окно установки находит строку очереди (progress08.js).
             # resolve() раскрывает /data/user/0 → /data/data, и строки «Скачивание…» не находились.
             download_file(base_url, remote_path, local_path, check_cancelled=check_cancelled,
+                          mtime=(item or {}).get("mtime"),  # время сервера — для сверки в следующий раз
                           on_progress=(lambda done, total, raw=str(p): on_file_progress(raw, done, total))
                           if on_file_progress else None)
             downloaded += 1

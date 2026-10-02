@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
-                           prune_removed_models, set_auth_cookie as _set_auth_cookie)
+                           prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version
 from wizard_spec import load_wizard_spec
 from apk_library import list_apks as _list_apks, ensure_apks_downloaded as _ensure_apks_downloaded
@@ -344,6 +344,10 @@ def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
     if manifest is None:
         log("Не удалось получить manifest.json с сервера — работаем с тем, что уже скачано локально.")
         return json.dumps({"downloaded": 0, "log": lines})
+
+    # Сначала сверка с сервером: старые и чужие версии файлов прошлой инструкции убираются, нужные скачаются заново
+    # перед использованием (content_sync.prune_model_to_server; как ПК: install_api.load_stages).
+    prune_model_to_server(cars_path, model_dir, manifest, log=log)
 
     # Читаем _wizard_spec.json напрямую (не через load_wizard_spec — та сама
     # читает содержимое instruction.html, то есть требует, чтобы файл уже

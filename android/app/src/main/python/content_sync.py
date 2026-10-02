@@ -98,6 +98,29 @@ def _is_stale(local_path: Path, item: dict) -> bool:
     return False
 
 
+def local_copy_is_current(path: Path, item: dict) -> bool:
+    """Локальная копия — та же версия, что на сервере: тот же размер и время изменения. Время сервера ставится при
+    скачивании (download_file(mtime=…)); APK, докачанные до 1.0.56, его не получали — у них время скачивания: скачан
+    ПОСЛЕ последней правки файла на сервере — та же версия (время сервера ставим), раньше — устарел. Копия desktop
+    app/content_sync.py:local_copy_is_current."""
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    if st.st_size != item.get("size", -1):
+        return False
+    remote_mtime = item.get("mtime")
+    if remote_mtime is None or abs(st.st_mtime - remote_mtime) <= 2:
+        return True
+    if st.st_mtime > remote_mtime:
+        try:
+            os.utime(path, (st.st_atime, remote_mtime))
+        except OSError:
+            pass
+        return True
+    return False
+
+
 def download_file(base_url: str, remote_path: str, dest: Path, chunk_size: int = 1024 * 1024,
                    mtime: float | None = None, on_progress=None, check_cancelled=lambda: None) -> None:
     url = f"{base_url}/{_encode_path(remote_path)}"
@@ -304,6 +327,55 @@ def _prune_empty_ancestors(start: Path, stop_at: Path) -> None:
         except OSError:
             return
         current = current.parent
+
+
+def model_on_server(cars_dir: Path, model_dir: Path, manifest) -> bool:
+    """Модель опубликована на сервере и не правится локально (_local_edit.json, как на ПК) — её файлы те же, что там."""
+    if manifest is None or (model_dir / "_local_edit.json").exists():
+        return False
+    try:
+        rel = "cars/" + model_dir.resolve().relative_to(cars_dir.resolve()).as_posix()
+    except ValueError:
+        return False
+    return f"{rel}/{_MODEL_MARKER}" in manifest
+
+
+def prune_model_to_server(cars_dir: Path, model_dir: Path, manifest, log=lambda m: None) -> list:
+    """Сверка опубликованной модели с сервером при открытии (владелец, 2026-10-02: «при открытии программа должна
+    всегда сверяться с сервером, удалять локально всякие старые апк, если они были скачаны в прошлой версии инструкции,
+    и быть готовой загрузить новые; файлы не должны дублироваться»). Из files/ и usb_files/ убирается всё, чего на
+    сервере нет (переименовано или убрано в админке), и то, что отличается от серверного (старая версия), — нужное
+    скачается заново перед использованием. Копия desktop app/content_sync.py:prune_model_stale_files."""
+    if not model_on_server(cars_dir, model_dir, manifest):
+        return []
+    remote_base = "cars/" + model_dir.resolve().relative_to(cars_dir.resolve()).as_posix()
+    removed = []
+    for subfolder in ("files", "usb_files"):
+        root = model_dir / subfolder
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            # .part — идущая сейчас докачка
+            if not path.is_file() or path.name.endswith(".part"):
+                continue
+            # Переподписанная копия (InstallEngine.kt: X_resigned.apk) живёт, пока жив свой исходный APK
+            if path.name.endswith("_resigned.apk") and path.with_name(path.name[:-len("_resigned.apk")] + ".apk").is_file():
+                continue
+            rel = path.relative_to(model_dir).as_posix()
+            item = manifest.get(f"{remote_base}/{rel}")
+            if item is not None and local_copy_is_current(path, item):
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed.append(rel)
+            _prune_empty_ancestors(path.parent, model_dir)
+    if removed:
+        names = ", ".join(rel.rsplit("/", 1)[-1] for rel in removed[:5])
+        more = f" и ещё {len(removed) - 5}" if len(removed) > 5 else ""
+        log(f"Модель сверена с сервером: убраны устаревшие файлы ({names}{more}) — нужные скачаются заново.")
+    return removed
 
 
 def prune_removed_models(base_dir: Path, cars_dir: Path, manifest, log=lambda m: None) -> list:
