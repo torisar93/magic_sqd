@@ -38,7 +38,7 @@ def test_file_problem(tmp_path):
 
 @pytest.mark.parametrize("reason, expected", [
     # №1942: YouTube Morphe под x86
-    ("Failure [INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]", "другой процессор"),
+    ("Failure [INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]", "не под процессор этой магнитолы"),
     # №2087: ContraCam на магнитоле с Android 12 (API 31)
     ("Exception occurred while executing 'install': java.lang.IllegalArgumentException: Error: Failed to parse APK "
      "file: /data/local/tmp/ContraCam_4.0.107-Google.apk: Requires newer sdk version #32 (current version is #31)",
@@ -52,10 +52,13 @@ def test_file_problem(tmp_path):
      "AndroidManifest.xml]", "не может прочитать"),
     ("Failure [INSTALL_FAILED_MISSING_SPLIT: Missing split for com.x]", "только часть приложения"),
     ("Failure [INSTALL_PARSE_FAILED_NO_CERTIFICATES: Package /data/app/x/base.apk has no certificates]",
-     "не подписан"),
+     "не принимает подпись этого APK"),
+    # №2404: старый Android магнитолы Harman не понимает подпись v2/v3 (YT Morphe) — тот же код, что и без подписи
+    ("Failure [INSTALL_PARSE_FAILED_NO_CERTIFICATES: Failed to collect certificates from /data/app/vmdl71700060.tmp/"
+     "base.apk: Attempt to get length of null array]", "не принимает подпись этого APK"),
     # localinstall: причина — итог хелпера из logcat (install_context.localinstall_status)
     ("localinstall не подтвердил успех (новых пакетов: нет): install status=1 INSTALL_FAILED_NO_MATCHING_ABIS: x",
-     "другой процессор"),
+     "не под процессор этой магнитолы"),
 ])
 def test_rejections_that_mean_the_file_itself(reason, expected):
     text = apk_check.rejection_message("app.apk", reason)
@@ -121,8 +124,8 @@ def test_device_rejection_of_the_file_stops_the_method_search(tmp_path, make_ctx
     ctx = make_ctx([x86], {"YouTube_Morphe-x86.apk": abi})
     ctx.install_selected_apks()
     assert len(ctx.tried) == 1  # раньше — все способы подряд с той же ошибкой (лог №1942)
-    assert ctx.apps_ok == 0 and "другой процессор" in ctx.failed_apps[0]
-    assert any(line.startswith("Не установлено: «YouTube_Morphe-x86.apk» собран") for line in ctx.test_log)
+    assert ctx.apps_ok == 0 and "не под процессор этой магнитолы" in ctx.failed_apps[0]
+    assert any(line.startswith("Не установлено: «YouTube_Morphe-x86.apk» собран не под процессор") for line in ctx.test_log)
 
 
 def test_locked_method_rejection_gets_the_clear_reason(tmp_path, make_ctx):

@@ -45,8 +45,9 @@ def rejection_message(name: str, reason: str) -> str | None:
     """Понятный текст, если магнитола отказала из-за самого файла; None — обычный отказ способа установки."""
     text = reason or ""
     if "INSTALL_FAILED_NO_MATCHING_ABIS" in text.upper():
-        return (f"«{name}» собран под другой процессор (например, x86), а не под процессор магнитолы — не встанет "
-                "никаким способом. Нужна версия для arm64-v8a или armeabi-v7a.")
+        # Процессор бывает и x86 (старые Haval на платформе Harman, лог №2404), поэтому без «нужна arm64».
+        return (f"«{name}» собран не под процессор этой магнитолы (в APK нет библиотек под её архитектуру) — не встанет "
+                "никаким способом. Нужна другая сборка приложения: universal или под процессор магнитолы.")
     sdk = _SDK_RE.search(text)
     if sdk or "INSTALL_FAILED_OLDER_SDK" in text.upper():
         need = f" (нужен API {sdk.group(1)}, на магнитоле {sdk.group(2)})" if sdk else ""
@@ -56,7 +57,10 @@ def rejection_message(name: str, reason: str) -> str | None:
         return (f"«{name}» — только часть приложения (нужны ещё split-файлы) — один этот файл не встанет. "
                 "Найдите версию одним APK.")
     if "INSTALL_PARSE_FAILED_NO_CERTIFICATES" in text.upper():
-        return f"«{name}» не подписан — Android не ставит неподписанные приложения. Нужен подписанный APK."
+        # Так же отвечает и старый Android на APK, подписанный только новой схемой (v2/v3, лог №2404: YT Morphe на
+        # магнитоле Harman — «Attempt to get length of null array»), — не только неподписанный.
+        return (f"«{name}»: магнитола не принимает подпись этого APK — он не подписан или подписан новой схемой, "
+                "которую её старый Android не понимает. Не встанет никаким способом; нужна другая сборка приложения.")
     if _BROKEN_RE.search(text):
         return f"«{name}» магнитола не может прочитать — файл повреждён или это не обычный APK. Скачайте его заново."
     return None
