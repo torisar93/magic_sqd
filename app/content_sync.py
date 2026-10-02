@@ -418,6 +418,19 @@ def _has_local_edit(model_dir: Path, cars_dir: Path | None = None,
     return True
 
 
+def model_on_server(base_dir: Path, model_dir: Path, manifest: dict[str, dict] | None) -> bool:
+    """Модель опубликована на сервере, и у техника нет её неотправленной правки — её файлы те же, что на сервере
+    (локальный файл, которого там уже нет, переименован или убран в админке)."""
+    if manifest is None:
+        return False
+    cars_dir = base_dir / "cars"
+    try:
+        rel = "cars/" + model_dir.relative_to(cars_dir).as_posix()
+    except ValueError:
+        return False
+    return f"{rel}/{_MODEL_MARKER}" in manifest and not _has_local_edit(model_dir, cars_dir, manifest)
+
+
 def _locally_edited_prefixes(cars_dir: Path, manifest: dict[str, dict] | None = None) -> set[str]:
     """Все "cars/<Марка>/<Модель>[/<Модификация>]" с маркером локальной
     правки (см. mark_local_edit) — для sync_scripts ниже, который в отличие

@@ -20,8 +20,8 @@ from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
                            list_devices, normalize_console_command, scan_network_for_wifi_adb,
                            split_top_level_command)
-from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, sync_model_apk_metadata,
-                             sync_model_subfolder, sync_shared_folder)
+from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, model_on_server,
+                             sync_model_apk_metadata, sync_model_subfolder, sync_shared_folder)
 from ...install_context import InstallCancelled
 from ... import device_models
 from ...rollback import rollback
@@ -419,8 +419,21 @@ class InstallApi:
         # prune_model_stale_files уберёт только при полной докачке модели)
         # показываем обычными галочками вместе с необязательными. Одноимённый
         # файл из optional/ побеждает — иначе одно приложение шло бы двумя строками.
-        required = scan_apk_dir_with_remote(required_dir, remote_items(required_dir))
-        optional = scan_apk_dir_with_remote(optional_dir, remote_items(optional_dir))
+        # Опубликованная модель: APK, которого на сервере больше нет (переименован или убран в админке), не показываем —
+        # иначе у техника, скачавшего его раньше, в списке оставалось и старое имя (prune_model_stale_files убирает такие
+        # файлы только при докачке модели перед установкой, а список — раньше). Своя неотправленная модель — как была.
+        server_only = model_on_server(self.base_dir, model.dir, manifest)
+
+        def listed(folder: Path):
+            items = remote_items(folder)
+            apks = scan_apk_dir_with_remote(folder, items)
+            if server_only:
+                on_server = {item["path"].rsplit("/", 1)[-1] for item in items}
+                apks = [apk for apk in apks if apk.path.name in on_server]
+            return apks
+
+        required = listed(required_dir)
+        optional = listed(optional_dir)
         optional_names = {apk.path.name for apk in optional}
         merged = [apk for apk in required if apk.path.name not in optional_names] + optional
         merged.sort(key=lambda apk: apk.name.lower())
