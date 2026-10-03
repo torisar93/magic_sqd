@@ -472,13 +472,26 @@ def _locally_edited_prefixes(cars_dir: Path, manifest: dict[str, dict] | None = 
     return prefixes
 
 
+def _inside_local_edit(path: Path, cars_dir: Path, manifest: dict[str, dict] | None = None) -> bool:
+    """path лежит в модели с неопубликованной локальной правкой (см. mark_local_edit, _has_local_edit)."""
+    cars_dir = cars_dir.resolve()
+    path = Path(path).resolve()
+    for parent in (path, *path.parents):
+        if parent == cars_dir or cars_dir not in parent.parents:
+            return False
+        if (parent / LOCAL_EDIT_MARKER_FILENAME).exists():
+            return _has_local_edit(parent, cars_dir, manifest)
+    return False
+
+
 def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
               log=lambda m: None, check_cancelled=lambda: None, skip_dirs: tuple = (),
               no_recurse_dirs: tuple = (), manifest: dict[str, dict] | None = None,
               on_progress=lambda done, total, *args: None,
-              skip_prefixes: tuple = ()) -> int:
+              skip_prefixes: tuple = (), keep_existing: bool = False) -> int:
     """Скачивает из remote_subpath в local_dir всё, чего там ещё нет (или
-    что отличается по размеру). skip_dirs/no_recurse_dirs — см.
+    что отличается по размеру). keep_existing — уже лежащие файлы не трогать вовсе, только докачать
+    недостающие (модель с неопубликованной локальной правкой, см. sync_model_subfolder). skip_dirs/no_recurse_dirs — см.
     list_files_recursive. Возвращает число скачанных файлов; сетевые ошибки
     не бросает наружу — только логирует, чтобы недоступный сервер не мешал
     работе программы. Исключение — 404 на листинге самой remote_subpath: это
@@ -529,6 +542,8 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path,
         if not rel:
             continue
         local_path = local_dir / rel
+        if keep_existing and local_path.exists():
+            continue
         if not _is_stale(local_path, item):
             continue
         to_download.append((item["path"], local_path, item.get("mtime"), item.get("size", 0)))
@@ -969,8 +984,13 @@ def sync_model_subfolder(base_dir: Path, local_dir: Path, log=lambda m: None,
     if manifest is None:
         manifest = fetch_manifest(url)
     remote_subpath = "cars/" + local_dir.relative_to(base_dir / "cars").as_posix()
+    # Модель с неопубликованной локальной правкой: её файлы версией с сервера не затираем (как sync_model_files/
+    # sync_scripts), только докачиваем недостающие. Раньше открытие модели прямо во время публикации из редактора
+    # возвращало старую инструкцию с сервера поверх только что сохранённой (2026-10-03, Haval H3), а у техника с
+    # заявкой на модерацию правка инструкции пропадала при каждом открытии модели.
+    keep_existing = _inside_local_edit(local_dir, base_dir / "cars", manifest)
     return sync_tree(url, remote_subpath, local_dir, log=log, check_cancelled=check_cancelled,
-                     manifest=manifest, on_progress=on_progress)
+                     manifest=manifest, on_progress=on_progress, keep_existing=keep_existing)
 
 
 def sync_model_apk_metadata(base_dir: Path, folders: list[Path], log=lambda m: None,
@@ -1159,8 +1179,10 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
         if path.exists():
             # Не просто "уже есть": обрыв на середине скачивания оставлял обрубленный .apk, а замена файла на сервере —
             # старую версию, которая потом и ставилась. Сверяем размер и время (local_copy_is_current); файла нет в
-            # манифесте или сети нет — берём, что есть.
-            if item is None or local_copy_is_current(path, item):
+            # манифесте или сети нет — берём, что есть. Файл модели с неопубликованной правкой — тоже свой (см.
+            # mark_local_edit): техник мог положить другую версию APK под тем же именем.
+            if item is None or local_copy_is_current(path, item) or (
+                    remote_path.startswith("cars/") and _inside_local_edit(path, cars_dir, manifest)):
                 continue
             log(f"{path.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
         pending.append((path, remote_path, rel, size, str(raw_path), (item or {}).get("mtime")))

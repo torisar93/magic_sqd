@@ -139,19 +139,22 @@ class InstallApi:
         self._session_log_token: str | None = None
 
     # ------------------------------------------------------------------
-    def _get_manifest(self) -> dict | None:
+    def _get_manifest(self, fresh: bool = False) -> dict | None:
         """Кэширует content/manifest.json на несколько секунд — иначе он
         (весь каталог cars/+apk/, не только текущая модель) перекачивался бы
         заново при каждом рендере каждого apps-этапа за один проход мастера
         (load_stages -> потом несколько вызовов standard_apks на том же
         экране). TTL короткий — не для оффлайн-работы, только чтобы не
         дублировать сетевые запросы в пределах одной "сессии" открытой
-        модели."""
+        модели. fresh — открытие модели (load_stages): всегда заново, иначе после публикации
+        повторный вход в модель минуту видел прежний манифест и прежнюю инструкцию, а «Обновить каталог»
+        этот кэш не сбрасывал — помогал только перезапуск (2026-10-03, Haval H3)."""
         url = get_base_url(self.base_dir)
         if not url:
             return None
         now = time.monotonic()
-        if self._manifest_cache is None or now - self._manifest_cache_time > _MANIFEST_CACHE_TTL_SECONDS:
+        if (fresh or self._manifest_cache is None
+                or now - self._manifest_cache_time > _MANIFEST_CACHE_TTL_SECONDS):
             self._manifest_cache = fetch_manifest(url)
             self._manifest_cache_time = now
         return self._manifest_cache
@@ -203,7 +206,7 @@ class InstallApi:
         # standard_apks() (список строится по манифесту, без докачки);
         # "usb"/"adb"/"exe" — свои файлы качаются по клику на соответствующем
         # этапе, не здесь.
-        manifest = self._get_manifest()
+        manifest = self._get_manifest(fresh=True)
         # Опубликованная модель — сначала сверка с сервером: старые и чужие версии файлов прошлой инструкции
         # убираются, нужные скачаются заново (content_sync.prune_model_stale_files). Своя модель и правка — не трогаем.
         try:

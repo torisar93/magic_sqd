@@ -33,7 +33,7 @@ def _api(tmp_path, model_dir, manifest):
     model = types.SimpleNamespace(dir=model_dir, brand="Haval", name="Jolion", modification="2026", key="k",
                                   stages_script=model_dir / "stages.py")
     api = InstallApi("adb", tmp_path, types.SimpleNamespace(get_model=lambda key: model))
-    api._get_manifest = lambda: manifest
+    api._get_manifest = lambda fresh=False: manifest
     return api
 
 

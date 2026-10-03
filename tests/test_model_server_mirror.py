@@ -123,7 +123,7 @@ def test_desktop_open_model_checks_with_server(tmp_path):
     model = types.SimpleNamespace(dir=model_dir, brand="Haval", name="Jolion", modification="2026", key="k",
                                   stages_script=model_dir / "stages.py")
     api = InstallApi("adb", tmp_path, types.SimpleNamespace(get_model=lambda key: model))
-    api._get_manifest = lambda: _manifest({"files/pack/optional/MagicSQD_WheelKeys_1.3.apk": (3, SERVER_MTIME)})
+    api._get_manifest = lambda fresh=False: _manifest({"files/pack/optional/MagicSQD_WheelKeys_1.3.apk": (3, SERVER_MTIME)})
 
     assert "stages" in api.load_stages("k")
     assert not stale.exists()
