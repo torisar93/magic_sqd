@@ -59,6 +59,15 @@ def test_file_problem(tmp_path):
     # localinstall: причина — итог хелпера из logcat (install_context.localinstall_status)
     ("localinstall не подтвердил успех (новых пакетов: нет): install status=1 INSTALL_FAILED_NO_MATCHING_ABIS: x",
      "не под процессор этой магнитолы"),
+    # №2583: мод Навигатора на Tank 300 со штатным yandex.auto.auth (adb install)
+    ("adb: failed to install C:\\apk\\Яндекс\\YN4_broadcast_MOD_kill.apk: Failure [INSTALL_FAILED_DUPLICATE_PERMISSION: "
+     "Package ru.yandex.yandexnavi attempting to redeclare permission com.yandex.permission.READ_CREDENTIALS already "
+     "owned by yandex.auto.auth]", "конфликтует с уже установленным yandex.auto.auth"),
+    # №2597: Яндекс Музыка рядом с модом Навигатора (dex-хелпер)
+    ("monji: wrote 44653580 bytes Failure status=5 message=INSTALL_FAILED_DUPLICATE_PERMISSION: Package ru.yandex.music "
+     "attempting to redeclare permission com.yandex.permission.READ_CREDENTIALS already owned by ru.yandex.yandexnavi",
+     "конфликтует с уже установленным ru.yandex.yandexnavi"),
+    ("Failure [INSTALL_FAILED_DUPLICATE_PERMISSION]", "конфликтует с уже установленным приложением"),
 ])
 def test_rejections_that_mean_the_file_itself(reason, expected):
     text = apk_check.rejection_message("app.apk", reason)
@@ -77,6 +86,16 @@ def test_rejections_that_mean_the_file_itself(reason, expected):
 ])
 def test_ordinary_method_failures_keep_trying(reason):
     assert apk_check.rejection_message("app.apk", reason) is None
+
+
+def test_duplicate_permission_names_the_owner_and_the_permission():
+    reason = ("Failure [INSTALL_FAILED_DUPLICATE_PERMISSION: Package ru.yandex.yandexnavi attempting to redeclare "
+              "permission com.yandex.permission.READ_CREDENTIALS already owned by yandex.auto.auth].")
+    text = apk_check.rejection_message("YN4.apk", reason)
+    assert text == ("«YN4.apk» конфликтует с уже установленным yandex.auto.auth: оба объявляют разрешение "
+                    "com.yandex.permission.READ_CREDENTIALS, а подписаны разными ключами — не встанет никаким способом. "
+                    "Нужна сборка с той же подписью, что у yandex.auto.auth, или удалите yandex.auto.auth, если это не "
+                    "штатное приложение магнитолы.")
 
 
 def test_android_copy_matches():
@@ -126,6 +145,18 @@ def test_device_rejection_of_the_file_stops_the_method_search(tmp_path, make_ctx
     assert len(ctx.tried) == 1  # раньше — все способы подряд с той же ошибкой (лог №1942)
     assert ctx.apps_ok == 0 and "не под процессор этой магнитолы" in ctx.failed_apps[0]
     assert any(line.startswith("Не установлено: «YouTube_Morphe-x86.apk» собран не под процессор") for line in ctx.test_log)
+
+
+def test_duplicate_permission_stops_the_method_search(tmp_path, make_ctx):
+    music = _zip(tmp_path / "Yandex-Music-2024.02.2_33.1.apk", ["AndroidManifest.xml"])
+    good = _zip(tmp_path / "good.apk", ["AndroidManifest.xml"])
+    dup = ("Failure [INSTALL_FAILED_DUPLICATE_PERMISSION: Package ru.yandex.music attempting to redeclare permission "
+           "com.yandex.permission.READ_CREDENTIALS already owned by ru.yandex.yandexnavi]")
+    ctx = make_ctx([music, good], {"Yandex-Music-2024.02.2_33.1.apk": dup})
+    ctx.install_selected_apks()
+    # №2597: раньше — 7 способов подряд с той же ошибкой и сырой список отказов в конце
+    assert [name for name, _ in ctx.tried].count("Yandex-Music-2024.02.2_33.1.apk") == 1
+    assert ctx.apps_ok == 1 and "конфликтует с уже установленным ru.yandex.yandexnavi" in ctx.failed_apps[0]
 
 
 def test_locked_method_rejection_gets_the_clear_reason(tmp_path, make_ctx):

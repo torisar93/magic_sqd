@@ -48,6 +48,8 @@ def test_prefetch_downloads_selected_apks_and_resign_cert(catalog, app_base, mon
     lines = logs_of(events)
     assert any("сначала скачиваю" in line for line in lines)
     assert any("Приложения скачаны" in line for line in lines)
+    # Как на Android: по строке на файл — иначе долгое скачивание в журнале выглядит как зависание (лог №2571)
+    assert [line for line in lines if line.startswith("Скачиваю")] == ["Скачиваю a.apk...", "Скачиваю b.apk..."]
     assert any(e.get("kind") == "sync_progress" and e.get("total") == 0 for e in events), "прогресс-бар скрывается в конце"
 
 

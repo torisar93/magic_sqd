@@ -1178,6 +1178,9 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
     completed_bytes = 0
     for done, (path, remote_path, rel, size, raw_path, mtime) in enumerate(pending, start=1):
         check_cancelled()
+        # Как на Android (apk_library.ensure_apks_downloaded): без этой строки долгое скачивание в журнале выглядело
+        # как зависание — заголовок этапа и тишина, пока программу не закрыли (лог №2571).
+        log(f"Скачиваю {path.name}...")
         try:
             def report(file_done: int, file_total: int, *, base=completed_bytes, file_size=size,
                        raw=raw_path) -> None:
