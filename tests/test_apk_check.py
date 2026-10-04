@@ -68,6 +68,19 @@ def test_file_problem(tmp_path):
      "attempting to redeclare permission com.yandex.permission.READ_CREDENTIALS already owned by ru.yandex.yandexnavi",
      "конфликтует с уже установленным ru.yandex.yandexnavi"),
     ("Failure [INSTALL_FAILED_DUPLICATE_PERMISSION]", "конфликтует с уже установленным приложением"),
+    # №2673 (ПК, dex-хелпер): Settings.apk из каталога Geely Cityray на Geely Preface FS11
+    ("monji: session=1036765551 flags=0x116 monji: wrote 20109392 bytes Failure status=5 message="
+     "INSTALL_FAILED_SHARED_USER_INCOMPATIBLE: Reconciliation failed...: Reconcile failed: Package com.android.settings has "
+     "no signatures that match those in shared user android.uid.system; ignoring!",
+     "подменяет системное приложение com.android.settings — такие ставятся только с подписью прошивки"),
+    # №2755 (Android 1.0.54): тот же отказ через «dex-хелпер не подтвердил успех»
+    ("dex-хелпер не подтвердил успех (новых пакетов: нет): monji: session=1083604760 flags=0x116 monji: wrote 20109392 "
+     "bytes Failure status=5 message=INSTALL_FAILED_SHARED_USER_INCOMPATIBLE: Reconciliation failed...",
+     "подменяет системное приложение — такие ставятся только с подписью прошивки"),
+    # №2673: Time_Zone.apk поверх постоянного системного приложения
+    ("monji: session=2056387230 flags=0x116 monji: wrote 209310 bytes Failure status=4 message=INSTALL_FAILED_INVALID_APK: "
+     "Package com.autolink.timesync.service is a persistent app. Persistent apps are not updateable.",
+     "обновляет постоянное системное приложение com.autolink.timesync.service — прошивка не даёт"),
 ])
 def test_rejections_that_mean_the_file_itself(reason, expected):
     text = apk_check.rejection_message("app.apk", reason)
@@ -157,6 +170,18 @@ def test_duplicate_permission_stops_the_method_search(tmp_path, make_ctx):
     # №2597: раньше — 7 способов подряд с той же ошибкой и сырой список отказов в конце
     assert [name for name, _ in ctx.tried].count("Yandex-Music-2024.02.2_33.1.apk") == 1
     assert ctx.apps_ok == 1 and "конфликтует с уже установленным ru.yandex.yandexnavi" in ctx.failed_apps[0]
+
+
+def test_system_app_replacement_stops_the_method_search(tmp_path, make_ctx):
+    settings = _zip(tmp_path / "Settings.apk", ["AndroidManifest.xml"])
+    good = _zip(tmp_path / "good.apk", ["AndroidManifest.xml"])
+    shared = ("Failure status=5 message=INSTALL_FAILED_SHARED_USER_INCOMPATIBLE: Reconciliation failed...: Reconcile "
+              "failed: Package com.android.settings has no signatures that match those in shared user android.uid.system")
+    ctx = make_ctx([settings, good], {"Settings.apk": shared})
+    ctx.install_selected_apks()
+    # №2673/№2678: раньше — 8 способов подряд, и после отказа каждый следующий падал с «error: closed»
+    assert [name for name, _ in ctx.tried].count("Settings.apk") == 1
+    assert ctx.apps_ok == 1 and "подменяет системное приложение com.android.settings" in ctx.failed_apps[0]
 
 
 def test_locked_method_rejection_gets_the_clear_reason(tmp_path, make_ctx):
