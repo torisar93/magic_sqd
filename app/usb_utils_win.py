@@ -126,6 +126,10 @@ def list_drives(include_all: bool = False, base_dir: Path | None = None) -> list
     return drives
 
 
+# Стандартное форматирование Windows не создаёт FAT32 на томе больше 32 ГБ.
+_FAT32_FORMAT_LIMIT = 32 * 1024 ** 3
+
+
 class UsbSafetyError(RuntimeError):
     pass
 
@@ -159,6 +163,15 @@ def format_drive(letter: str, filesystem: str, label: str, base_dir: Path, log=l
     assert_safe_to_format(letter, base_dir)
     drive_letter = letter.rstrip(":")
     safe_label = "".join(ch for ch in (label or "CARINSTALL") if ch.isalnum())[:11] or "CARINSTALL"
+
+    if filesystem.upper() == "FAT32":
+        total = ctypes.c_ulonglong(0)
+        _kernel32.GetDiskFreeSpaceExW(f"{letter}\\", None, ctypes.byref(total), None)
+        if total.value > _FAT32_FORMAT_LIMIT:
+            # Format-Volume так и ответит «Size Not Supported» (логи №2943, №3000, №3012) — говорим сразу и понятно.
+            raise RuntimeError(f"Windows форматирует в FAT32 только флешки до 32 ГБ, а {letter} — "
+                               f"{total.value / 1024 ** 3:.1f} ГБ. Возьмите флешку до 32 ГБ или отформатируйте эту "
+                               "в FAT32 сторонней программой (например, Rufus) и запишите без форматирования.")
 
     log(f"Форматирование {letter}\\ в {filesystem}...")
     ps_command = (

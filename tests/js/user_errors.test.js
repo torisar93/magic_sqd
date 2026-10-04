@@ -35,6 +35,9 @@ const CASES = [
   ["Ошибка записи: IOException: MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device, please reattach device and try again", "flash_io"],
   ["Флешка перестала отвечать при подключении (could not claim interface!)", "flash_io"],
   ["Не удалось прочитать флешку (Index 8 out of bounds for length 8)", "flash_unreadable"],
+  // ПК: FAT32 на флешке 58,6 ГБ (логи №2943, №3000, №3012)
+  [String.raw`Флешка: запись не удалась — файлы этапа и выбранные приложения: Ошибка: Не удалось отформатировать H:\: Format-Volume : Size Not Supported`, "fat32_too_big"],
+  ["Ошибка: Windows форматирует в FAT32 только флешки до 32 ГБ, а H: — 58.6 ГБ.", "fat32_too_big"],
   ["Не удалось записать magic_sqd.apk: сбой файловой системы флешки — отформатируйте флешку («Параметры флешки» → «Форматировать флешку») и запишите файлы заново.", "flash_unreadable"],
   // Способ «в системную папку» (BAIC U5 Plus) — про память магнитолы, не про флешку
   ["«HUR_7.2.1.apk» не установлено: на системном разделе магнитолы не хватает места для «HUR_7.2.1.apk»: нужно 58 МБ, свободно 12 МБ", "system_no_space"],
