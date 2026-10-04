@@ -179,6 +179,10 @@ class AppInstallFailed(RuntimeError):
     должен стоить техникам всей остальной, уже сделанной работы."""
 
 
+# Маркер «команда на магнитоле дошла до конца» (cp … && echo …) — у shell с check=False код возврата не виден.
+_STAGED_MARK = "MSQD_STAGED_OK"
+
+
 class UnsuitableApk(AppInstallFailed):
     """Сам файл не встанет никаким способом: не APK, XAPK/APKS, сборка под другой процессор, нужен Android новее
     (app/apk_check.py). Перебор остальных способов бесполезен — install_selected_apks пропускает это приложение
@@ -358,6 +362,9 @@ class InstallContext:
         # инлайн-выдача в localinstall/dex_shell и общая после установки
         # (_after_app_installed) не сработали дважды на одном приложении.
         self._granted_packages: set[str] = set()
+        # Файлы, уже лежащие на самой магнитоле (локальный путь → путь на ней): push копирует их там же, без передачи
+        # по сети, а install_apk ставит через pm install — см. optimize_for_motion.
+        self._prestaged: dict[str, str] = {}
         # Имя пакета, которое localinstall/dex_shell определили сравнением
         # списков пакетов до/после — запасной вариант, если из самого APK
         # его прочитать не удалось (см. _after_app_installed).
@@ -488,6 +495,16 @@ class InstallContext:
     def install_apk(self, path, reinstall=True, extra_args=None, timeout=180):
         self.check_cancelled()
         self.log(f"Установка APK: {Path(path).name}")
+        staged = self._prestaged.get(str(path))
+        if staged:
+            # Файл уже на магнитоле (optimize_for_motion): adb install снова тянул бы его по сети — ставим с её диска.
+            args = " ".join(["-r"] * reinstall + [shlex.quote(a) for a in (extra_args or [])])
+            result = self.shell(f"pm install {args} {shlex.quote(staged)}", check=False, timeout=timeout)
+            text = _completed_text(result)
+            if "Success" not in text:
+                _raise_if_version_downgrade(text)
+                raise AdbError(f"pm install (файл уже на магнитоле) не вернул Success: {text[:300]}")
+            return result
         try:
             return self._adb.install(path, reinstall=reinstall, extra_args=extra_args, timeout=timeout)
         except AdbError as exc:
@@ -913,24 +930,53 @@ class InstallContext:
         except ApkSignError as exc:
             self.log(f"Не удалось переподписать приложение: {exc}. Оно оставлено как было.")
             return
-        # Подпись изменилась — поверх старого приложения не встанет, поэтому сначала удаляем его.
-        self.shell(f"pm uninstall {package}", check=False, timeout=120)
-        self._install_method = None  # заново подобрать способ для этой установки
+        # Подпись изменилась — поверх старого приложения не встанет, его придётся снять. Сначала всё нужное кладём на
+        # саму магнитолу: помеченную версию (по сети — пока исходное ещё стоит) и копию исходного (на ней же, без
+        # сети). Снимаем только после этого: установка и возврат идут с её диска, и обрыв связи на заливке больше не
+        # оставляет магнитолу без приложения (лог №2784: Strelka HUD на Haval H3 по Wi-Fi, Android).
+        signed_remote = f"/data/local/tmp/{package}.motion.apk"
+        original_remote = f"/data/local/tmp/{package}.orig.apk"
         try:
-            self.install_apk_auto(signed)
-        except (InstallCancelled, AppInstallFailed, NewerVersionInstalled, AdbError) as exc:
-            self.log(f"Не удалось поставить помеченную версию: {_short_reason(exc)}. Возвращаю исходную...")
-            self._install_method = None
-            try:
-                self.install_apk_auto(original)
-                self.log("Исходное приложение возвращено — работа в движении не включена.")
-            except (InstallCancelled, AppInstallFailed, NewerVersionInstalled, AdbError):
-                self.log(f"Не удалось вернуть исходную версию — установите {package} заново из каталога.")
+            self.push(signed, signed_remote)
+            backup = self.shell(f"cp {shlex.quote(paths[0])} {original_remote} && chmod 644 {signed_remote} "
+                                f"{original_remote} && echo {_STAGED_MARK}", check=False, timeout=300)
+        except AdbError as exc:
+            self._drop_motion_staging(signed_remote, original_remote)
+            self.log(f"Не удалось залить помеченную версию на магнитолу: {_short_reason(exc)}. Приложение оставлено как было.")
             return
+        if _STAGED_MARK not in _completed_text(backup):
+            self._drop_motion_staging(signed_remote, original_remote)
+            self.log("Не удалось сохранить копию приложения на самой магнитоле — оно оставлено как было.")
+            return
+        self._prestaged.update({str(signed): signed_remote, str(original): original_remote})
+        try:
+            self.shell(f"pm uninstall {package}", check=False, timeout=120)
+            self._install_method = None  # заново подобрать способ для этой установки
+            try:
+                self.install_apk_auto(signed)
+            except (InstallCancelled, AppInstallFailed, NewerVersionInstalled, AdbError) as exc:
+                self.log(f"Не удалось поставить помеченную версию: {_short_reason(exc)}. Возвращаю исходную...")
+                self._install_method = None
+                try:
+                    self.install_apk_auto(original)
+                    self.log("Исходное приложение возвращено — работа в движении не включена.")
+                except (InstallCancelled, AppInstallFailed, NewerVersionInstalled, AdbError):
+                    self.log(f"Не удалось вернуть исходную версию — установите {package} заново из каталога.")
+                return
+        finally:
+            self._prestaged.pop(str(signed), None)
+            self._prestaged.pop(str(original), None)
+            self._drop_motion_staging(signed_remote, original_remote)
         self._granted_packages.discard(package)
         self._grant_all_permissions_if_available(package)
         self.log("Приложение переустановлено — если оно просит вход, войдите в него заново на магнитоле.")
         self._log_motion_verdict(package)
+
+    def _drop_motion_staging(self, *remote_paths) -> None:
+        try:
+            self.shell("rm -f " + " ".join(remote_paths), check=False)
+        except AdbError:
+            pass  # связь пропала — файлы в /data/local/tmp безвредны
 
     def _install_with_method(self, method: int, path, extra_args) -> None:
         if method == 0:
@@ -1507,6 +1553,13 @@ class InstallContext:
 
     def push(self, local, remote, timeout=180):
         self.check_cancelled()
+        staged = self._prestaged.get(str(local))
+        if staged:
+            # Уже на магнитоле (optimize_for_motion) — копируем там же, без передачи по сети.
+            result = self.shell(f"cp {shlex.quote(staged)} {shlex.quote(str(remote))} && echo {_STAGED_MARK}",
+                                check=False, timeout=timeout)
+            if _STAGED_MARK in _completed_text(result):
+                return result
         return self._adb.push(local, remote, timeout=timeout)
 
     def pull(self, remote, local, timeout=180):

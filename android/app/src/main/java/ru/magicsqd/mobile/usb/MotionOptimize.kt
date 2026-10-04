@@ -64,20 +64,51 @@ object MotionOptimize {
             log("Не удалось пометить приложение: ${e.message}. Оно оставлено как было.")
             return
         }
-        // Подпись изменилась — поверх старого приложения не встанет, поэтому сначала удаляем его.
+        // Подпись изменилась — поверх старого приложения не встанет, его придётся снять. Сначала всё нужное кладём на
+        // саму магнитолу: помеченную версию (по сети — пока исходное ещё стоит) и копию исходного (на ней же, без сети).
+        // Снимаем только после этого: установка и возврат идут с её диска, и обрыв связи на заливке больше не оставляет
+        // магнитолу без приложения (лог №2784: Strelka HUD на Haval H3 по Wi-Fi — сняли, а на заливке связь оборвалась).
+        val signedRemote = "/data/local/tmp/" + stagedNameFor(signed.name)
+        val originalRemote = "/data/local/tmp/" + stagedNameFor(original.name)
+        when (val r = AdbSession.push(PushSource.of(signed), signedRemote, log)) {
+            is AdbPushResult.Failed -> {
+                dropStaging(signedRemote, originalRemote, log)
+                log("Не удалось залить помеченную версию на магнитолу: ${r.reason}. Приложение оставлено как было.")
+                return
+            }
+            AdbPushResult.Success -> {}
+        }
+        val backup = AdbSession.shell("cp '${paths[0]}' $originalRemote && chmod 644 $signedRemote $originalRemote && " +
+            "echo $STAGED_MARK", log, 300000)
+        if ((backup as? AdbShellResult.Output)?.text?.contains(STAGED_MARK) != true) {
+            dropStaging(signedRemote, originalRemote, log)
+            log("Не удалось сохранить копию приложения на самой магнитоле — оно оставлено как было.")
+            return
+        }
         AdbSession.shell("pm uninstall $pkg", log, 120000)
-        val result = engine.installApks(listOf(signed.absolutePath), cancelled = cancelled)
+        val result = engine.installApks(listOf(signed.absolutePath), cancelled = cancelled,
+            preStaged = mapOf(signed.absolutePath to signedRemote))
         if (result is StageRunResult.Failed) {
             log("Не удалось поставить помеченную версию: ${result.reason}. Возвращаю исходную...")
-            val restore = engine.installApks(listOf(original.absolutePath), cancelled = cancelled)
+            val restore = engine.installApks(listOf(original.absolutePath), cancelled = cancelled,
+                preStaged = mapOf(original.absolutePath to originalRemote))
             if (restore is StageRunResult.Failed) log("Не удалось вернуть исходную версию — установите $pkg заново из каталога.")
             else log("Исходное приложение возвращено — работа в движении не включена.")
+            dropStaging(signedRemote, originalRemote, log)
             listOf(patched, signed).forEach { it.delete() }
             return
         }
+        dropStaging(signedRemote, originalRemote, log)
         log("Приложение переустановлено — если оно просит вход, войдите в него заново на магнитоле.")
         logVerdict(pkg, log)
         listOf(original, patched, signed).forEach { it.delete() }
+    }
+
+    /** Маркер «команда на магнитоле дошла до конца» (cp … && echo …) — код возврата shell отсюда не виден. */
+    private const val STAGED_MARK = "MSQD_STAGED_OK"
+
+    private fun dropStaging(signedRemote: String, originalRemote: String, log: (String) -> Unit) {
+        try { AdbSession.shell("rm -f $signedRemote $originalRemote", log) } catch (_: Exception) { /* связь пропала — безвредно */ }
     }
 
     private fun installedApkPaths(pkg: String, log: (String) -> Unit): List<String> {

@@ -600,13 +600,17 @@ class InstallEngine(
      * первом APK, запоминается на весь остаток списка — не имеет смысла
      * заново перебирать на каждом следующем файле. */
     fun installApks(apkPaths: List<String>, preferredMethod: String = "", modelDir: File? = null,
-        cancelled: () -> Boolean = { false }, onProgress: (String, Int, Int, String) -> Unit = { _, _, _, _ -> }): StageRunResult =
-        installApksWithProgress(apkPaths, preferredMethod, modelDir, cancelled, onProgress)
+        cancelled: () -> Boolean = { false }, onProgress: (String, Int, Int, String) -> Unit = { _, _, _, _ -> },
+        preStaged: Map<String, String> = emptyMap()): StageRunResult =
+        installApksWithProgress(apkPaths, preferredMethod, modelDir, cancelled, onProgress, preStaged = preStaged)
 
     fun installApksWithProgress(apkPaths: List<String>, preferredMethod: String = "", modelDir: File? = null,
         cancelled: () -> Boolean = { false }, onProgress: (String, Int, Int, String) -> Unit = { _, _, _, _ -> },
         onDetail: (String, Int, Int, ApkOperationProgress) -> Unit = { _, _, _, _ -> },
-        mockLocationPath: String? = null): StageRunResult {
+        mockLocationPath: String? = null,
+        // Файлы, уже лежащие на магнитоле (локальный путь → путь на ней, см. stagedRemoteFor): не заливаются заново,
+        // способы берут их с её диска (MotionOptimize: снимаем приложение, только когда новая версия уже там).
+        preStaged: Map<String, String> = emptyMap()): StageRunResult {
         val installed = mutableListOf<InstalledApp>()
         lastInstalled = installed
         duplicatePackageConflict(apkPaths)?.let { return StageRunResult.Failed(it) }
@@ -658,9 +662,10 @@ class InstallEngine(
             // сообщение вместо технического «получили -1 байт».
             // APK заливается на устройство ОДИН раз на все способы (stagedPath), а не каждым способом заново.
             // Переменные объявлены до perform: после обрыва связи файл на устройстве считаем потерянным.
-            var stagedValid = false
+            val preStagedRemote = preStaged[path]
+            var stagedValid = preStagedRemote != null
             var stagingFailed = false
-            var stagedRemote = ""
+            var stagedRemote = preStagedRemote ?: ""
             // Связь не вернулась — соединение закрываем: «не подключено» на экране и сразу окно «Магнитола не
             // подключена» при следующем запуске, а не новые попытки писать в мёртвую связь.
             fun giveUp(apkName: String, technical: String?): Nothing {
@@ -686,7 +691,8 @@ class InstallEngine(
                         onProgress(path, index, apkPaths.size, "error")
                         if (reconnected || cancelled()) giveUp(apkName, e.message)
                         reconnected = true
-                        stagedValid = false  // после обрыва файл на устройстве мог не долиться — зальём заново
+                        // после обрыва файл на устройстве мог не долиться — зальём заново (заранее залитый — целый)
+                        if (preStagedRemote == null) stagedValid = false
                         log("Связь с магнитолой оборвалась во время установки ${apkName} — жду её возвращения и повторяю...")
                         val back = try {
                             AdbSession.waitForDeviceAndReconnect(context, LINK_RECOVERY_TIMEOUT_MS, log)
@@ -733,8 +739,8 @@ class InstallEngine(
             val apk = PushSource.of(signedFile)
             // Имя файла на устройстве — без пробелов и кавычек: pm install получает путь без экранирования.
             // dex-хелпер работает с /data/local/tmp/<currentApkName> — тем же файлом.
-            val stagedName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-            stagedRemote = "/data/local/tmp/$stagedName"
+            val stagedName = stagedNameFor(file.name)
+            stagedRemote = preStagedRemote ?: "/data/local/tmp/$stagedName"
             currentApkName = stagedName
             currentPackageName = try {
                 context.packageManager.getPackageArchiveInfo(path, 0)?.packageName ?: ""
@@ -965,3 +971,7 @@ class InstallEngine(
         }
     }
 }
+
+/** Имя APK на магнитоле (/data/local/tmp/<имя>) — без пробелов и кавычек: pm install получает путь без экранирования,
+ *  dex-хелпер берёт тот же файл. Общее с MotionOptimize: он заливает файлы заранее, движок ставит их с этого пути. */
+internal fun stagedNameFor(fileName: String): String = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_")

@@ -55,6 +55,11 @@ class _FakeCtx:
         self.verdicts = 0
         self.install_should_fail = []  # список путей (по имени), установка которых должна упасть
         self.car_dump = "**System allowlist**\n  com.example.video\n**end**"
+        self._prestaged = {}
+        self.pushes = []          # (имя файла, путь на магнитоле)
+        self.push_should_fail = False
+        self.cp_should_fail = False
+        self.staged_at_install = []  # что было «уже на магнитоле» в момент установки
 
     # --- примитивы, которыми пользуется optimize_for_motion ---
     def check_cancelled(self):
@@ -65,6 +70,8 @@ class _FakeCtx:
 
     def shell(self, command, check=False, timeout=None):
         self.shell_calls.append(command)
+        if ic._STAGED_MARK in command:
+            return _Result("" if self.cp_should_fail else ic._STAGED_MARK)
         if command.startswith("pm path "):
             return _Result("\n".join(f"package:{p}" for p in self._apk_paths))
         if command == "dumpsys car_service":
@@ -74,9 +81,15 @@ class _FakeCtx:
     def pull(self, remote, local, timeout=180):
         Path(local).write_bytes(b"original-apk-bytes")
 
+    def push(self, local, remote, timeout=180):
+        if self.push_should_fail:
+            raise ic.AdbError("adb: error: closed")
+        self.pushes.append((Path(local).name, remote))
+
     def install_apk_auto(self, path, extra_args=None):
         name = Path(path).name
         self.installed.append(name)
+        self.staged_at_install.append(dict(self._prestaged))
         if name in self.install_should_fail:
             raise ic.AppInstallFailed(f"{name}: не встало")
 
@@ -85,6 +98,7 @@ class _FakeCtx:
 
     # методы, которые optimize_for_motion берёт с самого InstallContext, — переиспользуем настоящие
     _installed_apk_paths = ic.InstallContext._installed_apk_paths
+    _drop_motion_staging = ic.InstallContext._drop_motion_staging
     _log_motion_verdict = ic.InstallContext._log_motion_verdict
     optimize_for_motion = ic.InstallContext.optimize_for_motion
 
@@ -111,6 +125,54 @@ def test_single_apk_is_patched_resigned_and_reinstalled(tmp_path, patched_signin
     uninstall_at = next(i for i, c in enumerate(ctx.shell_calls) if c == "pm uninstall com.example.video")
     dump_at = next(i for i, c in enumerate(ctx.shell_calls) if c == "dumpsys car_service")
     assert uninstall_at < dump_at  # проверка — уже после переустановки
+
+
+def test_new_version_is_on_the_head_unit_before_the_old_one_is_removed(tmp_path, patched_signing):
+    # Лог №2784 (Android, Strelka HUD на Haval H3 по Wi-Fi): старое сняли, а связь оборвалась на заливке новой —
+    # приложение пропало. Теперь заливка и копия исходного — до снятия, установка и возврат — с диска магнитолы.
+    ctx = _FakeCtx(tmp_path, ["/data/app/com.example.video/base.apk"])
+    ctx.optimize_for_motion("com.example.video")
+    assert ctx.pushes == [("com.example.video.signed.apk", "/data/local/tmp/com.example.video.motion.apk")]
+    backup = next(i for i, c in enumerate(ctx.shell_calls) if c.startswith("cp /data/app/com.example.video/base.apk "))
+    uninstall = ctx.shell_calls.index("pm uninstall com.example.video")
+    assert backup < uninstall
+    assert ctx.staged_at_install[0] == {str(tmp_path / "motion_cache/com.example.video.signed.apk"): "/data/local/tmp/com.example.video.motion.apk",
+                                        str(tmp_path / "motion_cache/com.example.video.apk"): "/data/local/tmp/com.example.video.orig.apk"}
+    assert ctx._prestaged == {}  # после — не путает следующие установки
+    assert ("rm -f /data/local/tmp/com.example.video.motion.apk /data/local/tmp/com.example.video.orig.apk"
+            in ctx.shell_calls[uninstall:])  # прибрали за собой
+
+
+@pytest.mark.parametrize("what", ["push", "cp"])
+def test_staging_failure_leaves_the_app_untouched(tmp_path, patched_signing, what):
+    ctx = _FakeCtx(tmp_path, ["/data/app/com.example.video/base.apk"])
+    setattr(ctx, f"{what}_should_fail", True)
+    ctx.optimize_for_motion("com.example.video")
+    assert not any(c.startswith("pm uninstall") for c in ctx.shell_calls) and not ctx.installed
+    assert any("оставлено как было" in m for m in ctx.logs)
+
+
+def test_prestaged_file_is_copied_and_installed_on_the_head_unit(tmp_path):
+    calls = []
+
+    class _Adb:
+        def shell(self, command, check=True, timeout=120):
+            calls.append(command)
+            return _Result(ic._STAGED_MARK if ic._STAGED_MARK in command else "Success")
+
+        def push(self, *args, **kwargs):
+            raise AssertionError("по сети не заливаем — файл уже на магнитоле")
+
+        def install(self, *args, **kwargs):
+            raise AssertionError("adb install тянул бы файл с компьютера")
+
+    ctx = ic.InstallContext.__new__(ic.InstallContext)
+    ctx._adb, ctx._prestaged, ctx.log = _Adb(), {"/pc/app.signed.apk": "/data/local/tmp/app.motion.apk"}, lambda m: None
+    ctx.check_cancelled = lambda: None
+    ctx.push("/pc/app.signed.apk", "/sdcard/Download/app.signed.apk")
+    ctx.install_apk("/pc/app.signed.apk", extra_args=["-g"])
+    assert calls == [f"cp /data/local/tmp/app.motion.apk /sdcard/Download/app.signed.apk && echo {ic._STAGED_MARK}",
+                     "pm install -r -g /data/local/tmp/app.motion.apk"]
 
 
 def test_split_apk_is_refused(tmp_path, patched_signing):
@@ -198,3 +260,24 @@ def test_shared_wrapper_delegates_and_warns_on_old_client():
     logs = []
     mod.optimize_for_motion(types.SimpleNamespace(log=logs.append), "com.x")  # старый клиент — метода нет
     assert logs and "обновите программу" in logs[0]
+
+
+ANDROID = Path(__file__).resolve().parents[1] / "android/app/src/main/java/ru/magicsqd/mobile/usb"
+
+
+def test_android_removes_the_app_only_after_the_new_version_is_on_the_head_unit():
+    # Тот же порядок, что на ПК (лог №2784 — Android): заливка помеченной версии и копия исходного на магнитоле — до
+    # pm uninstall; установка и возврат — с её диска (preStaged), без заливки по сети после снятия.
+    code = (ANDROID / "MotionOptimize.kt").read_text(encoding="utf-8")
+    run = code[code.index("fun run("):code.index("private fun installedApkPaths(")]
+    push = run.index("AdbSession.push(PushSource.of(signed), signedRemote, log)")
+    backup = run.index("cp '${paths[0]}' $originalRemote")
+    uninstall = run.index('AdbSession.shell("pm uninstall $pkg", log, 120000)')
+    assert push < backup < uninstall
+    assert "preStaged = mapOf(signed.absolutePath to signedRemote)" in run[uninstall:]
+    assert "preStaged = mapOf(original.absolutePath to originalRemote)" in run[uninstall:]
+    assert 'val signedRemote = "/data/local/tmp/" + stagedNameFor(signed.name)' in run  # тот же путь, что берёт dex-хелпер
+    engine = (ANDROID / "InstallEngine.kt").read_text(encoding="utf-8")
+    assert "var stagedValid = preStagedRemote != null" in engine  # заранее залитое не заливается заново
+    assert "if (preStagedRemote == null) stagedValid = false" in engine  # и после обрыва связи считается целым
+    assert "val stagedName = stagedNameFor(file.name)" in engine
