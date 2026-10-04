@@ -879,7 +879,25 @@ class InstallEngine(
             var unsuitable: String? = null
             for (methodIndex in order) {
                 val (label, install) = INSTALL_METHODS[methodIndex]
-                when (val r = perform(install, apk, { stagedPath() })) {
+                var attempt = perform(install, apk, { stagedPath() })
+                var updatedByDex = false
+                // Запомненный для магнитолы (или заданный моделью) localinstall ставит только новые приложения: уже
+                // стоящее сразу обновляем dex-хелпером, как в ветке confirmedMethod выше, и запомненный способ не
+                // меняем. Иначе первое же обновление в сеансе перебирало pm-способы и перезапоминало dex_shell_install
+                // (логи №2786, №2934, №3031 — обновлённый Haval H3: pm install закрыт, новые ставит только localinstall).
+                if (attempt is AdbInstallResult.Failed && label == "localinstall" &&
+                    (remembered == "localinstall" || preferredMethod == "localinstall") &&
+                    packageInstalled(currentPackageName, log)) {
+                    log("«${file.name}»: $currentPackageName уже стоит на магнитоле, а localinstall ставит только новые " +
+                        "приложения — обновляю через dex-хелпер.")
+                    val dexShell = INSTALL_METHODS.first { it.first == "dex_shell_install" }.second
+                    when (val update = perform(dexShell, apk, { stagedPath() })) {
+                        is AdbInstallResult.Success -> { attempt = update; updatedByDex = true }
+                        is AdbInstallResult.Failed -> log("  ↳ dex-хелпер не обновил: " +
+                            update.reason.split(Regex("\\s+")).joinToString(" ").take(300))
+                    }
+                }
+                when (val r = attempt) {
                     is AdbInstallResult.Failed -> {
                         errors.add("$label: ${r.reason}")
                         // Причина каждого отказа сразу в лог — итоговая ошибка идёт только в окно этапа.
@@ -892,11 +910,13 @@ class InstallEngine(
                         if (unsuitable != null) break
                     }
                     is AdbInstallResult.Success -> {
-                        confirmedMethod = methodIndex
-                        if (methodIndex != 0 && !exclusive) {
+                        // Обновил dex-хелпер вместо localinstall — способ магнитолы прежний; localinstall подтверждаем на
+                        // сеанс, только если он уже работал на ней (запомнен), иначе следующее приложение — снова по порядку.
+                        confirmedMethod = if (updatedByDex && remembered != "localinstall") null else methodIndex
+                        if (!updatedByDex && methodIndex != 0 && !exclusive) {
                             log("Сработал способ установки APK: $label — дальше буду использовать его же для остальных приложений.")
                         }
-                        if (deviceModel != null && !exclusive && methodPrefs.getString(deviceModel, null) != label) {
+                        if (!updatedByDex && deviceModel != null && !exclusive && methodPrefs.getString(deviceModel, null) != label) {
                             methodPrefs.edit().putString(deviceModel, label).apply()
                             log("Запомнил: для магнитолы $deviceModel работает способ «$label» — в следующий раз начну с него.")
                         }

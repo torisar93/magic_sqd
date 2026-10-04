@@ -124,6 +124,16 @@ def test_dex_helper_method_itself_retries_without_grant_flag(make_ctx):
     assert ctx.test.grants == [PKG]  # разрешения выдаёт программа — флаг их выдачи хелперу не дали
 
 
+def test_model_preset_localinstall_updates_installed_app_via_dex_helper(make_ctx):
+    # Модель задаёт localinstall (Chery DesaySV, обновлённый Haval H3): уже стоящее приложение — сразу обновление
+    # dex-хелпером, а не перебор pm-способов (логи №2786, №3031 — так Android перезапоминал dex_shell_install).
+    device = FakeHeadUnit(installed={PKG})
+    ctx = make_ctx(device, locked=False)
+    ctx._preferred_method = _LOCALINSTALL_METHOD
+    ctx.install_apk_localinstall(ctx.test.apk)
+    assert device.helper_runs() == ["localinstall", "dex 0x116"]
+
+
 def test_localinstall_not_yet_confirmed_does_not_fall_back(make_ctx):
     # Пока localinstall на магнитоле не сработал, отказ — обычный: иначе на Geely OneOS (localinstall не работает
     # вовсе) первое уже стоящее приложение «подтвердило» бы localinstall, и новые пропускались бы.
@@ -236,6 +246,18 @@ def test_android_confirmed_localinstall_updates_installed_app_via_dex_helper():
     assert fallback < branch.index("dropStaged()")  # залитый APK ещё на магнитоле — dex-хелпер берёт его же
     assert 'INSTALL_METHODS.first { it.first == "dex_shell_install" }.second' in branch
     assert "localinstall поверх не ставит, dex-хелпер не обновил" in branch
+
+
+def test_android_remembered_localinstall_updates_without_switching_method():
+    # Запомненный для магнитолы (или заданный моделью) localinstall: уже стоящее приложение обновляет dex-хелпер прямо в
+    # переборе, запомненный способ не меняется (обновлённый Haval H3 перезапоминал dex_shell_install — №2786, №2934, №3031).
+    engine = _code(KOTLIN / "usb/InstallEngine.kt")
+    loop = engine[engine.index("for (methodIndex in order) {"):]
+    loop = loop[:loop.index("dropStaged()\n            if (keptNewer)")]
+    cond = loop.index('label == "localinstall" &&\n                    (remembered == "localinstall" || preferredMethod == "localinstall")')
+    assert cond < loop.index("packageInstalled(currentPackageName, log)") < loop.index("when (val r = attempt)")
+    assert 'confirmedMethod = if (updatedByDex && remembered != "localinstall") null else methodIndex' in loop
+    assert "if (!updatedByDex && deviceModel != null && !exclusive" in loop  # память способа не трогаем
 
 
 def test_android_localinstall_waits_for_the_apks_own_package():

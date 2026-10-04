@@ -1327,7 +1327,11 @@ class InstallContext:
             package = next(iter(new_packages))
         else:
             text = ((result.stdout or "") + (result.stderr or "")).strip()
-            if expected and expected in before and self._install_method == _LOCALINSTALL_METHOD:
+            # localinstall уже сработал на этой магнитоле в сеансе или задан моделью (Chery DesaySV, обновлённый
+            # Haval H3): уже стоящее приложение — обновление dex-хелпером (Android так же, логи №2786, №3031).
+            localinstall_expected = self._install_method == _LOCALINSTALL_METHOD or (
+                self._install_method is None and self._preferred_method == _LOCALINSTALL_METHOD)
+            if expected and expected in before and localinstall_expected:
                 self._update_with_dex_shell(path, expected)
                 return
             status = localinstall_status(_completed_text(self.shell("logcat -d -s LocalInstall", check=False)))
