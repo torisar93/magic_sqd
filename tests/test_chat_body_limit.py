@@ -130,3 +130,30 @@ def test_android_send_uses_the_limited_body(monkeypatch):
                                              "https://example.invalid/chat", "k"))
     assert reply["content"] == "ответ"
     assert len(sent["body"]) <= 200 * 1024
+
+
+def test_android_send_passes_session_cookie(monkeypatch):
+    """Android слал чат без сессии: сервер считал лимит по IP, и подписчик Boosty на телефоне
+    упирался в общие 20 запросов/час (на ПК сессия шла всегда, см. app/web/api/chat_api.py)."""
+    module = _android_module()
+    headers = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"ok": True, "type": "text", "content": "ответ"}).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        headers.append(request.get_header("Cookie"))
+        return _Response()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    args = (json.dumps([{"role": "user", "content": "привет"}]), "[]", "https://example.invalid/chat", "k")
+    module.send_chat_turn(*args, "", "magicsqd_user_session=abc")
+    module.send_chat_turn(*args)
+    assert headers == ["magicsqd_user_session=abc", None]

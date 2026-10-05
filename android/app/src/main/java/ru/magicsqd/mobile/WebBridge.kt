@@ -890,10 +890,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     }
 
     private fun chatSend(historyJson: String, recentLogJson: String, provider: String = "") {
+        // Сессия вошедшего — лимит чата по аккаунту, подписчику Boosty без лимита (как на ПК и в reportSend)
+        val cookie = authUserCookie() ?: ""
         Thread {
             val resultJson = try {
                 pyModule("chat_bridge").callAttr(
-                    "send_chat_turn", historyJson, recentLogJson, CHAT_URL, CHAT_KEY, provider
+                    "send_chat_turn", historyJson, recentLogJson, CHAT_URL, CHAT_KEY, provider, cookie
                 ).toString()
             } catch (e: Exception) {
                 JSONObject().put("ok", false).put("error", (e.message ?: "неизвестная ошибка")).toString()

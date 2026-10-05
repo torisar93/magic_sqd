@@ -49,12 +49,14 @@ def build_chat_body(history, recent_log, extra, max_bytes=CHAT_BODY_MAX_BYTES):
 
 
 def send_chat_turn(history_json: str, recent_log_json: str, chat_url: str, chat_key: str,
-                    provider: str = "") -> str:
+                    provider: str = "", session_cookie: str = "") -> str:
     """history_json/recent_log_json — уже сериализованные с Kotlin-стороны
     JSON-массивы (Chaquopy строкам доверяет проще, чем объектам). provider —
     "deepseek"/"qwen"/"" (принудительный выбор, команды /deepseek /qwen в
     чате — см. app.js), пустая строка = обычный автоматический режим на
-    сервере. Возвращает JSON-строку {"ok": true, "provider": "...",
+    сервере. session_cookie — вошедший техник (как в report_bridge): сервер
+    считает лимит по аккаунту, а подписчику Boosty снимает его совсем; без
+    cookie — общий лимит по IP. Возвращает JSON-строку {"ok": true, "provider": "...",
     "type": "text"/"command", ...} / {"ok": false, "error": "..."},
     разбирается на стороне WebBridge.kt."""
     try:
@@ -64,9 +66,10 @@ def send_chat_turn(history_json: str, recent_log_json: str, chat_url: str, chat_
         return json.dumps({"ok": False, "error": "некорректный запрос"})
 
     body = build_chat_body(history, recent_log, {"client_id": "", "provider": provider or None})
-    request = urllib.request.Request(
-        chat_url, data=body, method="POST",
-        headers={"X-Submit-Key": chat_key, "Content-Type": "application/json"})
+    headers = {"X-Submit-Key": chat_key, "Content-Type": "application/json"}
+    if session_cookie:
+        headers["Cookie"] = session_cookie
+    request = urllib.request.Request(chat_url, data=body, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=45) as resp:
             data = json.loads(resp.read().decode("utf-8"))
