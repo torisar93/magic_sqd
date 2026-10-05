@@ -349,12 +349,19 @@
       const stage = currentIndex >= 0 ? stages[currentIndex] : null;
       if (!stage || !stage.video_path || navVideoBtn.disabled) return;
       // Файл может докачиваться с сервера (до 150 МБ) — на это время кнопка занята, а неудача больше
-      // не молчит (раньше результат open_video вообще не читался).
+      // не молчит. Небольшое видео играем во ВСТРОЕННОМ плеере (video_data_url → <video> в модалке,
+      // см. dialogs.js: videoDialog); крупное (флаг too_big) бэкенд не гонит через bridge — для него
+      // откатываемся на внешний плеер ОС (install_open_video).
       navVideoBtn.disabled = true;
       try {
-        const result = await window.pywebview.api.install_open_video(stage.video_path);
-        if (result && result.ok === false) {
-          window.notice(result.error || "Не удалось открыть видео.", { title: "Видео", danger: true });
+        const result = await window.pywebview.api.install_video_data_url(stage.video_path);
+        if (result && result.ok && result.data_url) {
+          window.videoDialog.open(result.data_url, stage.video_label || "Видео");
+        } else if (result && result.ok && result.too_big) {
+          const ext = await window.pywebview.api.install_open_video(stage.video_path);
+          if (ext && ext.ok === false) window.notice(ext.error || "Не удалось открыть видео.", { title: "Видео", danger: true });
+        } else {
+          window.notice((result && result.error) || "Не удалось открыть видео.", { title: "Видео", danger: true });
         }
       } catch (error) {
         window.notice(`Не удалось открыть видео: ${error.message || error}`, { title: "Видео", danger: true });
@@ -1629,7 +1636,10 @@
   }
 
   async function renderUsbStage(panel, stage) {
-    UsbUI.heading(panel, 'Подготовьте USB-накопитель с файлами для вашей магнитолы.');
+    // Описание этапа (что именно пишется на флешку) — в заголовке, чтобы два
+    // разных этапа «Флешка» (например прошивка и TurboDog) не выглядели
+    // одинаково. Если описания нет — прежний общий текст.
+    UsbUI.heading(panel, stage.description || 'Подготовьте USB-накопитель с файлами для вашей магнитолы.');
     buildVariantPicker(panel, stage, stage.index);
     const write = UsbUI.button('usb06-open-writer', 'Подготовить флешку', 'download', true);
     let chooser;
@@ -1641,7 +1651,7 @@
       chooser = createAppChooser(panel, stage, choose, selectionCard.querySelector('.usb06-step-copy p'), preview, selectionCard, loaded => write.disabled = !loaded);
       write.disabled = true;
     }
-    const card = UsbUI.step(stage.usb_copy_selected_apks ? 2 : 1, 'file', 'Запишите файлы на флешку', stage.usb_copy_selected_apks
+    const card = UsbUI.step(stage.usb_copy_selected_apks ? 2 : 1, 'file', stage.title || 'Запишите файлы на флешку', stage.usb_copy_selected_apks
       ? 'На флешку будут скопированы файлы этапа и выбранные приложения.'
       : 'На флешку будут скопированы файлы этого этапа.', write);
     card.dataset.state = 'active'; panel.append(card);
@@ -1652,6 +1662,7 @@
         selectedApkPaths: stage.usb_copy_selected_apks
           ? chooser.paths()
           : selectedApkPaths(), titleSuffix: `${model.display_label} — ${stage.title}`,
+        filesystem: stage.usb_filesystem,
         log,
         onFinished: (success, result) => {
           // Прежний usb-этап в журнал сессии не писал ничего — запись на флешку на ПК в логах не была видна.
@@ -2104,6 +2115,7 @@
             modelKey: model.key, stageIndex: stage.index, variant: null, block: k, drive: drive?.current()?.letter,
             selectedApkPaths: block.copy_selected_apks ? chooser.paths() : [],
             titleSuffix: `${model.display_label} — ${block.title || stage.title}`,
+            filesystem: stage.usb_filesystem,
             log,
             onFinished: (success, result) => {
               // Как у прежнего QR-этапа: что и когда записали — в журнале сессии (разбор жалоб).

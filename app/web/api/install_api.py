@@ -319,6 +319,10 @@ class InstallApi:
             "variant_names": stage.get("variant_names"),
             "standard_label": stage.get("standard_label", "Стандартные приложения"),
             "usb_copy_selected_apks": stage.get("usb_copy_selected_apks", False),
+            # Предпочитаемая ФС флешки у модели (см. car_generator.py:
+            # StepSpec.usb_filesystem) — окно записи подставит её в выбор ФС.
+            # Пусто → FAT32 по умолчанию (dialogs.js).
+            "usb_filesystem": stage.get("usb_filesystem", ""),
             # Явный apps_connection побеждает; если его нет вовсе (этап
             # сохранён до появления этого поля), берём "wifi" для
             # wifi-only моделей вместо слепого "wired" — иначе apps-этап
@@ -346,10 +350,15 @@ class InstallApi:
             # (сейчас только у Haval Jolion 2026, Desay x9h).
             "qr_adb_engineering_menu": stage.get("qr_adb_engineering_menu", False),
             "check_options": stage.get("check_options"),
-            "exe_path": exe_path,
+            # Пути уходят в JS строкой (JSON не сериализует Path), фронт потом
+            # передаёт их обратно в install_open_video/install_run_exe (те
+            # принимают str и сами делают Path(...)). Первым video_path на деле
+            # пользуется Tenet/Arrizo — до них видео к этапу никто не ставил,
+            # поэтому сырой Path тут раньше не всплывал.
+            "exe_path": str(exe_path) if exe_path else None,
             "exe_name": Path(exe_path).name if exe_path else None,
             "exe_exists": exe_exists,
-            "video_path": video_path,
+            "video_path": str(video_path) if video_path else None,
             "video_label": stage.get("video_label") or "Смотреть видео",
             "video_exists": video_exists,
             "actions": [{"label": a.get("label", ""), "kind": a.get("kind", "command")}
@@ -1164,6 +1173,34 @@ class InstallApi:
             return {"ok": False, "error": f"Не удалось скачать {path.name} с сервера."}
         webbrowser.open(path.resolve().as_uri())
         return {"ok": True}
+
+    # Встроенный плеер (окно "Видео" в самом приложении, а не внешний
+    # обработчик ОС): отдаём небольшое видео как data: URL, фронт играет его
+    # в <video> внутри модалки (см. dialogs.js: videoDialog). Крупное видео
+    # (> VIDEO_EMBED_MAX_BYTES) через bridge гонять тяжело — для него фронт
+    # откатывается на open_video (внешний плеер). Та же ленивая докачка, что
+    # и у open_video выше.
+    VIDEO_EMBED_MAX_BYTES = 25 * 1024 * 1024
+
+    def video_data_url(self, video_path: str) -> dict:
+        path = Path(video_path)
+        if not path.exists():
+            try:
+                sync_model_subfolder(self.base_dir, path.parent, log=self._on_log,
+                                      on_progress=self._on_sync_progress)
+            except Exception as exc:  # noqa: BLE001
+                self._on_log(f"Не удалось скачать {path.name}: {exc}")
+            finally:
+                self._on_sync_progress(0, 0)
+        if not path.exists():
+            return {"ok": False, "error": f"Не удалось скачать {path.name} с сервера."}
+        try:
+            if path.stat().st_size > self.VIDEO_EMBED_MAX_BYTES:
+                return {"ok": True, "too_big": True}
+            data = base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError as exc:
+            return {"ok": False, "error": f"Не удалось прочитать {path.name}: {exc}"}
+        return {"ok": True, "data_url": f"data:video/mp4;base64,{data}"}
 
     # ------------------------------------------------------------------
     # Колбэки InstallRunner — вызываются из фонового потока установки,

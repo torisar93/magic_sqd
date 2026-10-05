@@ -219,6 +219,13 @@ class StepSpec:
     # применяться ОДНОВРЕМЕННО с usb_files — на флешку попадёт и то, и
     # другое (см. _render_install_py).
     usb_shared_folder: str = ""
+    # "usb" — предпочитаемая файловая система флешки: "FAT32"/"exFAT"/"NTFS".
+    # Пусто — по умолчанию FAT32. Окно записи (dialogs.js) подставляет её в
+    # выбор ФС при форматировании (техник может сменить). Некоторым магнитолам
+    # нужна именно NTFS (метод TurboDog на Chery/Tenet), поэтому это
+    # настраивается у модели, а не хардкод FAT32. На macOS NTFS-форматирование
+    # не поддерживается (см. usb_utils_mac.format_drive) — там ФС скрыта/запрещена.
+    usb_filesystem: str = ""
     # "adb" — см. _parse_adb_line ниже за синтаксисом спецкоманд (#sleep,
     # #reboot, #root, #push, ...) вперемешку с обычными adb shell командами
     # ИЛИ "сырыми" строками прямо из .bat/.sh автора набора (adb root/push/
@@ -880,6 +887,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             usb_copy_selected_apks=step_data.get("usb_copy_selected_apks", False),
             usb_apks_dest=step_data.get("usb_apks_dest", ""),
             usb_shared_folder=step_data.get("usb_shared_folder", ""),
+            usb_filesystem=step_data.get("usb_filesystem", ""),
             commands=step_data.get("commands", []),
             adb_install_selected_apks=step_data.get("adb_install_selected_apks", False),
             adb_files=adb_files,
@@ -1298,6 +1306,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "usb_copy_selected_apks": step.usb_copy_selected_apks,
                 "usb_apks_dest": step.usb_apks_dest,
                 "usb_shared_folder": step.usb_shared_folder,
+                "usb_filesystem": step.usb_filesystem,
                 "commands": step.commands,
                 "adb_install_selected_apks": step.adb_install_selected_apks,
                 "adb_files": [f.name for f in step.adb_files],
@@ -1806,6 +1815,8 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
                 entry.append('        "usb_copy_selected_apks": True,')
             if step.usb_shared_folder:
                 entry.append(f'        "usb_shared_folder": {step.usb_shared_folder!r},')
+            if step.usb_filesystem:
+                entry.append(f'        "usb_filesystem": {step.usb_filesystem!r},')
             if step.variants:
                 entry.append(f'        "variant_names": {[v.name for v in step.variants]!r},')
                 if any(v.standard_apks or v.standard_apks_optional for v in step.variants):

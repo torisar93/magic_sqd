@@ -346,8 +346,26 @@
       delete ringEl.dataset.stageIndex;
       showAllCheckbox.checked = false;
       formatCheckbox.checked = false;
-      fsRadios.forEach((radio) => { radio.checked = radio.value === "FAT32"; });
-      advancedDetails.open = false;
+      // Предпочитаемая ФС модели (этап «Флешка»: StepSpec.usb_filesystem,
+      // приходит в stage.usb_filesystem → opts.filesystem). Пусто → FAT32.
+      // На macOS NTFS-форматирование не поддерживается (usb_utils_mac.py) —
+      // прячем вариант и откатываемся на FAT32, чтобы не предлагать заведомо
+      // неработающее. Если задан NTFS — показываем расширенный блок сразу,
+      // чтобы техник видел выбранную ФС (а не думал, что пишется в FAT32).
+      const isMac = !!(window.appInfo && window.appInfo.is_mac);
+      const ntfsLabel = document.getElementById("usb-fs-ntfs-label");
+      if (ntfsLabel) ntfsLabel.hidden = isMac;
+      let preferredFs = String(newOpts.filesystem || "").toUpperCase();
+      if (!["FAT32", "EXFAT", "NTFS"].includes(preferredFs)) preferredFs = "FAT32";
+      if (preferredFs === "NTFS" && isMac) preferredFs = "FAT32";
+      const prefValue = { FAT32: "FAT32", EXFAT: "exFAT", NTFS: "NTFS" }[preferredFs];
+      let matched = false;
+      fsRadios.forEach((radio) => {
+        radio.checked = radio.value === prefValue;
+        if (radio.checked) matched = true;
+      });
+      if (!matched) fsRadios.forEach((radio) => { radio.checked = radio.value === "FAT32"; });
+      advancedDetails.open = preferredFs !== "FAT32";
       logDetails.open = false;
       setStatus("ready", "Выберите USB-накопитель", "Подключите флешку и выберите её в списке выше.");
       updateWarning();
@@ -961,6 +979,38 @@
     return { init, open };
   })();
 
+  // ==================================================================
+  // Встроенный плеер видео-инструкций (кнопка "Смотреть видео" в нав-баре
+  // мастера, см. stage_wizard.js). Играет внутри приложения в <video>, а не
+  // во внешнем плеере ОС. Источник — data: URL от install_video_data_url
+  // (см. install_api.py). Крупные видео (> лимита) бэкенд отдаёт флагом
+  // too_big — для них stage_wizard откатывается на внешний open_video.
+  // ==================================================================
+  const videoModal = (() => {
+    let dialog, video;
+    function init() {
+      dialog = document.getElementById("video-dialog");
+      video = document.getElementById("video-player");
+      document.getElementById("video-close").addEventListener("click", () => dialog.close());
+      // Клик по затемнённой подложке (вне видео) — закрыть.
+      dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+      // При закрытии останавливаем воспроизведение и отпускаем файл (большой
+      // data: URL не должен висеть в памяти с играющим звуком после закрытия).
+      dialog.addEventListener("close", () => {
+        try { video.pause(); } catch { /* ignore */ }
+        video.removeAttribute("src");
+        try { video.load(); } catch { /* ignore */ }
+      });
+    }
+    function open(src, title) {
+      document.getElementById("video-dialog-title").textContent = title || "Видео";
+      video.src = src;
+      if (!dialog.open) dialog.showModal();
+      video.play().catch(() => { /* автоплей мог быть отклонён — у видео есть controls */ });
+    }
+    return { init, open };
+  })();
+
   function initDialogs() {
     usb.init();
     report.init();
@@ -968,8 +1018,10 @@
     admin.init();
     adminApk.init();
     update.init();
+    videoModal.init();
   }
 
+  window.videoDialog = videoModal;
   window.usbDialog = usb;
   window.reportDialog = report;
   window.adminLoginDialog = adminLogin;

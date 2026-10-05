@@ -154,6 +154,12 @@ def format_drive(letter: str, filesystem: str, label: str, base_dir: Path, log=l
     возвращается этот новый путь: вызывающий код (usb_api.py) должен
     копировать файлы именно туда, а не по старому (уже недействительному)
     пути."""
+    if filesystem.upper() == "NTFS":
+        # macOS не умеет форматировать в NTFS (нет записи NTFS штатно). Для
+        # магнитол, которым нужна NTFS (метод TurboDog), флешку форматируют на
+        # Windows, либо пишут без форматирования на заранее NTFS-флешку.
+        raise RuntimeError("macOS не умеет форматировать флешку в NTFS. Отформатируйте её в NTFS на "
+                           "Windows, либо запишите без форматирования на уже NTFS-флешку.")
     whole_disk = assert_safe_to_format(letter, base_dir)
     safe_label = "".join(ch for ch in (label or "CARINSTALL") if ch.isalnum())[:11] or "CARINSTALL"
     fs_name = _FS_NAMES.get(filesystem, filesystem)

@@ -115,6 +115,7 @@ class WebApi:
         return {
             "admin_mode": self.admin_mode, "debug_mode": self.debug_mode,
             "client_id": self.client_id, "is_win7": self.is_win7,
+            "is_mac": self.is_mac,
             "under_program_files": is_under_program_files(self.base_dir),
             "auth_email": self.auth_email,
             "auth_subscriber": self.auth_subscriber,
@@ -264,6 +265,9 @@ class WebApi:
 
     def install_open_video(self, video_path: str) -> dict:
         return self._install.open_video(video_path)
+
+    def install_video_data_url(self, video_path: str) -> dict:
+        return self._install.video_data_url(video_path)
 
     # -- chat_api (ИИ-чат под логом установки) -------------------------------
     def chat_send(self, history: list, recent_log: list, provider: str | None = None) -> dict:

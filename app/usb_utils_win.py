@@ -159,7 +159,12 @@ def assert_safe_to_format(letter: str, base_dir: Path):
 
 
 def format_drive(letter: str, filesystem: str, label: str, base_dir: Path, log=lambda m: None):
-    """letter вида 'E:'. filesystem: 'FAT32' или 'exFAT'."""
+    """letter вида 'E:'. filesystem: 'FAT32', 'exFAT' или 'NTFS'.
+    NTFS нужна некоторым магнитолам (метод TurboDog на Chery/Tenet); Windows
+    (Format-Volume) умеет все три, ограничение «только до 32 ГБ» касается
+    ТОЛЬКО FAT32 (проверка ниже), у exFAT/NTFS его нет."""
+    if filesystem.upper() not in ("FAT32", "EXFAT", "NTFS"):
+        raise RuntimeError(f"Неизвестная файловая система: {filesystem!r} (ожидалось FAT32, exFAT или NTFS).")
     assert_safe_to_format(letter, base_dir)
     drive_letter = letter.rstrip(":")
     safe_label = "".join(ch for ch in (label or "CARINSTALL") if ch.isalnum())[:11] or "CARINSTALL"

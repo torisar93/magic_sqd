@@ -166,6 +166,7 @@
         <fieldset class="usb06-filesystems"><legend>Файловая система</legend>
           <label><input type="radio" name="usb-fs" value="FAT32" checked /><span>FAT32<small>Обычно нужна магнитолам</small></span></label>
           <label><input type="radio" name="usb-fs" value="exFAT" /><span>exFAT<small>Для накопителей больше 32 ГБ</small></span></label>
+          <label id="usb-fs-ntfs-label"><input type="radio" name="usb-fs" value="NTFS" /><span>NTFS<small>Нужна некоторым магнитолам (метод TurboDog)</small></span></label>
         </fieldset>
       </div>
     </details>
@@ -445,6 +446,30 @@
     <div class="dialog-actions">
       <button id="instruction-editor-save" class="accent">Сохранить</button>
     </div>
+  </dialog>
+
+  <!-- Встроенный плеер видео-инструкций (см. dialogs.js: videoDialog,
+       install_api.py: video_data_url) — играет внутри приложения, а не во
+       внешнем плеере ОС. -->
+  <style>
+    .video06-dialog { border: none; border-radius: 12px; padding: 0; width: min(760px, 92vw);
+      background: #191d24; color: #e9ecf1; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+    .video06-dialog::backdrop { background: rgba(0,0,0,.6); }
+    .video06-head { display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; border-bottom: 1px solid #2b303a; }
+    .video06-head h2 { font-size: 16px; font-weight: 600; margin: 0; }
+    .video06-close { background: transparent; border: none; color: #9aa2b0; font-size: 18px;
+      cursor: pointer; width: 32px; height: 32px; border-radius: 8px; }
+    .video06-close:hover { background: #232730; color: #e9ecf1; }
+    #video-player { display: block; width: 100%; max-height: 72vh; background: #000;
+      border-radius: 0 0 12px 12px; }
+  </style>
+  <dialog id="video-dialog" class="video06-dialog" aria-labelledby="video-dialog-title">
+    <div class="video06-head">
+      <h2 id="video-dialog-title">Видео</h2>
+      <button id="video-close" class="video06-close" aria-label="Закрыть">✕</button>
+    </div>
+    <video id="video-player" controls playsinline preload="metadata"></video>
   </dialog>
 
   <script src="js/events.js"></script>
