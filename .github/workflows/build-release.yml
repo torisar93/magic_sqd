@@ -168,18 +168,16 @@ jobs:
 
   # macOS собирается ДВУМЯ нативными заданиями (github.com/actions/runner-images):
   #   • macos-arm64 — на macos-15 (Apple Silicon);
-  #   • macos-intel — на macos-13 (последний БЕСПЛАТНЫЙ Intel-образ GitHub для
-  #     публичного репозитория; платные -large/-intel тут не нужны). Когда
-  #     GitHub выведет macos-13 из строя — вернуть ручную сборку на Mac или
-  #     платный раннер.
+  #   • macos-intel — на macos-15-intel (БЕСПЛАТНЫЙ Intel-образ GitHub для
+  #     публичного репозитория, обещан до августа 2027). macos-13 GitHub убрал
+  #     4.12.2025 — задание на нём висело в очереди без раннера (релиз 1.0.61).
+  #     Когда уберут и macos-15-intel — вернуть ручную сборку на Mac
+  #     (scripts/build_intel_dmg.sh) или платный раннер.
   # target_arch=None в magic_sqd_mac.spec → PyInstaller берёт арку ХОСТА, значит
   # на каждом раннере .app выходит нужной арки сам, без Rosetta и lipo-шима
   # (они нужны только когда x86_64 собирают на arm-маке под Rosetta — не наш
   # случай на нативном Intel-раннере). tools_mac.zip несёт UNIVERSAL
-  # adb/fastboot/aapt (годятся обеим аркам), но jre_minimal в нём одной арки
-  # (arm64) — поэтому в macos-intel JRE пересобирается заново через jlink уже
-  # на x86_64-раннере (иначе переподпись APK apksigner'ом не запустится у
-  # техника на Intel-маке).
+  # adb/fastboot/aapt и jre_minimal (x86_64+arm64) — годятся обеим аркам.
   macos-arm64:
     runs-on: macos-15
     needs: tests
@@ -281,11 +279,11 @@ jobs:
           name: MagicSQD_macOS_arm64
           path: installer_output/MagicSQD_*_arm64.dmg
 
-  # Intel (x86_64) — нативно на macos-13. Шаги те же, что в macos-arm64, плюс
-  # setup-java + пересборка jre_minimal через jlink в x86_64 (см. комментарий
-  # над macos-arm64). Имя артефакта/файла — *_x86_64.dmg.
+  # Intel (x86_64) — нативно на macos-15-intel. Шаги те же, что в macos-arm64,
+  # плюс проверка x86_64-среза в jre_minimal (см. комментарий над macos-arm64).
+  # Имя артефакта/файла — *_x86_64.dmg.
   macos-intel:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     needs: tests
     steps:
       - uses: actions/checkout@v4
@@ -307,12 +305,6 @@ jobs:
           printf '%s' "$SUBMIT_JSON" > submit.json
           printf '%s' "$ADMIN_JSON" > admin.json
 
-      # JDK 17+ нужен только для jlink (пересборка x86_64-JRE ниже).
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
       - name: PyInstaller build
         run: python -m PyInstaller magic_sqd_mac.spec --noconfirm
 
@@ -324,16 +316,14 @@ jobs:
           unzip -q -o tools_mac_ci.zip -d "$APP/tools_mac"
           chmod +x "$APP/tools_mac/adb" "$APP/tools_mac/fastboot" "$APP/tools_mac/aapt" "$APP/tools_mac/jre_minimal/bin/java"
 
-      # jre_minimal из zip — arm64 (jlink даёт один-арочный JRE); на Intel-.app
-      # нужен x86_64, иначе apksigner (java) не запустится у техника на Intel.
-      # Пересобираем теми же модулями, что в tools_mac/README.txt, нативно.
-      - name: Rebuild x86_64 jre_minimal via jlink
+      # Без x86_64-среза в jre_minimal переподпись APK (apksigner на java) не
+      # запустится у техника на Intel-маке — та же проверка, что в
+      # scripts/build_intel_dmg.sh.
+      - name: Check jre_minimal has x86_64
         run: |
-          APP="dist/Magic SQD.app/Contents/Resources/tools_mac"
-          rm -rf "$APP/jre_minimal"
-          "$JAVA_HOME/bin/jlink" --add-modules java.base,java.logging --strip-debug \
-            --no-man-pages --no-header-files --compress=2 --output "$APP/jre_minimal"
-          file "$APP/jre_minimal/bin/java"
+          JAVA="dist/Magic SQD.app/Contents/Resources/tools_mac/jre_minimal/bin/java"
+          file "$JAVA"
+          file "$JAVA" | grep -q x86_64
 
       - name: Re-sign .app after adding tools_mac
         run: |

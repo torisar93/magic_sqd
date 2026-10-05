@@ -1,7 +1,7 @@
 #!/bin/bash
-# Сборка Intel (x86_64) DMG для macOS — единственный релизный ассет, который не собирает CI
-# (в build-release.yml только macos-15 = arm64; Intel-раннера у GitHub нет). Запускать на Mac после того,
-# как CI создал релиз vX.Y.Z; версия берётся из app/version.py.
+# Сборка Intel (x86_64) DMG для macOS на Mac — запасной путь: обычно его собирает CI (build-release.yml,
+# задание macos-intel на macos-15-intel). Нужен, если задание не отработало (как с macos-13 в 1.0.61) или
+# GitHub уберёт Intel-раннер. Запускать после того, как CI создал релиз vX.Y.Z; версия — из app/version.py.
 #
 #   scripts/build_intel_dmg.sh            # собрать installer_output/MagicSQD_<версия>_x86_64.dmg
 #   scripts/build_intel_dmg.sh --upload   # ...и приложить к GitHub-релизу v<версия> (gh release upload)
