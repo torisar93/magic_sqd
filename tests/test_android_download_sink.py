@@ -17,7 +17,7 @@ ANDROID_PY = Path(__file__).resolve().parents[1] / "android/app/src/main/python"
 @pytest.fixture
 def mobile_bridge(monkeypatch):
     # Андроидные модули из одной папки, в порядке зависимостей (mobile_bridge: from content_sync import …).
-    for name in ("content_sync", "scanner", "wizard_spec", "apk_library", "mobile_bridge"):
+    for name in ("offline_pack", "content_sync", "scanner", "wizard_spec", "apk_library", "mobile_bridge"):
         spec = importlib.util.spec_from_file_location(name, ANDROID_PY / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         monkeypatch.setitem(sys.modules, name, module)

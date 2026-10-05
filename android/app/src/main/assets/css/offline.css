@@ -1,0 +1,48 @@
+/* «Скачать заранее» (подписчики Boosty, владелец 2026-10-05): кнопка B рядом с «Открыть инструкцию» (js/offline.js)
+   и «таблетки» под названием модели в списке — «✓ офлайн», «↻ обновить», «★ ранний доступ» (js/catalog-ui.js).
+   Файл одинаковый для ПК (app/web/frontend/css/) и Android (android/app/src/main/assets/css/). */
+
+/* Ряд кнопок карточки модели */
+.model-actions { display: flex; gap: 12px; align-items: stretch; width: 100%; flex: 0 0 auto; }
+.model-actions > .model-open,
+.model-detail.catalog10-scene .model-actions > .model-open { flex: 1 1 0; min-width: 0; width: auto; }
+.model-offline {
+  position: relative; overflow: hidden; flex: 0 0 38%; min-width: 0; min-height: 54px; margin: 0;
+  display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 16px;
+  border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+/* !important — общий стиль кнопок (refinement05.css: button:not(.accent)…) сильнее по селектору */
+.model-offline { border: 1px solid #3a4a55 !important; background: #26343d !important; color: #e3eaee !important; box-shadow: none !important; }
+.model-offline[hidden] { display: none !important; }
+.model-offline .offline-ico { display: inline-flex; width: 18px; height: 18px; flex: 0 0 auto; }
+/* refinement05.css: button svg { min-width: 22px } — иначе значок раздувается */
+.model-offline svg { width: 100%; height: 100%; min-width: 0 !important; }
+.model-offline .offline-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-offline small { flex: 0 0 auto; color: #93a3ab; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.model-offline > *:not(.offline-fill) { position: relative; }
+.model-offline .offline-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(143, 227, 200, .16); transition: width .25s linear; }
+.model-offline.is-done { color: #8fe3c8 !important; border-color: rgba(143, 227, 200, .45) !important; background: rgba(143, 227, 200, .08) !important; }
+.model-offline.is-locked { color: #f6a17a !important; border-color: rgba(246, 161, 122, .5) !important; background: rgba(246, 161, 122, .10) !important; }
+.model-offline.is-update .offline-ico { color: #f2c66d; }
+@media (prefers-reduced-motion: reduce) { .model-offline .offline-fill { transition: none; } }
+/* Узкий экран (телефон): кнопки одна под другой */
+@media (max-width: 640px) {
+  .model-actions { flex-direction: column; gap: 10px; }
+  .model-actions > .model-open,
+  .model-detail.catalog10-scene .model-actions > .model-open { flex: 0 0 auto; width: 100%; }
+  .model-offline { flex: 0 0 auto; width: 100%; min-height: 50px; }
+}
+
+/* «Таблетки» под названием модели */
+.cat-card .cat-pills { display: flex; flex-wrap: nowrap; gap: 3px; align-self: flex-start; max-width: 100%; margin-top: 3px; }
+.cat-card .cat-pill {
+  display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; padding: 1px 7px 1px 5px;
+  border-radius: 999px; font-size: 10.5px; font-weight: 600; line-height: 1.5; letter-spacing: 0; white-space: nowrap;
+  color: #8fe3c8; background: rgba(143, 227, 200, .12); border: 1px solid rgba(143, 227, 200, .32);
+}
+.cat-card .cat-pill svg { width: 11px; height: 11px; min-width: 0 !important; flex: 0 0 auto; }
+.cat-card .cat-pill-offline.is-stale { color: #f2c66d; background: rgba(242, 198, 109, .12); border-color: rgba(242, 198, 109, .38); }
+.cat-card .cat-pill-early { color: #f6a17a; background: rgba(246, 161, 122, .12); border-color: rgba(246, 161, 122, .38); }
+.cat-card .cat-pill-early svg { width: 10px; height: 10px; }
+.cat-card .cat-pill.is-compact { gap: 0; padding: 1px 4px; }
+.cat-card .cat-pill.is-compact svg { width: 10px; height: 10px; }

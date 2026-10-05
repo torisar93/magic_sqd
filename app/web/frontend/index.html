@@ -30,6 +30,7 @@
   <link rel="stylesheet" href="css/apps_tabs.css" />
   <link rel="stylesheet" href="css/device_hint.css" />
   <link rel="stylesheet" href="css/early_access.css" />
+  <link rel="stylesheet" href="css/offline.css" />
   <link rel="stylesheet" href="css/select-polyfill.css" />
   <link rel="stylesheet" href="css/win7-safe-mode.css" />
 </head>
@@ -125,10 +126,11 @@
     </div>
   </dialog>
 
-  <!-- Модель раннего доступа без подписки (см. js/catalog-ui.js: detail/earlyAccessParagraphs, boosty.js) -->
+  <!-- Модель раннего доступа без подписки (см. js/catalog-ui.js: detail/earlyAccessParagraphs, boosty.js);
+       то же окно — «Скачать заранее» без подписки (js/offline.js, boosty.showOfflineDialog) -->
   <dialog id="early-access-dialog" class="dialog-info">
     <img class="modal-logo" src="img/logo-full-dark.svg" alt="Magic SQD" />
-    <h2>Ранний доступ</h2>
+    <h2 id="early-access-title">Ранний доступ</h2>
     <div id="early-access-text"></div>
     <div class="boosty-links" id="early-access-boosty-links"></div>
     <div class="dialog-actions">
@@ -458,6 +460,7 @@
   <script src="js/select08.js"></script>
   <script src="js/catalog09.js"></script>
   <script src="js/catalog-ui.js"></script>
+  <script src="js/offline.js"></script>
   <script src="js/catalog11-brands.js"></script>
   <script src="js/instructions12.js"></script>
   <script src="js/refinement05.js"></script>

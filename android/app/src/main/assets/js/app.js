@@ -673,7 +673,7 @@
       return;
     }
     document.getElementById("cat-count").textContent=String(visible.length);
-    visible.forEach(item => listEl.appendChild(window.CatalogUI.card({kind:item.kind,name:item.label,meta:item.meta,image:item.icon ? dataUrl(item.icon) : null,colors:item.colors || (item.color ? [item.color] : []),action:item.action,early:item.early,onClick:item.onClick})));
+    visible.forEach(item => listEl.appendChild(window.CatalogUI.card({kind:item.kind,name:item.label,meta:item.meta,image:item.icon ? dataUrl(item.icon) : null,colors:item.colors || (item.color ? [item.color] : []),action:item.action,early:item.early,offline:item.offline,onClick:item.onClick})));
   }
 
   // Та же логика, что и в desktop-версии (см. app/web/frontend/js/screens/
@@ -702,9 +702,9 @@
     for (const brand of carsData.brands || []) {
       if (brand.name.toLocaleLowerCase().includes(query)) results.push({ kind: "brand", label: brand.name, meta: `${brand.groups.length} ${plural(brand.groups.length, "модель", "модели", "моделей")}`, color: brandCardColor(brand), icon: brand.logo, action: "Открыть марку", onClick: () => showGroupStep(brand) });
       for (const group of brand.groups) {
-        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, ...groupCardColors(group), icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", early: earlyOf(group), onClick: () => showModificationStep(group) });
+        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, ...groupCardColors(group), icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", early: earlyOf(group), offline: versionsOf(group), onClick: () => showModificationStep(group) });
         for (const modification of group.modifications || []) {
-          if ((modification.modification || "").toLocaleLowerCase().includes(query)) results.push({ kind: "variant", label: `${group.name} — ${modification.modification}`, meta: brand.name, color: modification.status_color, icon: modification.logo || group.logo, early: earlyOf(modification), onClick: () => selectModel(modification) });
+          if ((modification.modification || "").toLocaleLowerCase().includes(query)) results.push({ kind: "variant", label: `${group.name} — ${modification.modification}`, meta: brand.name, color: modification.status_color, icon: modification.logo || group.logo, early: earlyOf(modification), offline: [modification], onClick: () => selectModel(modification) });
         }
       }
     }
@@ -738,7 +738,7 @@
     renderList(brand.groups.map((g) => ({
       kind: "model", label: g.name, icon: g.logo || (g.leaf && g.leaf.logo),
       meta: g.has_modifications ? `${g.modifications.length} ${plural(g.modifications.length, "версия", "версии", "версий")}` : g.early_locked ? "" : g.leaf.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
-      early: earlyOf(g),
+      early: earlyOf(g), offline: versionsOf(g),
       action: g.has_modifications ? "Выбрать версию" : "Открыть",
       ...groupCardColors(g),
       onClick: () => showModificationStep(g),
@@ -781,6 +781,53 @@
   // окно с Boosty вместо инструкции.
   function earlyOf(item) {
     return item && item.early_open_at != null ? { locked: !!item.early_locked } : null;
+  }
+
+  // Версии модели, как их показывает карточка (detail: versions) — по ним «таблетка» «офлайн» в списке
+  function versionsOf(group) {
+    return group.has_modifications ? group.modifications : [group.leaf];
+  }
+
+  // «Скачать заранее» (js/offline.js, общий с ПК): вызовы WebBridge.kt (offline_*), ответы — событиями
+  function initOffline() {
+    if (!window.OfflineUI) return;
+    window.OfflineUI.init({
+      call: (method, args) => Bridge.call(method, args || {}),
+      subscriber: () => Boolean(Bridge.call("auth_status", {}).subscriber),
+      showLocked: showOfflineLockedModal,
+      confirm: ({ title, text, ok }) => new Promise((resolve) => {
+        let overlay;
+        const done = (value) => { overlay.remove(); resolve(value); };
+        overlay = showModal([
+          el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: title }),
+          el("p", { class: "stage-text", style: "color: var(--text-dim)", text }),
+          el("div", { class: "modal-actions" }, [
+            el("button", { text: "Отмена", onclick: () => done(false) }),
+            el("button", { class: "danger", text: ok || "Продолжить", onclick: () => done(true) }),
+          ]),
+        ], { dismissible: false });
+      }),
+      notify: (text) => {
+        let overlay;
+        overlay = showModal([
+          el("p", { class: "stage-text", text }),
+          el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
+        ]);
+      },
+    });
+  }
+
+  function showOfflineLockedModal() {
+    let overlay;
+    const [body, hint] = window.OfflineUI.lockedParagraphs();
+    body.className = "stage-text";
+    hint.className = "stage-text early-hint";
+    overlay = showModal([
+      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: "Скачать заранее" }),
+      body, hint,
+      boostyLinksRow(),
+      el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
+    ]);
   }
 
   function showEarlyAccessModal(modelSummary) {
@@ -3993,6 +4040,7 @@
     window.events.on("personal_apks_picked", onPersonalApksPicked);
     window.events.on("sync_finished", onSyncFinished);
     window.events.on("model_sync_finished", onModelSyncFinished);
+    initOffline();
     window.events.on("adb_connect_result", onAdbConnectResult);
     window.events.on("adb_log", onAdbLog);
     window.events.on("adb_ask_input", onAdbAskInput);

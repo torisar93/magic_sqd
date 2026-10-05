@@ -21,6 +21,7 @@
 
   async function init(container, callbacks) {
     onModelSelected = callbacks.onModelSelected;
+    initOffline();
     container.innerHTML = `
       <section class="catalog cat-screen" aria-label="Выбор автомобиля">
         <header class="cat-topbar">
@@ -315,7 +316,7 @@
     const groups=selectedBrand.groups.filter(g=>g.name.toLocaleLowerCase().includes(query));
     if(!groups.length)list.append(LabUI.n('p','', 'Ничего не найдено'));
     for(const group of groups){
-      const card=CatalogUI.card({kind:'model',name:group.name,image:group.logo||group.leaf?.logo,early:earlyOf(group),
+      const card=CatalogUI.card({kind:'model',name:group.name,image:group.logo||group.leaf?.logo,early:earlyOf(group),offline:versionsOf(group),
         meta:group.has_modifications?`${group.modifications.length} версии`:'',
         onClick:()=>{selectedGroup=group;list.querySelectorAll('.cat-card').forEach(c=>{c.classList.toggle('selected',c===card);c.setAttribute('aria-pressed',String(c===card));});const g=group;const detail=CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,heroSrc:g.hero||g.leaf?.hero,versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel,onLocked:showEarlyLocked});layout.querySelector('.model-detail')?.replaceWith(detail);}});
       card.classList.toggle('selected',group===selectedGroup);card.setAttribute('aria-pressed',String(group===selectedGroup));list.append(card);
@@ -342,7 +343,7 @@
             kind: "model", title: group.name, logo: group.logo || group.leaf?.logo, ...groupCardStatus(group),
             meta: brand.name,
             action: group.has_modifications ? "Выбрать версию" : "Открыть",
-            hasVariants: group.has_modifications, early: earlyOf(group),
+            hasVariants: group.has_modifications, early: earlyOf(group), offline: versionsOf(group),
             onClick: () => showModificationStep(brand, group),
           });
         }
@@ -352,7 +353,7 @@
           results.push({
             kind: "variant", title: `${group.name} — ${modification.modification}`,
             logo: modification.logo || group.logo, status: modification.status_color, meta: brand.name, action: "Открыть",
-            early: earlyOf(modification),
+            early: earlyOf(modification), offline: [modification],
             onClick: () => selectModel(modification),
           });
         }
@@ -390,7 +391,7 @@
   }
 
   function createCard(item) {
-    return window.CatalogUI.card({kind:item.kind,name:item.title,meta:item.meta,image:item.logo,colors:item.statuses || (item.status ? [item.status] : []),action:item.action,early:item.early,onClick:item.onClick});
+    return window.CatalogUI.card({kind:item.kind,name:item.title,meta:item.meta,image:item.logo,colors:item.statuses || (item.status ? [item.status] : []),action:item.action,early:item.early,offline:item.offline,onClick:item.onClick});
   }
 
   function defaultModelLogo(title) {
@@ -434,6 +435,26 @@
 
   function showEarlyLocked(modelSummary) {
     window.boostyDialogs?.showEarlyAccessDialog(modelSummary);
+  }
+
+  // Версии модели, как их показывает карточка (detail: versions) — по ним «таблетка» «офлайн» в списке
+  function versionsOf(group) {
+    return group.has_modifications ? group.modifications : [group.leaf];
+  }
+
+  // «Скачать заранее» (js/offline.js, общий с Android): вызовы app/web/api/offline_api.py и окна ПК
+  function initOffline() {
+    if (!window.OfflineUI) return;
+    window.OfflineUI.init({
+      call: (method, args) => {
+        const api = window.pywebview.api;
+        return method === "offline_cancel" ? api.offline_cancel() : api[method](args.model_key);
+      },
+      subscriber: () => !!window.authDialog?.isSubscriber?.(),
+      showLocked: () => window.boostyDialogs?.showOfflineDialog(),
+      confirm: ({ title, text, ok }) => window.confirmDialog(text, { title, okText: ok, danger: true }),
+      notify: (text) => window.notice(text),
+    });
   }
 
   async function selectModel(modelSummary) {

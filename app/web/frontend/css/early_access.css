@@ -1,8 +1,7 @@
 /* Ранний доступ для подписчиков Boosty (вариант 1, владелец 2026-10-05) — разметку строит js/catalog-ui.js.
    Файл одинаковый для ПК (app/web/frontend/css/) и Android (android/app/src/main/assets/css/). */
+/* метка в списке — «таблетка» «★ ранний доступ» / с замком (css/offline.css, общая с «офлайн») */
 .cat-card.cat-early .cat-copy { min-width: 0; }
-.cat-card.cat-early .cat-early-note { display: block; align-self: flex-start; margin-top: 2px; font-size: 11px; font-weight: 600; line-height: 1.3; color: #f6a17a; }
-.cat-card.cat-early.is-locked .cat-early-note { color: var(--text-dim, #93a3ab); font-weight: 500; }
 .cat-card.cat-early.is-locked .cat-visual { opacity: .42; filter: grayscale(.7); }
 .ui-icon.early-lock { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex: 0 0 auto; color: #f6a17a; }
 /* стрелки в списке моделей — 14px и полупрозрачные (catalog10.css); замок заметнее */

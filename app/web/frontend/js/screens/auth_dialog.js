@@ -152,6 +152,7 @@ window.authDialog = (() => {
     const role = popoverEl.querySelector("#catalog-account-role");
     if (role) role.dataset.subscriber = String(isSubscriber);
     updateRoleLabel();
+    window.OfflineUI?.refresh();  // замок на «Скачать заранее» снимается/ставится сразу
   }
 
   function updateRoleLabel() {
@@ -284,5 +285,5 @@ window.authDialog = (() => {
     updateRoleLabel();
   }
 
-  return { attach, setLoggedIn, setAdminVisible };
+  return { attach, setLoggedIn, setAdminVisible, isSubscriber: () => isSubscriber };
 })();

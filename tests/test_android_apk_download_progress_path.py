@@ -27,7 +27,7 @@ REMOTE = "apk/Навигация/Yandex.apk"
 @pytest.fixture
 def apk_library(monkeypatch):
     # apk_library делает "from content_sync import ..." — это андроидный content_sync из той же папки.
-    for name in ("content_sync", "apk_library"):
+    for name in ("offline_pack", "content_sync", "apk_library"):
         spec = importlib.util.spec_from_file_location(name, ANDROID_PY / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         monkeypatch.setitem(sys.modules, name, module)

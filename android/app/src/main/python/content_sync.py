@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+import offline_pack
+
 _DOWNLOAD_WORKERS = 16
 
 # Скрытые (тестовые) модели — группы пользователей (server/user_groups.py): вошедший в аккаунт
@@ -386,6 +388,8 @@ def prune_model_to_server(cars_dir: Path, model_dir: Path, manifest, log=lambda 
         names = ", ".join(rel.rsplit("/", 1)[-1] for rel in removed[:5])
         more = f" и ещё {len(removed) - 5}" if len(removed) > 5 else ""
         log(f"Модель сверена с сервером: убраны устаревшие файлы ({names}{more}) — нужные скачаются заново.")
+        # Скачанная заранее модель — теперь «обновить», а не «офлайн» (как на ПК: content_sync.prune_model_stale_files)
+        offline_pack.refresh_marker(manifest, cars_dir, model_dir)
     return removed
 
 

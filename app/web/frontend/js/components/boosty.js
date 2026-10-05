@@ -125,9 +125,21 @@
 
   // Модель раннего доступа без подписки (вариант 1, владелец 2026-10-05): что это, когда откроется всем, кнопки Boosty.
   function showEarlyAccessDialog(model) {
+    if (!model) return;
+    showLockedDialog("Ранний доступ", window.CatalogUI.earlyAccessParagraphs(model));
+  }
+
+  // «Скачать заранее» без подписки (js/offline.js) — то же окно, свой заголовок и текст.
+  function showOfflineDialog() {
+    showLockedDialog("Скачать заранее", window.OfflineUI.lockedParagraphs());
+  }
+
+  function showLockedDialog(title, paragraphs) {
     const dialog = document.getElementById("early-access-dialog");
-    if (!dialog || !model) return;
-    document.getElementById("early-access-text").replaceChildren(...window.CatalogUI.earlyAccessParagraphs(model));
+    if (!dialog) return;
+    const heading = document.getElementById("early-access-title");
+    if (heading) heading.textContent = title;
+    document.getElementById("early-access-text").replaceChildren(...paragraphs);
     document.getElementById("early-access-boosty-links").replaceChildren(boostyLinksRow());
     const close = document.getElementById("early-access-dialog-close");
     close.onclick = () => dialog.close();
@@ -135,5 +147,5 @@
     close.focus();
   }
 
-  window.boostyDialogs = { init, maybeShowWelcomeDialog, showCompletionDialog, showEarlyAccessDialog };
+  window.boostyDialogs = { init, maybeShowWelcomeDialog, showCompletionDialog, showEarlyAccessDialog, showOfflineDialog };
 })();

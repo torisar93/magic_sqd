@@ -71,7 +71,7 @@
     return new Promise((resolve) => { resolveFn = resolve; });
   }
 
-  function confirmDialog(message, { title = "Magic SQD" } = {}) {
+  function confirmDialog(message, { title = "Magic SQD", okText = "", danger = null } = {}) {
     ensureBuilt();
     okBtn.className="accent";
     titleEl.textContent = title;
@@ -82,9 +82,9 @@
     inputEl.style.display = "none";
     cancelBtn.style.display = "";
     cancelBtn.textContent = "Отмена";
-    const destructive=/форматир|безвозвратно/i.test(message);
+    const destructive=danger===null?/форматир|безвозвратно/i.test(message):!!danger;
     okBtn.className=destructive?"danger":"accent";
-    okBtn.textContent = destructive?"Форматировать":"Продолжить";
+    okBtn.textContent = okText || (destructive?"Форматировать":"Продолжить");
     dialog.showModal();
     return new Promise((resolve) => { resolveFn = resolve; });
   }

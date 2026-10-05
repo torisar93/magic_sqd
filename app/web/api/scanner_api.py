@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 
 from ..events import event_bridge
+from ... import offline_pack
 from ...scanner import scan_cars, scan_apks, model_status_color, rollup_status_color, ModelInfo
 
 BRAND_LOGO_FILENAMES = ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg")
@@ -156,6 +157,8 @@ class ScannerApi:
             "hero": self._logo_data_uri(model.hero_path),
             "early_open_at": model.early_open_at,
             "early_locked": model.early_locked,
+            # «Скачать заранее» (app/offline_pack.py): "done" — офлайн, "update" — на сервере новые файлы
+            "offline_state": None if model.is_pending else offline_pack.marker_state(model.dir),
         }
 
     def _brand_logo_data_uri(self, brand: str) -> str | None:

@@ -15,7 +15,7 @@ import threading
 import time
 
 from ..events import event_bridge
-from ... import device_models, update_tracker
+from ... import device_models, offline_pack, update_tracker
 from ...content_config import get_base_url
 from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
                               list_shared_apk_catalog, prune_removed_apks, prune_removed_models,
@@ -91,6 +91,8 @@ class SyncApi:
                 prune_removed_models(self.base_dir, self.cars_dir, manifest, log=self._log)
                 # Ранний доступ: подписчику — отметка, остальным — витрина модели под замком
                 sync_early_access(self.base_dir, self.cars_dir, manifest, log=self._log)
+                # Скачанные заранее модели: «офлайн» или «обновить» по свежему манифесту (значок в списке)
+                offline_pack.refresh_all(manifest, self.cars_dir, log=self._log)
             except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
                 self._log(f"Не удалось проверить обновления моделей на сервере: {exc}")
             else:
@@ -153,6 +155,7 @@ class SyncApi:
                 prune_removed_models(self.base_dir, self.cars_dir, manifest, log=self._log)
                 # вход подписчика открывает модели раннего доступа, выход — снова закрывает
                 sync_early_access(self.base_dir, self.cars_dir, manifest, log=self._log)
+                offline_pack.refresh_all(manifest, self.cars_dir, log=self._log)
             except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать вход в аккаунт
                 self._log(f"Не удалось обновить каталог моделей: {exc}")
                 return

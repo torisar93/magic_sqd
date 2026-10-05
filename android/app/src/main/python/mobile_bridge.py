@@ -5,14 +5,16 @@ import json
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
                            prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie,
-                           sync_early_access)
-from scanner import scan_cars, model_status_color, rollup_status_color, _read_version
+                           sync_early_access, sync_tree, model_on_server)
+from scanner import scan_cars, model_status_color, rollup_status_color, _read_version, read_early_access
+import offline_pack
 from wizard_spec import load_wizard_spec
 from apk_library import list_apks as _list_apks, ensure_apks_downloaded as _ensure_apks_downloaded
 
@@ -224,6 +226,8 @@ def sync_cars(cars_dir: str, base_url: str) -> str:
     prune_removed_models(cars_path.parent, cars_path, manifest, log=lambda m: lines.append(m))
     # Ранний доступ: подписчику — отметка, остальным — витрина модели под замком
     sync_early_access(base_url, cars_path, manifest, log=lambda m: lines.append(m))
+    # Скачанные заранее модели: «офлайн» или «обновить» по свежему манифесту (значок в списке)
+    offline_pack.refresh_all(manifest, cars_path, log=lambda m: lines.append(m))
     return json.dumps({"downloaded": downloaded, "log": lines})
 
 
@@ -244,6 +248,8 @@ def _model_to_dict(model) -> dict:
         "hero": _logo_rel_path(model.hero_path),
         "early_open_at": model.early_open_at,
         "early_locked": model.early_locked,
+        # «Скачать заранее» (offline_pack.py): "done" — офлайн, "update" — на сервере новые файлы
+        "offline_state": offline_pack.marker_state(model.dir),
     }
 
 
@@ -385,6 +391,100 @@ def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
                                         on_progress=_progress_cb("model"), manifest=manifest)
 
     return json.dumps({"downloaded": downloaded, "log": lines})
+
+
+# -- «Скачать заранее» (подписчики Boosty, владелец 2026-10-05) --------------
+# Состав пакета, отметка и удаление — offline_pack.py (тот же файл, что на ПК); вызывается из WebBridge.kt в фоновом
+# потоке, ход дела — DownloadSink (событие offline_progress), итог — событием offline_finished.
+_offline_cancel = threading.Event()
+
+
+class _OfflineCancelled(Exception):
+    pass
+
+
+# Манифест для состояния кнопки — на 20 с: карточка модели спрашивает его при каждом открытии и смене версии
+_offline_manifest = {"at": 0.0, "data": None}
+
+
+def _offline_status_manifest(base_url: str):
+    now = time.monotonic()
+    if _offline_manifest["data"] is None or now - _offline_manifest["at"] > 20:
+        _offline_manifest["data"] = fetch_manifest(base_url)
+        _offline_manifest["at"] = now
+    return _offline_manifest["data"]
+
+
+def _offline_locked(model_dir: Path) -> bool:
+    early = read_early_access(model_dir) or read_early_access(model_dir.parent)
+    return bool(early and early[1])
+
+
+def offline_status(cars_dir: str, base_url: str, model_key: str) -> str:
+    cars_path, model_dir = Path(cars_dir), Path(model_key)
+    if not model_dir.is_dir() or _offline_locked(model_dir):
+        return json.dumps({"key": model_key, "state": "none", "available": False})
+    manifest = _offline_status_manifest(base_url)
+    result = offline_pack.status(manifest, cars_path, model_dir)
+    if manifest is None:
+        result["available"] = result["state"] != "none"
+    else:
+        result["available"] = model_on_server(cars_path, model_dir, manifest) and result.get("files", 0) > 0
+    result["key"] = model_key
+    return json.dumps(result)
+
+
+def offline_cancel() -> str:
+    _offline_cancel.set()
+    return "{}"
+
+
+def offline_download(cars_dir: str, base_url: str, model_key: str, sink=None) -> str:
+    """Весь пакет модели на телефон. sink (WebBridge.kt: DownloadSink) — байты по мере прихода."""
+    _offline_cancel.clear()
+    cars_path, model_dir = Path(cars_dir), Path(model_key)
+    log = sink.line if sink is not None else (lambda m: None)
+    if not model_dir.is_dir() or _offline_locked(model_dir):
+        return json.dumps({"key": model_key, "ok": False, "error": "Модель не найдена."})
+    manifest = fetch_manifest(base_url)
+    if manifest is None:
+        return json.dumps({"key": model_key, "ok": False, "state": offline_pack.marker_state(model_dir) or "none",
+                           "error": "Нет связи с сервером — скачать заранее можно, пока есть интернет."})
+    # Сначала сверка с сервером, как при открытии модели: старые версии файлов убираются
+    prune_model_to_server(cars_path, model_dir, manifest, log=log)
+    current = offline_pack.plan(manifest, cars_path, model_dir)
+
+    def on_bytes(done, total):
+        if _offline_cancel.is_set():
+            raise _OfflineCancelled()
+        if sink is not None:
+            sink.progress(done, total)
+
+    on_bytes(0, current["missing_bytes"])
+    if current["missing"]:
+        missing = {item["path"]: {"size": item["size"], "mtime": item["mtime"]} for item in current["missing"]}
+        try:
+            # Пакет — список путей от content/: корень = filesDir (там же cars/)
+            sync_tree(base_url, "", cars_path.parent, missing, log=log, on_bytes=on_bytes)
+        except _OfflineCancelled:
+            return json.dumps({"key": model_key, "ok": False, "cancelled": True,
+                               "state": offline_pack.marker_state(model_dir) or "none"})
+    after = offline_pack.plan(manifest, cars_path, model_dir)
+    state = offline_pack.write_marker(model_dir, after)
+    _offline_manifest["data"] = manifest
+    _offline_manifest["at"] = time.monotonic()
+    failed = len(after["missing"])
+    return json.dumps({"key": model_key, "ok": not failed, "state": state, "failed": failed,
+                       "total_bytes": after["total_bytes"], "missing_bytes": after["missing_bytes"]})
+
+
+def offline_delete_info(cars_dir: str, model_key: str) -> str:
+    return json.dumps({"key": model_key, "bytes": offline_pack.delete_size(Path(cars_dir), Path(model_key))})
+
+
+def offline_delete(cars_dir: str, model_key: str) -> str:
+    freed = offline_pack.delete(Path(cars_dir), Path(model_key))
+    return json.dumps({"key": model_key, "ok": True, "freed": freed, "state": "none"})
 
 
 def sync_shared_folder_for(cars_dir: str, base_url: str, folder_name: str, sink=None) -> str:

@@ -59,7 +59,7 @@ def platform(request, monkeypatch):
             content_sync.sync_early_access(app_base, app_base / "cars", manifest)
             return {g.name: g for g in desktop_scanner.scan_cars(app_base / "cars").get("Haval", [])}
     else:
-        android_sync, android_scanner = _load_android(monkeypatch, "content_sync", "scanner")
+        _, android_sync, android_scanner = _load_android(monkeypatch, "offline_pack", "content_sync", "scanner")
 
         def sync(app_base, server):
             cars = app_base / "cars"

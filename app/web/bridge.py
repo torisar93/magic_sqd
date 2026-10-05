@@ -16,6 +16,7 @@ from .api.car_editor_api import CarEditorApi
 from .api.chat_api import ChatApi
 from .api.install_api import InstallApi
 from .api.install_log_api import InstallLogApi
+from .api.offline_api import OfflineApi
 from .api.qr_adb_api import QrAdbApi
 from .api.report_api import ReportApi
 from .api.scanner_api import ScannerApi
@@ -89,6 +90,7 @@ class WebApi:
         self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
         self._update = UpdateApi(base_dir, is_win7=is_win7)
         self._chat = ChatApi(base_dir, self.adb_path, self._auth)
+        self._offline = OfflineApi(base_dir, self._scanner, self._auth)
         # Прочный журнал сессий (см. app/pending_install_logs.py) — если
         # прошлый запуск не дошёл до штатного завершения (вылет/принудительное
         # закрытие) или не смог отправить лог (офлайн — например Wi-Fi ADB,
@@ -183,6 +185,22 @@ class WebApi:
 
     def scanner_list_apks(self) -> list:
         return self._scanner.list_apks()
+
+    # -- offline_api: «Скачать заранее» (подписчики Boosty) -----------------
+    def offline_status(self, model_key: str) -> dict:
+        return self._offline.status(model_key)
+
+    def offline_download(self, model_key: str) -> dict:
+        return self._offline.download(model_key)
+
+    def offline_cancel(self) -> dict:
+        return self._offline.cancel()
+
+    def offline_delete_info(self, model_key: str) -> dict:
+        return self._offline.delete_info(model_key)
+
+    def offline_delete(self, model_key: str) -> dict:
+        return self._offline.delete(model_key)
 
     def scanner_apk_icon(self, path: str):
         # Локальный импорт (не в шапке файла) — apk_icons.py тянет свои

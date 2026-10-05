@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+from . import offline_pack
 from .content_config import get_base_url
 
 CHUNK_SIZE = 1024 * 1024
@@ -931,6 +932,8 @@ def prune_model_stale_files(base_dir: Path, model_dir: Path, manifest: dict[str,
         names = ", ".join(rel.rsplit("/", 1)[-1] for rel in removed[:5])
         more = f" и ещё {len(removed) - 5}" if len(removed) > 5 else ""
         log(f"Модель сверена с сервером: убраны устаревшие файлы ({names}{more}) — нужные скачаются заново.")
+        # Скачанная заранее модель — теперь «обновить», а не «офлайн» (иначе у машины без сети файла не окажется)
+        offline_pack.refresh_marker(manifest, base_dir / "cars", model_dir)
     return removed
 
 

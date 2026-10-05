@@ -43,7 +43,7 @@ def test_desktop_reads_hidden_models_for_local_and_remote_apks(tmp_path):
 
 @pytest.fixture
 def apk_library(monkeypatch):
-    for name in ("content_sync", "apk_library"):  # apk_library импортирует андроидный content_sync
+    for name in ("offline_pack", "content_sync", "apk_library"):  # apk_library импортирует андроидный content_sync
         spec = importlib.util.spec_from_file_location(name, ANDROID_PY / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         monkeypatch.setitem(sys.modules, name, module)

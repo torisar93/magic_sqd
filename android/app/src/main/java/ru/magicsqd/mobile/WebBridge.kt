@@ -208,6 +208,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     args.optString("modification", ""),
                 ).toString()
                 "sync_model_payload" -> { syncModelPayload(args.getString("model_key")); "{}" }
+                // «Скачать заранее» (подписчики Boosty) — см. offlineDownload ниже и mobile_bridge.offline_*
+                "offline_status" -> { offlineStatus(args.getString("model_key")); "{}" }
+                "offline_download" -> { offlineDownload(args.getString("model_key")); "{}" }
+                "offline_cancel" -> pyModule("mobile_bridge").callAttr("offline_cancel").toString()
+                "offline_delete_info" -> pyModule("mobile_bridge").callAttr(
+                    "offline_delete_info", carsDir, args.getString("model_key")).toString()
+                "offline_delete" -> { offlineDelete(args.getString("model_key")); "{}" }
                 "scanner_list_apks" -> { listApks(); "{}" }
                 "lab_apk_icon" -> { loadLabApkIcon(args.optString("path")); "{}" }
                 "install_load_stages" -> pyModule("mobile_bridge").callAttr(
@@ -584,6 +591,77 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 JSONObject().put("error", (e.message ?: "неизвестная ошибка")).toString()
             }
             pushEvent(JSONObject().put("kind", "model_sync_finished").put("result", JSONObject(resultJson)))
+        }.start()
+    }
+
+    /** «Скачать заранее» (владелец, 2026-10-05): весь пакет модели на телефон, чтобы у машины работать без
+     * интернета. Состав и отметка — offline_pack.py (общий с ПК). Состояние кнопки — событием offline_status
+     * (манифест с сервера — не в потоке интерфейса), ход — offline_progress (байты), итог — offline_finished. */
+    @Volatile private var offlineRunningKey: String? = null
+
+    private fun offlineStatus(modelKey: String) {
+        Thread {
+            val result = try {
+                if (offlineRunningKey == modelKey) JSONObject().put("key", modelKey).put("state", "progress").put("available", true)
+                else JSONObject(pyModule("mobile_bridge").callAttr("offline_status", carsDir, BASE_URL, modelKey).toString())
+            } catch (e: Exception) {
+                JSONObject().put("key", modelKey).put("state", "none").put("available", false)
+            }
+            pushEvent(result.put("kind", "offline_status"))
+        }.start()
+    }
+
+    private fun offlineDownload(modelKey: String) {
+        synchronized(this) {
+            if (offlineRunningKey != null) {
+                pushEvent(JSONObject().put("kind", "offline_finished").put("key", modelKey).put("ok", false)
+                    .put("error", "Уже скачивается другая модель — дождитесь окончания."))
+                return
+            }
+            offlineRunningKey = modelKey
+        }
+        Thread {
+            val result = try {
+                // Платная функция: подписку проверяем по серверу — отметку ставят и снимают в админке
+                val cookie = authUserCookie()
+                val me = if (cookie == null) null
+                    else JSONObject(pyModule("auth_bridge").callAttr("me", AUTH_BASE_URL, cookie).toString())
+                if (me != null && me.optBoolean("ok")) {
+                    authPrefs().edit().putBoolean("subscriber", me.optBoolean("subscriber", false)).apply()
+                }
+                if (me == null || !me.optBoolean("ok")) {
+                    JSONObject().put("ok", false).put("locked", true)
+                        .put("error", if (cookie == null) "" else "Нет связи с сервером — скачать заранее можно, пока есть интернет.")
+                } else if (!me.optBoolean("subscriber", false)) {
+                    JSONObject().put("ok", false).put("locked", true)
+                } else {
+                    val sink = DownloadSink(
+                        log = { line -> android.util.Log.i("MagicSQD", "offline: $line") },
+                        onBytes = { done, total ->
+                            pushEvent(JSONObject().put("kind", "offline_progress").put("key", modelKey)
+                                .put("done", done).put("total", total))
+                        },
+                    )
+                    JSONObject(pyModule("mobile_bridge").callAttr("offline_download", carsDir, BASE_URL, modelKey, sink).toString())
+                }
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
+            } finally {
+                offlineRunningKey = null
+            }
+            pushEvent(result.put("kind", "offline_finished").put("key", modelKey))
+        }.start()
+    }
+
+    private fun offlineDelete(modelKey: String) {
+        Thread {
+            val result = try {
+                if (offlineRunningKey == modelKey) JSONObject().put("ok", false).put("error", "Модель ещё скачивается.")
+                else JSONObject(pyModule("mobile_bridge").callAttr("offline_delete", carsDir, modelKey).toString())
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
+            }
+            pushEvent(result.put("kind", "offline_deleted").put("key", modelKey))
         }.start()
     }
 

@@ -26,6 +26,11 @@ SHARED = [
     # Шрифт пароля ADB по QR (см. tests/test_password_font.py) — один файл на обе платформы.
     ("fonts/JetBrainsMono-Bold.ttf", "fonts/JetBrainsMono-Bold.ttf"),
     ("fonts/JetBrainsMono-OFL.txt", "fonts/JetBrainsMono-OFL.txt"),
+    # Каталог: карточки, «таблетки» и ранний доступ (2026-10-05), «Скачать заранее» (2026-10-05).
+    ("js/catalog-ui.js", "js/catalog-ui.js"),
+    ("css/early_access.css", "css/early_access.css"),
+    ("js/offline.js", "js/offline.js"),
+    ("css/offline.css", "css/offline.css"),
 ]
 
 

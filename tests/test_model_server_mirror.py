@@ -54,7 +54,7 @@ def prune(request, tmp_path, monkeypatch):
         def run(manifest):
             return desktop.prune_model_stale_files(base, model_dir, manifest)
     else:
-        (android,) = _load_android(monkeypatch, "content_sync")
+        _, android = _load_android(monkeypatch, "offline_pack", "content_sync")
 
         def run(manifest):
             return android.prune_model_to_server(base / "cars", model_dir, manifest)
@@ -146,7 +146,7 @@ def test_desktop_download_replaces_same_size_file_changed_on_server(content_serv
 
 
 def test_android_download_replaces_same_size_file_changed_on_server(content_server, tmp_path, monkeypatch):
-    _android_cs, apk_library = _load_android(monkeypatch, "content_sync", "apk_library")
+    _, _android_cs, apk_library = _load_android(monkeypatch, "offline_pack", "content_sync", "apk_library")
     rel = f"cars/{MODEL}/files/pack/optional/App.apk"
     _serve(content_server, rel, b"NEW-1", SERVER_MTIME)
     cars = tmp_path / "phone" / "cars"
