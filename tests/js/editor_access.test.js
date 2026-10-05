@@ -6,17 +6,25 @@ const { read, slice, assert, run } = require("./_util");
 
 module.exports = async function () {
   const file = "app/web/frontend/js/screens/graph_wizard.js";
-  const code = "let accessInitial = null; let accessMultiGroups = [];\n"
+  const code = "let accessInitial = null; let accessMultiGroups = []; let steps = [];\n"
     + slice(read(file), "  async function loadAccessControl() {", "  // Шаги без сохранённой позиции", file);
-  const box = { hidden: true, title: "" };
+  const box = { hidden: true, title: "", after() {} };
   const select = { children: [], value: "", replaceChildren(...opts) {
     this.children = opts; const chosen = opts.find((o) => o.selected !== null); this.value = chosen ? chosen.value : opts[0].value;
   } };
+  // Элементы раннего доступа и закрытых этапов (добавлены вместе с фичами Boosty) — моки лишь чтобы
+  // loadAccessControl/buildClosedAccess не падали; их собственное поведение проверяется отдельно.
+  const dateEl = { value: "", hidden: false };
+  const closedAccess = { hidden: false, remove() {}, after() {} };
+  const closedSelect = { value: "", onchange: null };
+  const byId = { "graph-wizard-access": box, "graph-wizard-access-select": select,
+    "graph-wizard-access-early-date": dateEl, "graph-wizard-closed-access": closedAccess,
+    "graph-wizard-closed-select": closedSelect };
   let info = null;
   const calls = [];
   const ctx = {
     isPendingModel: false, isEditing: true, editModelKey: "cars/Haval/Jolion",
-    document: { getElementById: (id) => (id === "graph-wizard-access" ? box : select) },
+    document: { getElementById: (id) => byId[id] || select },
     el: (tag, attrs) => ({ tag, value: attrs.value, text: attrs.text, selected: attrs.selected }),
     window: { pywebview: { api: { car_get_access: async (key) => { calls.push(key); return info; } } } },
   };
