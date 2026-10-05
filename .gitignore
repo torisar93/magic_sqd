@@ -6,6 +6,8 @@ __pycache__/
 
 # Мусор Finder на macOS
 .DS_Store
+# AppleDouble-файлы (появляются при копировании с Mac на exFAT/NTFS/SMB)
+._*
 
 # Артефакты сборки PyInstaller (пересобираются из magic_sqd.spec)
 build/
