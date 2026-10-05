@@ -22,12 +22,14 @@
   // ?locale=ru_RU — иначе Boosty открывается по умолчанию на английском (у Boosty нет
   // предсказуемой привязки к языку ОС/браузера технику; куки-подхват языка ставится
   // только ПОСЛЕ первого захода, а параметр в URL форсирует русский с первого клика).
-  function boostyLinksRow() {
+  // subscribeOnly — окно платной функции (замок: ранний доступ, «Скачать заранее», закрытые этапы): только
+  // подписка. Разовый донат ничего не открывает — он добровольный (владелец, 2026-10-05), в окне замка он лишний.
+  function boostyLinksRow({ subscribeOnly = false } = {}) {
     return el("div", { class: "boosty-links" }, [
       el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd?locale=ru_RU", target: "_blank" }, [
         svgIcon(STAR_ICON_PATH), el("span", { text: "Подписаться на Boosty" }),
       ]),
-      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate?locale=ru_RU", target: "_blank" }, [
+      subscribeOnly ? null : el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate?locale=ru_RU", target: "_blank" }, [
         svgIcon(HEART_ICON_PATH), el("span", { text: "Разовый донат" }),
       ]),
     ]);
@@ -140,7 +142,7 @@
     const heading = document.getElementById("early-access-title");
     if (heading) heading.textContent = title;
     document.getElementById("early-access-text").replaceChildren(...paragraphs);
-    document.getElementById("early-access-boosty-links").replaceChildren(boostyLinksRow());
+    document.getElementById("early-access-boosty-links").replaceChildren(boostyLinksRow({ subscribeOnly: true }));
     const close = document.getElementById("early-access-dialog-close");
     close.onclick = () => dialog.close();
     dialog.showModal();

@@ -825,7 +825,7 @@
     overlay = showModal([
       el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: "Скачать заранее" }),
       body, hint,
-      boostyLinksRow(),
+      boostyLinksRow({ subscribeOnly: true }),
       el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
     ]);
   }
@@ -838,7 +838,7 @@
     overlay = showModal([
       el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: "Ранний доступ" }),
       body, hint,
-      boostyLinksRow(),
+      boostyLinksRow({ subscribeOnly: true }),
       el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
     ]);
   }
@@ -3295,12 +3295,14 @@
   // открываются в системном браузере (см. MainActivity.kt:
   // shouldOverrideUrlLoading), не внутри WebView.
   // ?locale=ru_RU — иначе Boosty открывается по умолчанию на английском (см. память проекта).
-  function boostyLinksRow() {
+  // subscribeOnly — окно платной функции (замок: ранний доступ, «Скачать заранее», закрытые этапы): только
+  // подписка. Разовый донат ничего не открывает — он добровольный (владелец, 2026-10-05), в окне замка он лишний.
+  function boostyLinksRow({ subscribeOnly = false } = {}) {
     return el("div", { class: "boosty-links" }, [
       el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd?locale=ru_RU", target: "_blank" }, [
         svgIcon(STAR_ICON_PATH), el("span", { text: "Подписаться на Boosty" }),
       ]),
-      el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate?locale=ru_RU", target: "_blank" }, [
+      subscribeOnly ? null : el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate?locale=ru_RU", target: "_blank" }, [
         svgIcon(HEART_ICON_PATH), el("span", { text: "Разовый донат" }),
       ]),
     ]);
