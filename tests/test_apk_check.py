@@ -94,7 +94,6 @@ def test_rejections_that_mean_the_file_itself(reason, expected):
     "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package x signatures do not match]",
     "Failure [INSTALL_FAILED_CONFLICTING_PROVIDER: Can't install because provider name x is already used]",
     "Error: Unable to open file: /sdcard/Download/x.apk Consider using a file under /data/local/tmp/",
-    "Exception occurred while executing: java.lang.IllegalArgumentException: Unknown option --install-reason",
     "jdwp_whitelist: не удалось прочитать имя пакета — нужно для JDWP-патча",
 ])
 def test_ordinary_method_failures_keep_trying(reason):

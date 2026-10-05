@@ -30,7 +30,7 @@ def test_install_engine_never_reads_whole_files_except_small_helpers():
 
 def test_apk_installers_take_a_streaming_source_not_a_byte_array():
     code = _code("AdbInstall.kt")
-    for name in ("installApkOverAdb", "installApkHavalRevivedOverAdb", "installApkSpoofedOverAdb",
+    for name in ("installApkOverAdb", "installApkSpoofedOverAdb",
                  "installApkStreamOverAdb", "installApkViaLocalinstall", "installApkViaDexShell"):
         signature = re.search(rf"fun {name}\((.*?)\): AdbInstallResult", code, flags=re.S)
         assert signature, name

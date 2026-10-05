@@ -392,7 +392,6 @@ class InstallEngine(
                 AdbSession.installApkDexShell(apk, currentApkName, helper.readBytes(), methodLog, staged)
             }
         },
-        "adb_install_haval_revived" to { apk, staged, methodLog -> AdbSession.installApkHavalRevived(apk, methodLog, staged) },
         "jdwp_whitelist" to { apk, staged, methodLog ->
             AdbSession.installApkJdwpWhitelist(apk, currentPackageName, methodLog, staged, currentApkName)
         },

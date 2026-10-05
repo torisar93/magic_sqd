@@ -216,10 +216,6 @@ object AdbSession {
         if (stagedPath == null) installApkSpoofedOverAdb(requireTransport(), apk, log = log)
         else installApkSpoofedOverAdb(requireTransport(), apk, remotePath = stagedPath, log = log, prePushed = true)
 
-    fun installApkHavalRevived(apk: PushSource, log: (String) -> Unit, stagedPath: String? = null): AdbInstallResult =
-        if (stagedPath == null) installApkHavalRevivedOverAdb(requireTransport(), apk, log = log)
-        else installApkHavalRevivedOverAdb(requireTransport(), apk, remotePath = stagedPath, log = log, prePushed = true)
-
     /** expectedPackage — имя пакета из самого APK: его и ждём после хелпера (тот ставит асинхронно, лог №2042). */
     fun installApkLocalinstall(apk: PushSource, helperBytes: ByteArray, log: (String) -> Unit, stagedPath: String? = null,
                                expectedPackage: String = ""): AdbInstallResult =
