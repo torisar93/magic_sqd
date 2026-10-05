@@ -39,7 +39,7 @@ module.exports = async function () {
   info = { ok: true, available: true, restricted: false, groups: [], all_groups: groups };
   await api.loadAccessControl();
   assert(!box.hidden && calls.at(-1) === "cars/Haval/Jolion", "выбор показан для открытой модели");
-  assert(select.children.map((o) => o.value).join() === "all,admins,group:1,group:3" && select.value === "all", "варианты");
+  assert(select.children.map((o) => o.value).join() === "all,admins,early,group:1,group:3" && select.value === "all", "варианты");
   assert(api.accessChoice() === null, "не меняли — null");
   select.value = "group:3";
   assert(JSON.stringify(api.accessChoice()) === JSON.stringify({ restricted: true, groups: [3] }), "скрыть для группы");
