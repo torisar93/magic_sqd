@@ -215,7 +215,7 @@ def test_mirror_script_writes_min_version(tmp_path):
 
     def mirror(tag):
         subprocess.run([sys.executable, "-", str(out), tag, f"{tag}\n\n- правки", '{"windows": "MagicSQD_Setup.exe"}',
-                        '{"MagicSQD_Setup.exe": "abc"}', str(releases)], input=code, text=True, check=True)
+                        '{"MagicSQD_Setup.exe": "abc"}', str(releases)], input=code, encoding="utf-8", check=True)
         return json.loads(out.read_text(encoding="utf-8"))
 
     data = mirror("v1.0.42")

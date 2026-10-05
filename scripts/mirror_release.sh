@@ -16,8 +16,12 @@ HOST=root@94.102.89.93
 KEY=~/.ssh/magicsqd_deploy
 SSH="ssh -i $KEY -o BatchMode=yes -o ConnectTimeout=20"
 DEST=/opt/magicsqd/site/download
+# python3 на macOS; в Git Bash на Windows python3 — заглушка Microsoft Store, настоящий там python.
+# PYTHONUTF8 — чтобы Python на Windows читал и печатал UTF-8 (changelog по-русски), а не cp1251.
+PY=python3; "$PY" -c "" 2>/dev/null || PY=python
+export PYTHONUTF8=1
 
-TAG=${1:-v$(python3 -c "import re; print(re.search(r'APP_VERSION\s*=\s*\"([^\"]+)\"', open('app/version.py').read()).group(1))")}
+TAG=${1:-v$("$PY" -c "import re; print(re.search(r'APP_VERSION\s*=\s*\"([^\"]+)\"', open('app/version.py').read()).group(1))")}
 VER=${TAG#v}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -61,7 +65,7 @@ CHANGELOG=$(gh api "repos/{owner}/{repo}/releases/$REL_ID" --jq '.body')
 # см. update_api.py/mobile_bridge.py), даже если этот релиз уже не последний. Пометить старый релиз задним
 # числом: gh release edit vX.Y.Z --notes-file … (добавить строку) и перезапустить этот скрипт.
 gh api "repos/{owner}/{repo}/releases" --paginate --jq '.[] | [.tag_name, .body] | @json' > "$WORK/releases.jsonl"
-python3 - "$WORK/version.json" "$TAG" "$CHANGELOG" "{${ASSETS_JSON%, }}" "{${SHA_JSON%, }}" "$WORK/releases.jsonl" <<'PY'
+"$PY" - "$WORK/version.json" "$TAG" "$CHANGELOG" "{${ASSETS_JSON%, }}" "{${SHA_JSON%, }}" "$WORK/releases.jsonl" <<'PY'
 import json, re, sys
 path, tag, changelog, assets, sha, releases_path = sys.argv[1:]
 MANDATORY = re.compile(r"^\s*обязательное обновление\s*[.!]?\s*$", re.IGNORECASE | re.MULTILINE)
@@ -77,7 +81,8 @@ for line in open(releases_path, encoding="utf-8"):
 data = {"version": tag, "changelog": changelog.strip(), "assets": json.loads(assets), "sha256": json.loads(sha)}
 if marked:
     data["min_version"] = max(marked, key=ver)
-json.dump(data, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+# newline="\n" — на Windows иначе version.json уйдёт на сервер с CRLF
+json.dump(data, open(path, "w", encoding="utf-8", newline="\n"), ensure_ascii=False, indent=2)
 PY
 
 echo "== загружаю на сервер ($(du -ch "${UPLOAD[@]/#/$WORK/}" | tail -1 | cut -f1))"
@@ -92,4 +97,4 @@ echo "== проверка по HTTPS"
 for f in "${UPLOAD[@]}"; do
   code=$(curl -s -o /dev/null -w '%{http_code}' -I "https://magicsqd.ru/download/$f"); echo "   $f → HTTP $code"; [ "$code" = 200 ] || exit 1
 done
-curl -s https://magicsqd.ru/download/version.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('   version.json:', d['version'], '| assets:', ', '.join(d['assets']), '| обязательна до:', d.get('min_version', '—'))"
+curl -s https://magicsqd.ru/download/version.json | "$PY" -c "import json,sys; d=json.load(sys.stdin); print('   version.json:', d['version'], '| assets:', ', '.join(d['assets']), '| обязательна до:', d.get('min_version', '—'))"
