@@ -891,6 +891,14 @@ def prune_removed_apks(base_dir: Path, apk_dir: Path, manifest: dict[str, dict] 
 _KNOWN_MODEL_FILES_FILENAME = "_known_files.json"
 
 
+def is_local_only_file(path: Path) -> bool:
+    """Пометка только этого устройства — на сервер её не выкладывать (публикация из редактора, заявка):
+    неотправленная правка, «Скачать заранее», ранний доступ, прежний снимок файлов модели. Попади она
+    в каталог — у всех остальных модель значилась бы скачанной или исправленной."""
+    return path.name in (LOCAL_EDIT_MARKER_FILENAME, offline_pack.MARKER, EARLY_ACCESS_MARKER,
+                         _KNOWN_MODEL_FILES_FILENAME)
+
+
 def prune_model_stale_files(base_dir: Path, model_dir: Path, manifest: dict[str, dict] | None,
                              log=lambda m: None) -> list[str]:
     """Сверка опубликованной модели с сервером — при КАЖДОМ открытии модели (install_api.load_stages) и при полной

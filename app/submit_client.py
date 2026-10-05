@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from .content_sync import LOCAL_EDIT_MARKER_FILENAME
+from .content_sync import is_local_only_file
 from .submit_config import SubmitConfig
 
 CHUNK_SIZE = 1024 * 1024
@@ -58,7 +58,7 @@ def submit_model(model_dir: Path, brand: str, model: str, config: SubmitConfig,
             # локально отредактированную и блокируя её обновления навсегда.
             with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for file in model_dir.rglob("*"):
-                    if file.is_file() and file.name != LOCAL_EDIT_MARKER_FILENAME:
+                    if file.is_file() and not is_local_only_file(file):
                         zf.write(file, file.relative_to(model_dir))
         except OSError as exc:
             raise SubmitError(f"Не удалось собрать архив: {exc}") from exc
