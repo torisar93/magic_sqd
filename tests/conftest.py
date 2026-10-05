@@ -25,6 +25,12 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+class _ContentHTTPServer(http.server.ThreadingHTTPServer):
+    # Программа качает в 16 потоков (content_sync._DOWNLOAD_WORKERS). С очередью соединений по умолчанию (5)
+    # macOS сбрасывает лишние («Connection reset by peer») — test_early_access_sync падал на Mac через раз.
+    request_queue_size = 64
+
+
 class ContentServer:
     """Локальная копия magicsqd.ru/content: файлы кладутся через add(), manifest.json — write_manifest()."""
 
@@ -33,7 +39,7 @@ class ContentServer:
         self.content = root / "content"
         self.content.mkdir(parents=True, exist_ok=True)
         handler = functools.partial(_QuietHandler, directory=str(root))
-        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self._server = _ContentHTTPServer(("127.0.0.1", 0), handler)
         self.port = self._server.server_address[1]
         self.url = f"http://127.0.0.1:{self.port}/content"
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
