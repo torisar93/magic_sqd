@@ -1,0 +1,43 @@
+/* Закрытый этап под замком (js/closed_stage.js; владелец, 2026-10-05: вариант 1, по центру). Файл одинаковый
+   для ПК (app/web/frontend/css/) и Android (android/app/src/main/assets/css/). */
+.closed-stage {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  min-height: min(62vh, 560px); padding: 24px 0; text-align: center;
+}
+.closed-stage .closed-stage-title {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 14px;
+  margin: 0; text-align: center;
+}
+.closed-stage-tag {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; letter-spacing: 0; line-height: 1.6; white-space: nowrap;
+  color: #c9d3d8; background: rgba(201, 211, 216, .08); border: 1px solid rgba(201, 211, 216, .25);
+}
+.closed-stage-tag-icon { display: inline-flex; width: 12px; height: 12px; }
+.closed-stage svg { width: 100%; height: 100%; min-width: 0 !important; }
+.closed-stage-card {
+  display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; max-width: 560px;
+  padding: 26px 28px; border-radius: 14px; box-sizing: border-box;
+  border: 1px solid rgba(246, 161, 122, .42); background: linear-gradient(150deg, rgba(246, 161, 122, .10), rgba(246, 161, 122, .04));
+}
+.closed-stage-head { display: flex; flex-direction: column; align-items: center; gap: 10px; color: #f6a17a; font-weight: 700; font-size: 18px; line-height: 1.35; }
+.closed-stage-lock { display: inline-flex; width: 34px; height: 34px; }
+.closed-stage-card p { margin: 0; }
+.closed-stage-text { color: #cfdade; font-size: 15px; line-height: 1.55; }
+.closed-stage-hint { color: var(--text-dim, #93a3ab); font-size: 13px; line-height: 1.5; }
+.closed-stage-links { display: flex; justify-content: center; width: 100%; }
+.closed-stage .boosty-link.closed-stage-subscribe { justify-content: center; border-color: rgba(246, 161, 122, .55); color: #f6a17a; }
+.closed-stage .boosty-link .icon { display: inline-flex; width: 15px; height: 15px; }
+@media (max-width: 640px) {
+  .closed-stage { min-height: 0; padding: 12px 0; }
+  .closed-stage-card { padding: 22px 18px; }
+}
+/* Android: у этапа нет общего .workflow-title — размер заголовка как у .stage-chip */
+.closed-stage-page .closed-stage-title { font-size: 24px; line-height: 1.25; font-weight: 600; letter-spacing: -.3px; }
+/* Редактор (только ПК): галочка «Закрытый этап», узел с замком, «Закрытые этапы видят» */
+.editor-closed-toggle { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #f6a17a; font-weight: 600; cursor: pointer; }
+.editor-closed-toggle input { width: 18px; height: 18px; margin: 0; }
+.editor-closed-note { margin: 0 0 12px; color: #f6a17a; }
+.graph-node.is-closed { border-color: rgba(246, 161, 122, .55) !important; }
+.editor-closed-access[hidden] { display: none !important; }
+.dialog-actions .editor-access:has(+ .editor-closed-access:not([hidden])) { margin-right: 0; }

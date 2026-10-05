@@ -329,12 +329,30 @@ def set_model_access(base_url: str, session_cookie: str, rel_path: str, restrict
     _request(base_url, session_cookie, "POST", "/admin/api/access", body)
 
 
+def set_closed_access(base_url: str, session_cookie: str, rel_path: str, subscribers: bool, groups) -> None:
+    """Кто видит закрытые этапы модели (server/user_groups.py: closed_stage_access) — подписчики Boosty
+    и/или группы; администраторы — всегда."""
+    _request(base_url, session_cookie, "POST", "/admin/api/closed_access",
+             {"path": rel_path, "subscribers": bool(subscribers), "groups": [int(g) for g in groups]})
+
+
 def compute_stale_files(local_files, server_files) -> list[str]:
     """Файлы на сервере, которых больше нет в локальном наборе (пути
     относительно модели, разделитель '/') — чистая функция без сети, ради
     юнит-теста (см. cleanup_stale_model_files ниже за реальным
-    использованием)."""
-    return sorted(set(server_files) - set(local_files))
+    использованием). Закрытые этапы (<модель>/_closed/, app/closed_stages.py) убираются, только если
+    своя закрытая часть есть и локально: публикация с компьютера, где её нет (одобренная заявка
+    техника, у которого закрытых этапов не бывает), не должна стирать их на сервере."""
+    local = set(local_files)
+
+    def closed_part_missing_locally(path: str) -> bool:
+        parts = path.split("/")
+        if "_closed" not in parts:
+            return False
+        prefix = "/".join(parts[:parts.index("_closed") + 1]) + "/"
+        return not any(item.startswith(prefix) for item in local)
+
+    return sorted(path for path in set(server_files) - local if not closed_part_missing_locally(path))
 
 
 def cleanup_stale_model_files(base_url: str, session_cookie: str, dest_rel: str,

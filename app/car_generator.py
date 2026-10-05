@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import instruction_html
+from . import closed_stages, instruction_html
 from .scanner import VERSION_FILENAME, read_status
 
 INVALID_NAME_CHARS = set('<>:"/\\|?*')
@@ -353,6 +353,10 @@ class StepSpec:
     # шаги без сохранённой позиции при открытии).
     pos_x: float = 0.0
     pos_y: float = 0.0
+    # Закрытый этап (владелец, 2026-10-05; см. app/closed_stages.py) — только подписчикам Boosty и/или
+    # группам из админки. Ставит лишь администратор в редакторе; при сохранении этап уходит в _closed/,
+    # в открытой части остаётся заглушка.
+    closed: bool = False
 
 
 @dataclass
@@ -378,6 +382,9 @@ class NewCarSpec:
     # подставляется текущее, см. load_car_spec ниже). Красит модель в
     # списке марок/моделей — "ok"/"needs_review"/"broken".
     status: str = "ok"
+    # Закрытые этапы открыты подписчикам Boosty (иначе — только группам; см. app/closed_stages.py).
+    # Сам доступ задаёт сервер (POST /admin/api/closed_access), здесь — для текста заглушки.
+    closed_subscribers: bool = True
 
 
 class CarGenerationError(RuntimeError):
@@ -909,8 +916,13 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
             pos_y=step_data.get("pos_y", 0.0),
             uart_baudrate=step_data.get("uart_baudrate", 115200),
             actions=actions,
+            closed=bool(step_data.get("closed")),
         ))
 
+    # Закрытые этапы — содержимое из _closed/ (см. app/closed_stages.py); сама _closed/ — без вложенной
+    if model_dir.name != closed_stages.CLOSED_DIR:
+        steps = closed_stages.merge_for_edit(model_dir, steps,
+                                             lambda folder: load_car_spec(folder, brand, model, modification))
     return NewCarSpec(
         brand=brand,
         model=model,
@@ -919,6 +931,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
         wifi_port=data.get("wifi_port", 5555),
         steps=steps,
         status=read_status(model_dir),
+        closed_subscribers=data.get("closed_subscribers", True) is not False,
     )
 
 
@@ -1027,6 +1040,7 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     чтобы не копились сироты."""
     _assign_step_ids(spec)
     _assign_flash_block_ids(spec)
+    closed_stages.validate(spec)  # нельзя закрыть «Проверку» и т.п. — до записи хоть одного файла
     for step in spec.steps:
         _normalize_flash_step(step)
     files_dir = model_dir / "files"
@@ -1194,6 +1208,8 @@ def _write_model_files(model_dir: Path, spec: NewCarSpec) -> None:
     (model_dir / "stages.py").write_text(_render_stages_py(spec, model_dir), encoding="utf-8")
     (model_dir / SPEC_FILENAME).write_text(_render_spec_json(spec), encoding="utf-8")
     _write_version_file(model_dir, spec.changelog, spec.status)
+    # Закрытые этапы — в _closed/, в открытой части — заглушки (см. app/closed_stages.py)
+    closed_stages.split_model(model_dir, spec)
 
 
 def _write_instruction_dir(instr_dir: Path, blocks: list[dict], keep_paths: set[Path],
@@ -1272,6 +1288,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
     data = {
         "wifi": spec.wifi,
         "wifi_port": spec.wifi_port,
+        **({} if spec.closed_subscribers else {"closed_subscribers": False}),
         "steps": [
             {
                 "type": step.type,
@@ -1303,6 +1320,7 @@ def _render_spec_json(spec: NewCarSpec) -> str:
                 "pos_x": step.pos_x,
                 "pos_y": step.pos_y,
                 "uart_baudrate": step.uart_baudrate,
+                **({"closed": True} if step.closed else {}),
                 "actions": [
                     {"label": a.label, "kind": a.kind, "commands": a.commands,
                      "files": [f.name for f in a.files]}
@@ -1754,6 +1772,8 @@ def _render_stages_py(spec: NewCarSpec, model_dir: Path) -> str:
         if step.description:
             entry.append(f'        "description": {step.description!r},')
         entry.append(f'        "id": {step.id!r},')
+        if step.closed:
+            entry.append('        "closed": True,')
         if step.type == "check":
             # Граф исполнения для "check" — один следующий id НА КАЖДЫЙ
             # вариант (см. StepSpec.next_options), а не общий "next".

@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 
+from ... import closed_stages
 from ..events import event_bridge
 from ...content_sync import ensure_apks_downloaded, sync_model_files, sync_shared_folder
 from ...install_context import InstallCancelled
@@ -156,7 +157,8 @@ def _scan_usb_items(base_dir: Path, model, stage: dict, stage_index: int, varian
     точность для ручной правки install.py — это чисто визуальная сводка, не
     влияет на саму запись (см. план)."""
     items: list[dict] = []
-    usb_step_dir = model.dir / "usb_files" / f"step_{stage_index + 1}"
+    root, number = closed_stages.stage_location(model.dir, stage, stage_index)  # закрытый этап — в _closed/
+    usb_step_dir = root / "usb_files" / f"step_{number}"
     if variant:
         usb_step_dir = usb_step_dir / str(variant)
     if usb_step_dir.is_dir():

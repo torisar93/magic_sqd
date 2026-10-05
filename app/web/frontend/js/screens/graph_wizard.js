@@ -90,6 +90,11 @@
   // Ранний доступ для подписчиков Boosty (пункт «Кто видит» + дата открытия для всех)
   let accessInitialDate = "";
   let accessEarlyGroups = [];
+  // Закрытые этапы (app/closed_stages.py): у администратора — галочка у этапа и «Кто видит закрытые этапы»
+  let accessAvailable = false;
+  let closedGroups = [];          // группы из админки (для выбора, кто видит закрытые этапы)
+  let closedInitial = null;       // значение списка при открытии (без изменений — серверу не шлём)
+  let closedSubscribers = true;   // для текста заглушки (car_generator.NewCarSpec.closed_subscribers)
 
   let panX = 40, panY = 40, zoom = 1;
   let panState = null;
@@ -130,6 +135,7 @@
       id: null, next: null, next_options: [],
       variants: [],
       pos_x: 0, pos_y: 0,
+      closed: false,
     };
   }
 
@@ -288,9 +294,10 @@
       brand = spec.brand; model = spec.model; modification = spec.modification || "";
       wifi = spec.wifi; wifiPort = spec.wifi_port;
       status = spec.status || "ok";
+      closedSubscribers = spec.closed_subscribers !== false;
       steps = spec.steps;
     } else {
-      brand = ""; model = ""; modification = ""; wifi = false; wifiPort = 5555; status = "ok";
+      brand = ""; model = ""; modification = ""; wifi = false; wifiPort = 5555; status = "ok"; closedSubscribers = true;
       steps = [{ ...newStep("instruction"), title: "Этап 1" }];
     }
     changelog = "";
@@ -334,6 +341,9 @@
     const select = document.getElementById("graph-wizard-access-select");
     box.hidden = true;
     accessInitial = null;
+    accessAvailable = false;
+    closedInitial = null;
+    document.getElementById("graph-wizard-closed-access")?.remove();
     if (isPendingModel) return;
     let info = null;
     try {
@@ -374,6 +384,56 @@
       + "(им нужно войти в аккаунт в программе). Ранний доступ — ещё и подписчики Boosty, "
       + "остальные видят модель под замком; в 00:00 выбранной даты она откроется всем. Группы — в веб-админке.";
     box.hidden = false;
+    accessAvailable = true;
+    buildClosedAccess(groups, info.closed || { subscribers: true, groups: [] });
+    renderCanvas();
+    renderProperties();
+  }
+
+  // «Закрытые этапы видят» — рядом с «Кто видит», только если в модели есть закрытый этап
+  function buildClosedAccess(groups, closed) {
+    closedGroups = groups;
+    const options = [["subs", "Подписчики Boosty"], ["admins", "Только администраторы"],
+      ...groups.flatMap((g) => [[`subs+g:${g.id}`, `Подписчики Boosty и группа «${g.name}»`], [`g:${g.id}`, `Только группа «${g.name}»`]])];
+    const ids = closed.groups || [];
+    let current = closed.subscribers === false ? (ids.length ? `g:${ids[0]}` : "admins") : (ids.length ? `subs+g:${ids[0]}` : "subs");
+    if (ids.length > 1) {
+      current = "multi";
+      const names = ids.map((id) => (groups.find((g) => g.id === id) || { name: `#${id}` }).name).join(", ");
+      options.push(["multi", `${closed.subscribers === false ? "" : "Подписчики Boosty и "}группы: ${names}`]);
+    }
+    const select = el("select", { id: "graph-wizard-closed-select" }, options.map(([value, text]) => el("option", {
+      value, text, selected: value === current ? "" : null })));
+    const box = el("label", { class: "editor-access editor-closed-access", id: "graph-wizard-closed-access",
+      title: "Закрытые этапы модели (галочка «Закрытый этап» у этапа) видят администраторы и те, кого вы выберете. "
+        + "Остальным этап показывается под замком." }, [el("span", { class: "field-label", text: "Закрытые этапы видят" }), select]);
+    closedInitial = current;
+    closedMulti = { subscribers: closed.subscribers !== false, groups: ids };
+    // Текст заглушки у тех, кому этап закрыт: «для подписчиков Boosty» или «открыт не всем»
+    closedSubscribers = closedMulti.subscribers;
+    select.onchange = () => {
+      const value = select.value;
+      closedSubscribers = value === "subs" || value.startsWith("subs+g:") || (value === "multi" && closedMulti.subscribers);
+    };
+    document.getElementById("graph-wizard-access").after(box);
+    syncClosedAccess();
+  }
+  let closedMulti = { subscribers: true, groups: [] };
+
+  function syncClosedAccess() {
+    const box = document.getElementById("graph-wizard-closed-access");
+    if (box) box.hidden = !steps.some((s) => s.closed);
+  }
+
+  function closedChoice() {
+    const select = document.getElementById("graph-wizard-closed-select");
+    if (!select || closedInitial === null || select.value === closedInitial) return null;
+    const value = select.value;
+    if (value === "subs") return { subscribers: true, groups: [] };
+    if (value === "admins") return { subscribers: false, groups: [] };
+    if (value === "multi") return closedMulti;
+    if (value.startsWith("subs+g:")) return { subscribers: true, groups: [Number(value.slice("subs+g:".length))] };
+    return { subscribers: false, groups: [Number(value.slice("g:".length))] };
   }
 
   // Дата <input type=date> ↔ эпоха-секунды: 00:00 этого дня по времени компьютера
@@ -572,7 +632,7 @@
     worldEl.appendChild(startNodeEl);
 
     steps.forEach((step, i) => {
-      const titleEl = el("div", { text: step.title || `Этап ${i + 1}` });
+      const titleEl = el("div", { text: (step.closed ? "🔒 " : "") + (step.title || `Этап ${i + 1}`) });
       const typeLabelEl = el("div", { class: "graph-node-type-label", text: LEGACY_STEP_TYPE_LABELS[step.type] || step.type });
       const header = el("div", { class: "graph-node-header" }, [titleEl, typeLabelEl]);
       const body = el("div", { class: "graph-node-body", text: step.description || "" });
@@ -604,7 +664,7 @@
       }
 
       const node = el("div", {
-        class: `graph-node graph-node-type-${step.type}` + (i === selectedIndex ? " selected" : ""),
+        class: `graph-node graph-node-type-${step.type}` + (i === selectedIndex ? " selected" : "") + (step.closed ? " is-closed" : ""),
         style: `left: ${step.pos_x}px; top: ${step.pos_y}px`,
       }, children);
       node.addEventListener("mousedown", (e) => startNodeDrag(e, i, node));
@@ -847,7 +907,7 @@
     const node = nodes[index];
     if (!node) return;
     const titleDiv = node.querySelector(".graph-node-header > div:first-child");
-    if (titleDiv) titleDiv.textContent = steps[index].title || `Этап ${index + 1}`;
+    if (titleDiv) titleDiv.textContent = (steps[index].closed ? "🔒 " : "") + (steps[index].title || `Этап ${index + 1}`);
   }
 
   function updateNodeBody(index) {
@@ -958,6 +1018,28 @@
     });
     propsEl.appendChild(titleInput);
 
+    // Закрытый этап (app/closed_stages.py): ставит только администратор; без доступа — заглушка, не правится
+    if (step.closed_placeholder) {
+      propsEl.appendChild(el("p", { class: "app-desc editor-closed-note",
+        text: "🔒 Закрытый этап. Его содержимое здесь не скачано (нет доступа) — этап можно переставлять, но не править: при сохранении он останется как есть." }));
+      return;
+    }
+    if (accessAvailable && step.type !== "check") {
+      const box = el("input", { type: "checkbox" });
+      box.checked = !!step.closed;
+      box.addEventListener("change", () => {
+        step.closed = box.checked;
+        updateNodeHeader(index);
+        worldEl.querySelectorAll(".graph-node")[index]?.classList.toggle("is-closed", step.closed);
+        syncClosedAccess();
+      });
+      propsEl.appendChild(el("label", { class: "editor-closed-toggle",
+        title: "Видят подписчики Boosty и выбранные группы (список «Закрытые этапы видят» внизу окна). Остальным этап показывается под замком, содержимое им не отдаётся." },
+        [box, el("span", { text: "Закрытый этап — для подписчиков Boosty" })]));
+    } else if (step.closed) {
+      propsEl.appendChild(el("p", { class: "app-desc editor-closed-note", text: "🔒 Закрытый этап — для подписчиков Boosty." }));
+    }
+
     if (step.type !== "instruction") {
       propsEl.appendChild(el("span", { class: "field-label", text: "Описание (инструкция для этого этапа, необязательно)" }));
       const descArea = el("textarea", { style: "min-height: 60px; margin-bottom: 10px" });
@@ -978,7 +1060,8 @@
   // Сохранение — идентично car_wizard.js (тот же bridge-метод car_save).
   // ------------------------------------------------------------------
   function specToJson() {
-    return { brand, model, modification, wifi, wifi_port: Number(wifiPort) || 5555, steps, changelog, status };
+    return { brand, model, modification, wifi, wifi_port: Number(wifiPort) || 5555, steps, changelog, status,
+             closed_subscribers: closedSubscribers };
   }
 
   async function onSave() {
@@ -992,7 +1075,9 @@
       return;
     }
 
-    const access = accessChoice();
+    let access = accessChoice();
+    const closed = steps.some((s) => s.closed) ? closedChoice() : null;
+    if (closed) access = { ...(access || {}), closed };
     const earlyChosen = !document.getElementById("graph-wizard-access").hidden
       && document.getElementById("graph-wizard-access-select").value === "early";
     if (earlyChosen && access && !(access.early_open_at > Date.now() / 1000)) {

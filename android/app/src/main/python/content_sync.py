@@ -393,6 +393,28 @@ def prune_model_to_server(cars_dir: Path, model_dir: Path, manifest, log=lambda 
     return removed
 
 
+def prune_closed_stages(cars_dir: Path, manifest, log=lambda m: None) -> list:
+    """Закрытые этапы (как ПК: app/content_sync.py:prune_closed_stages): доступ сняли (подписка, группа) или
+    этапы открыли всем — скачанная прежде <модель>/_closed/ убирается. Без сети — не трогаем."""
+    if manifest is None or not cars_dir.is_dir():
+        return []
+    removed = []
+    for closed in sorted(cars_dir.rglob("_closed")):
+        model_dir = closed.parent
+        if not closed.is_dir() or "_shared" in closed.relative_to(cars_dir).parts or model_dir == cars_dir:
+            continue
+        if (model_dir / "_local_edit.json").exists():
+            continue
+        rel = "cars/" + closed.relative_to(cars_dir).as_posix()
+        if any(path.startswith(rel + "/") for path in manifest):
+            continue
+        shutil.rmtree(closed, ignore_errors=True)
+        removed.append(model_dir.relative_to(cars_dir).as_posix())
+    if removed:
+        log(f"Закрытые этапы больше не доступны — убраны: {', '.join(removed)}")
+    return removed
+
+
 EARLY_ACCESS_MARKER = "_early_access.json"  # то же имя в scanner.py
 _OWN_SUBMISSION_MARKER = ".submission_status"  # своя заявка техника (auth_bridge.sync_my_cars) — не трогаем
 

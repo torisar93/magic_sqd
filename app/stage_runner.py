@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from . import closed_stages
+
 STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction", "uart", "telnet", "actions", "qr_adb")
 
 
@@ -58,7 +60,9 @@ def load_stages(model) -> list[dict]:
                 if not callable(action.get("run")):
                     raise StageDefinitionError(f"Этап {i} (actions), действие {j}: не задан run(ctx)")
 
-    return list(stages)
+    # Закрытые этапы (подписчики Boosty/группы): скачана _closed/ — вместо заглушек настоящие этапы,
+    # нет — заглушки с closed_locked (мастер рисует их под замком). См. app/closed_stages.py.
+    return closed_stages.merge_stages(model.dir, list(stages), _load_module)
 
 
 def load_wifi_port(model) -> int:

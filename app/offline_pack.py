@@ -19,7 +19,9 @@ import time
 from pathlib import Path
 
 MARKER = "_offline.json"
-_OWN_SUBFOLDERS = ("files", "usb_files")
+# files/ и usb_files/ модели и её закрытых этапов (_closed/, см. app/closed_stages.py — в манифесте они есть
+# только у тех, кому закрытые этапы открыты)
+_OWN_SUBFOLDERS = ("files", "usb_files", "_closed/files", "_closed/usb_files")
 _SHARED_KEYS = ("usb_shared_folder", "shared_folder")
 
 
@@ -40,10 +42,6 @@ def _safe_folder_name(name) -> bool:
 def shared_folders(model_dir: Path) -> list[str]:
     """Общие наборы cars/_shared/<имя>, которые пишут на флешку этапы модели: usb_shared_folder у этапа «Флешка»
     (и у его вариантов), shared_folder у блоков записи этапа из блоков — где бы в спеке ни встретились."""
-    try:
-        spec = json.loads((Path(model_dir) / "_wizard_spec.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
     found: list[str] = []
 
     def walk(node) -> None:
@@ -58,7 +56,12 @@ def shared_folders(model_dir: Path) -> list[str]:
             for value in node:
                 walk(value)
 
-    walk(spec.get("steps") if isinstance(spec, dict) else None)
+    for spec_path in (Path(model_dir) / "_wizard_spec.json", Path(model_dir) / "_closed" / "_wizard_spec.json"):
+        try:
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        walk(spec.get("steps") if isinstance(spec, dict) else None)
     return found
 
 

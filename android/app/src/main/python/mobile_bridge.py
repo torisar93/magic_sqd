@@ -12,7 +12,7 @@ from pathlib import Path
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
                            prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie,
-                           sync_early_access, sync_tree, model_on_server)
+                           sync_early_access, sync_tree, model_on_server, prune_closed_stages)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version, read_early_access
 import offline_pack
 from wizard_spec import load_wizard_spec
@@ -226,6 +226,8 @@ def sync_cars(cars_dir: str, base_url: str) -> str:
     prune_removed_models(cars_path.parent, cars_path, manifest, log=lambda m: lines.append(m))
     # Ранний доступ: подписчику — отметка, остальным — витрина модели под замком
     sync_early_access(base_url, cars_path, manifest, log=lambda m: lines.append(m))
+    # Закрытые этапы, к которым больше нет доступа, — с телефона долой
+    prune_closed_stages(cars_path, manifest, log=lambda m: lines.append(m))
     # Скачанные заранее модели: «офлайн» или «обновить» по свежему манифесту (значок в списке)
     offline_pack.refresh_all(manifest, cars_path, log=lambda m: lines.append(m))
     return json.dumps({"downloaded": downloaded, "log": lines})
@@ -370,17 +372,27 @@ def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
     except (OSError, json.JSONDecodeError):
         raw = {"steps": []}
 
+    # Закрытые этапы (wizard_spec._merge_closed): их инструкции — в _closed/files/…, нумерация — своя
+    sources = [(model_dir, raw)]
+    try:
+        closed_raw = json.loads((model_dir / "_closed" / "_wizard_spec.json").read_text(encoding="utf-8"))
+        closed_raw = {"steps": [step if step.get("closed") else {} for step in closed_raw.get("steps", [])]}
+        sources.append((model_dir / "_closed", closed_raw))
+    except (OSError, json.JSONDecodeError):
+        pass
+    for root, spec_raw in sources:
+        files_dir = root / "files"
+        for i, step_data in enumerate(spec_raw.get("steps", []), start=1):
+            instr_dirs = [files_dir / f"instruction_{i}"] if step_data.get("type") == "instruction" else []
+            # Инструкции блоков этапа «Флешка» (files/flash_<id>/, см. wizard_spec._flash_blocks).
+            for block in step_data.get("flash_blocks") or []:
+                block_id = str(block.get("id") or "")
+                if block.get("kind") == "instruction" and re.fullmatch(r"[0-9a-f]{8}", block_id):
+                    instr_dirs.append(files_dir / f"flash_{block_id}")
+            for instr_dir in instr_dirs:
+                downloaded += sync_model_subfolder(base_url, cars_path, instr_dir, log=log,
+                                                    on_progress=_progress_cb("model"), manifest=manifest)
     files_dir = model_dir / "files"
-    for i, step_data in enumerate(raw.get("steps", []), start=1):
-        instr_dirs = [files_dir / f"instruction_{i}"] if step_data.get("type") == "instruction" else []
-        # Инструкции блоков этапа «Флешка» (files/flash_<id>/, см. wizard_spec._flash_blocks).
-        for block in step_data.get("flash_blocks") or []:
-            block_id = str(block.get("id") or "")
-            if block.get("kind") == "instruction" and re.fullmatch(r"[0-9a-f]{8}", block_id):
-                instr_dirs.append(files_dir / f"flash_{block_id}")
-        for instr_dir in instr_dirs:
-            downloaded += sync_model_subfolder(base_url, cars_path, instr_dir, log=log,
-                                                on_progress=_progress_cb("model"), manifest=manifest)
 
     # Сертификат переподписи модели (files/resign_cert, см. ApkResign.kt) —
     # не APK и не инструкция, поэтому раньше его не качало ничто (apps-этап

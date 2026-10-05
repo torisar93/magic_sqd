@@ -31,6 +31,9 @@ SHARED = [
     ("css/early_access.css", "css/early_access.css"),
     ("js/offline.js", "js/offline.js"),
     ("css/offline.css", "css/offline.css"),
+    # Закрытый этап под замком (2026-10-05).
+    ("js/closed_stage.js", "js/closed_stage.js"),
+    ("css/closed_stage.css", "css/closed_stage.css"),
 ]
 
 

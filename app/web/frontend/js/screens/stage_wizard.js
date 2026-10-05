@@ -868,6 +868,11 @@
   }
 
   function renderStagePage(stage) {
+    // Закрытый этап без доступа (app/closed_stages.py) — под замком, «Далее» пропускает (js/closed_stage.js)
+    if (stage.closed_locked && window.ClosedStageUI) {
+      contentEl.appendChild(window.ClosedStageUI.page(stage));
+      return;
+    }
     // Этап «Флешка» из блоков — своё название (его задаёт владелец), прежние usb/qr_adb — общее.
     const heading = stage.type === 'apps' ? 'Приложения' : stage.flash_blocks?.length ? stage.title || 'Подготовка флешки'
       : ['usb', 'qr_adb'].includes(stage.type) ? 'Подготовка флешки' : stage.title || TYPE_LABELS[stage.type] || 'Инструкция';

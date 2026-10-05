@@ -16,6 +16,11 @@ import re
 from pathlib import Path
 
 SPEC_FILENAME = "_wizard_spec.json"
+# Закрытые этапы (как ПК, app/closed_stages.py): полная модель — в <модель>/_closed/ (есть, только если доступ
+# открыт — подписчикам Boosty и/или группам), в открытой части — заглушки "closed": true.
+CLOSED_DIR = "_closed"
+# Текст заглушки, если закрытые этапы открыты только группам (app/closed_stages.py: PLACEHOLDER_TEXT_GROUPS)
+CLOSED_GROUPS_TEXT = "Этот этап открыт не всем. Обновите Magic SQD до последней версии."
 
 # Типы этапов, для которых Kotlin-сторона реально умеет что-то выполнять в
 # этой версии мобильного приложения — остальные (exe/uart) рендерятся как
@@ -457,10 +462,33 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             "variants": variants,
             "uart_baudrate": step_data.get("uart_baudrate", 115200),
             "actions": actions,
+            "closed": bool(step_data.get("closed")),
         })
 
+    if model_dir.name != CLOSED_DIR:
+        steps = _merge_closed(model_dir, steps, files_root)
     return {
         "wifi": data.get("wifi", False),
         "wifi_port": data.get("wifi_port", 5555),
         "steps": steps,
     }
+
+
+def _merge_closed(model_dir: Path, steps: list, files_root: Path | None) -> list:
+    """Заглушки закрытых этапов → настоящие этапы из _closed/ (скачана — значит, доступ есть; пути файлов —
+    от _closed/, переходы — из открытой части). Нет — заглушка остаётся с closed_locked (под замком)."""
+    if not any(step["closed"] for step in steps):
+        return steps
+    closed = load_wizard_spec(model_dir / CLOSED_DIR, files_root)
+    by_id = {step["id"]: step for step in (closed or {}).get("steps", []) if step["closed"]}
+    result = []
+    for step in steps:
+        source = by_id.get(step["id"]) if step["closed"] else None
+        if source is None:
+            if step["closed"]:
+                step = {**step, "closed_locked": True, "closed_subscribers": step["description"] != CLOSED_GROUPS_TEXT}
+            result.append(step)
+            continue
+        result.append({**source, "index": step["index"], "next": step["next"], "next_options": step["next_options"],
+                       "closed": True, "closed_index": source["index"] + 1})
+    return result

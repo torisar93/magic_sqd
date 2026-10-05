@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-from . import offline_pack
+from . import closed_stages, offline_pack
 from .content_config import get_base_url
 
 CHUNK_SIZE = 1024 * 1024
@@ -822,6 +822,30 @@ def sync_early_access(base_dir: Path, cars_dir: Path, manifest: dict[str, dict] 
                 _prune_empty_ancestors(model_dir.parent, cars_dir)
 
 
+def prune_closed_stages(base_dir: Path, cars_dir: Path, manifest: dict[str, dict] | None,
+                        log=lambda m: None) -> list[str]:
+    """Закрытые этапы (app/closed_stages.py): доступ сняли (подписка, группа) или этапы открыли всем —
+    скачанная прежде _closed/ модели убирается: в каталоге этого пользователя её больше нет. Без сети и
+    у модели с неотправленной правкой (её _closed/ — своя, ещё не на сервере) — не трогаем."""
+    if manifest is None or not cars_dir.is_dir():
+        return []
+    removed = []
+    for closed in sorted(cars_dir.rglob(closed_stages.CLOSED_DIR)):
+        model_dir = closed.parent
+        if not closed.is_dir() or "_shared" in closed.relative_to(cars_dir).parts or model_dir == cars_dir:
+            continue
+        if _has_local_edit(model_dir, cars_dir, manifest):
+            continue
+        rel = "cars/" + closed.relative_to(cars_dir).as_posix()
+        if any(path.startswith(rel + "/") for path in manifest):
+            continue
+        shutil.rmtree(closed, ignore_errors=True)
+        removed.append(model_dir.relative_to(cars_dir).as_posix())
+    if removed:
+        log(f"Закрытые этапы больше не доступны — убраны: {', '.join(removed)}")
+    return removed
+
+
 _KNOWN_APKS_FILENAME = "known_apks.json"
 
 
@@ -1053,7 +1077,11 @@ def sync_model_files(base_dir: Path, model, log=lambda m: None, check_cancelled=
     remote_base = "cars/" + model.dir.relative_to(base_dir / "cars").as_posix()
     needs_files, needs_usb_files = _model_wants_own_files(model.dir)
     downloaded = 0
-    for subfolder, needed in (("files", needs_files), ("usb_files", needs_usb_files)):
+    folders = [("files", needs_files), ("usb_files", needs_usb_files)]
+    # Закрытые этапы (app/closed_stages.py) — их файлы в _closed/, если она есть (есть доступ)
+    if (model.dir / closed_stages.CLOSED_DIR / "stages.py").is_file():
+        folders += [(f"{closed_stages.CLOSED_DIR}/files", True), (f"{closed_stages.CLOSED_DIR}/usb_files", True)]
+    for subfolder, needed in folders:
         if not needed:
             continue
         local_dir = model.dir / subfolder

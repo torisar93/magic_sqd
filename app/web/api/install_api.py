@@ -23,6 +23,7 @@ from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_de
 from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, model_on_server,
                              prune_model_stale_files, sync_model_apk_metadata, sync_model_subfolder,
                              sync_shared_folder)
+from ... import closed_stages
 from ...install_context import InstallCancelled
 from ... import device_models
 from ...rollback import rollback
@@ -296,6 +297,11 @@ class InstallApi:
             "index": index,
             "type": stage["type"],
             "title": stage["title"],
+            # Закрытый этап (app/closed_stages.py): closed_locked — у этого пользователя нет доступа,
+            # мастер рисует этап под замком (closed_subscribers — открыт подписчикам Boosty).
+            "closed": bool(stage.get("closed")),
+            "closed_locked": bool(stage.get("closed_locked")),
+            "closed_subscribers": stage.get("closed_subscribers", True) is not False,
             "description": stage.get("description"),
             "instruction_html": (_resolve_video_hrefs(
                                       _inline_relative_images(html_path.read_text(encoding="utf-8"), html_path.parent),
@@ -1032,15 +1038,18 @@ class InstallApi:
                 return []
             if stage_index is None:
                 return []
-            return [model.dir / "files" / f"actions_{stage_index + 1}_{action_index + 1}"]
+            # Закрытый этап — его файлы в _closed/ под его номером там (closed_stages.stage_location)
+            root, number = closed_stages.stage_location(model.dir, stage, stage_index)
+            return [root / "files" / f"actions_{number}_{action_index + 1}"]
         if stage.get("type") != "adb":
             return []
         # adb_files (StepSpec в car_generator.py) не сохраняется как ключ в
         # скомпилированном STAGES-словаре — используется только при
         # генерации, поэтому точную подпапку (files/adb_N) здесь узнать
         # нельзя. Берём весь files/ модели (БЕЗ usb_files/ — прошивки для
-        # флешки сюда не относятся).
-        return [model.dir / "files"]
+        # флешки сюда не относятся). У закрытого этапа — files/ закрытой части.
+        root, _number = closed_stages.stage_location(model.dir, stage, stage_index or 0)
+        return [root / "files"]
 
     def rollback_apps(self, device_serial: str | None, stage_index: int, apps: list[dict]) -> dict:
         """«Откатить в сток»: удалить с магнитолы то, что поставил последний запуск этапа «Приложения»

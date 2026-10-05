@@ -22,7 +22,7 @@ from ..events import event_bridge
 from ...admin_client import (AdminClientError, AdminEndpointMissing, AdminUploadCancelled,
                              cleanup_stale_model_files, clear_cached_session, delete_cars_path,
                              get_cached_session, get_model_access, login, set_cached_session,
-                             set_model_access, upload_model)
+                             set_closed_access, set_model_access, upload_model)
 from ...admin_config import get_admin_base_url
 from ...car_generator import (FLASH_BLOCK_ID_RE, FLASH_STEP_TYPES, INVALID_NAME_CHARS, ActionSpec,
                                CarGenerationError, FlashBlockSpec, NewCarSpec, StandardApkSpec, StepSpec,
@@ -122,6 +122,10 @@ def _step_to_dict(step: StepSpec) -> dict:
             {"label": a.label, "kind": a.kind, "commands": a.commands, "files": _files_to_dicts(a.files)}
             for a in step.actions
         ],
+        # Закрытый этап (app/closed_stages.py); closed_placeholder — его содержимого здесь нет (нет доступа):
+        # в редакторе его можно переставить, но не править — при сохранении он останется заглушкой.
+        "closed": step.closed,
+        "closed_placeholder": bool(getattr(step, "closed_placeholder", False)),
     }
 
 
@@ -149,7 +153,7 @@ def _variant_from_dict(data: dict) -> StepVariant:
 def _step_from_dict(data: dict) -> StepSpec:
     exe_file = data.get("exe_file")
     video_file = data.get("video_file")
-    return StepSpec(
+    step = StepSpec(
         type=data["type"], title=data.get("title", ""), description=data.get("description", ""),
         instruction_blocks=data.get("instruction_blocks") or [],
         usb_files=_files_from_dicts(data.get("usb_files")),
@@ -182,18 +186,35 @@ def _step_from_dict(data: dict) -> StepSpec:
                        files=_files_from_dicts(a.get("files")))
             for a in (data.get("actions") or [])
         ],
+        closed=bool(data.get("closed")),
     )
+    if step.closed and data.get("closed_placeholder"):
+        step.closed_placeholder = True  # см. closed_stages.split_model: заглушка остаётся заглушкой
+    return step
 
 
 def _clean_access(access) -> dict | None:
-    """{"restricted": bool, "groups": [id, ...]} из окна сохранения редактора или None
-    («не менять»). Мусор — тоже None: доступ модели тогда просто не трогаем."""
-    if not isinstance(access, dict) or not isinstance(access.get("restricted"), bool):
+    """{"restricted": bool, "groups": [id, ...]} и/или {"closed": {"subscribers": bool, "groups": [...]}}
+    из окна сохранения редактора или None («не менять»). Мусор — тоже None: доступ модели тогда просто
+    не трогаем. Только "closed" (поменяли лишь, кто видит закрытые этапы) — доступ к модели не трогаем."""
+    def ids(value) -> list | None:
+        value = value or []
+        ok = isinstance(value, list) and all(isinstance(g, int) and not isinstance(g, bool) for g in value)
+        return value if ok else None
+
+    if not isinstance(access, dict):
         return None
-    groups = access.get("groups") or []
-    if not isinstance(groups, list) or not all(isinstance(g, int) and not isinstance(g, bool) for g in groups):
+    result = {}
+    # Кто видит закрытые этапы модели (app/closed_stages.py)
+    closed = access.get("closed")
+    if isinstance(closed, dict) and isinstance(closed.get("subscribers"), bool) and ids(closed.get("groups")) is not None:
+        result["closed"] = {"subscribers": closed["subscribers"], "groups": ids(closed.get("groups"))}
+    if not isinstance(access.get("restricted"), bool):
+        return result or None
+    groups = ids(access.get("groups"))
+    if groups is None:
         return None
-    result = {"restricted": access["restricted"], "groups": groups if access["restricted"] else []}
+    result.update(restricted=access["restricted"], groups=groups if access["restricted"] else [])
     # Ранний доступ для подписчиков Boosty: дата (эпоха-секунды) или None — снять; нет ключа — не трогать
     if "early_open_at" in access:
         early = access["early_open_at"]
@@ -244,6 +265,17 @@ class CarEditorApi:
                 block_id = str(block.get("id") or "")
                 if block.get("kind") == "instruction" and FLASH_BLOCK_ID_RE.fullmatch(block_id):
                     instr_dirs.append(model_dir / "files" / f"flash_{block_id}")
+        try:
+            closed_raw = json.loads((model_dir / "_closed" / "_wizard_spec.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            closed_raw = {}
+        for i, step_data in enumerate(closed_raw.get("steps", []), start=1):
+            if step_data.get("closed") and step_data.get("type") == "instruction":
+                instr_dirs.append(model_dir / "_closed" / "files" / f"instruction_{i}")
+            for block in (step_data.get("flash_blocks") or []) if step_data.get("closed") else []:
+                block_id = str(block.get("id") or "")
+                if block.get("kind") == "instruction" and FLASH_BLOCK_ID_RE.fullmatch(block_id):
+                    instr_dirs.append(model_dir / "_closed" / "files" / f"flash_{block_id}")
         if not instr_dirs:
             return
         base_url = get_base_url(self.base_dir)
@@ -312,6 +344,7 @@ class CarEditorApi:
         return {
             "brand": spec.brand, "model": spec.model, "modification": spec.modification,
             "wifi": spec.wifi, "wifi_port": spec.wifi_port, "status": spec.status,
+            "closed_subscribers": spec.closed_subscribers,
             "steps": [_step_to_dict(s) for s in spec.steps],
         }
 
@@ -465,7 +498,8 @@ class CarEditorApi:
             return {"ok": True, "available": False, "error": str(exc)}
         return {"ok": True, "available": True, "path": rel_path,
                 "restricted": bool(data.get("restricted")), "groups": data.get("groups") or [],
-                "all_groups": data.get("all_groups") or [], "early_open_at": data.get("early_open_at")}
+                "all_groups": data.get("all_groups") or [], "early_open_at": data.get("early_open_at"),
+                "closed": data.get("closed") or {"subscribers": True, "groups": []}}
 
     def admin_login(self, base_url: str, username: str, password: str) -> dict:
         try:
@@ -497,6 +531,7 @@ class CarEditorApi:
             steps=[_step_from_dict(s) for s in spec_data.get("steps", [])],
             changelog=spec_data.get("changelog", ""),
             status=spec_data.get("status") or "ok",
+            closed_subscribers=spec_data.get("closed_subscribers", True) is not False,
         )
 
         self._cancel_flag = threading.Event()
@@ -705,7 +740,19 @@ class CarEditorApi:
                 access = {"restricted": True, "groups": current.get("groups") or []}
                 if current.get("early_open_at"):  # ранний доступ тоже переезжает на новый путь
                     access["early_open_at"] = current["early_open_at"]
+            closed = current.get("closed")
+            if isinstance(closed, dict) and (closed.get("subscribers") is False or closed.get("groups")):
+                # кто видит закрытые этапы — тоже на новый путь (по умолчанию — подписчики, переносить нечего)
+                access = {**(access or {}), "closed": {"subscribers": closed.get("subscribers") is not False,
+                                                       "groups": closed.get("groups") or []}}
         if access is None:
+            return
+        if "closed" in access:
+            set_closed_access(base_url, cookie, new_rel, access["closed"]["subscribers"], access["closed"]["groups"])
+            who = (["подписчики Boosty"] if access["closed"]["subscribers"] else []) + (
+                [f"группы {access['closed']['groups']}"] if access["closed"]["groups"] else [])
+            self._log("Закрытые этапы видят: " + (", ".join(who) or "только администраторы") + ".")
+        if "restricted" not in access:
             return
         if "early_open_at" in access:
             set_model_access(base_url, cookie, new_rel, access["restricted"], access["groups"],

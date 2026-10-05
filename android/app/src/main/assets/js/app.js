@@ -3162,6 +3162,15 @@
   }
 
   function renderStage(stage) {
+    // Закрытый этап без доступа (wizard_spec._merge_closed) — под замком, «Далее» пропускает (js/closed_stage.js)
+    if (stage.closed_locked && window.ClosedStageUI) {
+      updateTransportBars(stage);
+      nextAction = () => advanceAfter(stage.index);
+      const locked = el("div", { class: "stage-page closed-stage-page", "data-stage-type": stage.type, "data-stage-index": stage.index });
+      locked.appendChild(window.ClosedStageUI.page(stage));
+      wizardContentEl.appendChild(locked);
+      return;
+    }
     updateTransportBars(stage);
     const page = el("div", { class: "stage-page", "data-stage-type": stage.type, "data-stage-index":stage.index });
     page.appendChild(el("div", { class: "stage-chip", text: stage.type === "apps" ? "Приложения" : stage.title || stage.type || "" }));
