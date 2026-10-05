@@ -26,6 +26,9 @@ _RECENTLY_UPDATED_HOURS = 24
 # дружелюбный текст с кнопкой "Сообщить о проблеме" (см. report_dialog.py:
 # REASONS).
 NO_INSTRUCTION_MARKER = "no_instruction.txt"
+# Ранний доступ (сервер: server/user_groups.py) — отметку пишет content_sync.sync_early_access
+# в папку модели/версии: {"open_at": когда откроется всем, "locked": без подписки — только витрина}.
+EARLY_ACCESS_MARKER = "_early_access.json"
 
 
 VERSION_FILENAME = "version.json"
@@ -84,6 +87,10 @@ class ModelInfo:
     # Необязательная большая фотография модели (см. HERO_FILENAMES выше) —
     # тот же принцип, что и logo_path.
     hero_path: Path | None = None
+    # Ранний доступ (см. EARLY_ACCESS_MARKER): когда откроется всем; early_locked — у этого
+    # пользователя только витрина (нет подписки), открыть модель нельзя.
+    early_open_at: float | None = None
+    early_locked: bool = False
 
     @property
     def display_label(self) -> str:
@@ -111,6 +118,10 @@ class ModelGroup:
     # То же самое для большой фотографии модели (см. HERO_FILENAMES) — одна
     # на модель, а не на каждую модификацию.
     hero_path: Path | None = None
+    # Ранний доступ всей модели или хотя бы одной её версии (см. ModelInfo.early_open_at);
+    # early_locked — закрыты все версии.
+    early_open_at: float | None = None
+    early_locked: bool = False
 
     @property
     def has_modifications(self) -> bool:
@@ -162,26 +173,32 @@ def scan_cars(cars_dir: Path) -> dict[str, list[ModelGroup]]:
             if not model_dir.is_dir():
                 continue
             sub_dirs = _model_sub_dirs(model_dir)
+            model_early = read_early_access(model_dir)
             if _has_own_model_files(model_dir) or not sub_dirs:
-                leaf = _build_model_info(brand_dir.name, model_dir.name, None, model_dir)
+                leaf = _build_model_info(brand_dir.name, model_dir.name, None, model_dir, model_early)
                 groups.append(ModelGroup(
                     name=model_dir.name,
                     leaf=leaf,
                     modifications=[],
                     logo_path=_find_logo(model_dir),
                     hero_path=_find_hero(model_dir) or _hero_placeholder(cars_dir),
+                    early_open_at=leaf.early_open_at,
+                    early_locked=leaf.early_locked,
                 ))
             else:
                 modifications = [
-                    _build_model_info(brand_dir.name, model_dir.name, sub.name, sub)
+                    _build_model_info(brand_dir.name, model_dir.name, sub.name, sub, model_early)
                     for sub in sub_dirs
                 ]
+                early = [m for m in modifications if m.early_open_at is not None]
                 groups.append(ModelGroup(
                     name=model_dir.name,
                     leaf=None,
                     modifications=modifications,
                     logo_path=_find_logo(model_dir),
                     hero_path=_find_hero(model_dir) or _hero_placeholder(cars_dir),
+                    early_open_at=min((m.early_open_at for m in early), default=None),
+                    early_locked=bool(early) and all(m.early_locked for m in modifications),
                 ))
         if groups:
             brands[brand_dir.name] = groups
@@ -209,9 +226,23 @@ def _model_sub_dirs(model_dir: Path) -> list[Path]:
         key=lambda p: p.name.lower())
 
 
-def _build_model_info(brand: str, name: str, modification: str | None, leaf_dir: Path) -> ModelInfo:
+def read_early_access(directory: Path) -> tuple[float, bool] | None:
+    """(когда откроется всем, под замком ли) из EARLY_ACCESS_MARKER или None."""
+    try:
+        data = json.loads((directory / EARLY_ACCESS_MARKER).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    open_at = data.get("open_at") if isinstance(data, dict) else None
+    if isinstance(open_at, bool) or not isinstance(open_at, (int, float)):
+        return None
+    return float(open_at), bool(data.get("locked"))
+
+
+def _build_model_info(brand: str, name: str, modification: str | None, leaf_dir: Path,
+                      inherited_early: tuple[float, bool] | None = None) -> ModelInfo:
     stages_script = leaf_dir / "stages.py"
     revision, changelog, status, updated_at = _read_version(leaf_dir)
+    early = read_early_access(leaf_dir) or inherited_early
     return ModelInfo(
         brand=brand,
         name=name,
@@ -225,6 +256,8 @@ def _build_model_info(brand: str, name: str, modification: str | None, leaf_dir:
         updated_at=updated_at,
         logo_path=_find_logo(leaf_dir),
         hero_path=_find_hero(leaf_dir),
+        early_open_at=early[0] if early else None,
+        early_locked=bool(early and early[1]),
     )
 
 

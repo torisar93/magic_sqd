@@ -673,7 +673,7 @@
       return;
     }
     document.getElementById("cat-count").textContent=String(visible.length);
-    visible.forEach(item => listEl.appendChild(window.CatalogUI.card({kind:item.kind,name:item.label,meta:item.meta,image:item.icon ? dataUrl(item.icon) : null,colors:item.colors || (item.color ? [item.color] : []),action:item.action,onClick:item.onClick})));
+    visible.forEach(item => listEl.appendChild(window.CatalogUI.card({kind:item.kind,name:item.label,meta:item.meta,image:item.icon ? dataUrl(item.icon) : null,colors:item.colors || (item.color ? [item.color] : []),action:item.action,early:item.early,onClick:item.onClick})));
   }
 
   // Та же логика, что и в desktop-версии (см. app/web/frontend/js/screens/
@@ -702,9 +702,9 @@
     for (const brand of carsData.brands || []) {
       if (brand.name.toLocaleLowerCase().includes(query)) results.push({ kind: "brand", label: brand.name, meta: `${brand.groups.length} ${plural(brand.groups.length, "модель", "модели", "моделей")}`, color: brandCardColor(brand), icon: brand.logo, action: "Открыть марку", onClick: () => showGroupStep(brand) });
       for (const group of brand.groups) {
-        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, ...groupCardColors(group), icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", onClick: () => showModificationStep(group) });
+        if (group.name.toLocaleLowerCase().includes(query)) results.push({ kind: "model", label: group.name, meta: brand.name, ...groupCardColors(group), icon: group.logo || (group.leaf && group.leaf.logo), action: group.has_modifications ? "Выбрать версию" : "Открыть", early: earlyOf(group), onClick: () => showModificationStep(group) });
         for (const modification of group.modifications || []) {
-          if ((modification.modification || "").toLocaleLowerCase().includes(query)) results.push({ kind: "variant", label: `${group.name} — ${modification.modification}`, meta: brand.name, color: modification.status_color, icon: modification.logo || group.logo, onClick: () => selectModel(modification) });
+          if ((modification.modification || "").toLocaleLowerCase().includes(query)) results.push({ kind: "variant", label: `${group.name} — ${modification.modification}`, meta: brand.name, color: modification.status_color, icon: modification.logo || group.logo, early: earlyOf(modification), onClick: () => selectModel(modification) });
         }
       }
     }
@@ -737,7 +737,8 @@
     resetPickerScroll();
     renderList(brand.groups.map((g) => ({
       kind: "model", label: g.name, icon: g.logo || (g.leaf && g.leaf.logo),
-      meta: g.has_modifications ? `${g.modifications.length} ${plural(g.modifications.length, "версия", "версии", "версий")}` : g.leaf.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
+      meta: g.has_modifications ? `${g.modifications.length} ${plural(g.modifications.length, "версия", "версии", "версий")}` : g.early_locked ? "" : g.leaf.no_instruction ? "Способ уточняется" : "Открыть инструкцию",
+      early: earlyOf(g),
       action: g.has_modifications ? "Выбрать версию" : "Открыть",
       ...groupCardColors(g),
       onClick: () => showModificationStep(g),
@@ -753,7 +754,7 @@
     const img=group.logo||group.leaf?.logo;
     const heroImg=group.hero||group.leaf?.hero;
     listEl.append(CatalogUI.detail({brand:selectedBrand?.name||'',group:group.name,src:img?dataUrl(img):null,heroSrc:heroImg?dataUrl(heroImg):'',
-      versions:group.has_modifications?group.modifications:[group.leaf],onOpen:selectModel}));
+      versions:group.has_modifications?group.modifications:[group.leaf],onOpen:selectModel,onLocked:showEarlyAccessModal}));
   }
 
   function openModel(modelSummary, options = {}) {
@@ -776,7 +777,27 @@
   // yellow ("черновой способ") — предупреждаем, но даём продолжить; red
   // ("не работает") — тут "всё равно открыть" вводило бы техника в
   // заблуждение, что способ рабочий, поэтому только закрыть окно.
+  // Ранний доступ (см. js/catalog-ui.js, то же на ПК — main_picker.js): без подписки модель под замком —
+  // окно с Boosty вместо инструкции.
+  function earlyOf(item) {
+    return item && item.early_open_at != null ? { locked: !!item.early_locked } : null;
+  }
+
+  function showEarlyAccessModal(modelSummary) {
+    let overlay;
+    const [body, hint] = window.CatalogUI.earlyAccessParagraphs(modelSummary);
+    body.className = "stage-text";
+    hint.className = "stage-text early-hint";
+    overlay = showModal([
+      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: "Ранний доступ" }),
+      body, hint,
+      boostyLinksRow(),
+      el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
+    ]);
+  }
+
   function selectModel(modelSummary) {
+    if (modelSummary.early_locked) { showEarlyAccessModal(modelSummary); return; }
     if (modelSummary.status_color === "yellow" || modelSummary.status_color === "red") {
       showStatusWarningModal(modelSummary);
       return;

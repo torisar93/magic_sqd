@@ -315,14 +315,14 @@
     const groups=selectedBrand.groups.filter(g=>g.name.toLocaleLowerCase().includes(query));
     if(!groups.length)list.append(LabUI.n('p','', 'Ничего не найдено'));
     for(const group of groups){
-      const card=CatalogUI.card({kind:'model',name:group.name,image:group.logo||group.leaf?.logo,
+      const card=CatalogUI.card({kind:'model',name:group.name,image:group.logo||group.leaf?.logo,early:earlyOf(group),
         meta:group.has_modifications?`${group.modifications.length} версии`:'',
-        onClick:()=>{selectedGroup=group;list.querySelectorAll('.cat-card').forEach(c=>{c.classList.toggle('selected',c===card);c.setAttribute('aria-pressed',String(c===card));});const g=group;const detail=CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,heroSrc:g.hero||g.leaf?.hero,versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel});layout.querySelector('.model-detail')?.replaceWith(detail);}});
+        onClick:()=>{selectedGroup=group;list.querySelectorAll('.cat-card').forEach(c=>{c.classList.toggle('selected',c===card);c.setAttribute('aria-pressed',String(c===card));});const g=group;const detail=CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,heroSrc:g.hero||g.leaf?.hero,versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel,onLocked:showEarlyLocked});layout.querySelector('.model-detail')?.replaceWith(detail);}});
       card.classList.toggle('selected',group===selectedGroup);card.setAttribute('aria-pressed',String(group===selectedGroup));list.append(card);
     }
     layout.append(list);
     if(selectedGroup){const g=selectedGroup;layout.append(CatalogUI.detail({brand:selectedBrand.name,group:g.name,src:g.logo||g.leaf?.logo,heroSrc:g.hero||g.leaf?.hero,
-      versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel}));}
+      versions:g.has_modifications?g.modifications:[g.leaf],onOpen:selectModel,onLocked:showEarlyLocked}));}
     gridEl.append(layout);
   }
 
@@ -342,7 +342,7 @@
             kind: "model", title: group.name, logo: group.logo || group.leaf?.logo, ...groupCardStatus(group),
             meta: brand.name,
             action: group.has_modifications ? "Выбрать версию" : "Открыть",
-            hasVariants: group.has_modifications,
+            hasVariants: group.has_modifications, early: earlyOf(group),
             onClick: () => showModificationStep(brand, group),
           });
         }
@@ -352,6 +352,7 @@
           results.push({
             kind: "variant", title: `${group.name} — ${modification.modification}`,
             logo: modification.logo || group.logo, status: modification.status_color, meta: brand.name, action: "Открыть",
+            early: earlyOf(modification),
             onClick: () => selectModel(modification),
           });
         }
@@ -389,7 +390,7 @@
   }
 
   function createCard(item) {
-    return window.CatalogUI.card({kind:item.kind,name:item.title,meta:item.meta,image:item.logo,colors:item.statuses || (item.status ? [item.status] : []),action:item.action,onClick:item.onClick});
+    return window.CatalogUI.card({kind:item.kind,name:item.title,meta:item.meta,image:item.logo,colors:item.statuses || (item.status ? [item.status] : []),action:item.action,early:item.early,onClick:item.onClick});
   }
 
   function defaultModelLogo(title) {
@@ -426,7 +427,17 @@
     backEl.hidden = step === "brand";
   }
 
+  // Ранний доступ (см. js/catalog-ui.js): без подписки модель под замком — окно с Boosty вместо инструкции
+  function earlyOf(item) {
+    return item && item.early_open_at != null ? { locked: !!item.early_locked } : null;
+  }
+
+  function showEarlyLocked(modelSummary) {
+    window.boostyDialogs?.showEarlyAccessDialog(modelSummary);
+  }
+
   async function selectModel(modelSummary) {
+    if (modelSummary?.early_locked) { showEarlyLocked(modelSummary); return; }
     const model = await window.pywebview.api.scanner_select_model(modelSummary.key);
     if (onModelSelected && !model.error) await onModelSelected(model);
   }

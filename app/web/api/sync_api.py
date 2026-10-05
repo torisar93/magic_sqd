@@ -19,7 +19,7 @@ from ... import device_models, update_tracker
 from ...content_config import get_base_url
 from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
                               list_shared_apk_catalog, prune_removed_apks, prune_removed_models,
-                              sync_scripts, sync_shared_apk_metadata)
+                              sync_early_access, sync_scripts, sync_shared_apk_metadata)
 from ...ping_client import PingError, get_or_create_client_id, send_ping
 from ...scanner import flatten_models, scan_cars
 from ...submit_config import get_submit_config
@@ -89,10 +89,13 @@ class SyncApi:
                 # манифеста, не трогает то, что технику ещё только предстоит
                 # опубликовать).
                 prune_removed_models(self.base_dir, self.cars_dir, manifest, log=self._log)
+                # Ранний доступ: подписчику — отметка, остальным — витрина модели под замком
+                sync_early_access(self.base_dir, self.cars_dir, manifest, log=self._log)
             except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать запуск
                 self._log(f"Не удалось проверить обновления моделей на сервере: {exc}")
             else:
-                models = flatten_models(scan_cars(self.cars_dir))
+                # Модель под замком в «Что нового» не нужна — её не открыть; попадёт туда, когда откроется
+                models = [m for m in flatten_models(scan_cars(self.cars_dir)) if not m.early_locked]
                 changes, new_state = update_tracker.compute_changes(self.base_dir, models)
                 update_tracker.save_seen(self.base_dir, new_state)
             finally:
@@ -148,6 +151,8 @@ class SyncApi:
                 sync_scripts(self.base_dir, self.cars_dir, log=self._log, manifest=manifest,
                              on_progress=self._on_sync_progress)
                 prune_removed_models(self.base_dir, self.cars_dir, manifest, log=self._log)
+                # вход подписчика открывает модели раннего доступа, выход — снова закрывает
+                sync_early_access(self.base_dir, self.cars_dir, manifest, log=self._log)
             except Exception as exc:  # noqa: BLE001 - сбой сети не должен ломать вход в аккаунт
                 self._log(f"Не удалось обновить каталог моделей: {exc}")
                 return

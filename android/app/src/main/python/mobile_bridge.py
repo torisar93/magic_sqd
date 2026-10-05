@@ -10,7 +10,8 @@ import urllib.request
 from pathlib import Path
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
-                           prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie)
+                           prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie,
+                           sync_early_access)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version
 from wizard_spec import load_wizard_spec
 from apk_library import list_apks as _list_apks, ensure_apks_downloaded as _ensure_apks_downloaded
@@ -221,6 +222,8 @@ def sync_cars(cars_dir: str, base_url: str) -> str:
     # content_sync.prune_removed_models — не трогает то, что техник только
     # что создал локально и ещё не опубликовал).
     prune_removed_models(cars_path.parent, cars_path, manifest, log=lambda m: lines.append(m))
+    # Ранний доступ: подписчику — отметка, остальным — витрина модели под замком
+    sync_early_access(base_url, cars_path, manifest, log=lambda m: lines.append(m))
     return json.dumps({"downloaded": downloaded, "log": lines})
 
 
@@ -239,6 +242,8 @@ def _model_to_dict(model) -> dict:
         "submission_status_label": {"pending": "На модерации", "rejected": "Отклонена модератором"}.get(model.submission_status, ""),
         "logo": _logo_rel_path(model.logo_path),
         "hero": _logo_rel_path(model.hero_path),
+        "early_open_at": model.early_open_at,
+        "early_locked": model.early_locked,
     }
 
 
@@ -254,6 +259,8 @@ def _group_to_dict(group) -> dict:
         "leaf": leaf_dict,
         "modifications": mod_dicts,
         "status_color": rollup_status_color(colors),
+        "early_open_at": group.early_open_at,
+        "early_locked": group.early_locked,
     }
 
 

@@ -112,7 +112,7 @@ class ScannerApi:
         model = self._models_by_key.get(key)
         if model is None:
             return {"error": "unknown model key"}
-        if not model.stages_script:
+        if not model.stages_script and not model.early_locked:  # под замком stages.py и не должно быть
             event_bridge.push({
                 "kind": "log",
                 "text": f"[{model.display_label}] Внимание: нет stages.py в {model.dir}",
@@ -131,6 +131,8 @@ class ScannerApi:
             "leaf": leaf_dict,
             "modifications": mod_dicts,
             "status_color": rollup_status_color(colors),
+            "early_open_at": group.early_open_at,
+            "early_locked": group.early_locked,
         }
 
     def _model_to_dict(self, model: ModelInfo) -> dict:
@@ -152,6 +154,8 @@ class ScannerApi:
             "submission_status_label": SUBMISSION_STATUS_LABELS.get(model.submission_status, ""),
             "logo": self._logo_data_uri(model.logo_path),
             "hero": self._logo_data_uri(model.hero_path),
+            "early_open_at": model.early_open_at,
+            "early_locked": model.early_locked,
         }
 
     def _brand_logo_data_uri(self, brand: str) -> str | None:

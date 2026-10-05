@@ -123,5 +123,17 @@
     if (!window.Thanks.get()) refreshSupporters().then(() => { if (completionDialog.open) fillCompletionThanks(); });
   }
 
-  window.boostyDialogs = { init, maybeShowWelcomeDialog, showCompletionDialog };
+  // Модель раннего доступа без подписки (вариант 1, владелец 2026-10-05): что это, когда откроется всем, кнопки Boosty.
+  function showEarlyAccessDialog(model) {
+    const dialog = document.getElementById("early-access-dialog");
+    if (!dialog || !model) return;
+    document.getElementById("early-access-text").replaceChildren(...window.CatalogUI.earlyAccessParagraphs(model));
+    document.getElementById("early-access-boosty-links").replaceChildren(boostyLinksRow());
+    const close = document.getElementById("early-access-dialog-close");
+    close.onclick = () => dialog.close();
+    dialog.showModal();
+    close.focus();
+  }
+
+  window.boostyDialogs = { init, maybeShowWelcomeDialog, showCompletionDialog, showEarlyAccessDialog };
 })();

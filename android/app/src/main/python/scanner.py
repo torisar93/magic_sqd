@@ -18,6 +18,8 @@ LOGO_FILENAMES = ("logo.png", "logo.svg", "logo.jpg", "logo.jpeg")
 # файлами модели, без пересборки APK).
 HERO_FILENAMES = ("hero.webp", "hero.png", "hero.jpg", "hero.jpeg")
 HERO_PLACEHOLDER_FILENAMES = ("hero-placeholder.webp", "hero-placeholder.png")
+# Ранний доступ — отметку пишет content_sync.sync_early_access (то же, что desktop app/scanner.py).
+EARLY_ACCESS_MARKER = "_early_access.json"
 
 
 @dataclass
@@ -37,6 +39,9 @@ class ModelInfo:
     # Статус своей заявки на сервере ("pending"/"rejected"), см. auth_bridge.
     # sync_my_cars — маркер-файл SUBMISSION_STATUS_FILENAME в папке модели.
     submission_status: str = ""
+    # Ранний доступ: когда откроется всем; early_locked — без подписки, только витрина.
+    early_open_at: float = None
+    early_locked: bool = False
 
     @property
     def display_label(self) -> str:
@@ -51,6 +56,8 @@ class ModelGroup:
     modifications: list
     logo_path: Path = None
     hero_path: Path = None
+    early_open_at: float = None
+    early_locked: bool = False
 
 
 _MODEL_PAYLOAD_DIR_NAMES = {"files", "usb_files"}
@@ -70,20 +77,25 @@ def scan_cars(cars_dir: Path):
             if not model_dir.is_dir():
                 continue
             sub_dirs = _model_sub_dirs(model_dir)
+            model_early = read_early_access(model_dir)
             if _has_own_model_files(model_dir) or not sub_dirs:
-                leaf = _build_model_info(brand_dir.name, model_dir.name, None, model_dir)
+                leaf = _build_model_info(brand_dir.name, model_dir.name, None, model_dir, model_early)
                 groups.append(ModelGroup(
                     name=model_dir.name, leaf=leaf, modifications=[], logo_path=_find_logo(model_dir),
                     hero_path=_find_hero(model_dir) or _hero_placeholder(cars_dir),
+                    early_open_at=leaf.early_open_at, early_locked=leaf.early_locked,
                 ))
             else:
                 modifications = [
-                    _build_model_info(brand_dir.name, model_dir.name, sub.name, sub)
+                    _build_model_info(brand_dir.name, model_dir.name, sub.name, sub, model_early)
                     for sub in sub_dirs
                 ]
+                early = [m for m in modifications if m.early_open_at is not None]
                 groups.append(ModelGroup(
                     name=model_dir.name, leaf=None, modifications=modifications, logo_path=_find_logo(model_dir),
                     hero_path=_find_hero(model_dir) or _hero_placeholder(cars_dir),
+                    early_open_at=min((m.early_open_at for m in early), default=None),
+                    early_locked=bool(early) and all(m.early_locked for m in modifications),
                 ))
         if groups:
             brands[brand_dir.name] = groups
@@ -101,9 +113,22 @@ def _model_sub_dirs(model_dir: Path):
         key=lambda p: p.name.lower())
 
 
-def _build_model_info(brand: str, name: str, modification, leaf_dir: Path) -> ModelInfo:
+def read_early_access(directory: Path):
+    """(когда откроется всем, под замком ли) из EARLY_ACCESS_MARKER или None."""
+    try:
+        data = json.loads((directory / EARLY_ACCESS_MARKER).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    open_at = data.get("open_at") if isinstance(data, dict) else None
+    if isinstance(open_at, bool) or not isinstance(open_at, (int, float)):
+        return None
+    return float(open_at), bool(data.get("locked"))
+
+
+def _build_model_info(brand: str, name: str, modification, leaf_dir: Path, inherited_early=None) -> ModelInfo:
     stages_script = leaf_dir / "stages.py"
     revision, changelog, status, updated_at = _read_version(leaf_dir)
+    early = read_early_access(leaf_dir) or inherited_early
     return ModelInfo(
         brand=brand,
         name=name,
@@ -118,6 +143,8 @@ def _build_model_info(brand: str, name: str, modification, leaf_dir: Path) -> Mo
         logo_path=_find_logo(leaf_dir),
         hero_path=_find_hero(leaf_dir),
         submission_status=_read_submission_status(leaf_dir),
+        early_open_at=early[0] if early else None,
+        early_locked=bool(early and early[1]),
     )
 
 

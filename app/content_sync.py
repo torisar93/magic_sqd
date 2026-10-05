@@ -191,6 +191,7 @@ def fetch_manifest(base_url: str) -> dict[str, dict] | None:
     сервере нет (старый бэкенд, ещё не обновлённый) или сеть недоступна —
     тогда вызывающий код откатывается на list_files_recursive для конкретно
     нужного ему поддерева, как раньше."""
+    global _last_early_access
     try:
         with open_url(f"{base_url}/manifest.json", timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -199,11 +200,24 @@ def fetch_manifest(base_url: str) -> dict[str, dict] | None:
     files = data.get("files")
     if not isinstance(files, dict):
         return None
+    early = data.get("early_access")
+    _last_early_access = early if isinstance(early, dict) else {}
     result = {}
     for path, entry in files.items():
         if isinstance(entry, dict) and isinstance(entry.get("size"), int):
             result[path] = {"size": entry["size"], "mtime": entry.get("mtime")}
     return result
+
+
+# Раздел "early_access" последнего скачанного манифеста (см. server/user_groups.py:
+# filter_manifest): {"Марка/Модель": {"open_at": когда откроется всем, "files": витрина}}.
+# fetch_manifest возвращает только "files" (так его ждут все вызывающие), поэтому этот
+# раздел запоминается здесь и забирается sync_early_access.
+_last_early_access: dict = {}
+
+
+def last_early_access() -> dict:
+    return _last_early_access
 
 
 def filter_manifest(manifest: dict[str, dict], subpath: str, skip_dirs: tuple = (),
@@ -729,6 +743,82 @@ def prune_removed_models(base_dir: Path, cars_dir: Path, manifest: dict[str, dic
             removed.append(prefix)
     _save_known_models(base_dir, current)
     return removed
+
+
+EARLY_ACCESS_MARKER = "_early_access.json"  # то же имя в app/scanner.py (не импортируем — см. _MODEL_MARKER)
+
+
+def _early_marker_dirs(cars_dir: Path) -> list[Path]:
+    return [marker.parent for pattern in (f"*/*/{EARLY_ACCESS_MARKER}", f"*/*/*/{EARLY_ACCESS_MARKER}")
+            for marker in cars_dir.glob(pattern)]
+
+
+def sync_early_access(base_dir: Path, cars_dir: Path, manifest: dict[str, dict] | None,
+                      early: dict | None = None, log=lambda m: None) -> None:
+    """Модели раннего доступа (см. server/user_groups.py) — после sync_scripts и
+    prune_removed_models. У подписчика модель уже скачана целиком (она есть в
+    manifest), здесь ей только ставится отметка EARLY_ACCESS_MARKER (метка «ранний
+    доступ» в каталоге). У остальных — качается витрина (version.json, logo, hero
+    модели и версий) и отметка с locked=true: каталог показывает модель под замком.
+    Если здесь остались файлы инструкции (подписка снята, вышли из аккаунта) — они
+    удаляются: без подписки модель открыть нельзя. Отметки моделей, у которых ранний
+    доступ закончился, снимаются. early — раздел early_access манифеста (по умолчанию
+    из последнего fetch_manifest)."""
+    url = get_base_url(base_dir)
+    if not url or manifest is None:
+        return
+    early = last_early_access() if early is None else early
+    wanted: set[Path] = set()
+    for path, entry in (early or {}).items():
+        parts = [part for part in str(path).split("/") if part]
+        if (not isinstance(entry, dict) or isinstance(entry.get("open_at"), bool)
+                or not isinstance(entry.get("open_at"), (int, float)) or not 2 <= len(parts) <= 3
+                or any(part in (".", "..") or part.startswith((".", "_")) for part in parts)):
+            continue
+        model_rel = "cars/" + "/".join(parts)
+        teaser = {rel: meta for rel, meta in (entry.get("files") or {}).items()
+                  if isinstance(meta, dict) and isinstance(meta.get("size"), int)
+                  and rel.startswith(model_rel + "/") and ".." not in rel.split("/")}
+        locked = not any(rel.startswith(model_rel + "/") and rel not in teaser for rel in manifest)
+        model_dir = cars_dir.joinpath(*parts)
+        teaser_local = {cars_dir / rel[len("cars/"):] for rel in teaser}
+        if locked and model_dir.is_dir() and not _has_local_edit(model_dir, cars_dir, manifest):
+            removed = 0
+            for file in sorted(model_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+                if file.is_file() and file not in teaser_local and file.name != EARLY_ACCESS_MARKER:
+                    file.unlink(missing_ok=True)
+                    removed += 1
+                elif file.is_dir():
+                    try:
+                        file.rmdir()  # только пустые
+                    except OSError:
+                        pass
+            if removed:
+                log(f"Ранний доступ без подписки — убираю файлы инструкции: {model_rel}")
+        for rel, meta in teaser.items():
+            local = cars_dir / rel[len("cars/"):]
+            if _is_stale(local, meta):
+                try:
+                    download_file(url, rel, local, log=log, mtime=meta.get("mtime"))
+                except (urllib.error.URLError, OSError) as exc:
+                    log(f"Не удалось скачать {rel}: {exc}")
+        model_dir.mkdir(parents=True, exist_ok=True)
+        marker = {"open_at": float(entry["open_at"]), "locked": locked}
+        marker_path = model_dir / EARLY_ACCESS_MARKER
+        try:
+            if not marker_path.exists() or json.loads(marker_path.read_text(encoding="utf-8")) != marker:
+                marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        except (OSError, json.JSONDecodeError):
+            marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        wanted.add(model_dir)
+    for model_dir in _early_marker_dirs(cars_dir):
+        if model_dir not in wanted and model_dir.is_dir():
+            (model_dir / EARLY_ACCESS_MARKER).unlink(missing_ok=True)
+            # витрина без инструкции (ранний доступ сняли, модель снова скрыта) — убрать целиком
+            if not any((d / name).exists() for d in (model_dir, *model_dir.iterdir()) if d.is_dir()
+                       for name in ("stages.py", "install.py")) and not _has_local_edit(model_dir, cars_dir, manifest):
+                shutil.rmtree(model_dir, ignore_errors=True)
+                _prune_empty_ancestors(model_dir.parent, cars_dir)
 
 
 _KNOWN_APKS_FILENAME = "known_apks.json"

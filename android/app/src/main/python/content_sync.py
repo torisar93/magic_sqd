@@ -51,6 +51,7 @@ def _encode_path(path: str) -> str:
 def fetch_manifest(base_url: str):
     """content/manifest.json — {"<путь>": {"size": int, "mtime": float}, ...}
     -> {"<путь>": {"size": int, "mtime": float}}."""
+    global _last_early_access
     try:
         with open_url(f"{base_url}/manifest.json", timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -59,11 +60,21 @@ def fetch_manifest(base_url: str):
     files = data.get("files")
     if not isinstance(files, dict):
         return None
+    early = data.get("early_access")
+    _last_early_access = early if isinstance(early, dict) else {}
     result = {}
     for path, entry in files.items():
         if isinstance(entry, dict) and isinstance(entry.get("size"), int):
             result[path] = {"size": entry["size"], "mtime": entry.get("mtime")}
     return result
+
+
+# Раздел "early_access" последнего манифеста (см. desktop app/content_sync.py — то же самое).
+_last_early_access: dict = {}
+
+
+def last_early_access() -> dict:
+    return _last_early_access
 
 
 def filter_manifest(manifest, subpath: str, skip_dirs=(), no_recurse_dirs=()):
@@ -376,6 +387,74 @@ def prune_model_to_server(cars_dir: Path, model_dir: Path, manifest, log=lambda 
         more = f" и ещё {len(removed) - 5}" if len(removed) > 5 else ""
         log(f"Модель сверена с сервером: убраны устаревшие файлы ({names}{more}) — нужные скачаются заново.")
     return removed
+
+
+EARLY_ACCESS_MARKER = "_early_access.json"  # то же имя в scanner.py
+_OWN_SUBMISSION_MARKER = ".submission_status"  # своя заявка техника (auth_bridge.sync_my_cars) — не трогаем
+
+
+def _early_marker_dirs(cars_dir: Path) -> list:
+    return [marker.parent for pattern in (f"*/*/{EARLY_ACCESS_MARKER}", f"*/*/*/{EARLY_ACCESS_MARKER}")
+            for marker in cars_dir.glob(pattern)]
+
+
+def sync_early_access(base_url: str, cars_dir: Path, manifest, early=None, log=lambda m: None) -> None:
+    """Порт desktop app/content_sync.py:sync_early_access — модели раннего доступа: подписчику
+    отметка «ранний доступ», остальным витрина (version.json, logo, hero) под замком; файлы
+    инструкции без подписки удаляются; отметки закончившегося раннего доступа снимаются."""
+    if not base_url or manifest is None:
+        return
+    early = last_early_access() if early is None else early
+    wanted = set()
+    for path, entry in (early or {}).items():
+        parts = [part for part in str(path).split("/") if part]
+        if (not isinstance(entry, dict) or isinstance(entry.get("open_at"), bool)
+                or not isinstance(entry.get("open_at"), (int, float)) or not 2 <= len(parts) <= 3
+                or any(part in (".", "..") or part.startswith((".", "_")) for part in parts)):
+            continue
+        model_rel = "cars/" + "/".join(parts)
+        teaser = {rel: meta for rel, meta in (entry.get("files") or {}).items()
+                  if isinstance(meta, dict) and isinstance(meta.get("size"), int)
+                  and rel.startswith(model_rel + "/") and ".." not in rel.split("/")}
+        locked = not any(rel.startswith(model_rel + "/") and rel not in teaser for rel in manifest)
+        model_dir = cars_dir.joinpath(*parts)
+        teaser_local = {cars_dir / rel[len("cars/"):] for rel in teaser}
+        if locked and model_dir.is_dir() and not (model_dir / _OWN_SUBMISSION_MARKER).exists():
+            removed = 0
+            for file in sorted(model_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+                if file.is_file() and file not in teaser_local and file.name != EARLY_ACCESS_MARKER:
+                    file.unlink(missing_ok=True)
+                    removed += 1
+                elif file.is_dir():
+                    try:
+                        file.rmdir()
+                    except OSError:
+                        pass
+            if removed:
+                log(f"Ранний доступ без подписки — убираю файлы инструкции: {model_rel}")
+        for rel, meta in teaser.items():
+            local = cars_dir / rel[len("cars/"):]
+            if _is_stale(local, meta):
+                try:
+                    download_file(base_url, rel, local, mtime=meta.get("mtime"))
+                except (urllib.error.URLError, OSError) as exc:
+                    log(f"Не удалось скачать {rel}: {exc}")
+        model_dir.mkdir(parents=True, exist_ok=True)
+        marker = {"open_at": float(entry["open_at"]), "locked": locked}
+        marker_path = model_dir / EARLY_ACCESS_MARKER
+        try:
+            if not marker_path.exists() or json.loads(marker_path.read_text(encoding="utf-8")) != marker:
+                marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        except (OSError, json.JSONDecodeError):
+            marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        wanted.add(model_dir)
+    for model_dir in _early_marker_dirs(cars_dir):
+        if model_dir not in wanted and model_dir.is_dir():
+            (model_dir / EARLY_ACCESS_MARKER).unlink(missing_ok=True)
+            if not any((d / name).exists() for d in (model_dir, *model_dir.iterdir()) if d.is_dir()
+                       for name in ("stages.py", "install.py")) and not (model_dir / _OWN_SUBMISSION_MARKER).exists():
+                shutil.rmtree(model_dir, ignore_errors=True)
+                _prune_empty_ancestors(model_dir.parent, cars_dir)
 
 
 def prune_removed_models(base_dir: Path, cars_dir: Path, manifest, log=lambda m: None) -> list:
