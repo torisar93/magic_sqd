@@ -314,11 +314,19 @@ def get_model_access(base_url: str, session_cookie: str, rel_path: str | None = 
     return _request(base_url, session_cookie, "GET", "/admin/api/access" + suffix)
 
 
-def set_model_access(base_url: str, session_cookie: str, rel_path: str, restricted: bool, groups) -> None:
+_KEEP = object()
+
+
+def set_model_access(base_url: str, session_cookie: str, rel_path: str, restricted: bool, groups,
+                     early_open_at=_KEEP) -> None:
     """«Кто видит»: restricted=False — все; иначе администраторы + группы groups.
-    Путь может ещё не существовать — так новая скрытая модель закрыта ДО загрузки."""
-    _request(base_url, session_cookie, "POST", "/admin/api/access",
-             {"path": rel_path, "restricted": bool(restricted), "groups": [int(g) for g in groups]})
+    Путь может ещё не существовать — так новая скрытая модель закрыта ДО загрузки.
+    early_open_at — ранний доступ для подписчиков Boosty до этой даты (эпоха-секунды),
+    None — снять; не передан — сервер ранний доступ не трогает (см. server/backend.py)."""
+    body = {"path": rel_path, "restricted": bool(restricted), "groups": [int(g) for g in groups]}
+    if early_open_at is not _KEEP:
+        body["early_open_at"] = early_open_at
+    _request(base_url, session_cookie, "POST", "/admin/api/access", body)
 
 
 def compute_stale_files(local_files, server_files) -> list[str]:

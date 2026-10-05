@@ -19,3 +19,6 @@
 .model-early-tag[hidden] { display: none !important; }
 
 .early-hint { color: var(--text-dim, #93a3ab); font-size: 13px; }
+
+/* Редактор (ПК): «Кто видит → Ранний доступ» — дата, когда модель откроется всем */
+.editor-access input[type=date] { width: auto; flex: 0 0 auto; color-scheme: dark; }

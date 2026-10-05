@@ -87,6 +87,9 @@
   // не меняли — car_save получает null, и доступ модели на сервере не трогается.
   let accessInitial = null;
   let accessMultiGroups = [];
+  // Ранний доступ для подписчиков Boosty (пункт «Кто видит» + дата открытия для всех)
+  let accessInitialDate = "";
+  let accessEarlyGroups = [];
 
   let panX = 40, panY = 40, zoom = 1;
   let panState = null;
@@ -340,9 +343,16 @@
     const groups = info.all_groups || [];
     const groupName = (id) => (groups.find((g) => g.id === id) || { name: `#${id}` }).name;
     const options = [["all", "Все"], ["admins", "Только администраторы"],
+      ["early", "Ранний доступ (подписчики Boosty)"],
       ...groups.map((g) => [`group:${g.id}`, `Группа «${g.name}»`])];
     let current = "all";
-    if (info.restricted) {
+    const dateEl = document.getElementById("graph-wizard-access-early-date");
+    accessEarlyGroups = info.early_open_at ? (info.groups || []) : [];
+    accessInitialDate = info.early_open_at ? dateInputValue(info.early_open_at) : "";
+    dateEl.value = accessInitialDate || dateInputValue(Date.now() / 1000 + 7 * 86400);
+    if (info.early_open_at) {
+      current = "early";
+    } else if (info.restricted) {
       const ids = info.groups || [];
       if (!ids.length) current = "admins";
       else if (ids.length === 1) current = `group:${ids[0]}`;
@@ -357,20 +367,37 @@
     select.replaceChildren(...options.map(([value, text]) => el("option", {
       value, text, selected: value === current ? "" : null })));
     accessInitial = current;
+    const syncDate = () => { dateEl.hidden = select.value !== "early"; };
+    select.onchange = syncDate;
+    syncDate();
     box.title = "Скрытую модель видят только администраторы и участники выбранной группы "
-      + "(им нужно войти в аккаунт в программе). Группы — в веб-админке.";
+      + "(им нужно войти в аккаунт в программе). Ранний доступ — ещё и подписчики Boosty, "
+      + "остальные видят модель под замком; в 00:00 выбранной даты она откроется всем. Группы — в веб-админке.";
     box.hidden = false;
+  }
+
+  // Дата <input type=date> ↔ эпоха-секунды: 00:00 этого дня по времени компьютера
+  function dateInputValue(seconds) {
+    const d = new Date(seconds * 1000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
 
   function accessChoice() {
     const box = document.getElementById("graph-wizard-access");
     if (box.hidden || accessInitial === null) return null;
     const value = document.getElementById("graph-wizard-access-select").value;
-    if (value === accessInitial) return null;
+    const date = document.getElementById("graph-wizard-access-early-date").value;
+    if (value === accessInitial && (value !== "early" || date === accessInitialDate)) return null;
+    if (value === "early") {
+      return { restricted: true, groups: accessEarlyGroups,
+               early_open_at: date ? new Date(date + "T00:00").getTime() / 1000 : null };
+    }
+    // ушли с «Раннего доступа» на скрытие — снять его (иначе сервер его оставит)
+    const clearEarly = accessInitial === "early" ? { early_open_at: null } : {};
     if (value === "all") return { restricted: false, groups: [] };
-    if (value === "admins") return { restricted: true, groups: [] };
-    if (value === "multi") return { restricted: true, groups: accessMultiGroups };
-    return { restricted: true, groups: [Number(value.slice("group:".length))] };
+    if (value === "admins") return { restricted: true, groups: [], ...clearEarly };
+    if (value === "multi") return { restricted: true, groups: accessMultiGroups, ...clearEarly };
+    return { restricted: true, groups: [Number(value.slice("group:".length))], ...clearEarly };
   }
 
   // Шаги без сохранённой позиции (0/0 — и вновь созданные, и шаги,
@@ -965,6 +992,14 @@
       return;
     }
 
+    const access = accessChoice();
+    const earlyChosen = !document.getElementById("graph-wizard-access").hidden
+      && document.getElementById("graph-wizard-access-select").value === "early";
+    if (earlyChosen && access && !(access.early_open_at > Date.now() / 1000)) {
+      await window.notice("Выберите дату в будущем — когда модель откроется всем.", { title: "Ранний доступ", danger: true });
+      return;
+    }
+
     const target = await window.pywebview.api.car_get_publish_target();
     if (target.mode === "admin" && !target.session_cached) {
       const ok = await window._openAdminLoginDialog(target.base_url);
@@ -972,7 +1007,7 @@
     }
 
     const label = modification ? `${brand} / ${model} — ${modification}` : `${brand} / ${model}`;
-    const result = await window.pywebview.api.car_save(specToJson(), editModelKey, accessChoice());
+    const result = await window.pywebview.api.car_save(specToJson(), editModelKey, access);
     if (!result.ok) {
       await window.notice(result.error, { title: "Сохранение", danger: true });
       return;

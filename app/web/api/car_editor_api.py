@@ -13,6 +13,7 @@ import json
 import mimetypes
 import shutil
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import webview
@@ -192,7 +193,14 @@ def _clean_access(access) -> dict | None:
     groups = access.get("groups") or []
     if not isinstance(groups, list) or not all(isinstance(g, int) and not isinstance(g, bool) for g in groups):
         return None
-    return {"restricted": access["restricted"], "groups": groups if access["restricted"] else []}
+    result = {"restricted": access["restricted"], "groups": groups if access["restricted"] else []}
+    # Ранний доступ для подписчиков Boosty: дата (эпоха-секунды) или None — снять; нет ключа — не трогать
+    if "early_open_at" in access:
+        early = access["early_open_at"]
+        if early is not None and (isinstance(early, bool) or not isinstance(early, (int, float))):
+            return None
+        result["early_open_at"] = early
+    return result
 
 
 class CarEditorApi:
@@ -457,7 +465,7 @@ class CarEditorApi:
             return {"ok": True, "available": False, "error": str(exc)}
         return {"ok": True, "available": True, "path": rel_path,
                 "restricted": bool(data.get("restricted")), "groups": data.get("groups") or [],
-                "all_groups": data.get("all_groups") or []}
+                "all_groups": data.get("all_groups") or [], "early_open_at": data.get("early_open_at")}
 
     def admin_login(self, base_url: str, username: str, password: str) -> dict:
         try:
@@ -695,11 +703,19 @@ class CarEditorApi:
                 return  # сервер без групп — скрытых моделей на нём и не бывает
             if current.get("restricted"):
                 access = {"restricted": True, "groups": current.get("groups") or []}
+                if current.get("early_open_at"):  # ранний доступ тоже переезжает на новый путь
+                    access["early_open_at"] = current["early_open_at"]
         if access is None:
             return
-        set_model_access(base_url, cookie, new_rel, access["restricted"], access["groups"])
-        self._log("Доступ к модели: " + ("скрыта (видят администраторы и выбранные группы)."
-                                          if access["restricted"] else "видна всем."))
+        if "early_open_at" in access:
+            set_model_access(base_url, cookie, new_rel, access["restricted"], access["groups"],
+                             early_open_at=access["early_open_at"])
+        else:
+            set_model_access(base_url, cookie, new_rel, access["restricted"], access["groups"])
+        early = access.get("early_open_at")
+        self._log("Доступ к модели: " + (
+            f"ранний доступ для подписчиков Boosty, всем — с {datetime.fromtimestamp(early):%d.%m.%Y}." if early
+            else "скрыта (видят администраторы и выбранные группы)." if access["restricted"] else "видна всем."))
 
     @staticmethod
     def _upload_progress():

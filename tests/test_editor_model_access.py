@@ -46,7 +46,8 @@ class _AdminHandler(http.server.BaseHTTPRequestHandler):
         rule = self.server.rules.get(path)
         payload = {"ok": True, "all_groups": [{"id": 1, "name": "Тестировщики"}]}
         if path:
-            payload.update({"path": path, "restricted": rule is not None, "groups": rule or []})
+            payload.update({"path": path, "restricted": rule is not None, "groups": rule or [],
+                            "early_open_at": self.server.early.get(path)})
         self._reply(200, payload)
 
     def do_POST(self):
@@ -59,6 +60,12 @@ class _AdminHandler(http.server.BaseHTTPRequestHandler):
             self.server.rules[body["path"]] = body["groups"]
         else:
             self.server.rules.pop(body["path"], None)
+            self.server.early.pop(body["path"], None)
+        if body["restricted"] and "early_open_at" in body:  # как server/backend.py: null — снять, нет поля — не трогать
+            if body["early_open_at"] is None:
+                self.server.early.pop(body["path"], None)
+            else:
+                self.server.early[body["path"]] = body["early_open_at"]
         self._reply(200, {"ok": True})
 
 
@@ -66,6 +73,7 @@ class _AdminHandler(http.server.BaseHTTPRequestHandler):
 def admin_server():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _AdminHandler)
     server.calls, server.rules, server.supports_access, server.fail_post = [], {}, True, False
+    server.early = {}
     threading.Thread(target=server.serve_forever, daemon=True).start()
     server.url = f"http://127.0.0.1:{server.server_address[1]}"
     yield server
@@ -146,6 +154,28 @@ def test_access_info_for_editor(editor, admin_server, tmp_path, monkeypatch):
     ({"restricted": True, "groups": [True]}, None),
     ({"restricted": False, "groups": [1]}, {"restricted": False, "groups": []}),
     ({"restricted": True}, {"restricted": True, "groups": []}),
+    ({"restricted": True, "early_open_at": 2e9}, {"restricted": True, "groups": [], "early_open_at": 2e9}),
+    ({"restricted": True, "early_open_at": None}, {"restricted": True, "groups": [], "early_open_at": None}),
+    ({"restricted": True, "early_open_at": "12.10"}, None), ({"restricted": True, "early_open_at": True}, None),
 ])
 def test_access_payload_is_validated(raw, expected):
     assert _clean_access(raw) == expected
+
+
+def test_early_access_choice_is_sent_before_upload(editor, admin_server):
+    """«Кто видит → Ранний доступ (подписчики Boosty)»: дата открытия для всех уходит на сервер вместе со скрытием."""
+    editor._apply_access(admin_server.url, COOKIE, "Haval/H6", None,
+                         {"restricted": True, "groups": [], "early_open_at": 2_000_000_000.0})
+    assert admin_server.calls == [("POST", "/admin/api/access",
+                                   {"path": "Haval/H6", "restricted": True, "groups": [], "early_open_at": 2_000_000_000.0}, COOKIE)]
+    assert admin_server.early == {"Haval/H6": 2_000_000_000.0}
+    # сменили на «Только администраторы» — ранний доступ снимается явно
+    editor._apply_access(admin_server.url, COOKIE, "Haval/H6", None, {"restricted": True, "groups": [], "early_open_at": None})
+    assert admin_server.early == {} and admin_server.rules == {"Haval/H6": []}
+
+
+def test_rename_of_early_access_model_keeps_the_date(editor, admin_server):
+    admin_server.rules["Haval/H6"] = []
+    admin_server.early["Haval/H6"] = 2_000_000_000.0
+    editor._apply_access(admin_server.url, COOKIE, "Haval/H6 New", Path("Haval/H6"), None)
+    assert admin_server.rules["Haval/H6 New"] == [] and admin_server.early["Haval/H6 New"] == 2_000_000_000.0
