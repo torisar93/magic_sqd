@@ -7,6 +7,7 @@ const { read, slice, assert, run } = require("./_util");
 module.exports = async function () {
   const file = "app/web/frontend/js/screens/graph_wizard.js";
   const code = "let accessInitial = null; let accessMultiGroups = []; let steps = [];\n"
+    + "function renderCanvas(){} function renderProperties(){}\n"
     + slice(read(file), "  async function loadAccessControl() {", "  // Шаги без сохранённой позиции", file);
   const box = { hidden: true, title: "", after() {} };
   const select = { children: [], value: "", replaceChildren(...opts) {
