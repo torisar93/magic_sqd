@@ -45,6 +45,8 @@ _ADB_INSTALL_STREAM_RE = re.compile(r"^#install_stream\s+(\S+)\s*$", re.IGNORECA
 # и остальные маркеры выше) — "shell" молчит на успехе (см. InstallEngine.kt:
 # "shell" -> AdbShellResult.Output -> {}), "shell_log" явно пишет вывод в лог.
 _ADB_LOG_RE = re.compile(r"^#log\s+(.+)$", re.IGNORECASE)
+# "#py <модуль>.<функция> [аргументы]" — см. app/car_generator.py: _ADB_PY_RE; исполняет py_runner.py (PyCtxBridge).
+_ADB_PY_RE = re.compile(r"^#py\s+([A-Za-z]\w*)\.([A-Za-z]\w*)(?:\s+(.*?))?\s*$", re.IGNORECASE)
 
 _DEV = r"(?:\s+-s\s+\S+)?"
 _RAW_ADB_ROOT_RE = re.compile(rf"^adb{_DEV}\s+root\s*$", re.IGNORECASE)
@@ -61,6 +63,17 @@ _RAW_CAT_PM_INSTALL_STREAM_RE = re.compile(
 _BAT_TIMEOUT_RE = re.compile(r"^TIMEOUT\s+/T\s+([\d.]+)", re.IGNORECASE)
 _BAT_NOOP_RE = re.compile(
     r"^(@?echo(\s|\.|$)|cls\s*$|color\s|pause\s*$|rem[:\s]|::|:\w+\s*$)", re.IGNORECASE)
+
+
+def _py_args(text) -> list:
+    """Аргументы «#py» — как app/car_generator.py: _py_args."""
+    if not text:
+        return []
+    import shlex
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return text.split()
 
 
 def _adb_basename(local: str) -> str:
@@ -94,6 +107,8 @@ def parse_adb_line(line: str) -> dict:
         return {"kind": "install_stream", "file": _adb_basename(m.group(1))}
     if m := _ADB_LOG_RE.match(line):
         return {"kind": "shell_log", "command": m.group(1).strip()}
+    if m := _ADB_PY_RE.match(line):
+        return {"kind": "py", "module": m.group(1), "function": m.group(2), "args": _py_args(m.group(3))}
 
     if _RAW_ADB_ROOT_RE.match(line):
         return {"kind": "root"}

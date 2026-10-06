@@ -1827,9 +1827,54 @@
   };
 
   function onAdbAskInput(event) {
-    promptText(event.prompt, "", (value) => {
-      Bridge.call("adb_ask_input_response", { requestId: event.requestId, value });
-    });
+    const answer = (value) => Bridge.call("adb_ask_input_response", { requestId: event.requestId, value });
+    if (event.cancellable) promptAsk(event, answer);
+    else promptText(event.prompt, "", answer);
+  }
+
+  // Вопрос общего Python-кода каталога (ctx.ask_input/ask_choice — PyCtxBridge.kt, py_runner.py): как окно ask_choice
+  // на ПК — список вариантов с фильтром и «Ввести вручную…» (если можно), плюс «Отмена» (пустой ответ — функция
+  // останавливается). Код ждёт ответа, поэтому окно не закрывается тапом мимо.
+  function promptAsk(event, onSubmit) {
+    const choices = Array.isArray(event.choices) ? event.choices.map(String) : [];
+    const overlay = el("div", { class: "modal-overlay" });
+    const done = (value) => { overlay.remove(); onSubmit(value); };
+    const cancelBtn = el("button", { text: "Отмена", onclick: () => done("") });
+    const box = el("div", { class: "modal-box" });
+    function showInput() {
+      clear(box);
+      const input = el("input", { type: "text" });
+      const ok = el("button", { class: "accent", text: "OK", onclick: () => done(input.value.trim()) });
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") done(input.value.trim()); });
+      if (event.title) box.appendChild(el("p", { class: "stage-text", style: "font-weight: 600", text: event.title }));
+      box.append(el("p", { class: "stage-text", text: event.prompt || "" }), input, ok, cancelBtn);
+      input.focus();
+    }
+    function showList() {
+      clear(box);
+      const listWrap = el("div", { class: "host-scan-list" });
+      const filterInput = el("input", { type: "text", placeholder: "Фильтр" });
+      function renderList() {
+        clear(listWrap);
+        const f = filterInput.value.trim().toLowerCase();
+        const filtered = f ? choices.filter((c) => c.toLowerCase().includes(f)) : choices;
+        if (!filtered.length) {
+          listWrap.appendChild(el("p", { class: "stage-text", style: "color: var(--text-dim)", text: "Ничего не найдено." }));
+        }
+        filtered.forEach((choice) => listWrap.appendChild(el("button", { text: choice, onclick: () => done(choice) })));
+      }
+      filterInput.addEventListener("input", renderList);
+      renderList();
+      if (event.title) box.appendChild(el("p", { class: "stage-text", style: "font-weight: 600", text: event.title }));
+      box.append(el("p", { class: "stage-text", text: event.prompt || "" }));
+      if (choices.length > 8) box.appendChild(filterInput);
+      box.appendChild(listWrap);
+      if (event.allowManual !== false) box.appendChild(el("button", { text: "Ввести вручную…", onclick: showInput }));
+      box.appendChild(cancelBtn);
+    }
+    if (choices.length) showList(); else showInput();
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
   }
 
   function filesByNameFrom(paths) {

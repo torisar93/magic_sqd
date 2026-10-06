@@ -420,6 +420,10 @@ object AdbPermissions {
 
     fun uninstallHelper(context: android.content.Context): File = File(context.filesDir, "cars/_shared/$UNINSTALL_HELPER")
 
+    /** Удалить dex-хелпером, минуя pm (ctx.uninstall_via_helper общего Python-кода, PyCtxBridge). true — удалено. */
+    fun removePackageViaHelper(context: android.content.Context, pkg: String, log: (String) -> Unit): Boolean =
+        removeViaHelper(pkg, uninstallHelper(context), log) == Removal.Removed
+
     /** Наш dex-хелпер удаления (исходник — helpers/uninstall_helper): app_process от имени shell →
      * PackageInstaller.uninstall. Прошивки, закрывшие pm, пропускают app_process — так же ставит хелпер установки.
      * Откат в сток на N155 упирался в «удалите штатно» (логи №797, №962, №1664, №1746). Проверено на эмуляторе

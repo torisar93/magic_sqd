@@ -84,6 +84,8 @@ class InstallEngine(
     private val context: Context,
     private val log: (String) -> Unit,
     private val requestAskInput: (requestId: String, prompt: String) -> Unit,
+    /** Для «#py модуль.функция» — общий Python-код каталога (PyCtxBridge, py_runner.py); null — команда недоступна. */
+    private val pyBridge: PyCtxBridge? = null,
 ) {
     /**
      * commands — JSONArray объектов {"kind": ..., ...}, как возвращает
@@ -215,6 +217,21 @@ class InstallEngine(
                         is AdbShellResult.Rejected -> log("Команда отклонена устройством: $command (${r.reason})")
                         is AdbShellResult.Failed -> return StageRunResult.Failed("'$command': ${r.reason}")
                     }
+                }
+
+                // "#py <модуль>.<функция> [аргументы]" (wizard_spec.py, app/car_generator.py: _ADB_PY_RE) — та же
+                // функция из cars/_shared, что исполняет ПК: py_runner.py поверх PyCtxBridge.
+                "py" -> {
+                    val bridge = pyBridge
+                        ?: return StageRunResult.Failed("Команда #py в этом месте приложения недоступна — обновите приложение.")
+                    val raw = cmd.optJSONArray("args") ?: JSONArray()
+                    val args = JSONArray()
+                    for (i in 0 until raw.length()) {
+                        val arg = raw.optString(i)
+                        args.put(if (lastAsk != null) arg.replace("{ask}", lastAsk) else arg)
+                    }
+                    val r = bridge.call(cmd.getString("module"), cmd.getString("function"), args, files = filesByName)
+                    if (!r.ok) return StageRunResult.Failed(r.error.ifBlank { "${cmd.getString("module")}.${cmd.getString("function")}: ошибка" })
                 }
 
                 else -> log("Неизвестный тип команды в _wizard_spec.json: ${cmd.getString("kind")}")

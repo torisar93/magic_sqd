@@ -23,7 +23,9 @@
     "штатный install не работает (например Jetour Dashing на Android 9, Soueast S09); " +
     "размер в -S подставляется автоматически по текущему файлу\n" +
     "#ask Введите IP-адрес — спросить у пользователя во время установки; ответ можно " +
-    "подставить в следующую команду через {ask}, например:\nconnect {ask}:5555\n\n" +
+    "подставить в следующую команду через {ask}, например:\nconnect {ask}:5555\n" +
+    "#py модуль.функция аргументы — вызвать функцию из cars/_shared/модуль.py (на ПК и на Android, с подписью " +
+    "разработчика — scripts/publish_shared.py), например:\n#py adb_permissions.disable_app com.example\n\n" +
     "Из .bat/.sh распознаются как есть (без переписывания в #-спецкоманды): " +
     "adb root/remount/disable-verity/reboot/wait-for-device, adb shell <команда>, " +
     "adb push <файл> <путь>, adb install <apk>, cat файл | pm install -S размер, TIMEOUT /T N.";
@@ -261,7 +263,8 @@
       "#push ИмяФайла /remote/path — закачать прикреплённый файл (см. ниже)\n" +
       "#install ИмяФайла — установить прикреплённый APK\n" +
       "#ask Введите значение — спросить у пользователя, ответ можно подставить в следующую команду " +
-      "через {ask}.";
+      "через {ask}.\n" +
+      "#py модуль.функция аргументы — вызвать функцию из cars/_shared/модуль.py (ПК и Android).";
 
     function renderActionsFields(step) {
       renderConnectionRow(step, "actions_connection", "actions_wifi_port");

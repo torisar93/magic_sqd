@@ -1396,6 +1396,12 @@ _ADB_INSTALL_STREAM_RE = re.compile(r"^#install_stream\s+(\S+)\s*$", re.IGNORECA
 # техник потом отправит через "Сообщить о проблеме", поэтому отдельный маркер,
 # а не финальный fallback.
 _ADB_LOG_RE = re.compile(r"^#log\s+(.+)$", re.IGNORECASE)
+# "#py <модуль>.<функция> [аргументы]" — вызвать функцию(ctx, *аргументы) из cars/_shared/<модуль>.py (владелец,
+# 2026-10-06: «чтобы обновлений приложения стало поменьше»). ПК исполняет её как остальной код каталога, Android —
+# тем же Python (android/.../python/py_runner.py, только с подписью разработчика). Так новая процедура для магнитолы
+# пишется один раз и доходит до обеих платформ с каталогом, без выпуска программы. Аргументы — через пробел, в
+# кавычках можно с пробелами; {ask} — ответ последнего #ask.
+_ADB_PY_RE = re.compile(r"^#py\s+([A-Za-z]\w*)\.([A-Za-z]\w*)(?:\s+(.*?))?\s*$", re.IGNORECASE)
 
 # "Сырые" строки прямо из .bat/.sh — необязательный "-s <serial>" после adb
 # (техник мог скопировать команду вместе с указанием устройства).
@@ -1425,6 +1431,18 @@ _RAW_CAT_PM_INSTALL_STREAM_RE = re.compile(
 _BAT_TIMEOUT_RE = re.compile(r"^TIMEOUT\s+/T\s+([\d.]+)", re.IGNORECASE)
 _BAT_NOOP_RE = re.compile(
     r"^(@?echo(\s|\.|$)|cls\s*$|color\s|pause\s*$|rem[:\s]|::|:\w+\s*$)", re.IGNORECASE)
+
+
+def _py_args(text) -> list:
+    """Аргументы «#py»: как в shell — через пробел, в кавычках можно с пробелами; непарная кавычка — просто по
+    пробелам."""
+    if not text:
+        return []
+    import shlex
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return text.split()
 
 
 def _adb_basename(local: str) -> str:
@@ -1463,6 +1481,8 @@ def _parse_adb_line(line: str) -> tuple[str, object]:
         return "install_stream", _adb_basename(m.group(1))
     if m := _ADB_LOG_RE.match(line):
         return "shell_log", m.group(1).strip()
+    if m := _ADB_PY_RE.match(line):
+        return "py", (m.group(1), m.group(2), _py_args(m.group(3)))
 
     # "Сырые" строки прямо из .bat/.sh автора набора (см. пояснение выше).
     if _RAW_ADB_ROOT_RE.match(line):
@@ -1532,6 +1552,13 @@ def _render_command_body(commands: list[str], files_rel_prefix: str) -> list[str
         elif kind == "install_stream":
             rel = f"{files_rel_prefix}/{payload}"
             lines.append(f"    ctx.install_apk_stream(ctx.file({rel!r}))")
+        elif kind == "py":
+            # __import__ — модуль из cars/_shared (stages.py уже добавил её в sys.path): так вызов работает и в
+            # программах, вышедших до «#py».
+            module, function, args = payload
+            rendered = "".join(
+                f", {a!r}.replace('{{ask}}', str(_ask))" if "{ask}" in a else f", {a!r}" for a in args)
+            lines.append(f"    __import__({module!r}).{function}(ctx{rendered})")
         elif kind == "shell_log":
             if "{ask}" in payload:
                 lines.append(

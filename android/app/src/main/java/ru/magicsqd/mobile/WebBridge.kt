@@ -24,6 +24,7 @@ import ru.magicsqd.mobile.usb.MotionOptimize
 import ru.magicsqd.mobile.usb.InstalledApp
 import ru.magicsqd.mobile.usb.MdnsResolve
 import ru.magicsqd.mobile.usb.NetworkScan
+import ru.magicsqd.mobile.usb.PyCtxBridge
 import ru.magicsqd.mobile.usb.StageRunResult
 import ru.magicsqd.mobile.usb.UsbFlashSession
 import ru.magicsqd.mobile.usb.readQrAdbBugreportZip
@@ -62,6 +63,15 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // Тот же адрес, что и в server.json на десктопе — публичный
         // content-сервер, не секрет.
         private const val BASE_URL = "https://magicsqd.ru/content"
+        /** «Доп. действие» → функция cars/_shared/adb_permissions.py (её же вызывает ПК), см. runPyAction. */
+        private val PY_ACTIONS = mapOf(
+            "grant_permissions" to "grant_all_permissions",
+            "mock_location" to "set_mock_location_app",
+            "launch_activity" to "launch_main_activity",
+            "uninstall_app" to "uninstall_app",
+            "disable_app" to "disable_app",
+            "enable_app" to "enable_app",
+        )
         // ИИ-чат (см. chat_bridge.py, server/backend.py: POST /chat) — тот же
         // сервер/ключ, что и в submit.json на десктопе (X-Submit-Key — не
         // настоящий секрет, анти-спам заглушка, лежит в каждом установленном
@@ -1207,8 +1217,49 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         return "$trimmed%$ifaceName"
     }
 
-    private fun installEngine() = InstallEngine(context, ::pushAdbLog) { requestId, prompt ->
+    private fun installEngine(): InstallEngine = InstallEngine(context, ::pushAdbLog, { requestId, prompt ->
         pushEvent(JSONObject().put("kind", "adb_ask_input").put("requestId", requestId).put("prompt", prompt))
+    }, pyBridge())
+
+    /** Kotlin-примитивы для общего Python-кода каталога (PyCtxBridge, py_runner.py): журнал, «Стоп», окна вопросов
+     * (со списком вариантов, как ask_choice на ПК), «работа в движении». */
+    private fun pyBridge(): PyCtxBridge = PyCtxBridge(
+        context, ::pushAdbLog, { labCancelInstall },
+        requestAsk = { requestId, prompt, title, choices, allowManual ->
+            pushEvent(JSONObject().put("kind", "adb_ask_input").put("requestId", requestId).put("prompt", prompt)
+                .put("title", title).put("choices", choices).put("allowManual", allowManual).put("cancellable", true))
+        },
+        motion = { pkg ->
+            if (!MotionOptimize.certReady(context)) syncSharedFolder(MotionOptimize.CERT_FOLDER)
+            MotionOptimize.run(context, pkg, installEngine(), { labCancelInstall }, ::pushAdbLog)
+        },
+    )
+
+    /** Какие «Доп. действия» исполнять общим Python-кодом каталога (cars/_shared/adb_permissions.py — тот же, что на
+     * ПК), а не встроенным Kotlin-портом, решает сервер: content/config/client.json, settings.android_py_actions —
+     * список kind. Так действия переводятся по одному после проверки на живой магнитоле и так же откатываются — без
+     * выпуска приложения. */
+    private fun pyActionEnabled(kind: String): Boolean = try {
+        val config = JSONObject(clientConfigFile.readText())
+        val kinds = config.optJSONObject("settings")?.optJSONArray("android_py_actions")
+        config.optInt("schema") == 1 && kinds != null && (0 until kinds.length()).any { kinds.optString(it) == kind }
+    } catch (_: Exception) {
+        false
+    }
+
+    /** true — действие выполнил общий Python-код; false — делать встроенным способом (не включено сервером или
+     * код каталога недоступен: нет модуля, подписи или функции). */
+    private fun runPyAction(kind: String, pkg: String): Boolean {
+        val function = PY_ACTIONS[kind] ?: return false
+        if (!pyActionEnabled(kind)) return false
+        labCancelInstall = false
+        val r = pyBridge().call("adb_permissions", function, JSONArray().put(pkg))
+        if (r.unavailable) {
+            pushAdbLog("Общий код каталога недоступен (${r.error}) — делаю встроенным способом.")
+            return false
+        }
+        if (!r.ok) pushAdbLog(if (r.cancelled) r.error else "Не удалось: ${r.error}")
+        return true
     }
 
     /** Исполняет команды одного "adb"-этапа (args.commands — как вернул
@@ -1233,6 +1284,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     // точечно прямо здесь — модель больше не докачивается
                     // целиком при открытии (см. mobile_bridge.sync_payload).
                     if (!skipDownload) ensureApksDownloaded(filesByName.values.toList())
+                    // «Стоп» прошлой операции не должен остановить «#py» этого этапа (PyCtxBridge.isCancelled).
+                    labCancelInstall = false
                     installEngine().runAdbCommands(commands, filesByName)
                 }
             } catch (e: Exception) {
@@ -1659,38 +1712,58 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             pushAdbLog("ADB не подключён — команда не выполнена.")
             emptyList()
         } else {
-            AdbPermissions.listInstalledPackages(thirdPartyOnly, ::pushAdbLog)
+            pyListPackages(thirdPartyOnly) ?: AdbPermissions.listInstalledPackages(thirdPartyOnly, ::pushAdbLog)
         }
         pushEvent(JSONObject().put("kind", "actions_packages_result").put("packages", JSONArray(packages)))
     }
 
+    /** Список пакетов общим Python-кодом (adb_permissions.list_installed_packages), если сервер включил его для
+     * "list_packages" (см. pyActionEnabled); null — встроенным способом. */
+    private fun pyListPackages(thirdPartyOnly: Boolean): List<String>? {
+        if (!pyActionEnabled("list_packages")) return null
+        val r = pyBridge().call("adb_permissions", "list_installed_packages", JSONArray().put(thirdPartyOnly))
+        val list = r.result as? JSONArray
+        if (!r.ok || list == null) {
+            if (r.unavailable) pushAdbLog("Общий код каталога недоступен (${r.error}) — делаю встроенным способом.")
+            else pushAdbLog("Не удалось получить список общим кодом каталога: ${r.error} — делаю встроенным способом.")
+            return null
+        }
+        return (0 until list.length()).map { list.optString(it) }.filter { it.isNotBlank() }
+    }
+
     private fun actionsGrantPermissions(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        if (runPyAction("grant_permissions", pkg)) return@runExclusive
         AdbPermissions.grantAllPermissions(pkg, ::pushAdbLog)
     }
 
     private fun actionsMockLocation(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        if (runPyAction("mock_location", pkg)) return@runExclusive
         AdbPermissions.setMockLocationApp(pkg, ::pushAdbLog)
     }
 
     private fun actionsLaunchActivity(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        if (runPyAction("launch_activity", pkg)) return@runExclusive
         AdbPermissions.launchMainActivity(pkg, ::pushAdbLog)
     }
 
     private fun actionsUninstallApp(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        if (runPyAction("uninstall_app", pkg)) return@runExclusive
         AdbPermissions.uninstallApp(context, pkg, ::pushAdbLog)
     }
 
     private fun actionsDisableApp(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        if (runPyAction("disable_app", pkg)) return@runExclusive
         AdbPermissions.disableApp(pkg, ::pushAdbLog)
     }
 
     private fun actionsEnableApp(pkg: String) = runExclusive(::onBusy) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
+        if (runPyAction("enable_app", pkg)) return@runExclusive
         AdbPermissions.enableApp(pkg, ::pushAdbLog)
     }
 
