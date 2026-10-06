@@ -255,6 +255,25 @@
       "source": "https://jetour-ru.com/",
       "sourceSha256": "c428c11b8bdbdbf37f824b52905a2f652d0878866465283be12995330396d550"
     },
+    "kaiyi": {
+      "src": "brands/kaiyi.webp",
+      "size": [
+        630,
+        249
+      ],
+      "alphaBounds": [
+        0,
+        0,
+        630,
+        249
+      ],
+      "approved": true,
+      "vector": false,
+      "officialContour": true,
+      "opticalScale": 1,
+      "source": "logo.webp от владельца (папка «new cars», 2026-10-06)",
+      "sourceSha256": "172151b25cade407525989c8875344a95a7da6b1ecc9917e243e4dad307b3e40"
+    },
     "knewstar": {
       "src": "brands/knewstar.svg",
       "size": [
