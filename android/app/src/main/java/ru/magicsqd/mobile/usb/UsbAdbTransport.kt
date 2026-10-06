@@ -653,10 +653,10 @@ fun runAdbService(
     return AdbShellResult.Output(String(output.toByteArray(), Charsets.UTF_8))
 }
 
-/** Частный случай runAdbService для обычных shell-команд. */
+/** Частный случай runAdbService для обычных shell-команд. Пароль подтверждения команд (Changan) — ShellVerifyPassword. */
 fun runAdbShellCommand(
     transport: AdbTransport,
     command: String,
     log: (String) -> Unit,
     timeoutMs: Int = TIMEOUT_MS,
-): AdbShellResult = runAdbService(transport, "shell:$command", log, timeoutMs)
+): AdbShellResult = ShellVerifyPassword.run(command, log) { runAdbService(transport, "shell:$it", log, timeoutMs) }

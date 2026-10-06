@@ -261,6 +261,39 @@ class AdbError(RuntimeError):
     pass
 
 
+# Changan (прошивка changan_car — UNI-K, CS35 Plus New и родня): команды shell спрашивают пароль подтверждения
+# со своего stdin («please input verify password:»); без него — «verify failed!» и отказ (лог №1073 — ПК, adb install
+# и pm install; №3524–3529 — Android, ни одной установки). Пароль известен (инструкции моделей Changan, владелец
+# 06.10.2026: «adb369875 или adb36987»). Копия — android/.../usb/ShellVerifyPassword.kt.
+VERIFY_PASSWORDS = ("adb369875", "adb36987")
+
+
+def asks_verify_password(text: str) -> bool:
+    return "verify password" in (text or "").lower()
+
+
+def verify_password_failed(text: str) -> bool:
+    return "verify failed" in (text or "").lower()
+
+
+def with_verify_password(command: str, password: str) -> str:
+    """Команда, которой пароль приходит первой строкой stdin (группа — чтобы он дошёл и до «a && b», и до «a; b»).
+    Строка одна: в команде с несколькими вызовами pm пароль достанется только первому — программа зовёт pm по
+    одному на команду (pm grant, pm install)."""
+    return f"echo {password} | {{\n{command}\n}}"
+
+
+def _output(result) -> str:
+    return (result.stdout or "") + (result.stderr or "")
+
+
+def strip_verify_prompt(text: str) -> str:
+    """Приглашение «please input verify password:» печатается и при верном пароле — убираем его из вывода, чтобы
+    разбор вывода (Success, package:…) шёл как без пароля."""
+    import re
+    return re.sub(r"please input verify password:[ \t]*", "", text or "", flags=re.I)
+
+
 # Команды верхнего уровня adb (управляют самим adb/подключением) в отличие
 # от произвольного текста, который должен выполниться ВНУТРИ шелла
 # устройства. Мини-консоль под логом главного окна (см.
@@ -337,6 +370,8 @@ class Adb:
         self.adb_path = adb_path
         self.device = device
         self._log = log or (lambda msg: None)
+        # Пароль подтверждения команд (Changan, см. VERIFY_PASSWORDS): какой подошёл — тот и подаём дальше сами.
+        self.verify_password: str | None = None
 
     def _base_args(self):
         args = [self.adb_path]
@@ -385,8 +420,13 @@ class Adb:
             raise AdbError(message) from exc
         except subprocess.TimeoutExpired as exc:
             raise AdbError(f"Команда не ответила за {timeout} сек: {' '.join(cmd)}") from exc
+        if check:
+            self._raise_if_failed(cmd, result)
+        return result
 
-        if check and result.returncode != 0:
+    @staticmethod
+    def _raise_if_failed(cmd, result) -> None:
+        if result.returncode != 0:
             # capture_output=True выше и так уже ловит stdout/stderr на КАЖДЫЙ
             # вызов — раньше это просто никогда не читалось при ошибке, из-за
             # чего в логе (и клиенту, и в присланном на сервер логе установки)
@@ -403,10 +443,41 @@ class Adb:
             if detail:
                 message += f"\n{detail}"
             raise AdbError(message)
-        return result
 
     def shell(self, command: str, check=True, timeout=120):
-        return self.run("shell", command, check=check, timeout=timeout)
+        """adb shell; на магнитоле, которая спрашивает пароль подтверждения команд (Changan, см. VERIFY_PASSWORDS),
+        подаёт его сам: сначала как есть, при запросе — с известными паролями, подошедший — во все следующие."""
+        known = self.verify_password
+        if known is None:
+            result = self.run("shell", command, check=False, timeout=timeout)
+            if asks_verify_password(_output(result)):
+                self._log("Магнитола спрашивает пароль подтверждения команд (Changan) — подаю известный пароль...")
+                result = self._find_verify_password(command, timeout) or result
+                if self.verify_password is None:
+                    self._log(f"Известные пароли подтверждения не подошли ({', '.join(VERIFY_PASSWORDS)}).")
+        else:
+            result = self.run("shell", with_verify_password(command, known), check=False, timeout=timeout)
+            # Не подошёл и найденный пароль: другой пароль или команда, которой stdin нужен под данные (cat … |
+            # pm install -S — пароль туда не подать). Найденный не забываем — следующим командам он нужен.
+            if verify_password_failed(_output(result)):
+                result = self._find_verify_password(command, timeout, skip=known) or result
+        if self.verify_password is not None:
+            result = subprocess.CompletedProcess(result.args, result.returncode, strip_verify_prompt(result.stdout),
+                                                 strip_verify_prompt(result.stderr))
+        if check:
+            self._raise_if_failed(self._base_args() + ["shell", command], result)
+        return result
+
+    def _find_verify_password(self, command: str, timeout, skip: str | None = None) -> subprocess.CompletedProcess | None:
+        for password in VERIFY_PASSWORDS:
+            if password == skip:
+                continue
+            result = self.run("shell", with_verify_password(command, password), check=False, timeout=timeout)
+            if not verify_password_failed(_output(result)):
+                self.verify_password = password
+                self._log("Пароль подтверждения подошёл — дальше подаю его в каждую команду сам.")
+                return result
+        return None
 
     def install(self, apk_path, reinstall=True, extra_args=None, timeout=180):
         apk_path = str(apk_path)
@@ -438,7 +509,7 @@ class Adb:
         self._log("Ожидание полной загрузки системы...")
         deadline = time.time() + timeout
         while time.time() < deadline:
-            result = self.run("shell", "getprop sys.boot_completed", check=False, timeout=10)
+            result = self.shell("getprop sys.boot_completed", check=False, timeout=10)
             if result.stdout and result.stdout.strip() == "1":
                 self._log("Система загружена.")
                 return

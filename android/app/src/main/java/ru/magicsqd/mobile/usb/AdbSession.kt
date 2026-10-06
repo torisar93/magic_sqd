@@ -93,6 +93,7 @@ object AdbSession {
         val result = performCnxnHandshake(usbTransport, context, log)
         if (result is AdbHandshakeResult.Connected) {
             deviceModel = parseDeviceModel(result.bannerFromDevice)
+            ShellVerifyPassword.onConnected(result.bannerFromDevice)
             transport = LinkWatch(usbTransport)
             mode = Mode.USB
         } else {
@@ -129,6 +130,7 @@ object AdbSession {
         val result = performCnxnHandshake(tcpTransport, context, log)
         if (result is AdbHandshakeResult.Connected) {
             deviceModel = parseDeviceModel(result.bannerFromDevice)
+            ShellVerifyPassword.onConnected(result.bannerFromDevice)
             transport = LinkWatch(tcpTransport)
             mode = Mode.WIFI
             wifiHost = host
