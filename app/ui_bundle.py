@@ -28,6 +28,11 @@ import re
 import shutil
 import urllib.error
 import urllib.request
+
+try:
+    from . import content_sync  # ПК: пакет app
+except ImportError:  # pragma: no cover
+    import content_sync  # Android
 import zipfile
 from pathlib import Path, PurePosixPath
 
@@ -226,7 +231,7 @@ def install(root, platform: str, app_version: str, entry: dict, data: bytes, bui
 
 
 def _get(url: str, timeout: float, limit: int) -> bytes:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
+    with content_sync.open_url(url, timeout) as resp:
         data = resp.read(limit + 1)
     if len(data) > limit:
         raise ValueError("слишком большой ответ сервера")

@@ -51,3 +51,16 @@ def get_base_url(base_dir: Path) -> str | None:
 def get_download_base_url(base_dir: Path) -> str | None:
     url = _read_server_json(base_dir).get("download_base_url") or None
     return url.rstrip("/") if url else None
+
+
+def get_app_build_secret(base_dir: Path) -> bytes:
+    """Секрет официальной сборки (hex в server.json, вшит CI из MAGICSQD_BUILD_SECRET) — для токена
+    доступа к каталогу и ключа шифрования (см. catalog_setup). Нет/из исходников — b"" (токена и
+    шифрования не будет, всё работает как раньше со старым сервером)."""
+    value = _read_server_json(base_dir).get("app_build_secret")
+    if not isinstance(value, str) or not value:
+        return b""
+    try:
+        return bytes.fromhex(value.strip())
+    except ValueError:
+        return b""

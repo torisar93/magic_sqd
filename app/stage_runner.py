@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-from . import closed_stages
+from . import catalog_key, closed_stages
 
 STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction", "uart", "telnet", "actions", "qr_adb")
 
@@ -98,9 +98,13 @@ def stage_instruction_html_path(model, stage: dict) -> Path | None:
 
 
 def _load_module(script_path: Path):
-    spec = importlib.util.spec_from_file_location(
-        f"car_stages_script_{abs(hash(str(script_path)))}", script_path
-    )
+    # Файл модели на устройстве зашифрован (catalog_key) — читаем исходник с расшифровкой и исполняем
+    # из строки; __file__ ставим реальным, чтобы сгенерированный stages.py нашёл _shared через
+    # Path(__file__).parents и построил пути к files/. Из исходников (плейнтекст) — то же самое.
+    source = catalog_key.read_text(script_path)
+    name = f"car_stages_script_{abs(hash(str(script_path)))}"
+    spec = importlib.util.spec_from_loader(name, loader=None)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module.__file__ = str(script_path)
+    exec(compile(source, str(script_path), "exec"), module.__dict__)
     return module

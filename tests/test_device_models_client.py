@@ -24,12 +24,15 @@ class _Resp(io.BytesIO):
 
 
 def _serve(monkeypatch, module, payload=None, error=None):
+    # ПК ходит через content_sync.open_url (токен сборки) — urlopen получает объект Request; Android
+    # (mobile_bridge) — голый urlopen со строкой. Берём адрес из того и другого.
     def urlopen(url, timeout=None):
-        assert url.endswith("/device_models.json")
+        assert getattr(url, "full_url", url).endswith("/device_models.json")
         if error:
             raise error
         return _Resp(payload)
-    monkeypatch.setattr(module.urllib.request, "urlopen", urlopen)
+    target = getattr(module, "content_sync", module)
+    monkeypatch.setattr(target.urllib.request, "urlopen", urlopen)
 
 
 def test_desktop_keeps_a_copy_and_survives_offline(tmp_path, monkeypatch):

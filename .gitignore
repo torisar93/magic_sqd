@@ -166,3 +166,6 @@ installer_output/
 .venv-win7/
 build_win7/
 dist_win7/
+
+# Случайный секрет установки для шифрования каталога (catalog_setup) — у каждой машины свой
+.catalog_key

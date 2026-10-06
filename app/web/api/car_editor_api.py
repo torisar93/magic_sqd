@@ -16,6 +16,11 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from ... import catalog_key
+except ImportError:  # pragma: no cover
+    import catalog_key
+
 import webview
 
 from ..events import event_bridge
@@ -250,7 +255,7 @@ class CarEditorApi:
         if not spec_path.exists():
             return
         try:
-            raw = json.loads(spec_path.read_text(encoding="utf-8"))
+            raw = json.loads(catalog_key.read_text(spec_path))
         except (OSError, json.JSONDecodeError):
             return
         # Инструкции этапов «Инструкция», прежние инструкции этапов флешки/QR
@@ -266,7 +271,7 @@ class CarEditorApi:
                 if block.get("kind") == "instruction" and FLASH_BLOCK_ID_RE.fullmatch(block_id):
                     instr_dirs.append(model_dir / "files" / f"flash_{block_id}")
         try:
-            closed_raw = json.loads((model_dir / "_closed" / "_wizard_spec.json").read_text(encoding="utf-8"))
+            closed_raw = json.loads(catalog_key.read_text(model_dir / "_closed" / "_wizard_spec.json"))
         except (OSError, json.JSONDecodeError):
             closed_raw = {}
         for i, step_data in enumerate(closed_raw.get("steps", []), start=1):

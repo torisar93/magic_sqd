@@ -22,6 +22,9 @@ import os
 import struct
 
 MAGIC = b"MSQD1"
+# Заголовок + nonce + тег. ChaCha20 — потоковый шифр: шифртекст той же длины, что исходный файл,
+# поэтому зашифрованный файл на диске ровно на OVERHEAD байт больше размера в манифесте сервера.
+OVERHEAD = len(MAGIC) + 12 + 16
 _P1305 = (1 << 130) - 5
 _CONST = b"expand 32-byte k"
 
@@ -108,6 +111,21 @@ def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> bytes:
     nonce = os.urandom(12)
     ciphertext, tag = _aead_encrypt(key, nonce, plaintext, aad)
     return MAGIC + nonce + ciphertext + tag
+
+
+def stored_size_matches(path, st_size: int, expected: int) -> bool:
+    """Размер файла на диске соответствует размеру из манифеста (исходного файла): совпадает как есть,
+    или файл зашифрован (MSQD1) и больше ровно на OVERHEAD. Заголовок читаем только во втором случае —
+    сверка свежести идёт по тысячам файлов (content_sync._is_stale, offline_pack.is_current)."""
+    if st_size == expected:
+        return True
+    if expected >= 0 and st_size == expected + OVERHEAD:
+        try:
+            with open(path, "rb") as f:
+                return f.read(len(MAGIC)) == MAGIC
+        except OSError:
+            return False
+    return False
 
 
 def is_encrypted(blob: bytes) -> bool:

@@ -18,6 +18,15 @@ import json
 import time
 from pathlib import Path
 
+try:
+    from . import catalog_crypto  # ПК: модуль пакета app
+except ImportError:  # pragma: no cover
+    import catalog_crypto  # Android: плоский модуль
+try:
+    from . import catalog_key
+except ImportError:  # pragma: no cover
+    import catalog_key
+
 MARKER = "_offline.json"
 # files/ и usb_files/ модели и её закрытых этапов (_closed/, см. app/closed_stages.py — в манифесте они есть
 # только у тех, кому закрытые этапы открыты)
@@ -58,7 +67,7 @@ def shared_folders(model_dir: Path) -> list[str]:
 
     for spec_path in (Path(model_dir) / "_wizard_spec.json", Path(model_dir) / "_closed" / "_wizard_spec.json"):
         try:
-            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            spec = json.loads(catalog_key.read_text(spec_path))
         except (OSError, ValueError):
             continue
         walk(spec.get("steps") if isinstance(spec, dict) else None)
@@ -93,7 +102,8 @@ def is_current(path: Path, item: dict) -> bool:
         st = path.stat()
     except OSError:
         return False
-    if st.st_size != item.get("size", -1):
+    # Зашифрованный файл модели (catalog_key) на диске больше на catalog_crypto.OVERHEAD — это та же версия.
+    if not catalog_crypto.stored_size_matches(path, st.st_size, item.get("size", -1)):
         return False
     remote_mtime = item.get("mtime")
     return remote_mtime is None or abs(st.st_mtime - remote_mtime) <= 2 or st.st_mtime > remote_mtime

@@ -47,6 +47,7 @@ def _publish(server, *, apk=b"A" * 3000, extra_model=True):
 
 
 def _load_android(monkeypatch, *names):
+    monkeypatch.syspath_prepend(str(ANDROID_PY))  # catalog_crypto/catalog_key — плоские импорты как в Chaquopy
     for name in names:  # андроидные модули импортируют друг друга по короткому имени
         spec = importlib.util.spec_from_file_location(name, ANDROID_PY / f"{name}.py")
         module = importlib.util.module_from_spec(spec)

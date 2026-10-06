@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+
+from . import content_sync
 from pathlib import Path
 
 from .content_config import get_base_url
@@ -24,7 +26,7 @@ def refresh(base_dir: Path, timeout: float = 10) -> bool:
     if not base_url:
         return False
     try:
-        with urllib.request.urlopen(f"{base_url}/{CACHE_NAME}", timeout=timeout) as resp:
+        with content_sync.open_url(f"{base_url}/{CACHE_NAME}", timeout) as resp:
             raw = resp.read()
         if not _valid(json.loads(raw.decode("utf-8"))):
             return False

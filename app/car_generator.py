@@ -20,6 +20,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from . import catalog_key  # ПК: пакет app
+except ImportError:  # pragma: no cover
+    import catalog_key
+
 from . import closed_stages, instruction_html
 from .scanner import VERSION_FILENAME, read_status
 
@@ -633,7 +638,7 @@ def _merge_required_into_optional(required: list[StandardApkSpec],
 
 def _read_instruction_blocks(instr_dir: Path) -> list[dict]:
     try:
-        text = (instr_dir / "instruction.html").read_text(encoding="utf-8", errors="replace")
+        text = catalog_key.read_text(instr_dir / "instruction.html", errors="replace")
     except OSError:
         text = ""
     return instruction_html.parse_blocks(text, instr_dir) or []
@@ -785,7 +790,7 @@ def load_car_spec(model_dir: Path, brand: str, model: str, modification: str = "
     if not spec_path.exists():
         return None
     try:
-        data = json.loads(spec_path.read_text(encoding="utf-8"))
+        data = json.loads(catalog_key.read_text(spec_path))
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -1267,7 +1272,7 @@ def _write_version_file(model_dir: Path, changelog: str, status: str = "ok") -> 
     version_path = model_dir / VERSION_FILENAME
     revision = 0
     try:
-        existing = json.loads(version_path.read_text(encoding="utf-8"))
+        existing = json.loads(catalog_key.read_text(version_path))
         revision = int(existing.get("revision", 0))
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         pass

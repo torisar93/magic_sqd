@@ -5,6 +5,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+try:
+    from . import catalog_key  # ПК: пакет app
+except ImportError:  # pragma: no cover
+    import catalog_key
+
 # Статус модели (см. ModelInfo.status ниже, app/car_generator.py:
 # NewCarSpec.status) — ставится вручную в редакторе (визуальный граф,
 # см. app/web/frontend/js/screens/graph_wizard.js: renderHeader), а не
@@ -298,7 +303,7 @@ def _find_logo(directory: Path) -> Path | None:
 
 def _read_version(model_dir: Path) -> tuple[int, str, str, str]:
     try:
-        data = json.loads((model_dir / VERSION_FILENAME).read_text(encoding="utf-8"))
+        data = json.loads(catalog_key.read_text(model_dir / VERSION_FILENAME))
     except (OSError, json.JSONDecodeError):
         return 0, "", "ok", ""
     try:

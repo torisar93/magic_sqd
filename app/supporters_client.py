@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+
+from . import content_sync
 from pathlib import Path
 
 from .content_config import get_base_url
@@ -19,7 +21,7 @@ def fetch_supporters(base_dir: Path, timeout: float = 8) -> dict | None:
     if not base_url:
         return None
     try:
-        with urllib.request.urlopen(f"{base_url}/supporters.json", timeout=timeout) as resp:
+        with content_sync.open_url(f"{base_url}/supporters.json", timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         return None

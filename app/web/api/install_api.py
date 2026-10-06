@@ -16,6 +16,11 @@ import time
 import webbrowser
 from pathlib import Path
 
+try:
+    from ... import catalog_key
+except ImportError:  # pragma: no cover
+    import catalog_key
+
 from ..events import event_bridge, input_broker
 from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
                            list_devices, normalize_console_command, scan_network_for_wifi_adb,
@@ -56,7 +61,7 @@ def _inline_relative_images(html_text: str, base_dir: Path) -> str:
             return match.group(0)
         path = (base_dir / src).resolve()
         try:
-            data = path.read_bytes()
+            data = catalog_key.read_bytes(path)
         except OSError:
             return match.group(0)
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -304,7 +309,7 @@ class InstallApi:
             "closed_subscribers": stage.get("closed_subscribers", True) is not False,
             "description": stage.get("description"),
             "instruction_html": (_resolve_video_hrefs(
-                                      _inline_relative_images(html_path.read_text(encoding="utf-8"), html_path.parent),
+                                      _inline_relative_images(catalog_key.read_text(html_path), html_path.parent),
                                       html_path.parent)
                                   if html_path else None),
             # Граф исполнения (см. car_generator.py: StepSpec.next/
@@ -375,7 +380,7 @@ class InstallApi:
         if data["kind"] == "instruction":
             html_path = model.dir / block["instruction"] if block.get("instruction") else None
             data["instruction_html"] = (
-                _resolve_video_hrefs(_inline_relative_images(html_path.read_text(encoding="utf-8"),
+                _resolve_video_hrefs(_inline_relative_images(catalog_key.read_text(html_path),
                                                              html_path.parent), html_path.parent)
                 if html_path is not None and html_path.is_file() else None)
         elif data["kind"] == "write":

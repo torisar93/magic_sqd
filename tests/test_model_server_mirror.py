@@ -22,6 +22,7 @@ SERVER_MTIME = 1_700_000_000.0
 
 
 def _load_android(monkeypatch, *names):
+    monkeypatch.syspath_prepend(str(ANDROID_PY))  # catalog_crypto/catalog_key — плоские импорты как в Chaquopy
     for name in names:  # apk_library делает "from content_sync import ..." — андроидный из той же папки
         spec = importlib.util.spec_from_file_location(name, ANDROID_PY / f"{name}.py")
         module = importlib.util.module_from_spec(spec)

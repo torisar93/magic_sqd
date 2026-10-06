@@ -31,6 +31,11 @@ import threading
 import urllib.error
 import urllib.request
 
+try:
+    from . import content_sync  # ПК: пакет app
+except ImportError:  # pragma: no cover
+    import content_sync  # Android
+
 SCHEMA = 1  # самая новая схема файла, которую понимает эта версия программы
 REMOTE_PATH = "config/client.json"  # от content/ (base_url сервера уже заканчивается на /content)
 CACHE_NAME = "client_config.json"
@@ -90,7 +95,7 @@ def refresh(base_url: str, timeout: float = 10) -> bool:
     if not base_url or not path:
         return False
     try:
-        with urllib.request.urlopen(f"{base_url.rstrip('/')}/{REMOTE_PATH}", timeout=timeout) as resp:
+        with content_sync.open_url(f"{base_url.rstrip('/')}/{REMOTE_PATH}", timeout) as resp:
             raw = resp.read()
         parsed = json.loads(raw.decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):

@@ -63,3 +63,14 @@ def decrypt_if_needed(data: bytes) -> bytes:
     if _key is None:
         raise RuntimeError("файл каталога зашифрован, но ключ не настроен")
     return catalog_crypto.decrypt(_key, data)
+
+
+def read_bytes(path) -> bytes:
+    """Прочитать файл модели с диска, расшифровав при необходимости (замена path.read_bytes())."""
+    with open(path, "rb") as f:
+        return decrypt_if_needed(f.read())
+
+
+def read_text(path, encoding: str = "utf-8", errors: str = "strict") -> str:
+    """Замена path.read_text() для файлов модели (спека/версия/инструкция)."""
+    return read_bytes(path).decode(encoding, errors)

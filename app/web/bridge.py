@@ -26,7 +26,7 @@ from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
-from .. import client_config, ui_bundle
+from .. import catalog_setup, client_config, ui_bundle
 from ..adb_utils import find_adb_path
 from ..pending_install_logs import (
     append_current, finalize_to_queue, recover_stale_current, seal_abandoned_session, send_one, send_queue,
@@ -52,6 +52,9 @@ class WebApi:
         # Настройки и правила с сервера (app/client_config.py) — копия рядом с программой; свежая скачивается при
         # запуске (sync_api.startup_sync). Настраиваем до всего остального: apk_check читает правила при установке.
         client_config.configure(base_dir / client_config.CACHE_NAME, APP_VERSION, "pc")
+        # Закрытый каталог: ключ шифрования файлов модели, хук расшифровки, токен официальной сборки
+        # (app/catalog_setup.py). До сканера и синхронизации — они уже читают/пишут зашифрованные файлы.
+        catalog_setup.configure(base_dir)
         self.adb_path = find_adb_path(base_dir)
         # DEBUG-логирование (см. main_web.py:_enable_debug_log_all) — раньше
         # отдельный debug-установщик, теперь маркер-файл переключается прямо

@@ -183,6 +183,7 @@ ANDROID_PY = REPO / "android/app/src/main/python"
 def _android(monkeypatch, name):
     import importlib.util
     import sys
+    monkeypatch.syspath_prepend(str(ANDROID_PY))  # catalog_crypto/catalog_key — плоские импорты как в Chaquopy
     spec = importlib.util.spec_from_file_location(name, ANDROID_PY / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, name, module)
