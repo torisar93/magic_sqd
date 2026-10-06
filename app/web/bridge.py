@@ -26,7 +26,7 @@ from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
-from .. import client_config
+from .. import client_config, ui_bundle
 from ..adb_utils import find_adb_path
 from ..pending_install_logs import (
     append_current, finalize_to_queue, recover_stale_current, seal_abandoned_session, send_one, send_queue,
@@ -108,6 +108,22 @@ class WebApi:
         # и finally-блок после webview.start(); запечатываем один раз.
         self._abandoned_log_sealed = False
         self._abandoned_log_path: Path | None = None
+        # Интерфейс с сервера (app/ui_bundle.py, main_web.choose_frontend_dir): встроенная папка — основа для
+        # следующего бандла; app.js сообщает ui_ready, когда каталог отрисован (иначе main_web откатит на встроенный).
+        self._ui_ready = threading.Event()
+        self.builtin_frontend_dir: Path | None = None
+        self.bundle_frontend_dir: Path | None = None
+
+    def _set_frontend(self, builtin_dir: Path, bundle_dir: Path | None) -> None:
+        self.builtin_frontend_dir = builtin_dir
+        self.bundle_frontend_dir = bundle_dir
+        self._sync.builtin_frontend_dir = builtin_dir
+
+    def ui_ready(self) -> None:
+        self._ui_ready.set()
+
+    def _wait_ui_ready(self, timeout: float) -> bool:
+        return self._ui_ready.wait(timeout)
 
     def _recover_pending_install_logs(self) -> None:
         platform = self._install_log_platform()
@@ -125,6 +141,9 @@ class WebApi:
             "auth_subscriber": self.auth_subscriber,
             "app_version": APP_VERSION,
             "os": os_description(),
+            # Выпуск интерфейса с сервера (app/ui_bundle.py); 0 — встроенный.
+            "ui_rev": (ui_bundle.active_rev(self.base_dir / "ui", "desktop", APP_VERSION)
+                       if self.bundle_frontend_dir else 0),
         }
 
     def client_log_error(self, message: str, stack: str = "") -> None:

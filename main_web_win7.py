@@ -49,7 +49,9 @@ def run() -> None:
 
     api = WebApi(base_dir, admin_mode=False, is_win7=True)
     debug_upload_once = main_web._enable_debug_log_all(base_dir, api)
-    frontend_dir = main_web.get_frontend_dir(base_dir)
+    builtin_frontend_dir = main_web.get_frontend_dir(base_dir)
+    frontend_dir = main_web.choose_frontend_dir(base_dir, builtin_frontend_dir)
+    api._set_frontend(builtin_frontend_dir, None if frontend_dir == builtin_frontend_dir else frontend_dir)
 
     main_web._log_step("Windows 7 (x86)-сборка: рендерер всегда Qt (PyQt5), WebView2 не проверяется")
 
@@ -71,6 +73,7 @@ def run() -> None:
     # (window.native.Handle), у Qt-окна такого атрибута нет — не вызываем.
     events.set_window(window)
     events.event_bridge.start_pump()
+    main_web.start_ui_bundle_watchdog(api, window, base_dir, builtin_frontend_dir, frontend_dir)
 
     main_web._log_step("webview.start()")
     try:

@@ -15,7 +15,7 @@ import threading
 import time
 
 from ..events import event_bridge
-from ... import client_config, device_models, offline_pack, update_tracker
+from ... import client_config, device_models, offline_pack, ui_bundle, update_tracker
 from ...content_config import get_base_url
 from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
                               list_shared_apk_catalog, prune_closed_stages, prune_removed_apks,
@@ -23,6 +23,7 @@ from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, 
 from ...ping_client import PingError, get_or_create_client_id, send_ping
 from ...scanner import flatten_models, scan_cars
 from ...submit_config import get_submit_config
+from ...version import APP_VERSION
 
 PING_INTERVAL_SECONDS = 3 * 60
 
@@ -37,6 +38,8 @@ class SyncApi:
         self._scanner_api = scanner_api
         self._heartbeat_started = False
         self._resync_lock = threading.Lock()
+        # Встроенный интерфейс (WebApi._set_frontend) — основа, на которую накладывается бандл с сервера.
+        self.builtin_frontend_dir = None
 
     @staticmethod
     def _log(message) -> None:
@@ -52,6 +55,10 @@ class SyncApi:
         # программы не выглядело зависшим (раньше был только построчный лог).
         event_bridge.push({"kind": "sync_progress", "done": done, "total": total,
                            "files_done": files_done, "files_total": files_total})
+
+    def _refresh_ui_bundle(self, base_url: str) -> None:
+        ui_bundle.refresh(base_url, self.base_dir / "ui", "desktop", APP_VERSION,
+                          builtin_dir=self.builtin_frontend_dir, log=self._log)
 
     @staticmethod
     def _refresh_client_config(base_url: str) -> None:
@@ -75,6 +82,9 @@ class SyncApi:
             threading.Thread(target=device_models.refresh, args=(self.base_dir,), daemon=True).start()
             # Настройки и правила с сервера (app/client_config.py) — в фоне; поменялись — интерфейс берёт новые сразу.
             threading.Thread(target=self._refresh_client_config, args=(base_url,), daemon=True).start()
+            # Интерфейс с сервера (app/ui_bundle.py) — в фоне, применится при следующем запуске.
+            if self.builtin_frontend_dir is not None:
+                threading.Thread(target=self._refresh_ui_bundle, args=(base_url,), daemon=True).start()
             # Один манифест на весь запуск (см. content_sync.fetch_manifest/
             # server/backend.py: write_manifest) — раньше и cars/, и apk/
             # обходились отдельными рекурсивными сериями HTTP-запросов через

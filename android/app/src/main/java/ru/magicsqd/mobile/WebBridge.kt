@@ -144,6 +144,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         startInstallLogRecovery()
         startDeviceModelsRefresh()
         startClientConfigRefresh()
+        startUiBundleRefresh()
         // До 1.0.41 при каждом «Получить пароль» сюда падала копия bugreport-zip (разбор жалоб «пароль
         // неверный»); сбор выключен — прежние копии убираем.
         Thread { File(context.filesDir, "qr_adb_debug").deleteRecursively() }.start()
@@ -184,9 +185,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 // на десктопе (app/web/bridge.py: app_get_info).
                 "device_models" -> deviceModelsJson()
                 "client_config" -> clientConfigJson()
+                "ui_ready" -> { onUiReady?.invoke(); "{}" }
                 "app_version" -> JSONObject()
                     .put("version", context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?")
                     .put("client_id", getOrCreateClientId())
+                    // Выпуск интерфейса с сервера (UiBundleAssets); 0 — встроенный. В шапку журнала установки.
+                    .put("ui_rev", uiRev)
                     // Для журнала сессии: какой телефон — по client_id не понять (он новый после каждой переустановки).
                     .put("device", "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}")
                     .put("android", android.os.Build.VERSION.RELEASE ?: "?")
@@ -586,6 +590,27 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         clientConfigFile.readText().let { JSONObject(it).toString() }
     } catch (_: Exception) {
         "{}"
+    }
+
+    /** Интерфейс с сервера (UiBundleAssets, ui_bundle.py): MainActivity выставляет выпуск, с которым открыт
+     * интерфейс, и ждёт ui_ready от app.js — иначе откат на встроенный. */
+    @Volatile var uiRev: Int = 0
+    @Volatile var onUiReady: (() -> Unit)? = null
+
+    /** Свежий бандл интерфейса — в фоне при запуске; скачанный применится со следующего запуска. */
+    private fun startUiBundleRefresh() {
+        val version = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (_: Exception) { "" }
+        Thread {
+            try {
+                val result = pyModule("mobile_bridge").callAttr("ui_bundle_refresh", BASE_URL,
+                    UiBundleAssets.root(context).absolutePath, version).toString()
+                android.util.Log.i("WebBridge", "интерфейс с сервера: $result")
+            } catch (_: Exception) {
+                // нет сети — остаётся как было
+            }
+        }.apply { isDaemon = true; name = "magicsqd-ui-bundle" }.start()
     }
 
     /** Список «Спасибо вам» для окна «Всё готово» (см. mobile_bridge.supporters_fetch) — в фоне,

@@ -570,6 +570,9 @@ window.addEventListener("pywebviewready", async () => {
     },
   });
   await pickerReady;
+  // Каталог на экране — интерфейс запустился. Для интерфейса с сервера (app/ui_bundle.py) это знак, что откат на
+  // встроенный не нужен (main_web.start_ui_bundle_watchdog).
+  if (window.pywebview.api.ui_ready) window.pywebview.api.ui_ready().catch(() => {});
   // Отдаём браузеру один кадр с каталогом, после чего тихо подготавливаем
   // рабочий экран. К моменту первого клика он обычно уже готов; await выше
   // сохраняет корректность и при очень быстром клике.

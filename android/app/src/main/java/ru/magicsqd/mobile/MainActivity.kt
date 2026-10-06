@@ -39,6 +39,14 @@ class MainActivity : AppCompatActivity() {
     // (флаш лога установки при сворачивании/закрытии).
     private lateinit var webView: WebView
 
+    // Сторож интерфейса с сервера (UiBundleAssets): снимается по ui_ready, иначе — откат на встроенный.
+    private val uiWatchdog = android.os.Handler(android.os.Looper.getMainLooper())
+
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val INDEX_URL = "https://appassets.androidplatform.net/assets/index.html"
+    }
+
     /** Перехватывает необработанные исключения ЛЮБОГО потока (JVM-глобальная
      * настройка, а не только для этого потока/Activity) — раньше такого не
      * было вовсе: реальный вылет приложения не оставлял никакого следа даже
@@ -127,8 +135,21 @@ class MainActivity : AppCompatActivity() {
         // относительные пути были недостижимы вообще (другой корень). Второй
         // path handler ("/data/") отдаёт всё под context.filesDir — оттуда же,
         // где content_sync.py держит cars/.
+        // "/assets/" — встроенный интерфейс из APK, а поверх него файлы интерфейса с сервера, если для этой версии
+        // приложения скачан проверенный бандл (UiBundleAssets, ui_bundle.py).
+        val uiAssets = UiBundleAssets(this)
+        val uiRoot = UiBundleAssets.root(this)
+        val uiBundle = UiBundleAssets.active(uiRoot, appVersion())
+        uiAssets.use(uiBundle?.dir)
+        bridge.uiRev = uiBundle?.rev ?: 0
+        if (uiBundle != null) {
+            Log.i(TAG, "интерфейс с сервера: ${uiBundle.dir.name}")
+            bridge.onUiReady = { runOnUiThread { uiWatchdog.removeCallbacksAndMessages(null) } }
+            uiWatchdog.postDelayed({ fallbackToBuiltinUi(bridge, uiAssets, uiRoot, uiBundle.rev) },
+                UiBundleAssets.UI_READY_TIMEOUT_MS)
+        }
         val assetLoader = WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler("/assets/", uiAssets)
             .addPathHandler("/data/", WebViewAssetLoader.InternalStoragePathHandler(this, filesDir))
             .build()
         webView.webViewClient = object : WebViewClientCompat() {
@@ -152,7 +173,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+        webView.loadUrl(INDEX_URL)
 
         // Всё состояние (открытая модалка, текущий этап мастера, хлебные
         // крошки пикера) живёт в JS — системный жест/кнопка "назад" по
@@ -175,6 +196,36 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    private fun appVersion(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (_: Exception) {
+        ""
+    }
+
+    /** Интерфейс с сервера не дошёл до ui_ready (app.js, конец запуска) за минуту — сломан или не подходит этой
+     * версии. Выпуск помечается плохим (к нему не вернёмся до следующего), окно открывается со встроенным. */
+    private fun fallbackToBuiltinUi(bridge: WebBridge, uiAssets: UiBundleAssets, uiRoot: java.io.File, rev: Int) {
+        Log.w(TAG, "интерфейс с сервера (выпуск $rev) не запустился — открываю встроенный")
+        Thread {
+            try {
+                com.chaquo.python.Python.getInstance().getModule("mobile_bridge")
+                    .callAttr("ui_bundle_mark_bad", uiRoot.absolutePath, rev)
+            } catch (e: Exception) {
+                Log.w(TAG, "не удалось пометить интерфейс с сервера плохим", e)
+            }
+        }.start()
+        uiAssets.use(null)
+        bridge.uiRev = 0
+        bridge.onUiReady = null
+        webView.clearCache(true)
+        webView.loadUrl(INDEX_URL)
+    }
+
+    override fun onDestroy() {
+        uiWatchdog.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 
     override fun onStart() {

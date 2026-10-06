@@ -140,7 +140,8 @@
     if (!info) return [];
     const build = info.is_win7 ? "Win7/x86" : "x64";
     const warn = info.under_program_files ? " · ВНИМАНИЕ: установлено в Program Files" : "";
-    const lines = [`Magic SQD v${info.app_version} (${build}) · client=${info.client_id}${warn}`];
+    const ui = info.ui_rev ? ` · интерфейс r${info.ui_rev}` : "";
+    const lines = [`Magic SQD v${info.app_version} (${build})${ui} · client=${info.client_id}${warn}`];
     if (info.os) lines.push(`Компьютер: ${info.os} · ${new Date().toLocaleString("ru-RU")}`);
     return lines;
   }

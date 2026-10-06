@@ -245,6 +245,59 @@ def get_frontend_dir(base_dir: Path) -> Path:
     return root / "app" / "web" / "frontend"
 
 
+UI_READY_TIMEOUT = 60  # с после загрузки страницы: столько ждём api.ui_ready от интерфейса с сервера, иначе откат
+
+
+def choose_frontend_dir(base_dir: Path, builtin_dir: Path) -> Path:
+    """Интерфейс с сервера (app/ui_bundle.py), если для этой версии программы есть проверенный бандл, иначе
+    встроенный. Заодно убирает папки старых бандлов. Любой сбой — встроенный интерфейс."""
+    from app import ui_bundle
+    root = base_dir / "ui"
+    try:
+        ui_bundle.cleanup(root, "desktop", APP_VERSION, log=_log_step)
+        active = ui_bundle.active_dir(root, "desktop", APP_VERSION)
+    except Exception as exc:  # noqa: BLE001 - интерфейс должен открыться в любом случае
+        _log_step(f"проверка интерфейса с сервера не удалась: {exc!r}")
+        return builtin_dir
+    if active is None:
+        return builtin_dir
+    _log_step(f"интерфейс с сервера: {active.name}")
+    return active
+
+
+def start_ui_bundle_watchdog(api, window, base_dir: Path, builtin_dir: Path, frontend_dir: Path) -> None:
+    """Интерфейс с сервера не дошёл до api.ui_ready за UI_READY_TIMEOUT после загрузки страницы — помечаем его плохим
+    (к нему не вернёмся до нового выпуска) и открываем встроенный прямо в этом окне. Отсчёт — с загрузки страницы:
+    на старом ПК само окно (WebView2/Qt) поднимается долго, это не повод откатывать интерфейс."""
+    if frontend_dir == builtin_dir:
+        return
+    import threading
+
+    def watch() -> None:
+        loaded = getattr(getattr(window, "events", None), "loaded", None)
+        if loaded is not None:
+            loaded.wait(UI_READY_TIMEOUT * 5)
+        if api._wait_ui_ready(UI_READY_TIMEOUT):
+            return
+        from app import ui_bundle
+        rev = ui_bundle.active_rev(base_dir / "ui", "desktop", APP_VERSION)
+        _log_step(f"интерфейс с сервера (выпуск {rev}) не запустился за {UI_READY_TIMEOUT} с — открываю встроенный")
+        try:
+            ui_bundle.mark_bad(base_dir / "ui", rev)
+            api._set_frontend(builtin_dir, None)
+            import webview.http as webview_http
+            server = getattr(webview_http, "global_server", None)
+            if server is not None and getattr(server, "root_path", None):
+                server.root_path = os.path.abspath(builtin_dir)
+                window.load_url(server.address + "index.html")
+            else:
+                window.load_url(str(builtin_dir / "index.html"))
+        except Exception as exc:  # noqa: BLE001
+            _log_step(f"откат на встроенный интерфейс не удался: {exc!r}")
+
+    threading.Thread(target=watch, daemon=True, name="ui-bundle-watchdog").start()
+
+
 def get_webview_profile_dir(base_dir: Path) -> Path:
     """Постоянный, но полностью технический профиль WebView2.
 
@@ -617,7 +670,9 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
 
     api = WebApi(base_dir, admin_mode=admin_mode)
     debug_upload_once = _enable_debug_log_all(base_dir, api)
-    frontend_dir = get_frontend_dir(base_dir)
+    builtin_frontend_dir = get_frontend_dir(base_dir)
+    frontend_dir = choose_frontend_dir(base_dir, builtin_frontend_dir)
+    api._set_frontend(builtin_frontend_dir, None if frontend_dir == builtin_frontend_dir else frontend_dir)
 
     _log_step("renderer check")
     renderer = _ensure_renderer(base_dir, title, force_qt="--qt-fallback" in sys.argv)
@@ -667,6 +722,7 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     http_port = _pick_safe_http_port()
     _log_step(f"starting local http server on port {http_port} and waiting for it to be ready")
     _start_local_http_server_ready(str(frontend_dir / "index.html"), http_port)
+    start_ui_bundle_watchdog(api, window, base_dir, builtin_frontend_dir, frontend_dir)
 
     if sys.platform == "darwin":
         def _quit_cleanup() -> None:

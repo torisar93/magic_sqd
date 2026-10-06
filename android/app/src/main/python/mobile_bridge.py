@@ -111,6 +111,21 @@ def client_config_refresh(base_url: str, cache_path: str, app_version: str) -> b
     return client_config.refresh(base_url)
 
 
+def ui_bundle_refresh(base_url: str, root: str, app_version: str) -> str:
+    """Интерфейс с сервера (ui_bundle.py, content/ui/manifest.json; desktop — sync_api._refresh_ui_bundle): убрать
+    папки старых бандлов (действующий — тот, что выбрал MainActivity по state.json, — остаётся) и скачать новый, если
+    он есть. Применится со следующего запуска. Возвращает итог ui_bundle.refresh ("updated", "disabled", …)."""
+    import ui_bundle
+    ui_bundle.cleanup(root, "android", app_version)
+    return ui_bundle.refresh(base_url, root, "android", app_version)
+
+
+def ui_bundle_mark_bad(root: str, rev: int) -> None:
+    """Интерфейс с сервера не дошёл до ui_ready (MainActivity) — к этому выпуску больше не возвращаться."""
+    import ui_bundle
+    ui_bundle.mark_bad(root, int(rev))
+
+
 def supporters_fetch(base_url: str) -> str:
     """Список «Спасибо вам» (content/supporters.json, см. desktop app/supporters_client.py) — только
     имена и цвет карточки. Любой сбой — {} (например, телефон в Wi-Fi магнитолы без интернета): окно

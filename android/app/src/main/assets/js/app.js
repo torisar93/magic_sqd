@@ -141,7 +141,8 @@
   function sessionHeaderLines() {
     try {
       const info = Bridge.call("app_version", {});
-      const lines = [`Magic SQD v${info.version} (Android) · client=${info.client_id}`];
+      const ui = info.ui_rev ? ` · интерфейс r${info.ui_rev}` : "";
+      const lines = [`Magic SQD v${info.version} (Android)${ui} · client=${info.client_id}`];
       if (info.device) lines.push(`Телефон: ${info.device} · Android ${info.android} (API ${info.sdk}) · ${new Date().toLocaleString("ru-RU")}`);
       return lines;
     } catch (e) { return []; /* не критично для установки — просто не будет диагностических строк */ }
@@ -4076,6 +4077,9 @@
     document.getElementById("app").classList.toggle("compact-log", preferences.compact_log);
     if (!preferences.auto_sync) syncStatusEl.style.display = "none";
     loadCars();
+    // Каталог на экране — интерфейс запустился. Для интерфейса с сервера (UiBundleAssets) это знак MainActivity,
+    // что откат на встроенный не нужен (на ПК то же — app.js после pickerReady).
+    try { Bridge.call("ui_ready", {}); } catch (e) { /* не критично */ }
     const catalogWasEmpty = !carsData || !carsData.brands || carsData.brands.length === 0;
     if (preferences.auto_sync) startSync(catalogWasEmpty);
     startupPopups();
