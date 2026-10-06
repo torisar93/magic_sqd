@@ -132,6 +132,10 @@ class ActionSpec:
     # которые программа записала в /system/app (способ установки system_app,
     # BAIC U5 Plus). Отдельным этапом после перезагрузки: до неё Android таких
     # приложений не видит, а ADB там перезагрузку не переживает.
+    # "restore_wifi" — «Вернуть Wi-Fi / ДХО / Arkamys» (Desay SV NV8020/18:
+    # Omoda C5 до 2026 и родня): cars/_shared/wifi_restore.py → InstallContext.
+    # restore_wifi_features — правит SystemUI/Настройки в /system, только ПК по
+    # кабелю (Android показывает «Доступно только в версии для Windows»).
     kind: str = "command"
     commands: list[str] = field(default_factory=list)
     # Файлы, прикреплённые к ЭТОМУ действию — на них ссылаются #push/
@@ -1608,6 +1612,8 @@ def _render_install_py(spec: NewCarSpec) -> str:
         lines.append("from adb_permissions import grant_system_apps_permissions  # noqa: E402")
     if any(step.type == "actions" and a.kind == "motion_optimize" for step in spec.steps for a in step.actions):
         lines.append("from adb_permissions import optimize_for_motion  # noqa: E402")
+    if any(step.type == "actions" and a.kind == "restore_wifi" for step in spec.steps for a in step.actions):
+        lines.append("from wifi_restore import restore_wifi_features  # noqa: E402")
 
     for i, step in enumerate(spec.steps, start=1):
         if step.type == "adb":
@@ -1659,6 +1665,8 @@ def _render_install_py(spec: NewCarSpec) -> str:
                     lines.append("    optimize_for_motion(ctx, package)")
                 elif action.kind == "grant_system_apps":
                     lines.append("    grant_system_apps_permissions(ctx)")
+                elif action.kind == "restore_wifi":
+                    lines.append("    restore_wifi_features(ctx)")
                 else:
                     lines += _render_command_body(action.commands, f"actions_{i}_{j}")
         elif step.type == "usb":

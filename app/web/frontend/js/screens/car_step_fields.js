@@ -254,6 +254,7 @@
       uninstall_app: "Удалить приложение",
       grant_system_apps: "Выдать разрешения приложениям из системной папки",
       motion_optimize: "Разрешить работу в движении",
+      restore_wifi: "Вернуть Wi-Fi / ДХО / Arkamys (Desay SV, только ПК по кабелю)",
     };
 
     const ACTION_COMMAND_HELP_TEXT =

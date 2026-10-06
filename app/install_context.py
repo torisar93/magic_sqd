@@ -981,6 +981,133 @@ class InstallContext:
         except AdbError:
             pass  # связь пропала — файлы в /data/local/tmp безвредны
 
+    def restore_wifi_features(self, features=("wifi", "drl", "arkamys")) -> None:
+        """«Вернуть Wi-Fi / ДХО / Arkamys» (владелец, 2026-10-06; ГУ Desay SV NV8020/18 — Omoda C5, Chery Tiggo 4 New,
+        Tenet T4, XCITE X-Cross 8 на SemiDrive X9H, Android 10; разобрано по теме 4PDA 1117181). На «урезанных»
+        прошивках производитель прячет в интерфейсе Wi-Fi (пункт и плитку шторки), управление ДХО и переключатель
+        звука Arkamys — методами-гейтами класса CarConfigInfoClient в com.android.systemui и com.chery.settings, а
+        включение Wi-Fi ещё и игнорируется в WifiReposity.setWifiEnabled (см. wifi_patch.py). Сам стек/функции в
+        прошивке целы — скрыт только UI.
+
+        Снимаем ОБА системных APK С САМОЙ МАШИНЫ (версия всегда совпадает — готовые чужие файлы с другой версии ломают
+        настройки, вплоть до «кирпича»), правим dex точечно и одной длиной, переподписываем ПУБЛИЧНЫМ платформенным
+        ключом AOSP (cars/_shared/platform_cert — ГУ собрано userdebug/test-keys, поэтому этот открытый ключ подходит),
+        кладём обратно в /system поверх штатных (root → disable-verity → remount, бэкап на саму машину, rm <app>/oat,
+        chmod 644, chown root:root, chcon u:object_r:system_file:s0), затем перезагрузка.
+
+        ВНИМАНИЕ: правит системный раздел — делать ТОЛЬКО по USB-кабелю. Оригиналы сохраняются на самой машине
+        (путь в логе), при сбое заливки возвращаются автоматически. Особенность части прошивок: Wi-Fi подключается,
+        но может не передавать данные (аппаратное ограничение ГУ)."""
+        from . import wifi_patch
+        from .apk_signer import ApkSignError, resign_apk
+        self.check_cancelled()
+        if self.shared_dir is None:
+            self.log("Не удалось вернуть Wi-Fi/ДХО/Arkamys: не найдена папка cars/_shared.")
+            return
+        cert_dir = self.shared_dir / "platform_cert"
+
+        def cert_ready() -> bool:
+            return (cert_dir / "private.pk8").is_file() and (cert_dir / "certificate.crt").is_file()
+
+        if not cert_ready():
+            from .content_sync import sync_shared_folder
+            sync_shared_folder(self.shared_dir.parent.parent, "platform_cert", log=self.log)
+        if not cert_ready():
+            self.log("Не удалось: нет платформенного ключа подписи (cars/_shared/platform_cert) — проверьте интернет "
+                     "и повторите.")
+            return
+
+        base_dir = self.shared_dir.parent.parent
+        work = base_dir / "wifi_patch_cache"
+        work.mkdir(parents=True, exist_ok=True)
+        targets = [("com.android.systemui", "SystemUI"), ("com.chery.settings", "Настройки")]
+
+        # 1) снять, пропатчить и подписать всё заранее — системный раздел ещё не трогаем.
+        prepared: list[tuple[str, str, str, Path]] = []  # (package, title, remote_path, signed_local)
+        for package, title in targets:
+            self.check_cancelled()
+            paths = self._installed_apk_paths(package)
+            if not paths:
+                self.log(f"Пропускаю {title}: пакет {package} на магнитоле не найден.")
+                continue
+            if len(paths) > 1:
+                self.log(f"Пропускаю {title}: собран из нескольких частей (split APK) — так патчить нельзя.")
+                continue
+            remote = paths[0]
+            if not remote.startswith("/system/"):
+                self.log(f"Пропускаю {title}: {package} стоит не в /system ({remote}).")
+                continue
+            original = work / f"{package}.apk"
+            patched = work / f"{package}.patched.apk"
+            signed = work / f"{package}.signed.apk"
+            for stale in (original, patched, signed):
+                stale.unlink(missing_ok=True)
+            try:
+                self.log(f"{title}: снимаю {package} с магнитолы...")
+                self.pull(remote, original)
+                if not original.is_file() or original.stat().st_size == 0:
+                    self.log(f"Пропускаю {title}: не удалось скопировать с магнитолы.")
+                    continue
+                done = wifi_patch.patch_apk_inplace(original, patched, list(features))
+            except (AdbError, OSError) as exc:
+                self.log(f"Пропускаю {title}: {_short_reason(exc)}")
+                continue
+            except wifi_patch.WifiPatchError as exc:
+                self.log(f"Пропускаю {title}: не удалось пропатчить ({exc}) — оставляю как есть.")
+                continue
+            if not done:
+                self.log(f"{title}: нужные функции уже открыты — менять нечего.")
+                continue
+            self.log(f"{title}: правки — {', '.join(done)}. Переподписываю платформенным ключом...")
+            try:
+                resign_apk(base_dir, patched, cert_dir, signed)
+            except ApkSignError as exc:
+                self.log(f"Пропускаю {title}: не удалось переподписать ({exc}).")
+                continue
+            prepared.append((package, title, remote, signed))
+
+        if not prepared:
+            self.log("Wi-Fi/ДХО/Arkamys: менять нечего или не удалось подготовить файлы — система не тронута.")
+            return
+
+        # 2) открыть /system на запись и залить (с бэкапом на самой машине и авто-откатом при сбое).
+        self._open_system_partition()
+        backup_dir = "/data/local/tmp/magicsqd_wifi_backup"
+        self.shell(f"mkdir -p {backup_dir}", check=False)
+
+        def _restore(remote: str, backup: str) -> None:
+            self.shell(f"cp -a {shlex.quote(backup)} {shlex.quote(remote)} && chmod 644 {shlex.quote(remote)} "
+                       f"&& chcon u:object_r:system_file:s0 {shlex.quote(remote)}", check=False, timeout=300)
+
+        for package, title, remote, signed in prepared:
+            self.check_cancelled()
+            folder = remote.rsplit("/", 1)[0]
+            backup = f"{backup_dir}/{package}.apk"
+            self.log(f"{title}: бэкап {remote} → {backup}, заливаю пропатченный...")
+            try:
+                self.shell(f"cp -a {shlex.quote(remote)} {shlex.quote(backup)}", check=False, timeout=300)
+                self._push_to_system(signed, remote, timeout=900)
+                result = self.shell(
+                    f"rm -rf {shlex.quote(folder)}/oat && chmod 644 {shlex.quote(remote)} "
+                    f"&& chown root:root {shlex.quote(remote)} "
+                    f"&& chcon u:object_r:system_file:s0 {shlex.quote(remote)} && echo MSQD_OK",
+                    check=False, timeout=120)
+            except AdbError as exc:
+                self.log(f"{title}: сбой заливки ({_short_reason(exc)}) — возвращаю оригинал из бэкапа.")
+                _restore(remote, backup)
+                self.log("Патч прерван. Перезагрузите магнитолу — интерфейс вернётся к исходному.")
+                return
+            if "MSQD_OK" not in _completed_text(result):
+                self.log(f"{title}: не удалось выставить права/контекст — возвращаю оригинал.")
+                _restore(remote, backup)
+                return
+            self.log(f"{title}: записано в {remote} (права 644, SELinux-контекст системный). Бэкап: {backup}.")
+
+        self.log("Готово. Перезагружаю магнитолу, чтобы изменения вступили в силу...")
+        self.shell("reboot", check=False)
+        self.log(f"После перезагрузки проверьте Wi-Fi/ДХО/Arkamys. Если пропадёт часть интерфейса — верните оригиналы "
+                 f"из {backup_dir} (adb push обратно в /system, chmod 644, chcon system_file) и перезагрузите.")
+
     def _install_apk_py(self, path) -> None:
         """Свой способ модели: функция(ctx, apk, remote) из cars/_shared. Любой её сбой — AdbError (способ не
         сработал); остановка техником и понятная остановка (InstallCancelled) проходят как есть."""
