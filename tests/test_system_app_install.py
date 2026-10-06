@@ -246,7 +246,9 @@ def test_android_system_app_only_when_model_chose_it():
     assert '"system_app" to { apk, staged, methodLog -> installSystemApp(apk, staged, methodLog) }' in engine
     assert 'private val EXCLUSIVE_METHODS = setOf("system_app")' in engine
     # В автоматическом переборе его нет, выбран моделью — только он; память способа его не подставляет.
-    assert "INSTALL_METHODS.indices.filter { INSTALL_METHODS[it].first !in EXCLUSIVE_METHODS }" in engine
+    # methods — встроенные способы плюс свой способ модели «py:», если он выбран (tests/test_py_install_method.py).
+    assert "methods.indices.filter { methods[it].first !in EXCLUSIVE_METHODS }" in engine
+    assert "val exclusive = preferredMethod in EXCLUSIVE_METHODS || pyMethod != null" in engine
     assert "exclusive -> listOf(preferredIndex)" in engine
     assert "?.takeIf { it !in EXCLUSIVE_METHODS }" in engine
 
@@ -258,7 +260,7 @@ def test_android_same_order_as_pc_and_no_reboot():
     assert "return remountSystem(log)" in open_partition
     assert '"reboot:"' not in open_partition and "fun rebootAndWait(" not in session  # ADB перезагрузку не переживает
     engine = _kotlin("InstallEngine.kt")
-    assert 'confirmedMethod?.let { INSTALL_METHODS[it].first } == "system_app"' in engine
+    assert 'confirmedMethod?.let { methods[it].first } == "system_app"' in engine
     assert "systemAppsWritten++" in engine and "finishSystemApps" not in engine
     assert "echo 'magicsqd mock_location' > /system/app/$currentPackageName/$SYSTEM_APP_MARKER" in engine
     assert '"grant_system_apps" -> AdbPermissions.grantSystemApps(log)?.let { return StageRunResult.Failed(it) }' in engine

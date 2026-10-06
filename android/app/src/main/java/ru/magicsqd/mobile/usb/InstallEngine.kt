@@ -419,6 +419,29 @@ class InstallEngine(
      *  на других магнитолах программа не должна открывать системный раздел на запись. */
     private val EXCLUSIVE_METHODS = setOf("system_app")
 
+    /** Свой способ установки модели — apps_install_method "py:<модуль>.<функция>" (как ПК:
+     * install_context.parse_py_install_method): функция(ctx, apk, remote) из cars/_shared ставит APK сама через
+     * общий Python-код (PyCtxBridge, py_runner.py); remote — путь файла, уже залитого движком на магнитолу. Новый
+     * способ для новой магнитолы приходит с каталогом, без выпуска приложения. Только он, без перебора и без памяти
+     * способа по магнитоле. */
+    private val PY_METHOD = Regex("^py:([A-Za-z]\\w*)\\.([A-Za-z]\\w*)$")
+
+    private fun pyInstallMethod(module: String, function: String): (PushSource, String?, (String) -> Unit) -> AdbInstallResult =
+        { _, staged, _ ->
+            val bridge = pyBridge
+            val local = currentApkFile
+            when {
+                bridge == null -> AdbInstallResult.Failed("свой способ установки модели здесь недоступен — обновите приложение")
+                local == null -> AdbInstallResult.Failed("нет файла APK на телефоне")
+                else -> {
+                    val args = JSONArray().put(local.absolutePath).put(staged ?: JSONObject.NULL)
+                    val r = bridge.call(module, function, args)
+                    if (r.ok) AdbInstallResult.Success("$module.$function")
+                    else AdbInstallResult.Failed(r.error.ifBlank { "$module.$function не сработал" })
+                }
+            }
+        }
+
     /** BAIC U5 Plus (владелец, 2026-09-27): приложение кладётся в системную папку — adb root, disable-verity,
      * remount, файл в /system/app, chmod 644. Своя папка /system/app/<пакет>/<пакет>.apk (повторная установка
      * заменяет её целиком), сжатые нативные библиотеки — рядом в lib/<arm|arm64>/ (системному приложению Android их
@@ -635,12 +658,16 @@ class InstallEngine(
         // очередь идёт дальше (см. ветку confirmedMethod ниже).
         val skipped = mutableListOf<String>()
         var okCount = 0  // встало или уже стояло — если 0, итог «Не установлено», а не «остальные установлены»
-        // system_app — только по выбору модели и без перебора остальных (см. EXCLUSIVE_METHODS).
-        val exclusive = preferredMethod in EXCLUSIVE_METHODS
+        // Свой способ модели "py:модуль.функция" (см. PY_METHOD) — в конец списка способов, индексы встроенных те же.
+        val pyMethod = PY_METHOD.matchEntire(preferredMethod.trim())
+        val methods = if (pyMethod == null) INSTALL_METHODS
+            else INSTALL_METHODS + (preferredMethod.trim() to pyInstallMethod(pyMethod.groupValues[1], pyMethod.groupValues[2]))
+        // system_app и свой способ модели — только по выбору модели и без перебора остальных (см. EXCLUSIVE_METHODS).
+        val exclusive = preferredMethod in EXCLUSIVE_METHODS || pyMethod != null
         systemPartitionReady = false
         var systemAppsWritten = 0
-        val baseOrder = INSTALL_METHODS.indices.filter { INSTALL_METHODS[it].first !in EXCLUSIVE_METHODS }.let { indices ->
-            val preferredIndex = INSTALL_METHODS.indexOfFirst { it.first == preferredMethod }
+        val baseOrder = methods.indices.filter { methods[it].first !in EXCLUSIVE_METHODS }.let { indices ->
+            val preferredIndex = methods.indexOfFirst { it.first == preferredMethod.trim() }
             when {
                 exclusive -> listOf(preferredIndex)
                 preferredIndex >= 0 -> listOf(preferredIndex) + indices.filter { it != preferredIndex }
@@ -655,7 +682,7 @@ class InstallEngine(
         val methodPrefs = context.getSharedPreferences("install_methods", Context.MODE_PRIVATE)
         val remembered = if (exclusive) null
             else deviceModel?.let { methodPrefs.getString(it, null) }?.takeIf { it !in EXCLUSIVE_METHODS }
-        val rememberedIndex = INSTALL_METHODS.indexOfFirst { it.first == remembered }
+        val rememberedIndex = methods.indexOfFirst { it.first == remembered }
         val order = if (rememberedIndex >= 0) listOf(rememberedIndex) + baseOrder.filter { it != rememberedIndex } else baseOrder
         if (rememberedIndex >= 0) log("Для этой магнитолы ($deviceModel) в прошлый раз сработал способ «$remembered» — начинаю с него.")
         val certDir = modelDir?.let { resignCertDirForModel(it) }
@@ -796,7 +823,7 @@ class InstallEngine(
             // срывать установку — приложение уже стоит.
             fun afterInstall(installedNow: Boolean = true) {
                 okCount++
-                if (installedNow && confirmedMethod?.let { INSTALL_METHODS[it].first } == "system_app") {
+                if (installedNow && confirmedMethod?.let { methods[it].first } == "system_app") {
                     // Приложение из /system/app Android увидит только после перезагрузки, до неё разрешения не выдать
                     // («Unknown package»), а ADB на BAIC U5 Plus перезагрузку не переживает — разрешения выдаёт
                     // отдельный этап после неё (AdbPermissions.grantSystemApps); фиктивное местоположение он возьмёт
@@ -852,7 +879,7 @@ class InstallEngine(
             }
 
             if (confirmedMethod != null) {
-                val (label, install) = INSTALL_METHODS[confirmedMethod]
+                val (label, install) = methods[confirmedMethod]
                 var result = perform(install, apk, { stagedPath() })
                 // localinstall (Chery-хелпер) ставит только новые приложения: поверх установленного PackageManager
                 // отказывает («Attempt to re-install … without first uninstalling», в logcat — в выводе пусто). На
@@ -900,7 +927,7 @@ class InstallEngine(
             var keptNewer = false
             var unsuitable: String? = null
             for (methodIndex in order) {
-                val (label, install) = INSTALL_METHODS[methodIndex]
+                val (label, install) = methods[methodIndex]
                 var attempt = perform(install, apk, { stagedPath() })
                 var updatedByDex = false
                 // Запомненный для магнитолы (или заданный моделью) localinstall ставит только новые приложения: уже

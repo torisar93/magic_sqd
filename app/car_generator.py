@@ -281,7 +281,9 @@ class StepSpec:
     # следом, если указанный не сработал, — это подсказка для скорости, а
     # не жёсткая привязка, на случай если автор ошибся. "" (по умолчанию) —
     # обычный порядок с самого начала. Значения — см. _APPS_INSTALL_METHOD_KEYS
-    # ниже (та же строка хранится в _wizard_spec.json/stages.py).
+    # ниже (та же строка хранится в _wizard_spec.json/stages.py). Ещё — свой
+    # способ модели "py:модуль.функция" (install_context.parse_py_install_method):
+    # функция из cars/_shared ставит APK сама, только она, на ПК и Android.
     apps_install_method: str = ""
     # Порт Wi-Fi ADB именно ДЛЯ ЭТОГО apps-этапа (apps_connection
     # "wifi"/"ask") — независим от spec.wifi_port ниже (тот общий на всю

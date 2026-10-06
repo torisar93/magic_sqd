@@ -44,6 +44,18 @@ INSTALL_METHOD_KEYS = ("adb_install", "pm_install", "pm_install_stream", "locali
 # запись, а обычная установка на этой не даст того, что нужно модели.
 _SYSTEM_APP_METHOD = INSTALL_METHOD_KEYS.index("system_app")
 _EXCLUSIVE_METHODS = frozenset({_SYSTEM_APP_METHOD})
+# Свой способ установки модели (владелец, 2026-10-06: «чтобы обновлений приложения стало поменьше»):
+# apps_install_method "py:<модуль>.<функция>" — функция(ctx, apk, remote) из cars/_shared ставит APK сама (remote —
+# путь уже залитого на магнитолу файла или None). Тот же код исполняет Android (InstallEngine.kt → py_runner.py), так
+# что новый способ для новой магнитолы приходит с каталогом, без выпуска программы. Только он, без перебора остальных
+# (как system_app). Вышедшие до него версии такой ключ не узнают и перебирают способы как обычно.
+_PY_METHOD_RE = re.compile(r"^py:([A-Za-z]\w*)\.([A-Za-z]\w*)$")
+
+
+def parse_py_install_method(value) -> tuple[str, str] | None:
+    """("модуль", "функция") для apps_install_method вида "py:модуль.функция", иначе None."""
+    match = _PY_METHOD_RE.match(str(value or "").strip())
+    return (match.group(1), match.group(2)) if match else None
 _LOCALINSTALL_METHOD = INSTALL_METHOD_KEYS.index("localinstall")
 # Метка в /system/app/<пакет>/ — «поставлено программой»: по ней кнопки «Доп. действий» отличают такие
 # приложения от штатных (cars/_shared/adb_permissions.py).
@@ -343,6 +355,9 @@ class InstallContext:
             INSTALL_METHOD_KEYS.index(preferred_install_method)
             if preferred_install_method in INSTALL_METHOD_KEYS else None
         )
+        # Свой способ модели из cars/_shared ("py:модуль.функция", см. parse_py_install_method) — вместо перебора.
+        self._py_method = parse_py_install_method(preferred_install_method)
+        self._py_method_worked = False
         # Пакеты, которым уже выдали разрешения в этом запуске — чтобы
         # инлайн-выдача в localinstall/dex_shell и общая после установки
         # (_after_app_installed) не сработали дважды на одном приложении.
@@ -705,6 +720,9 @@ class InstallContext:
             self.log(problem)
             raise UnsuitableApk(problem)
         path = self._maybe_resign(path)
+        if self._py_method is not None:
+            self._install_apk_py_auto(path, name)
+            return
         if self._install_method is not None:
             try:
                 self._install_with_method(self._install_method, path, extra_args)
@@ -962,6 +980,45 @@ class InstallContext:
             self.shell("rm -f " + " ".join(remote_paths), check=False)
         except AdbError:
             pass  # связь пропала — файлы в /data/local/tmp безвредны
+
+    def _install_apk_py(self, path) -> None:
+        """Свой способ модели: функция(ctx, apk, remote) из cars/_shared. Любой её сбой — AdbError (способ не
+        сработал); остановка техником и понятная остановка (InstallCancelled) проходят как есть."""
+        module_name, function_name = self._py_method
+        module = self._load_shared_module(module_name)
+        function = getattr(module, function_name, None) if module is not None else None
+        if not callable(function) or function_name.startswith("_"):
+            raise AdbError(f"нет функции {module_name}.{function_name} в cars/_shared — синхронизируйте каталог")
+        try:
+            function(self, Path(path), self._prestaged.get(str(path)))
+        except (InstallCancelled, AdbError):
+            raise
+        except Exception as exc:  # noqa: BLE001 — ошибка кода способа = способ не сработал, а не падение программы
+            raise AdbError(f"{type(exc).__name__}: {exc}") from exc
+
+    def _install_apk_py_auto(self, path, name: str) -> None:
+        """install_apk_auto для своего способа модели: только он, как system_app; причина отказа — итог."""
+        label = "свой способ модели ({})".format(".".join(self._py_method))
+        try:
+            self._install_apk_py(path)
+        except SignatureMismatchError as exc:
+            raise InstallCancelled(self._signature_mismatch_message(path, exc))
+        except VersionDowngradeError as exc:
+            raise NewerVersionInstalled(Path(path).name) from exc
+        except AdbError as exc:
+            self.log(f"  ↳ не сработало ({label}): {_short_reason(exc)}")
+            gone = device_unavailable_message(str(exc), during=self._device_confirmed)
+            if gone:
+                raise InstallCancelled(gone) from exc
+            unsuitable = rejection_message(name, str(exc))
+            if unsuitable:
+                self.log(unsuitable)
+                raise UnsuitableApk(unsuitable) from exc
+            if self._py_method_worked:
+                # Способ на этой магнитоле уже ставил приложения — не встало только это (как AppInstallFailed выше).
+                raise AppInstallFailed(f"{Path(path).name}: {_short_reason(exc, 150)}") from exc
+            raise InstallCancelled(f"«{Path(path).name}» не установлено: " + _short_reason(exc, 400)) from exc
+        self._py_method_worked = True
 
     def _install_with_method(self, method: int, path, extra_args) -> None:
         if method == 0:

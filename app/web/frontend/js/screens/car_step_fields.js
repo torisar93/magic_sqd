@@ -665,9 +665,11 @@
       dex_shell_install: "app_process + dex-хелпер (PackageInstaller.Session, Geely OneOS)",
       jdwp_whitelist: "JDWP-патч белого списка + pm install (Desay x9h — Haval Jolion 2026)",
       system_app: "В системную папку /system/app: adb root + remount (BAIC U5 Plus)",
+      py: "Свой способ: функция из cars/_shared (Python, ПК и Android)",
     };
-    // Только этот способ, без перебора остальных (install_context.py: _EXCLUSIVE_METHODS).
-    const EXCLUSIVE_INSTALL_METHODS = ["system_app"];
+    // Только этот способ, без перебора остальных (install_context.py: _EXCLUSIVE_METHODS, свой способ «py:»).
+    const EXCLUSIVE_INSTALL_METHODS = ["system_app", "py"];
+    const PY_INSTALL_METHOD_RE = /^py:([A-Za-z]\w*\.[A-Za-z]\w*)$/;
 
     // Подсказка "начни перебор способов установки APK с этого" — не
     // отменяет перебор остальных, только меняет порядок (см. car_generator.py:
@@ -676,21 +678,44 @@
     // платформе (например Chery/Jaecoo/Exeed/Tenet на DesaySV — там всегда
     // срабатывает "localinstall") и не хочет, чтобы техник каждый раз ждал,
     // пока программа перепробует предыдущие способы впустую.
+    // Свой способ (владелец, 2026-10-06: «чтобы обновлений приложения стало поменьше») — "py:модуль.функция":
+    // функция(ctx, apk, remote) из cars/_shared ставит APK сама, на ПК и на Android (install_context.py:
+    // parse_py_install_method, InstallEngine.kt: PY_METHOD). Новый способ для новой магнитолы — без выпуска программы.
     function renderInstallMethodRow(step) {
       container.appendChild(el("span", { class: "field-label", text: "Способ установки APK" }));
+      const current = step.apps_install_method || "";
+      const pyMatch = PY_INSTALL_METHOD_RE.exec(current);
+      const selected = pyMatch ? "py" : current;
       const select = el("select", {}, Object.entries(APPS_INSTALL_METHOD_LABELS).map(([value, text]) =>
-        el("option", { value, text, selected: value === (step.apps_install_method || "") ? "" : null })));
+        el("option", { value, text, selected: value === selected ? "" : null })));
+      const pyInput = el("input", { type: "text", placeholder: "модуль.функция, например my_unit.install" });
+      pyInput.value = pyMatch ? pyMatch[1] : "";
       const hint = el("p", { style: "font-size: 12px; color: var(--text-dim); margin: 4px 0 0;" });
-      function updateHint() {
-        hint.textContent = EXCLUSIVE_INSTALL_METHODS.includes(select.value)
-          ? "Только этот способ: программа откроет системный раздел на запись и положит приложения в /system/app. "
-            + "Они появятся после перезагрузки магнитолы — разрешения выдаёт отдельный этап после неё (кнопка "
-            + "«Выдать разрешения приложениям из системной папки»). Другие способы не пробуются."
-          : "Если заранее известно, какой способ работает на этой магнитоле — программа попробует его первым; "
-            + "остальные всё равно пробуются по порядку следом, если он не сработает.";
+      function store() {
+        if (select.value !== "py") { step.apps_install_method = select.value; return; }
+        const value = pyInput.value.trim();
+        // Пока имя не похоже на «модуль.функция» — не сохраняем (иначе программа молча перебирала бы способы).
+        step.apps_install_method = PY_INSTALL_METHOD_RE.test(`py:${value}`) ? `py:${value}` : "";
       }
-      select.addEventListener("change", () => { step.apps_install_method = select.value; updateHint(); });
+      function updateHint() {
+        pyInput.style.display = select.value === "py" ? "" : "none";
+        if (select.value === "py") {
+          hint.textContent = "Только этот способ: программа вызовет функцию(ctx, apk, remote) из cars/_shared/модуль.py "
+            + "для каждого приложения (remote — путь файла, уже залитого на магнитолу, или None). На Android — "
+            + "только с подписью разработчика (scripts/publish_shared.py). Другие способы не пробуются.";
+        } else if (EXCLUSIVE_INSTALL_METHODS.includes(select.value)) {
+          hint.textContent = "Только этот способ: программа откроет системный раздел на запись и положит приложения в /system/app. "
+            + "Они появятся после перезагрузки магнитолы — разрешения выдаёт отдельный этап после неё (кнопка "
+            + "«Выдать разрешения приложениям из системной папки»). Другие способы не пробуются.";
+        } else {
+          hint.textContent = "Если заранее известно, какой способ работает на этой магнитоле — программа попробует его первым; "
+            + "остальные всё равно пробуются по порядку следом, если он не сработает.";
+        }
+      }
+      select.addEventListener("change", () => { store(); updateHint(); });
+      pyInput.addEventListener("input", store);
       container.appendChild(select);
+      container.appendChild(pyInput);
       updateHint();
       container.appendChild(hint);
     }
