@@ -15,7 +15,7 @@ import threading
 import time
 
 from ..events import event_bridge
-from ... import device_models, offline_pack, update_tracker
+from ... import client_config, device_models, offline_pack, update_tracker
 from ...content_config import get_base_url
 from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
                               list_shared_apk_catalog, prune_closed_stages, prune_removed_apks,
@@ -53,6 +53,11 @@ class SyncApi:
         event_bridge.push({"kind": "sync_progress", "done": done, "total": total,
                            "files_done": files_done, "files_total": files_total})
 
+    @staticmethod
+    def _refresh_client_config(base_url: str) -> None:
+        if client_config.refresh(base_url):
+            event_bridge.push({"kind": "client_config_updated", "config": client_config.view()})
+
     def startup_sync(self) -> dict:
         """Вызывается один раз из JS сразу после того, как главное окно
         готово (см. app.js) — до этого момента pywebview.api ещё недоступен.
@@ -68,6 +73,8 @@ class SyncApi:
         if base_url:
             # Таблица «магнитола → модель» для подсказки «Похоже, это другая машина» — в фоне, запуск не ждёт.
             threading.Thread(target=device_models.refresh, args=(self.base_dir,), daemon=True).start()
+            # Настройки и правила с сервера (app/client_config.py) — в фоне; поменялись — интерфейс берёт новые сразу.
+            threading.Thread(target=self._refresh_client_config, args=(base_url,), daemon=True).start()
             # Один манифест на весь запуск (см. content_sync.fetch_manifest/
             # server/backend.py: write_manifest) — раньше и cars/, и apk/
             # обходились отдельными рекурсивными сериями HTTP-запросов через

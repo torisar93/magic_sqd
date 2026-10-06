@@ -102,6 +102,15 @@ def device_models_refresh(base_url: str, cache_path: str) -> bool:
     return True
 
 
+def client_config_refresh(base_url: str, cache_path: str, app_version: str) -> bool:
+    """Настройки и правила с сервера (client_config.py, content/config/client.json; desktop — sync_api.startup_sync):
+    сначала configure — apk_check сразу берёт правила из копии в файлах приложения, даже без сети; потом свежий файл.
+    True — копия поменялась (WebBridge шлёт интерфейсу client_config_updated)."""
+    import client_config
+    client_config.configure(cache_path, app_version, "android")
+    return client_config.refresh(base_url)
+
+
 def supporters_fetch(base_url: str) -> str:
     """Список «Спасибо вам» (content/supporters.json, см. desktop app/supporters_client.py) — только
     имена и цвет карточки. Любой сбой — {} (например, телефон в Wi-Fi магнитолы без интернета): окно

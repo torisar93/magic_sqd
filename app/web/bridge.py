@@ -26,6 +26,7 @@ from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
+from .. import client_config
 from ..adb_utils import find_adb_path
 from ..pending_install_logs import (
     append_current, finalize_to_queue, recover_stale_current, seal_abandoned_session, send_one, send_queue,
@@ -48,6 +49,9 @@ class WebApi:
         self.is_mac = sys.platform == "darwin"
         self.cars_dir = base_dir / "cars"
         self.apk_dir = base_dir / "apk"
+        # Настройки и правила с сервера (app/client_config.py) — копия рядом с программой; свежая скачивается при
+        # запуске (sync_api.startup_sync). Настраиваем до всего остального: apk_check читает правила при установке.
+        client_config.configure(base_dir / client_config.CACHE_NAME, APP_VERSION, "pc")
         self.adb_path = find_adb_path(base_dir)
         # DEBUG-логирование (см. main_web.py:_enable_debug_log_all) — раньше
         # отдельный debug-установщик, теперь маркер-файл переключается прямо
@@ -148,6 +152,10 @@ class WebApi:
     # -- sync_api -----------------------------------------------------------
     def sync_startup(self) -> dict:
         return self._sync.startup_sync()
+
+    def client_config(self) -> dict:
+        """Настройки и правила с сервера для интерфейса (js/client_config.js → окна «что сделать» и т.п.)."""
+        return client_config.view()
 
     # -- settings_api -------------------------------------------------------
     def settings_info(self) -> dict:

@@ -8,7 +8,12 @@
    Файл ОДИНАКОВЫЙ на ПК (app/web/frontend/js/components/user_errors.js) и на Android
    (android/app/src/main/assets/js/user_errors.js) — правьте оба сразу (см.
    tests/test_shared_frontend_copies.py). Правила — по реальным текстам ошибок обеих платформ
-   (tests/js/user_errors.test.js); порядок важен: берётся первое совпадение. */
+   (tests/js/user_errors.test.js); порядок важен: берётся первое совпадение.
+
+   Правила с сервера (настройки client_config.json, раздел "user_errors" — см. app/client_config.py и
+   js/client_config.js): проверяются ПЕРВЫМИ, правило с тем же id заменяет встроенное. Регэкспы там — строками
+   (без учёта регистра); битый регэксп или правило без заголовка просто пропускаются. Так окно для новой ошибки
+   или исправленный текст доходят до техников без выпуска программы (владелец, 2026-10-06). */
 (() => {
   const RULES = [
     {
@@ -313,6 +318,57 @@
     },
   ];
 
+  // Серверные правила — тот же вид, что встроенные, но match/unless — строки регэкспов.
+  let remoteRules = [];
+
+  function compile(list) {
+    if (!Array.isArray(list)) return [];
+    const result = [];
+    for (const source of list) {
+      if (typeof source !== "string" || !source) continue;
+      try { result.push(new RegExp(source, "i")); } catch (err) { /* битый регэксп — без него */ }
+    }
+    return result;
+  }
+
+  // Текст/шаги правила с сервера: строка (список строк) или {pc, android} — как у встроенных; остальное — пусто.
+  function cleanText(value) {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return { pc: typeof value.pc === "string" ? value.pc : "", android: typeof value.android === "string" ? value.android : "" };
+    }
+    return "";
+  }
+
+  function cleanSteps(value) {
+    const list = (items) => (Array.isArray(items) ? items.filter((item) => typeof item === "string" && item) : []);
+    if (Array.isArray(value)) return list(value);
+    if (value && typeof value === "object") return { pc: list(value.pc), android: list(value.android) };
+    return [];
+  }
+
+  function setRemote(rules) {
+    remoteRules = [];
+    if (!Array.isArray(rules)) return;
+    for (const rule of rules) {
+      if (!rule || typeof rule !== "object" || typeof rule.id !== "string" || !rule.id) continue;
+      if (typeof rule.title !== "string" || !rule.title.trim()) continue;
+      const match = compile(rule.match);
+      if (!match.length) continue;
+      remoteRules.push({
+        id: rule.id, icon: typeof rule.icon === "string" && rule.icon ? rule.icon : "warning", title: rule.title,
+        match, unless: compile(rule.unless), text: cleanText(rule.text), steps: cleanSteps(rule.steps),
+        keepMessage: !!rule.keepMessage,
+      });
+    }
+  }
+
+  function activeRules() {
+    if (!remoteRules.length) return RULES;
+    const overridden = new Set(remoteRules.map((rule) => rule.id));
+    return remoteRules.concat(RULES.filter((rule) => !overridden.has(rule.id)));
+  }
+
   function platform() {
     return window.AndroidBridge ? "android" : "pc";
   }
@@ -333,7 +389,7 @@
   function classify(message) {
     const text = String(message || "");
     if (!text.trim()) return null;
-    for (const rule of RULES) {
+    for (const rule of activeRules()) {
       if (!rule.match.some((re) => re.test(text))) continue;
       if (rule.unless && rule.unless.some((re) => re.test(text))) continue;
       return resolve(rule);
@@ -342,9 +398,9 @@
   }
 
   function byId(id) {
-    const rule = RULES.find((item) => item.id === id);
+    const rule = activeRules().find((item) => item.id === id);
     return rule ? resolve(rule) : null;
   }
 
-  window.UserErrors = { classify, byId, ids: RULES.map((rule) => rule.id) };
+  window.UserErrors = { classify, byId, setRemote, ids: RULES.map((rule) => rule.id) };
 })();

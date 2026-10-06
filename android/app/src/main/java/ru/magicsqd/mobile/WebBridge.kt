@@ -143,6 +143,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         startHeartbeat()
         startInstallLogRecovery()
         startDeviceModelsRefresh()
+        startClientConfigRefresh()
         // До 1.0.41 при каждом «Получить пароль» сюда падала копия bugreport-zip (разбор жалоб «пароль
         // неверный»); сбор выключен — прежние копии убираем.
         Thread { File(context.filesDir, "qr_adb_debug").deleteRecursively() }.start()
@@ -182,6 +183,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 // openModel) могла показать и версию, и id одним вызовом, как
                 // на десктопе (app/web/bridge.py: app_get_info).
                 "device_models" -> deviceModelsJson()
+                "client_config" -> clientConfigJson()
                 "app_version" -> JSONObject()
                     .put("version", context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?")
                     .put("client_id", getOrCreateClientId())
@@ -554,6 +556,34 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     private fun deviceModelsJson(): String = try {
         deviceModelsFile.readText().let { JSONObject(it).toString() }
+    } catch (_: Exception) {
+        "{}"
+    }
+
+    /** Настройки и правила с сервера (client_config.py: content/config/client.json — отказы «файл не годится»,
+     * окна «что сделать», тексты, флажки) — копия в файлах приложения, свежая скачивается в фоне при запуске;
+     * поменялась — интерфейс получает её событием client_config_updated (js/client_config.js). Python-часть
+     * (apk_check) берёт правила из той же копии: configure() внутри client_config_refresh. */
+    private val clientConfigFile get() = File(context.filesDir, "client_config.json")
+
+    private fun startClientConfigRefresh() {
+        val version = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (_: Exception) { "" }
+        Thread {
+            try {
+                val changed = pyModule("mobile_bridge")
+                    .callAttr("client_config_refresh", BASE_URL, clientConfigFile.absolutePath, version).toBoolean()
+                if (changed) pushEvent(JSONObject().put("kind", "client_config_updated")
+                    .put("config", JSONObject(clientConfigJson())))
+            } catch (_: Exception) {
+                // нет сети — остаётся прежняя копия
+            }
+        }.apply { isDaemon = true; name = "magicsqd-client-config" }.start()
+    }
+
+    private fun clientConfigJson(): String = try {
+        clientConfigFile.readText().let { JSONObject(it).toString() }
     } catch (_: Exception) {
         "{}"
     }

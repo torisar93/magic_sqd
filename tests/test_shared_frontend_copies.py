@@ -15,6 +15,8 @@ ANDROID = ROOT / "android/app/src/main/assets"
 SHARED = [
     ("js/components/stage_run.js", "js/stage_run.js"),
     ("js/components/user_errors.js", "js/user_errors.js"),
+    # Настройки и правила с сервера (2026-10-06): правила окон «что сделать», тексты, флажки.
+    ("js/client_config.js", "js/client_config.js"),
     ("css/stage_run.css", "css/stage_run.css"),
     ("js/progress08.js", "js/progress08.js"),
     ("css/progress08.css", "css/progress08.css"),

@@ -8,6 +8,9 @@ file_problem — проверка самого файла ДО заливки н
 «не годится сам файл» (или он не уживается с тем, что уже стоит): остальные способы упрутся в то же самое. Такое
 приложение пропускается с понятной причиной, остальные из списка ставятся дальше.
 
+Новые такие отказы можно добавлять без выпуска программы — правилами "apk_rejections" в настройках с сервера
+(client_config.py, content/config/client.json): они проверяются ПЕРВЫМИ, встроенные ниже остаются запасными.
+
 Две одинаковые копии: app/apk_check.py (ПК) и android/app/src/main/python/apk_check.py (Android, через Chaquopy) —
 строки журнала на обеих платформах одни и те же. Только стандартная библиотека."""
 from __future__ import annotations
@@ -15,6 +18,11 @@ from __future__ import annotations
 import os
 import re
 import zipfile
+
+try:
+    from . import client_config  # ПК: модуль пакета app
+except ImportError:  # Android (Chaquopy): модули верхнего уровня
+    import client_config
 
 _BUNDLE_SUFFIXES = (".xapk", ".apks", ".apkm")
 _SDK_RE = re.compile(r"Requires newer sdk version #?(\d+) \(current version is #?(\d+)\)", re.I)
@@ -46,9 +54,25 @@ def file_problem(path, name: str | None = None) -> str | None:
     return f"«{name}» — не APK: внутри нет AndroidManifest.xml. Скачайте приложение заново."
 
 
+def _remote_rejection(name: str, text: str) -> str | None:
+    """Правила "apk_rejections" с сервера (см. client_config.py): первое подошедшее даёт текст. Любая неисправность
+    правила (нет текста, битый регэксп) — правило пропускается, до встроенных дело дойдёт как раньше."""
+    for rule in client_config.rules("apk_rejections"):
+        message = rule.get("message")
+        if not isinstance(message, str) or not message.strip():
+            continue
+        values = client_config.match_rule(rule, text)
+        if values is not None:
+            return client_config.fill(message, {**values, "name": name})
+    return None
+
+
 def rejection_message(name: str, reason: str) -> str | None:
     """Понятный текст, если магнитола отказала из-за самого файла; None — обычный отказ способа установки."""
     text = reason or ""
+    remote = _remote_rejection(name, text)
+    if remote:
+        return remote
     if "INSTALL_FAILED_NO_MATCHING_ABIS" in text.upper():
         # Процессор бывает и x86 (старые Haval на платформе Harman, лог №2404), поэтому без «нужна arm64».
         return (f"«{name}» собран не под процессор этой магнитолы (в APK нет библиотек под её архитектуру) — не встанет "
