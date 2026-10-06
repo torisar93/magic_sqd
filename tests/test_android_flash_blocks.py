@@ -21,10 +21,16 @@ WIZARD_SPEC_PATH = ROOT / "android/app/src/main/python/wizard_spec.py"
 
 @pytest.fixture(scope="module")
 def wizard_spec():
+    # wizard_spec импортирует catalog_crypto/catalog_key — плоские импорты, как в Chaquopy
+    android_py = str(WIZARD_SPEC_PATH.parent)
+    sys.path.insert(0, android_py)
     spec = importlib.util.spec_from_file_location("android_wizard_spec_flash", WIZARD_SPEC_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(android_py)
     return module
 
 

@@ -10,6 +10,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import catalog_key
+
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
                            prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie,
                            sync_early_access, sync_tree, model_on_server, prune_closed_stages)
@@ -392,14 +394,14 @@ def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
     # читает содержимое instruction.html, то есть требует, чтобы файл уже
     # был на диске; здесь наоборот, решаем, что докачать, ДО чтения).
     try:
-        raw = json.loads((model_dir / "_wizard_spec.json").read_text(encoding="utf-8"))
+        raw = json.loads(catalog_key.read_text(model_dir / "_wizard_spec.json"))
     except (OSError, json.JSONDecodeError):
         raw = {"steps": []}
 
     # Закрытые этапы (wizard_spec._merge_closed): их инструкции — в _closed/files/…, нумерация — своя
     sources = [(model_dir, raw)]
     try:
-        closed_raw = json.loads((model_dir / "_closed" / "_wizard_spec.json").read_text(encoding="utf-8"))
+        closed_raw = json.loads(catalog_key.read_text(model_dir / "_closed" / "_wizard_spec.json"))
         closed_raw = {"steps": [step if step.get("closed") else {} for step in closed_raw.get("steps", [])]}
         sources.append((model_dir / "_closed", closed_raw))
     except (OSError, json.JSONDecodeError):

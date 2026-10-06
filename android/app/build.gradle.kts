@@ -31,6 +31,12 @@ android {
             // (USB host спайки на эмуляторе всё равно не тестируются, там нет реального OTG).
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
+
+        // Секрет официальной сборки для закрытого каталога (см. WebBridge.configureCatalog): CI передаёт
+        // его как -Pmsqd.buildSecret=<hex> из секрета MAGICSQD_BUILD_SECRET. В исходниках пусто → токена
+        // и шифрования нет, всё работает как раньше. Не класть секрет в репозиторий.
+        buildConfigField("String", "MSQD_BUILD_SECRET",
+            "\"${project.findProperty("msqd.buildSecret") ?: ""}\"")
     }
 
     signingConfigs {
@@ -63,6 +69,10 @@ android {
         // не связанной с реальными проблемами в коде — блокирует release-сборку
         // без этого отключения.
         checkReleaseBuilds = false
+    }
+
+    buildFeatures {
+        buildConfig = true  // MSQD_BUILD_SECRET (см. defaultConfig.buildConfigField)
     }
 }
 

@@ -11,9 +11,14 @@ ADB-команд вместо кода), чтобы интерпретирова
 (_parse_adb_line/_render_command_body), должны разбирать те же строки так же.
 Модели БЕЗ _wizard_spec.json (написанные руками) этим модулем не покрываются
 — мобильный мастер для них должен явно показать "не поддерживается"."""
+import base64
 import json
+import mimetypes
 import re
 from pathlib import Path
+
+import catalog_crypto
+import catalog_key
 
 SPEC_FILENAME = "_wizard_spec.json"
 # Закрытые этапы (как ПК, app/closed_stages.py): полная модель — в <модель>/_closed/ (есть, только если доступ
@@ -241,8 +246,32 @@ def _rewrite_instruction_images(html: str, instr_dir: Path, files_root: Path) ->
     except ValueError:
         return html  # instr_dir не под files_root — рассинхрон путей, не трогаем
     base = f"https://appassets.androidplatform.net/data/{rel}/"
-    html = _IMG_SRC_RE.sub(lambda m: f"{m.group(1)}{base}{m.group(2)}{m.group(3)}", html)
+    # Картинки инструкций зашифрованы (catalog_key) — WebView не отдал бы их из /data/ расшифрованными,
+    # поэтому встраиваем base64 (расшифровав), как на ПК. Видео (не шифруется, крупное) — ссылкой на /data/.
+    def _img(m):
+        inlined = _inline_instruction_image(instr_dir, m.group(2))
+        tail = inlined if inlined is not None else f"{base}{m.group(2)}"
+        return f"{m.group(1)}{tail}{m.group(3)}"
+    html = _IMG_SRC_RE.sub(_img, html)
     return _VIDEO_HREF_RE.sub(lambda m: f"{m.group(1)}{base}{m.group(2)}{m.group(3)}", html)
+
+
+def _inline_instruction_image(instr_dir: Path, src: str):
+    """Зашифрованную картинку инструкции расшифровываем и встраиваем data:-URI (WebView не отдал бы её
+    из /data/ расшифрованной). Плейнтекст (из исходников) и ошибки — None: остаётся ссылка на /data/."""
+    path = instr_dir / src
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if not catalog_crypto.is_encrypted(raw):
+        return None
+    try:
+        data = catalog_key.decrypt_if_needed(raw)
+    except Exception:  # noqa: BLE001
+        return None
+    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
 # Этап «Флешка» из блоков (см. app/car_generator.py: FlashBlockSpec) — id блока =
@@ -265,7 +294,7 @@ def _flash_blocks(raw_blocks, files_dir: Path, usb_step_dir: Path, files_root: P
             if _FLASH_BLOCK_ID_RE.fullmatch(block_id):
                 instr_dir = files_dir / f"flash_{block_id}"
                 try:
-                    html = (instr_dir / "instruction.html").read_text(encoding="utf-8", errors="replace")
+                    html = catalog_key.read_text(instr_dir / "instruction.html", errors="replace")
                 except OSError:
                     html = ""
                 if html and files_root is not None:
@@ -298,7 +327,7 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
     if not spec_path.exists():
         return None
     try:
-        data = json.loads(spec_path.read_text(encoding="utf-8"))
+        data = json.loads(catalog_key.read_text(spec_path))
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -379,7 +408,7 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             instr_dir = files_dir / f"instruction_{i}"
             instr_path = instr_dir / "instruction.html"
             try:
-                instruction_html = instr_path.read_text(encoding="utf-8", errors="replace")
+                instruction_html = catalog_key.read_text(instr_path, errors="replace")
             except OSError:
                 instruction_html = ""
             if instruction_html and files_root is not None:

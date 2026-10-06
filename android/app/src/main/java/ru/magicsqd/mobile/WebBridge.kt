@@ -141,7 +141,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     init {
         if (!Python.isStarted()) Python.start(AndroidPlatform(context))
-        Thread { applyCatalogSession() }.start()  // не на главном потоке: импорт mobile_bridge — время
+        // Закрытый каталог: ключ шифрования и токен официальной сборки — до синхронизации (фоновый
+        // поток: импорт python-модулей не на главном). configureCatalog перед applyCatalogSession.
+        Thread { configureCatalog(); applyCatalogSession() }.start()
         webView.keepScreenOn = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
             .getBoolean("keep_screen_on", true)
         // Если техник уже входил раньше — сразу подтягиваем его заявки на
@@ -377,6 +379,25 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         try {
             pyModule("mobile_bridge").callAttr("set_auth_cookie", authUserCookie() ?: "", Uri.parse(AUTH_BASE_URL).host ?: "")
         } catch (_: Exception) { /* без сессии каталог просто общий */ }
+    }
+
+    /** Закрытый каталог: секрет официальной сборки (BuildConfig, вшит CI; из исходников пуст) + случайный
+     * секрет этой установки → ключ шифрования файлов модели и токен доступа к /content (catalog_setup). */
+    private fun configureCatalog() {
+        try {
+            pyModule("catalog_setup").callAttr(
+                "configure", BuildConfig.MSQD_BUILD_SECRET, getOrCreateDeviceRandom(), BASE_URL, getOrCreateClientId())
+        } catch (_: Exception) { /* без секрета — каталог открыт, файлы плейнтекстом, как раньше */ }
+    }
+
+    /** Случайный 32-байтовый секрет этой установки (hex) для ключа шифрования — у каждого устройства свой. */
+    private fun getOrCreateDeviceRandom(): String {
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        prefs.getString("catalog_device_random", null)?.let { return it }
+        val bytes = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val hex = bytes.joinToString("") { "%02x".format(it) }
+        prefs.edit().putString("catalog_device_random", hex).apply()
+        return hex
     }
 
     private fun authStatus(): JSONObject =

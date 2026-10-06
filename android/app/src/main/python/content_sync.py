@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+import catalog_crypto
+import catalog_key
 import offline_pack
 
 _DOWNLOAD_WORKERS = 16
@@ -32,9 +34,22 @@ def set_auth_cookie(cookie, host=None) -> None:
     _auth_cookie, _auth_host = (cookie, host) if cookie and host else (None, None)
 
 
+# Токен официальной сборки (app_token): сервер отдаёт каталог только с ним. Ставит WebBridge при старте,
+# если в сборке есть секрет; без секрета (из исходников) — None, запрос идёт без токена.
+_app_token = None
+
+
+def set_app_token(token) -> None:
+    global _app_token
+    _app_token = token
+
+
 def open_url(url: str, timeout: float):
-    """urlopen для запросов к каталогу — с cookie сессии техника, если он вошёл."""
+    """urlopen для запросов к каталогу — с токеном официальной сборки и cookie сессии техника."""
     request = urllib.request.Request(url)
+    if _app_token is not None:
+        for name, value in _app_token.header().items():
+            request.add_header(name, value)
     if _auth_cookie and urlparse(url).hostname == _auth_host:
         request.add_header("Cookie", _auth_cookie)
     return urllib.request.urlopen(request, timeout=timeout)
@@ -103,7 +118,8 @@ def _is_stale(local_path: Path, item: dict) -> bool:
     if not local_path.exists():
         return True
     st = local_path.stat()
-    if st.st_size != item.get("size", -1):
+    # Зашифрованный файл модели (catalog_key) больше на catalog_crypto.OVERHEAD — это та же версия.
+    if not catalog_crypto.stored_size_matches(local_path, st.st_size, item.get("size", -1)):
         return True
     remote_mtime = item.get("mtime")
     if remote_mtime is not None and abs(st.st_mtime - remote_mtime) > 2:
@@ -120,7 +136,7 @@ def local_copy_is_current(path: Path, item: dict) -> bool:
         st = path.stat()
     except OSError:
         return False
-    if st.st_size != item.get("size", -1):
+    if not catalog_crypto.stored_size_matches(path, st.st_size, item.get("size", -1)):
         return False
     remote_mtime = item.get("mtime")
     if remote_mtime is None or abs(st.st_mtime - remote_mtime) <= 2:
@@ -178,6 +194,10 @@ def download_file(base_url: str, remote_path: str, dest: Path, chunk_size: int =
         except OSError:
             pass
         raise
+    # Собственные файлы модели (спека, скрипты, инструкции — catalog_key.is_encrypted_path) храним
+    # зашифрованными ключом этой установки; без ключа (из исходников) — как есть.
+    if catalog_key.is_configured() and catalog_key.is_encrypted_path(remote_path):
+        tmp_dest.write_bytes(catalog_key.encrypt_bytes(tmp_dest.read_bytes()))
     tmp_dest.replace(dest)
     if mtime is not None:
         # Штампуем mtime сервера на локальный файл — это то, с чем следующий

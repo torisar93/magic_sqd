@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import catalog_key
+
 MODEL_STATUSES = ("ok", "needs_review", "broken")
 _RECENTLY_UPDATED_HOURS = 24
 NO_INSTRUCTION_MARKER = "no_instruction.txt"
@@ -116,7 +118,7 @@ def _model_sub_dirs(model_dir: Path):
 def read_early_access(directory: Path):
     """(когда откроется всем, под замком ли) из EARLY_ACCESS_MARKER или None."""
     try:
-        data = json.loads((directory / EARLY_ACCESS_MARKER).read_text(encoding="utf-8"))
+        data = json.loads(catalog_key.read_text(directory / EARLY_ACCESS_MARKER))
     except (OSError, json.JSONDecodeError):
         return None
     open_at = data.get("open_at") if isinstance(data, dict) else None
@@ -150,7 +152,7 @@ def _build_model_info(brand: str, name: str, modification, leaf_dir: Path, inher
 
 def _read_submission_status(model_dir: Path) -> str:
     try:
-        value = (model_dir / SUBMISSION_STATUS_FILENAME).read_text(encoding="utf-8").strip()
+        value = catalog_key.read_text(model_dir / SUBMISSION_STATUS_FILENAME).strip()
     except OSError:
         return ""
     return value if value in ("pending", "rejected") else ""
@@ -183,7 +185,7 @@ def _hero_placeholder(cars_dir: Path):
 
 def _read_version(model_dir: Path):
     try:
-        data = json.loads((model_dir / VERSION_FILENAME).read_text(encoding="utf-8"))
+        data = json.loads(catalog_key.read_text(model_dir / VERSION_FILENAME))
     except (OSError, json.JSONDecodeError):
         return 0, "", "ok", ""
     try:
