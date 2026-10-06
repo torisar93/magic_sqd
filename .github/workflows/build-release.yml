@@ -391,9 +391,14 @@ jobs:
       # gradlew/gradlew.bat в репозитории нет (см. reference_android_gradle_build
       # в памяти) — вызываем main-класс из gradle-wrapper.jar напрямую, он
       # сам докачает нужный Gradle по gradle-wrapper.properties.
+      # Секрет официальной сборки для закрытого каталога (см. WebBridge.configureCatalog,
+      # app/build.gradle.kts). Hex, без спецсимволов — безопасно в кавычках. Пусто/нет секрета —
+      # сборка без токена и шифрования (переходный период), всё как раньше.
       - name: Build release APK
         working-directory: android
-        run: java -cp gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain :app:assembleRelease
+        env:
+          MSQD_BUILD_SECRET: ${{ secrets.MAGICSQD_BUILD_SECRET }}
+        run: java -cp gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain :app:assembleRelease -Pmsqd.buildSecret="$MSQD_BUILD_SECRET"
 
       - name: Rename APK to release convention
         shell: bash

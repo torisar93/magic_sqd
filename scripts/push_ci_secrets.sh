@@ -46,6 +46,15 @@ get_prop() { grep -m1 "^$1=" android/keystore/keystore.properties | cut -d= -f2-
 "$GH" secret set MAGICSQD_SUBMIT_JSON  < submit.json
 "$GH" secret set MAGICSQD_ADMIN_JSON   < admin.json
 
+# Закрытый каталог: один и тот же секрет сборки лежит в server.json (поле app_build_secret — его
+# читает ПК) и отдельным секретом для Android-сборки (-Pmsqd.buildSecret). Берём из server.json, чтобы
+# не держать в двух местах. Пусто (поля нет) — токена и шифрования не будет (переходный период).
+# Тот же hex надо прописать на сервере в backend.env APP_BUILD_SECRET при закрытии /content.
+BUILD_SECRET=$(python3 -c "import json;print(json.load(open('server.json')).get('app_build_secret',''))" 2>/dev/null || true)
+printf '%s' "$BUILD_SECRET" | "$GH" secret set MAGICSQD_BUILD_SECRET
+[ -n "$BUILD_SECRET" ] && echo "app_build_secret из server.json → MAGICSQD_BUILD_SECRET установлен" \
+                       || echo "ВНИМАНИЕ: в server.json нет app_build_secret — каталог останется открытым (токена/шифрования не будет)"
+
 base64 -w0 android/keystore/magicsqd-release.jks | "$GH" secret set ANDROID_KEYSTORE_BASE64
 get_prop storePassword | "$GH" secret set ANDROID_KEYSTORE_PASSWORD
 get_prop keyAlias      | "$GH" secret set ANDROID_KEY_ALIAS
