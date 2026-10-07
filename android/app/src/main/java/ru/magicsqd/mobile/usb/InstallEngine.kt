@@ -291,6 +291,17 @@ class InstallEngine(
     private fun unsuitableFile(name: String, reason: String): String? =
         try { apkCheck.callAttr("rejection_message", name, reason)?.toString() } catch (_: Exception) { null }
 
+    /** «Файл не годится» с поправкой: «нет подписи» на уже стоящем приложении — не плохой файл. На Geely G426 так
+     *  кончаются повтор и обновление поверх через dex-хелпер (логи №3750, №3988) — говорим, что приложение уже стоит,
+     *  вместо «нужна другая сборка». Как ПК: install_context._rejection. */
+    private fun rejection(name: String, pkg: String, reason: String, log: (String) -> Unit): String? {
+        if ("INSTALL_PARSE_FAILED_NO_CERTIFICATES" in reason.uppercase() && packageInstalled(pkg, log)) {
+            val text = try { apkCheck.callAttr("already_installed_message", name, pkg)?.toString() } catch (_: Exception) { null }
+            if (text != null) return text
+        }
+        return unsuitableFile(name, reason)
+    }
+
     private fun definitiveRejection(apkName: String, reason: String): String? {
         val upper = reason.uppercase()
         return when {
@@ -334,10 +345,9 @@ class InstallEngine(
     private fun sameApkInstalled(pkg: String, apk: File, log: (String) -> Unit): Boolean {
         if (pkg.isEmpty()) return false
         return try {
-            val listed = (AdbSession.shell("pm path $pkg", log) as? AdbShellResult.Output)?.text.orEmpty()
-            val paths = listed.lines().map { it.trim() }.filter { it.startsWith("package:") }.map { it.removePrefix("package:") }
-            if (paths.size != 1 || paths[0].isEmpty() || paths[0].any { it.isWhitespace() }) return false
-            val out = (AdbSession.shell("sha256sum ${paths[0]}", log, 120_000) as? AdbShellResult.Output)?.text.orEmpty()
+            val installed = installedBaseApk(pkg, log)
+            if (installed.isNullOrEmpty()) return false
+            val out = (AdbSession.shell("sha256sum $installed", log, 120_000) as? AdbShellResult.Output)?.text.orEmpty()
             val remote = out.trim().split(Regex("\\s+")).firstOrNull()?.lowercase().orEmpty()
             remote.length == 64 && remote == sha256Hex(apk)
         } catch (_: Exception) {
@@ -345,12 +355,24 @@ class InstallEngine(
         }
     }
 
-    /** Пакет уже стоит на магнитоле (pm path что-то вернул). Любая неясность — false. */
+    /** base.apk уже стоящего пакета: `pm path`, а если он пути не дал — `dumpsys package` (apk_check.installed_base_apk:
+     *  на Geely G426 `pm path` до сверки не доводил, лог №3988). Пусто/null — сверять не с чем. Как ПК:
+     *  install_context._installed_base_apk. */
+    private fun installedBaseApk(pkg: String, log: (String) -> Unit): String? {
+        val listed = (AdbSession.shell("pm path $pkg", log) as? AdbShellResult.Output)?.text.orEmpty()
+        val found = apkCheck.callAttr("installed_base_apk", listed, null, pkg)?.toString()
+        if (found != null) return found
+        val dump = (AdbSession.shell("dumpsys package $pkg", log, 60_000) as? AdbShellResult.Output)?.text.orEmpty()
+        return apkCheck.callAttr("installed_base_apk", listed, dump, pkg)?.toString()
+    }
+
+    /** Пакет уже стоит на магнитоле: `pm list packages` (на Geely G426 работает — по нему dex-хелпер проверяет успех)
+     *  или путь к нему. Любая неясность — false. Как ПК: install_context._package_present. */
     private fun packageInstalled(pkg: String, log: (String) -> Unit): Boolean {
         if (pkg.isEmpty()) return false
         return try {
-            (AdbSession.shell("pm path $pkg", log) as? AdbShellResult.Output)?.text.orEmpty()
-                .lineSequence().any { it.trim().startsWith("package:") }
+            val listed = (AdbSession.shell("pm list packages $pkg", log) as? AdbShellResult.Output)?.text.orEmpty()
+            listed.lineSequence().any { it.trim() == "package:$pkg" } || !installedBaseApk(pkg, log).isNullOrEmpty()
         } catch (_: Exception) {
             false  // обрыв связи — следующий шаг установки сам разберётся (см. perform)
         }
@@ -906,7 +928,7 @@ class InstallEngine(
                         // на нём (лог #764: Settings.apk с INSTALL_FAILED_CONFLICTING_PROVIDER, остальное — вторым запуском).
                         val reason = r.reason.split(Regex("\\s+")).joinToString(" ")
                         log("  ↳ не сработало ($label): ${reason.take(300)}")
-                        val unsuitable = unsuitableFile(file.name, r.reason)
+                        val unsuitable = rejection(file.name, currentPackageName, r.reason, log)
                         if (unsuitable != null) { skipUnsuitable(unsuitable); continue }
                         skipped.add("${file.name}: ${reason.take(150)}")
                         onProgress(path, index, apkPaths.size, "error")
@@ -955,7 +977,7 @@ class InstallEngine(
                         if (newerVersionInstalled(r.reason)) { keptNewer = true; break }
                         definitiveRejection(file.name, r.reason)?.let { dropStaged(); return failed(it) }
                         // Отказ из-за самого файла — остальные способы упрутся в то же самое (логи №1942, №2087).
-                        unsuitable = unsuitableFile(file.name, r.reason)
+                        unsuitable = rejection(file.name, currentPackageName, r.reason, log)
                         if (unsuitable != null) break
                     }
                     is AdbInstallResult.Success -> {

@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
 
 from app import apk_check, install_context
 from app.install_context import InstallContext, UnsuitableApk
@@ -230,7 +231,70 @@ def test_android_engine_uses_the_same_rules():
     # проверка файла — до заливки на магнитолу
     assert loop.index("val problem = fileProblem(path, file.name)") < loop.index("AdbSession.push(apk, stagedRemote, log)")
     # в переборе отказ «сам файл» обрывает перебор и пропускает приложение
-    assert "unsuitable = unsuitableFile(file.name, r.reason)\n                        if (unsuitable != null) break" in loop
+    # (через rejection: «нет подписи» на уже стоящем приложении — свой текст, см. test_android_replug_and_scan.py)
+    assert "unsuitable = rejection(file.name, currentPackageName, r.reason, log)\n                        if (unsuitable != null) break" in loop
     assert "if (unsuitable != null) { skipUnsuitable(unsuitable); continue }" in loop
     assert 'if (skipped.isNotEmpty() && okCount == 0) {' in engine
     assert 'return StageRunResult.Failed("Не установлено: " + skipped.joinToString("; "))' in engine
+
+
+# --- Уже стоящее приложение: путь к base.apk и «нет подписи» на Geely G426 (логи №3750, №3752, №3988) ---------------
+
+_DUMPSYS = """Packages:
+  Package [ru.mehanik88.cityraysettings] (4f1a2b3):
+    userId=10123
+    codePath=/data/app/~~AbC==/ru.mehanik88.cityraysettings-XyZ==
+    resourcePath=/data/app/~~AbC==/ru.mehanik88.cityraysettings-XyZ==
+    versionCode=10203 minSdk=26 targetSdk=33
+    splits=[base]
+  Package [com.other] (1):
+    codePath=/data/app/com.other-1
+"""
+
+
+@pytest.mark.parametrize("pm_path, dumpsys, expected", [
+    ("package:/data/app/x-1/base.apk\n", None, "/data/app/x-1/base.apk"),          # обычный случай — pm path
+    ("package:/data/app/x/base.apk\npackage:/data/app/x/split_config.arm64_v8a.apk\n", None, ""),  # из частей
+    ("", None, None),                                                                # пути нет — нужен dumpsys
+    ("", _DUMPSYS, "/data/app/~~AbC==/ru.mehanik88.cityraysettings-XyZ==/base.apk"),  # G426: путь из dumpsys
+    ("", _DUMPSYS.replace("splits=[base]", "splits=[base, config.arm64_v8a]"), ""),  # из частей по dumpsys
+    ("", "Packages:\n  Package [ru.mehanik88.cityraysettings] (1):\n    codePath=/system/app/GSettings\n", None),
+    ("", "Unable to find package: ru.mehanik88.cityraysettings\n", None),            # пакета нет
+])
+def test_installed_base_apk(pm_path, dumpsys, expected):
+    assert apk_check.installed_base_apk(pm_path, dumpsys, "ru.mehanik88.cityraysettings") == expected
+
+
+def test_already_installed_message_names_the_package_and_the_way_out():
+    text = apk_check.already_installed_message("GSettings_1.2.3(10203)_release.apk", "ru.mehanik88.cityraysettings")
+    assert text.startswith("«GSettings_1.2.3(10203)_release.apk»: на магнитоле уже стоит ru.mehanik88.cityraysettings")
+    assert "«Удалить приложение»" in text and "нужна другая сборка" not in text
+
+
+_NO_CERTS = ("dex-хелпер не подтвердил успех (новых пакетов: нет): monji: session=64462960 flags=0x116 monji: wrote "
+             "6390474 bytes Failure status=4 message=INSTALL_PARSE_FAILED_NO_CERTIFICATES: Failed collecting certificates")
+
+
+def _device(ctx, responses):
+    def shell(command, check=True, timeout=120):
+        return SimpleNamespace(stdout=responses.get(command, ""), stderr="", returncode=0)
+    ctx.shell = shell
+
+
+def test_no_certificates_on_installed_app_says_already_installed(tmp_path, make_ctx, monkeypatch):
+    gsettings = _zip(tmp_path / "GSettings_1.2.3(10203)_release.apk", ["AndroidManifest.xml"])
+    monkeypatch.setattr(install_context, "read_package_name", lambda path: "ru.mehanik88.cityraysettings")
+    ctx = make_ctx([gsettings], {gsettings.name: _NO_CERTS})
+    _device(ctx, {"pm list packages ru.mehanik88.cityraysettings": "package:ru.mehanik88.cityraysettings\n"})
+    ctx.install_selected_apks()
+    assert len(ctx.tried) == 1 and ctx.apps_ok == 0
+    assert ctx.failed_apps == [apk_check.already_installed_message(gsettings.name, "ru.mehanik88.cityraysettings")]
+
+
+def test_no_certificates_on_new_app_keeps_the_file_verdict(tmp_path, make_ctx, monkeypatch):
+    unsigned = _zip(tmp_path / "unsigned.apk", ["AndroidManifest.xml"])
+    monkeypatch.setattr(install_context, "read_package_name", lambda path: "com.example.unsigned")
+    ctx = make_ctx([unsigned], {unsigned.name: _NO_CERTS})
+    _device(ctx, {"pm list packages com.example.unsigned": "package:com.example.unsigned.helper\n"})  # не тот пакет
+    ctx.install_selected_apks()
+    assert ctx.failed_apps == [apk_check.rejection_message(unsigned.name, _NO_CERTS)]

@@ -51,6 +51,19 @@ def test_same_file_on_head_unit_is_not_installed_again(ctx):
     assert "«WiFi+Manager.apk»: на магнитоле уже стоит этот же файл — установку пропускаю." in ctx.test.log
 
 
+def test_same_file_found_through_dumpsys_when_pm_path_is_silent(ctx):
+    # Geely G426 (лог №3988): pm path уже стоящего приложения пути не дал — сверка не шла, тот же файл ставился заново,
+    # а dex-хелпер отвечал «нет подписи». Путь к base.apk берём из dumpsys package (codePath).
+    digest = hashlib.sha256(ctx.test.apk.read_bytes()).hexdigest()
+    commands = _device(ctx, {
+        "dumpsys package org.kman.WifiManager": "Packages:\n  Package [org.kman.WifiManager] (1):\n"
+                                                 "    codePath=/data/app/~~a==/org.kman.WifiManager-b==\n    splits=[base]\n",
+        "sha256sum /data/app/~~a==/org.kman.WifiManager-b==/base.apk": f"{digest}  base.apk\n"})
+    ctx.install_selected_apks()
+    assert ctx.test.installs == [] and ctx.test.after == [("WiFi+Manager.apk", False)]
+    assert commands[:2] == ["pm path org.kman.WifiManager", "dumpsys package org.kman.WifiManager"]
+
+
 @pytest.mark.parametrize("responses", [
     # другая сборка с тем же пакетом (мод вместо оригинала) — ставим
     {"pm path org.kman.WifiManager": "package:/data/app/x/base.apk\n", "sha256sum /data/app/x/base.apk": "0" * 64 + "  x\n"},

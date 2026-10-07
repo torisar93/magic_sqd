@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 from .adb_utils import Adb, AdbError
-from .apk_check import file_problem, rejection_message
+from .apk_check import already_installed_message, file_problem, installed_base_apk, rejection_message
 from .apk_package import read_package_name
 from .scanner import read_apk_mock_location
 from .uninstall_helper import HELPER_NAME as UNINSTALL_HELPER_NAME, uninstall_via_helper
@@ -631,15 +631,45 @@ class InstallContext:
         if not package:
             return False
         try:
-            listed = self.shell(f"pm path {package}", check=False, timeout=30).stdout or ""
-            paths = [line.strip()[len("package:"):] for line in listed.splitlines()
-                     if line.strip().startswith("package:")]
-            if len(paths) != 1 or not paths[0] or any(ch.isspace() for ch in paths[0]):
+            installed = self._installed_base_apk(package)
+            if not installed:
                 return False
-            remote = (self.shell(f"sha256sum {paths[0]}", check=False, timeout=120).stdout or "").split()
+            remote = (self.shell(f"sha256sum {installed}", check=False, timeout=120).stdout or "").split()
             return bool(remote) and remote[0].lower() == _file_sha256(self._maybe_resign(apk))
         except (AdbError, OSError):
             return False
+
+    def _installed_base_apk(self, package: str) -> str | None:
+        """base.apk уже стоящего пакета: `pm path`, а если он пути не дал — `dumpsys package` (apk_check.installed_base_apk;
+        на Geely G426 `pm path` до сверки не доводил, лог №3988). Пусто/None — сверять не с чем."""
+        listed = self.shell(f"pm path {package}", check=False, timeout=30).stdout or ""
+        found = installed_base_apk(listed, None, package)
+        if found is None:
+            dump = self.shell(f"dumpsys package {package}", check=False, timeout=60).stdout or ""
+            found = installed_base_apk(listed, dump, package)
+        return found
+
+    def _package_present(self, package: str) -> bool:
+        """Пакет уже стоит: `pm list packages` (на Geely G426 работает — по нему dex-хелпер проверяет успех) или путь
+        к нему. Любая неясность — False."""
+        try:
+            listed = self.shell(f"pm list packages {package}", check=False, timeout=30).stdout or ""
+            if any(line.strip() == f"package:{package}" for line in listed.splitlines()):
+                return True
+            return bool(self._installed_base_apk(package))
+        except (AdbError, OSError):
+            return False
+
+    def _rejection(self, name: str, exc, apk) -> str | None:
+        """Отказ магнитолы, после которого другие способы бесполезны (apk_check.rejection_message). «Нет подписи» на
+        уже стоящем приложении — не плохой файл: на Geely G426 так кончаются повтор и обновление поверх через
+        dex-хелпер (логи №3750, №3988) — говорим, что приложение уже стоит, вместо «нужна другая сборка»."""
+        text = str(exc)
+        if "INSTALL_PARSE_FAILED_NO_CERTIFICATES" in text.upper():
+            package = read_package_name(apk)
+            if package and self._package_present(package):
+                return already_installed_message(name, package)
+        return rejection_message(name, text)
 
     def _mock_location_target(self) -> Path | None:
         """Приложение, которому после установки нужно выдать фиктивное
@@ -737,7 +767,7 @@ class InstallContext:
                 gone = device_unavailable_message(str(exc), during=True)
                 if gone:
                     raise InstallCancelled(gone) from exc
-                unsuitable = rejection_message(name, str(exc))
+                unsuitable = self._rejection(name, exc, path)
                 if unsuitable:
                     self.log(unsuitable)
                     raise UnsuitableApk(unsuitable) from exc
@@ -775,7 +805,7 @@ class InstallContext:
                     raise InstallCancelled(gone) from exc
                 # Отказ из-за самого файла (другой процессор, нужен Android новее, файл не читается) — остальные
                 # способы упрутся в то же самое: сразу понятная причина, приложение пропускаем (логи №1942, №2087).
-                unsuitable = rejection_message(name, str(exc))
+                unsuitable = self._rejection(name, exc, path)
                 if unsuitable:
                     self.log(unsuitable)
                     raise UnsuitableApk(unsuitable) from exc
@@ -1137,7 +1167,7 @@ class InstallContext:
             gone = device_unavailable_message(str(exc), during=self._device_confirmed)
             if gone:
                 raise InstallCancelled(gone) from exc
-            unsuitable = rejection_message(name, str(exc))
+            unsuitable = self._rejection(name, exc, path)
             if unsuitable:
                 self.log(unsuitable)
                 raise UnsuitableApk(unsuitable) from exc

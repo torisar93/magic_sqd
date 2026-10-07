@@ -35,6 +35,8 @@ const CASES = [
   ["Ошибка записи: IOException: MAX_RECOVERY_ATTEMPTS Exceeded while trying to transfer command to device, please reattach device and try again", "flash_io"],
   ["Флешка перестала отвечать при подключении (could not claim interface!)", "flash_io"],
   ["Не удалось прочитать флешку (Index 8 out of bounds for length 8)", "flash_unreadable"],
+  // Android: испорченная таблица FAT — libaums падал по памяти (логи №3807, №3833); «Форматировать» не поможет
+  ["Флешка: не удалось подключиться — Флешка повреждена: её файловая система испорчена (таблица FAT), программа не может ни прочитать её, ни отформатировать. Отформатируйте флешку на компьютере в FAT32 или возьмите другую.", "flash_corrupted"],
   // ПК: FAT32 на флешке 58,6 ГБ (логи №2943, №3000, №3012)
   [String.raw`Флешка: запись не удалась — файлы этапа и выбранные приложения: Ошибка: Не удалось отформатировать H:\: Format-Volume : Size Not Supported`, "fat32_too_big"],
   ["Ошибка: Windows форматирует в FAT32 только флешки до 32 ГБ, а H: — 58.6 ГБ.", "fat32_too_big"],

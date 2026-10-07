@@ -108,8 +108,12 @@ def test_same_apk_already_on_head_unit_is_not_reinstalled():
     # test_same_apk_skip.py; здесь Android: проверка до заливки файла, сравнение SHA-256 с base.apk на магнитоле.
     engine = _code(KOTLIN / "usb/InstallEngine.kt")
     same = _function(engine, "private fun sameApkInstalled(")
-    assert 'AdbSession.shell("pm path $pkg", log)' in same and "sha256sum ${paths[0]}" in same
-    assert "paths.size != 1" in same and "remote == sha256Hex(apk)" in same and "catch (_: Exception)" in same
+    assert "installedBaseApk(pkg, log)" in same and "sha256sum $installed" in same
+    assert "installed.isNullOrEmpty()" in same and "remote == sha256Hex(apk)" in same and "catch (_: Exception)" in same
+    # Путь к base.apk: pm path, а если он не дал — dumpsys package (Geely G426, лог №3988); разбор — общий apk_check.
+    base = _function(engine, "private fun installedBaseApk(")
+    assert 'AdbSession.shell("pm path $pkg", log)' in base and 'AdbSession.shell("dumpsys package $pkg", log, 60_000)' in base
+    assert base.count('callAttr("installed_base_apk"') == 2
     loop = engine[engine.index("for ((index, path) in apkPaths.withIndex())"):]
     assert loop.index("if (sameApkInstalled(currentPackageName, signedFile, log))") < loop.index("if (confirmedMethod != null)")
     assert "на магнитоле уже стоит этот же файл — установку пропускаю" in loop
@@ -126,3 +130,25 @@ def test_launch_app_reports_what_really_happened():
     screen = _function(permissions, "private fun onScreen(")
     assert "dumpsys activity activities | grep -E 'Display #|ResumedActivity'" in screen
     assert 'line.contains("topResumedActivity")' in screen and 'component.startsWith("$pkg/")' in screen
+
+
+def test_no_certificates_on_installed_app_says_already_installed():
+    # Geely G426 (логи №3750, №3988): повтор/обновление поверх через dex-хелпер — «нет подписи»; раньше программа
+    # писала «файл не годится, нужна другая сборка». Как ПК: install_context._rejection.
+    engine = _code(KOTLIN / "usb/InstallEngine.kt")
+    rejection = _function(engine, "private fun rejection(")
+    assert '"INSTALL_PARSE_FAILED_NO_CERTIFICATES" in reason.uppercase() && packageInstalled(pkg, log)' in rejection
+    assert 'callAttr("already_installed_message", name, pkg)' in rejection and "unsuitableFile(name, reason)" in rejection
+    installed = _function(engine, "private fun packageInstalled(")
+    assert 'AdbSession.shell("pm list packages $pkg", log)' in installed and 'it.trim() == "package:$pkg"' in installed
+    assert engine.count("rejection(file.name, currentPackageName, r.reason, log)") == 2
+    assert "unsuitableFile(file.name, r.reason)" not in engine
+
+
+def test_corrupted_flash_does_not_crash_the_app():
+    # Логи №3807, №3833: испорченная таблица FAT — libaums копил цепочку кластеров до OutOfMemoryError (не Exception),
+    # программа падала. Теперь — понятная ошибка, окно «Флешка повреждена» (user_errors.js, flash_corrupted).
+    session = _code(KOTLIN / "usb/UsbFlashSession.kt")
+    connect = _function(session, "fun connectBlocking(")
+    assert "catch (e: OutOfMemoryError)" in connect and "target.close()" in connect and "FLASH_CORRUPTED" in connect
+    assert 'const val FLASH_CORRUPTED = "Флешка повреждена: её файловая система испорчена' in session

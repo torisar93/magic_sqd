@@ -120,3 +120,39 @@ def rejection_message(name: str, reason: str) -> str | None:
     if _BROKEN_RE.search(text):
         return f"«{name}» магнитола не может прочитать — файл повреждён или это не обычный APK. Скачайте его заново."
     return None
+
+
+def installed_base_apk(pm_path_output: str | None, dumpsys_output: str | None, package: str) -> str | None:
+    """Путь к base.apk уже стоящего пакета — для сверки «на магнитоле уже стоит этот же файл». Сначала вывод
+    `pm path <пакет>`: ровно один путь — он; несколько (приложение из частей, split) — "" (сверять нечем). Ни
+    одного — смотрим вывод `dumpsys package <пакет>` (codePath): на Geely G426 (Cityray Monji) `pm path` уже стоящего
+    приложения до сверки не доводил, тот же файл ставился заново, и dex-хелпер отвечал «нет подписи» (лог №3988).
+    None — пути нет: нужен dumpsys (dumpsys_output ещё не передан) или пакета нет."""
+    paths = [line.strip()[len("package:"):] for line in (pm_path_output or "").splitlines()
+             if line.strip().startswith("package:") and line.strip() != "package:"]
+    if len(paths) > 1:
+        return ""
+    if len(paths) == 1:
+        return paths[0] if not any(ch.isspace() for ch in paths[0]) else ""
+    if not dumpsys_output:
+        return None
+    section = dumpsys_output.split(f"Package [{package}]", 1)
+    if len(section) < 2:
+        return None
+    block = re.split(r"\n\s*Package \[", section[1], maxsplit=1)[0]
+    code = re.search(r"^\s*codePath=(\S+)\s*$", block, re.M)
+    splits = re.search(r"^\s*splits=\[([^\]]*)\]", block, re.M)
+    if not code or not code.group(1).startswith("/data/app/"):
+        return None  # системное приложение или формат не тот — сверять не берёмся
+    if splits and [part.strip() for part in splits.group(1).split(",") if part.strip()] not in ([], ["base"]):
+        return ""
+    return code.group(1).rstrip("/") + "/base.apk"
+
+
+def already_installed_message(name: str, package: str) -> str:
+    """Магнитола ответила «нет подписи» (INSTALL_PARSE_FAILED_NO_CERTIFICATES), а приложение на ней уже стоит: так на
+    Geely G426 (Cityray Monji) кончаются повторная установка и обновление поверх через dex-хелпер (логи №3750, №3752,
+    №3988). Файл в порядке — раньше программа писала «не встанет никаким способом, нужна другая сборка»."""
+    return (f"«{name}»: на магнитоле уже стоит {package}, и поверх него эта магнитола не ставит (отвечает «нет "
+            "подписи»). Если нужна именно эта версия — удалите стоящее приложение (кнопка «Удалить приложение» в "
+            "«Дополнительных действиях») и поставьте снова.")

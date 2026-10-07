@@ -95,7 +95,8 @@ def test_grant_inside_install_method_shows_the_same_phase(tmp_path, monkeypatch)
     phases = [event[4] for event in events]
     assert phases.count("install") == 1 and phases[-1] is None
     assert [event[5] for event in events if len(event) > 5][-1] == (STEPS, STEPS)
-    assert commands.count("dumpsys package ru.yandex.music") == 1  # не второй раз после установки
+    # не второй раз после установки (считаем саму выдачу: dumpsys package теперь зовёт и поиск уже стоящего файла)
+    assert commands.count("pm grant ru.yandex.music android.permission.RECORD_AUDIO") == 1
 
 
 def test_stop_during_grant_still_closes_the_row(tmp_path, monkeypatch):
