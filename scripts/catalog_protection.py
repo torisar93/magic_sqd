@@ -58,9 +58,11 @@ def app_check():
     return None
 
 def token_statuses(pos, since):
-    """Ответы /auth/app-token в журнале nginx с позиции pos (не раньше since): {код: (запросов, адресов)}."""
+    """Ответы /auth/app-token в журнале nginx с позиции pos (не раньше since), отдельно для чужих адресов и для
+    адреса, с которого запущен скрипт (там и его самопроверка, и программы этой же сети):
+    {"others"|"mine": {код: (запросов, адресов)}}."""
     me = os.environ.get("SSH_CLIENT", "").split(" ")[0]
-    stats = {}
+    stats = {"others": {}, "mine": {}}
     try:
         size = os.path.getsize(LOG)
     except OSError:
@@ -69,15 +71,16 @@ def token_statuses(pos, since):
         f.seek(pos if pos <= size else 0)
         for raw in f:
             m = LINE.match(raw.decode("utf-8", "replace"))
-            if not m or m.group(1) == me:
+            if not m:
                 continue
             when = datetime.datetime.strptime(m.group(2), "%d/%b/%Y:%H:%M:%S %z").timestamp()
             if when < since:
                 continue
-            n, ips = stats.get(m.group(3), (0, set()))
+            side = stats["mine" if m.group(1) == me else "others"]
+            n, ips = side.get(m.group(3), (0, set()))
             ips.add(m.group(1))
-            stats[m.group(3)] = (n + 1, ips)
-    return {code: (n, len(ips)) for code, (n, ips) in stats.items()}
+            side[m.group(3)] = (n + 1, ips)
+    return {who: {code: (n, len(ips)) for code, (n, ips) in side.items()} for who, side in stats.items()}
 
 if mode == "check-apk":
     secret = sys.stdin.read().strip().lower().encode("ascii")
@@ -100,8 +103,8 @@ if mode == "watch":
     deadline = time.time() + limit
     while True:
         stats = token_statuses(pos, since)
-        ok, bad = stats.get("200", (0, 0)), stats.get("403", (0, 0))
-        if ok[0] >= 3 or bad[0] >= 5 or time.time() >= deadline:
+        ok, bad = stats["others"].get("200", (0, 0)), stats["others"].get("403", (0, 0))
+        if ok[1] >= 3 or bad[0] >= 5 or time.time() >= deadline:
             print("WATCH", json.dumps(stats)); sys.exit(0)
         time.sleep(5)
 
@@ -178,6 +181,7 @@ def self_check(secret: str) -> list[str]:
     icons = []
     if status == 200:
         print("  ✓ каталог с токеном открывается (200)")
+        # apk_icons: путь APK → "icons/<sha>.png" (строка; в icons/.index.json на сервере — словари с "icon")
         icons = list((json.loads(raw.decode("utf-8")).get("apk_icons") or {}).values())
     else:
         problems.append(f"каталог с токеном не открылся ({status})")
@@ -186,7 +190,8 @@ def self_check(secret: str) -> list[str]:
         print("  ✓ без токена каталог закрыт (403)")
     else:
         problems.append(f"без токена каталог отвечает {status}, а должен 403")
-    icon = next((v.get("icon") for v in icons if isinstance(v, dict) and v.get("icon")), None)
+    icon = next((v if isinstance(v, str) else v.get("icon") for v in icons
+                 if (isinstance(v, str) and v) or (isinstance(v, dict) and v.get("icon"))), None)
     if icon:
         status, _ = http(f"{SITE}/content/{icon}")
         print(f"  {'✓' if status == 200 else '✗'} значки приложений открыты ({status})")
@@ -211,7 +216,9 @@ def cmd_status(key: Path) -> None:
     state, check, stats = out[1], out[2], json.loads(out[3])
     on = state == "set"
     print(f"Проверка сборки: {'ВКЛЮЧЕНА' if on else 'выключена'} (app_check без токена → {check}).")
-    print(f"Токены сегодня (кроме этого компьютера): {describe(stats)}.")
+    print(f"Токены сегодня — другие устройства: {describe(stats['others'])}.")
+    if stats["mine"]:
+        print(f"С адреса этого компьютера (его программы и проверки): {describe(stats['mine'])}.")
 
 
 def cmd_off(key: Path) -> None:
@@ -235,12 +242,16 @@ def cmd_on(key: Path, watch_seconds: int) -> None:
     if not problems:
         print(f"4. Смотрю, получают ли токены настоящие программы (до {watch_seconds} с)…")
         stats = json.loads(remote("watch", pos, started, str(watch_seconds), key=key).split(" ", 1)[1])
-        print(f"   {describe(stats)}")
-        ok, bad = stats.get("200", (0, 0))[0], stats.get("403", (0, 0))[0]
+        others, mine = stats["others"], stats["mine"]
+        print(f"   другие устройства: {describe(others)}")
+        if mine.get("200", (0, 0))[0] > 1:  # один токен — самопроверка выше, остальные — программы этой же сети
+            print(f"   программы с адреса этого компьютера тоже получают токен: {describe(mine)}")
+        ok, bad = others.get("200", (0, 0))[0], others.get("403", (0, 0))[0]
         if bad >= 5 and ok == 0:
             problems.append("настоящие программы получают отказ — секрет в сборках другой")
         elif ok == 0:
-            print("   Программ за это время не было — посмотрите позже: python3 scripts/catalog_protection.py status")
+            print("   Других программ за это время не было — посмотрите позже: "
+                  "python3 scripts/catalog_protection.py status")
     if problems:
         print("Не так: " + "; ".join(problems) + ". Выключаю обратно…")
         cmd_off(key)
