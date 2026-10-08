@@ -415,9 +415,11 @@ function onModelSelected(model) {
   shell.classList.add("workspace-open");
   shell.style.gridTemplateColumns = "";
   document.getElementById("workspace-nav").hidden = false;
-  document.getElementById("workspace-model-title").textContent = model.modification
+  const titleEl = document.getElementById("workspace-model-title");
+  titleEl.textContent = model.modification
     ? `${model.brand} ${model.name} — ${model.modification}`
     : `${model.brand} ${model.name}`;
+  titleEl.title = titleEl.textContent;  // в узком окне название обрезается до двух строк — целиком при наведении
   document.getElementById("edit-car-btn").disabled = !model.has_wizard_spec;
   document.getElementById("workspace-edit-car").disabled = !model.has_wizard_spec;
   window.stageWizard.open(model);

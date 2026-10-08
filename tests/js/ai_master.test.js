@@ -38,6 +38,7 @@ class El {
   dispatch(type, extra) { (this.listeners[type] || []).forEach((fn) => fn(Object.assign({ preventDefault() {} }, extra || {}))); }
   click() { if (!this.disabled) this.dispatch("click"); }
   focus() {}
+  setAttribute(name, value) { this.attrs[name] = String(value); }
   all() { return this.children.filter((c) => c instanceof El).flatMap((c) => [c, ...c.all()]); }
   querySelectorAll(tag) { return this.all().filter((c) => c.tagName === tag.toUpperCase()); }
   find(cls) { return this.all().filter((c) => c.classList.contains(cls)); }
