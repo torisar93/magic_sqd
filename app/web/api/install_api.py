@@ -473,6 +473,10 @@ class InstallApi:
     def list_devices(self) -> list[dict]:
         return list_devices(self.adb_path)
 
+    def busy(self) -> bool:
+        """Идёт этап, откат или докачка перед установкой — ИИ-мастер (ai_api.py) в это время команд не выполняет."""
+        return bool(self._runner.running or self._rollback_running or self._prefetching)
+
     def device_models(self) -> dict:
         """Копия таблицы «магнитола → модель» (app/device_models.py) — для подсказки «Похоже, это другая машина»."""
         return device_models.load(self.base_dir) if self.base_dir else {}

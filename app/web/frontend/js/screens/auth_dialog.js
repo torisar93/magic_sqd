@@ -142,6 +142,8 @@ window.authDialog = (() => {
     newPasswordInput.value = "";
     newPasswordRepeatInput.value = "";
     changePasswordStatusEl.textContent = "";
+    // Вход/выход меняет, доступна ли «Установка с ИИ» (js/screens/ai_panel.js спрашивает сервер заново).
+    document.dispatchEvent(new CustomEvent("magicsqd-auth", { detail: { email, subscriber } }));
   }
 
   // Подписчик Boosty — кнопка аккаунта в шапке и подпись роли окрашены в цвет Boosty.

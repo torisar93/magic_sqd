@@ -1,0 +1,83 @@
+/* ИИ-мастер — чат «Установки с ИИ» (js/ai_master.js). Общий для ПК и Android (одинаковые копии); где стоит
+   контейнер — решает платформа: панель слева на ПК (ai_panel.css), весь экран на телефоне. Палитра — из макетов
+   _previews/ai-master (тёмная, как программа). */
+.ai-master { display: flex; flex-direction: column; min-height: 0; height: 100%; color: #e6eef0;
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: linear-gradient(180deg, #16222a 0%, #111a20 100%); }
+.ai-master button { font: inherit; cursor: pointer; }
+.ai-head { display: flex; align-items: center; gap: 8px; padding: 16px 12px 12px 14px; border-bottom: 1px solid rgba(255, 255, 255, .07); flex-shrink: 0; }
+.ai-logo { width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #a8f1d8, #5fc7ad); color: #0e1d1b; font-size: 17px; font-weight: 800; }
+.ai-titles { min-width: 0; flex: 1; }
+.ai-title { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-sub { font-size: 11.5px; color: #8fa3a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-limit { font-size: 11px; color: #a9bcbf; border: 1px solid rgba(255, 255, 255, .1); border-radius: 999px; padding: 3px 8px; white-space: nowrap; }
+.ai-master .ai-btn.ai-small { border: 1px solid rgba(255, 255, 255, .13); background: rgba(255, 255, 255, .05); color: #cfe0e2;
+  border-radius: 8px; padding: 4px 6px; font-size: 11px; flex: none; min-width: 26px; }
+.ai-master .ai-btn.ai-small.on { border-color: rgba(255, 196, 120, .5); color: #ffd08a; }
+.ai-master .ai-head .ai-close { font-size: 15px; line-height: 1; padding: 4px 7px; }
+.ai-notice { margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .1); color: #cfe0e2; flex-shrink: 0; }
+.ai-notice.warn { border-color: rgba(255, 196, 120, .4); background: rgba(40, 30, 14, .55); color: #ffd08a; }
+.ai-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+.ai-view { display: flex; flex-direction: column; justify-content: flex-end; gap: 9px; min-height: 100%; }
+.ai-msg { max-width: 94%; padding: 9px 12px; border-radius: 14px; font-size: 13.5px; overflow-wrap: anywhere; }
+.ai-msg p { margin: 0; } .ai-msg p + p, .ai-msg ul + p, .ai-msg p + ul { margin-top: 6px; }
+.ai-msg ul { margin: 4px 0 0; padding-left: 18px; } .ai-msg li { margin: 2px 0; }
+.ai-msg code { font: 12.5px/1.4 "JetBrains Mono", Menlo, Consolas, monospace; background: rgba(0, 0, 0, .25); border-radius: 5px; padding: 1px 5px; }
+.ai-msg.ai { background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .07); border-top-left-radius: 4px; align-self: flex-start; }
+.ai-msg.me { align-self: flex-end; background: linear-gradient(135deg, #9fe9cf, #7bd0ba); color: #0e1d1b; border-top-right-radius: 4px; font-weight: 500; }
+.ai-msg b { color: #fff; } .ai-msg.me b { color: #0e1d1b; }
+.ai-photo { margin: 8px 0 2px; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255, 255, 255, .1); background: #0c1418; }
+.ai-photo img { display: block; width: 100%; max-height: 220px; object-fit: contain; background: #0c1418; }
+.ai-photo figcaption { font-size: 11.5px; color: #9fb3b7; padding: 6px 9px; display: flex; justify-content: space-between; gap: 8px; }
+.ai-photo figcaption a { color: #9fe9cf; text-decoration: none; white-space: nowrap; font-weight: 600; }
+.ai-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-master .ai-btn.ai-chip { flex: none; border: 1px solid rgba(159, 233, 207, .35); color: #bff3e1; background: rgba(159, 233, 207, .07); padding: 6px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 500; }
+.ai-event { font-size: 12px; color: #8fa3a8; display: flex; gap: 7px; align-items: center; padding-left: 2px; overflow-wrap: anywhere; }
+.ai-event i { width: 16px; height: 16px; border-radius: 5px; background: rgba(159, 233, 207, .15); color: #9fe9cf; font-style: normal; font-size: 10px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ai-event.fail i { background: rgba(255, 140, 120, .15); color: #ffb4a8; }
+.ai-event.warn { color: #ffd08a; justify-content: space-between; }
+.ai-event code { font: 11.5px/1.4 "JetBrains Mono", Menlo, Consolas, monospace; color: #cfe0e2; }
+.ai-typing { font-size: 12px; color: #8fa3a8; padding-left: 4px; animation: ai-pulse 1.4s ease-in-out infinite; }
+@keyframes ai-pulse { 50% { opacity: .45; } }
+.ai-card { border: 1px solid rgba(159, 233, 207, .3); background: rgba(14, 28, 30, .9); border-radius: 12px; padding: 10px 12px; font-size: 13px; }
+.ai-card.warn { border-color: rgba(255, 196, 120, .4); background: rgba(40, 30, 14, .55); }
+.ai-card-title { font-size: 12px; color: #9fe9cf; font-weight: 700; margin-bottom: 6px; }
+.ai-card.warn .ai-card-title { color: #ffd08a; }
+.ai-card pre { margin: 0; background: #0a1215; border: 1px solid rgba(255, 255, 255, .08); border-radius: 8px; padding: 7px 9px;
+  font: 12.5px/1.45 "JetBrains Mono", Menlo, Consolas, monospace; color: #d9f6ec; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-note-why { margin-top: 7px; font-size: 12.5px; color: #cfe0e2; }
+.ai-note { margin-top: 6px; font-size: 12px; color: #c9b38a; }
+.ai-card-done { margin-top: 8px; font-size: 12px; color: #8fa3a8; }
+.ai-actions { display: flex; gap: 8px; margin-top: 10px; }
+.ai-master .ai-btn { flex: 1; border-radius: 10px; padding: 8px 10px; font-weight: 600; font-size: 13px; border: 1px solid rgba(255, 255, 255, .13);
+  background: rgba(255, 255, 255, .05); color: #e6eef0; text-align: center; }
+.ai-master .ai-btn.primary { background: linear-gradient(135deg, #a8f1d8, #79cfb9); color: #0e1d1b; border-color: transparent; }
+.ai-master .ai-btn:disabled { opacity: .5; cursor: default; }
+.ai-input { padding: 10px 12px 12px; border-top: 1px solid rgba(255, 255, 255, .07); flex-shrink: 0; }
+.ai-input-box { display: flex; gap: 8px; align-items: flex-end; background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 14px; padding: 7px 7px 7px 12px; }
+.ai-input-box textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: #e6eef0; font-family: inherit;
+  font-size: 13.5px; line-height: 1.4; height: 31px; max-height: 120px; min-height: 22px; padding: 6px 0; box-shadow: none; border-radius: 0;
+  overflow-y: hidden; }
+.ai-master .ai-btn.ai-send { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 10px; border: 0; background: linear-gradient(135deg, #a8f1d8, #79cfb9);
+  color: #0e1d1b; font-weight: 800; }
+.ai-foot { font-size: 11px; color: #6f8488; margin-top: 6px; display: flex; justify-content: space-between; gap: 8px; }
+.ai-lock { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px 22px 40px; gap: 12px; }
+.ai-lock-icon { width: 58px; height: 58px; border-radius: 17px; display: flex; align-items: center; justify-content: center; font-size: 26px;
+  background: rgba(159, 233, 207, .1); border: 1px solid rgba(159, 233, 207, .3); }
+.ai-lock h3 { margin: 4px 0 0; font-size: 18px; }
+.ai-lock p { margin: 0; color: #a9bcbf; font-size: 13.5px; }
+.ai-master .ai-lock .ai-btn { flex: none; width: 100%; padding: 11px; font-size: 14px; margin-top: 6px; }
+
+/* Подсветка в окне программы (ставит платформа по highlight/focus_block). */
+.ai-ring { position: fixed; border: 2px solid #9fe9cf; border-radius: 12px; pointer-events: none; z-index: 9990;
+  box-shadow: 0 0 0 5px rgba(159, 233, 207, .16), 0 0 26px rgba(159, 233, 207, .38); transition: opacity .3s; }
+.ai-tag { position: fixed; z-index: 9991; pointer-events: none; background: linear-gradient(135deg, #a8f1d8, #79cfb9); color: #0e1d1b;
+  font: 700 12px/1 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 7px 10px; border-radius: 999px; box-shadow: 0 6px 16px rgba(0, 0, 0, .4); white-space: nowrap; }
+.ai-tag::before { content: "✦ "; }
+.ai-app-badge { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; font: 700 11px/1.3 -apple-system, "Segoe UI", Roboto, sans-serif; }
+.ai-app-badge.yes { background: rgba(159, 233, 207, .16); color: #9fe9cf; border: 1px solid rgba(159, 233, 207, .4); }
+.ai-app-badge.no { background: rgba(255, 140, 120, .12); color: #ffb4a8; border: 1px solid rgba(255, 140, 120, .35); }

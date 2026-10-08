@@ -36,6 +36,11 @@ SHARED = [
     # Закрытый этап под замком (2026-10-05).
     ("js/closed_stage.js", "js/closed_stage.js"),
     ("css/closed_stage.css", "css/closed_stage.css"),
+    # ИИ-мастер («Установка с ИИ», 2026-10-08): общее ядро чата и его стиль.
+    ("js/ai_master.js", "js/ai_master.js"),
+    ("css/ai_master.css", "css/ai_master.css"),
+    # Читатель инструкций: номера блоков и оглавление для ИИ — одинаковые на обеих платформах.
+    ("js/instructions12.js", "js/instructions12.js"),
 ]
 
 
@@ -73,3 +78,13 @@ def test_user_errors_is_loaded_before_stage_run(index, user_errors, stage_run):
 def test_device_hint_is_included_on_both_platforms(index, css, js):
     html = index.read_text(encoding="utf-8")
     assert f'href="{css}"' in html and f'src="{js}"' in html
+
+
+@pytest.mark.parametrize("index, core, panel", [
+    (DESKTOP / "index.html", "js/ai_master.js", "js/screens/ai_panel.js"),
+])
+def test_ai_master_core_is_loaded_before_platform_panel(index, core, panel):
+    # «Установка с ИИ»: панель платформы создаёт чат общим ядром — оно должно быть уже загружено.
+    html = index.read_text(encoding="utf-8")
+    assert 'href="css/ai_master.css"' in html
+    assert html.index(f'src="{core}"') < html.index(f'src="{panel}"')

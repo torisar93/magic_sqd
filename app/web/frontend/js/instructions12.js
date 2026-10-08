@@ -48,6 +48,8 @@
     @media(max-width:600px){body{padding:22px 16px 28px!important;font-size:16px!important}h1{font-size:25px!important;margin-bottom:22px!important}h2{font-size:20px!important;margin-top:26px!important}ol{border-radius:16px!important;margin:18px 0!important}ol>li{padding:15px 14px 15px 55px!important;min-height:60px}ol>li::before{left:14px!important;top:15px!important;width:28px!important;height:28px!important;border-radius:9px!important;font-size:11px!important}.warn,.danger,.callout{padding:14px 15px!important}img.screenshot,body>img,body>figure>img{border-radius:12px!important}#magicsqd-lightbox{padding:12px!important}}
     @media(prefers-reduced-motion:no-preference){body>h1,body>h2,body>ol,body>p,body>img,body>figure{animation:reader12-enter .45s cubic-bezier(.2,.7,.2,1) both}body>ol{animation-delay:45ms}body>img,body>figure{animation-delay:90ms}@keyframes reader12-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+    .ai-focus{outline:2px solid #9fe9cf!important;outline-offset:6px;border-radius:12px;box-shadow:0 0 0 6px #9fe9cf29,0 0 26px #9fe9cf55!important}
+    li.ai-focus{outline-offset:-3px}
   `;
   function reader(html, options = {}) {
     const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
@@ -62,15 +64,66 @@
     if (document.documentElement.classList.contains('reduce-motion')) style.textContent += '\n*,*::before,*::after{animation:none!important;transition:none!important}';
     doc.head.append(style);
     if (options.title && !doc.body.querySelector('h1')) {
-      const title = doc.createElement('h1');title.textContent = options.title;doc.body.prepend(title);
+      const title = doc.createElement('h1');title.textContent = options.title;title.setAttribute('data-ai-skip', '');doc.body.prepend(title);
     }
     if (options.description) {
       const description = doc.createElement('p');
-      description.textContent = options.description;description.style.whiteSpace = 'pre-wrap';
+      description.textContent = options.description;description.style.whiteSpace = 'pre-wrap';description.setAttribute('data-ai-skip', '');
       const heading = doc.body.querySelector('h1');
       if (heading) heading.after(description);else doc.body.prepend(description);
     }
+    numberBlocks(doc);
+    doc.getElementById('instruction12-ai')?.remove();
+    const focus = doc.createElement('script');
+    focus.id = 'instruction12-ai'; focus.textContent = focusScript;
+    doc.body.append(focus);
     return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+  }
+  // ИИ-мастер (2026-10-08): номера блоков data-b — по ним ИИ ссылается на место в инструкции и на фото; тот же
+  // обход даёт оглавление для сервера (outline). Верхние элементы тела — «1», «2»…, пункты списков — «7.3».
+  // Вставки читателя (заголовок, описание этапа) и служебные узлы не нумеруются.
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT', 'LINK', 'META']);
+  function numberBlocks(doc) {
+    let n = 0;
+    Array.from(doc.body.children).forEach(node => {
+      if (SKIP_TAGS.has(node.tagName) || node.hasAttribute('data-ai-skip') || (node.id || '').startsWith('magicsqd-')) return;
+      const media = /^(IMG|VIDEO)$/.test(node.tagName) || node.querySelector('img,video');
+      if (!media && !node.textContent.trim()) return;
+      n += 1;
+      node.setAttribute('data-b', String(n));
+      if (node.tagName === 'OL' || node.tagName === 'UL') {
+        Array.from(node.children).filter(li => li.tagName === 'LI').forEach((li, i) => li.setAttribute('data-b', `${n}.${i + 1}`));
+      }
+    });
+  }
+  // Внутри документа: «подсветить блок» по postMessage (фрейм бывает в песочнице без общего происхождения) и
+  // ответ родителю, где блок, — чтобы прокрутить контейнер, если сам фрейм не прокручивается. Фото выше блока могут
+  // ещё раскладываться (большие data:-картинки) — место поправляется ещё дважды.
+  const focusScript = "(function(){var last=null,timer=null;window.addEventListener('message',function(e){var d=e.data;"
+    + "if(!d||d.type!=='magicsqd-ai-focus')return;var el=document.querySelector('[data-b=\"'+String(d.b).replace(/[^0-9.]/g,'')+'\"]');"
+    + "if(last)last.classList.remove('ai-focus');clearTimeout(timer);if(!el)return;last=el;el.classList.add('ai-focus');"
+    + "function place(smooth){if(last!==el)return;var r=el.getBoundingClientRect();"
+    + "if(document.documentElement.scrollHeight>window.innerHeight+4)el.scrollIntoView({behavior:smooth?'smooth':'auto',block:'center'});"
+    + "try{parent.postMessage({type:'magicsqd-ai-focus-at',b:d.b,top:r.top+(window.scrollY||0),height:r.height},'*')}catch(x){}}"
+    + "place(true);var n=0;(function again(){timer=setTimeout(function(){place(false);if(++n<2)again();},700);})();});})();";
+  function blocks(html, options = {}) {
+    return new DOMParser().parseFromString(reader(html, options), 'text/html');
+  }
+  // Оглавление для ИИ: [{b, text, photo}] — тот же обход, что у reader (номера совпадают с фреймом).
+  function outline(html, options = {}) {
+    return Array.from(blocks(html, options).querySelectorAll('[data-b]')).map(node => {
+      const list = node.tagName === 'OL' || node.tagName === 'UL';
+      const img = node.tagName === 'IMG' ? node : node.querySelector('img');
+      const text = list ? `список из ${node.querySelectorAll(':scope > li').length} пунктов`
+        : (node.textContent.replace(/\s+/g, ' ').trim() || (img && img.alt) || 'фото').slice(0, 200);
+      return { b: node.getAttribute('data-b'), text, photo: !list && !!img };
+    });
+  }
+  // Картинка блока (src как в документе: data:, /data/… или относительный путь — разрешает платформа).
+  function photo(html, b, options = {}) {
+    const node = blocks(html, options).querySelector(`[data-b="${String(b).replace(/[^0-9.]/g, '')}"]`);
+    const img = node && (node.tagName === 'IMG' ? node : node.querySelector('img'));
+    return img ? img.getAttribute('src') : null;
   }
   function textDocument(text) {
     const doc = document.implementation.createHTMLDocument('');
@@ -79,7 +132,7 @@
     });
     return doc.documentElement.outerHTML;
   }
-  window.Instructions12 = { reader, textDocument };
+  window.Instructions12 = { reader, textDocument, outline, photo };
   // Existing help dialogs use the same document skin, including source links and lightbox scripts.
   window.LabUI.reader = reader;
 })();

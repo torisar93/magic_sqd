@@ -755,5 +755,7 @@ window.addEventListener("pywebviewready", async () => {
   });
 
   window.chatPanel.init(settingsPreferences.chat_enabled);
+  // «Установка с ИИ» (js/screens/ai_panel.js): кнопка «✦ ИИ» появится, если сервер включил функцию этому технику.
+  window.aiPanel.init();
 
 });

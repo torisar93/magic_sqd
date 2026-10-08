@@ -44,6 +44,11 @@ def set_app_token(token) -> None:
     _app_token = token
 
 
+def app_token_header() -> dict:
+    """Заголовок токена официальной сборки для своих запросов к серверу (ИИ-мастер, ai_client.py); {} — без токена."""
+    return _app_token.header() if _app_token is not None else {}
+
+
 def open_url(url: str, timeout: float):
     """urlopen для запросов к каталогу — с токеном официальной сборки и cookie сессии техника."""
     request = urllib.request.Request(url)

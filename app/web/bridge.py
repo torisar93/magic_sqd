@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 from .api.admin_api import AdminApi
+from .api.ai_api import AiApi
 from .api.auth_api import AuthApi
 from .api.car_editor_api import CarEditorApi
 from .api.chat_api import ChatApi
@@ -89,6 +90,7 @@ class WebApi:
         self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
         self._update = UpdateApi(base_dir)
         self._chat = ChatApi(base_dir, self.adb_path, self._auth)
+        self._ai = AiApi(base_dir, self.adb_path, self._auth, self._install, self._install_log_platform())
         self._offline = OfflineApi(base_dir, self._scanner, self._auth)
         # Прочный журнал сессий (см. app/pending_install_logs.py) — если
         # прошлый запуск не дошёл до штатного завершения (вылет/принудительное
@@ -297,6 +299,13 @@ class WebApi:
 
     def chat_confirm_command(self, device, command: str) -> dict:
         return self._chat.chat_confirm_command(device, command)
+
+    # -- ai_api (ИИ-мастер «Установка с ИИ», панель js/screens/ai_panel.js) ----------
+    def ai_call(self, path: str, payload=None) -> dict:
+        return self._ai.call(path, payload)
+
+    def ai_shell(self, device, command: str, mode: str, busy: bool = False) -> dict:
+        return self._ai.shell(device, command, mode, busy)
 
     # -- usb_api ------------------------------------------------------------
     def usb_list_drives(self, include_all: bool = False) -> list:

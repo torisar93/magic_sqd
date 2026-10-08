@@ -380,6 +380,19 @@
     // всякого поиска) поверх/рядом с "Обновляем каталог" (см.
     // catalog-startup-overlay ниже), что выглядело как баг поиска.
     emptyEl.hidden = visibleItems.length > 0 || !query;
+    // Машины нет в каталоге — «✦ Спросить ИИ» (js/screens/ai_panel.js), если «Установка с ИИ» включена технику.
+    const canAsk = !emptyEl.hidden && !!window.aiPanel && window.aiPanel.isAvailable();
+    let askBtn = emptyEl.querySelector(".catalog-ask-ai");
+    if (canAsk && !askBtn) {
+      askBtn = document.createElement("button");
+      askBtn.type = "button";
+      askBtn.className = "catalog-ask-ai";
+      askBtn.textContent = "✦ Спросить ИИ";
+      askBtn.addEventListener("click", () => window.aiPanel.ask(
+        `В каталоге не нашлось «${searchEl.value.trim()}». Помогите найти мою машину.`));
+      emptyEl.append(" ", askBtn);
+    }
+    if (askBtn) askBtn.hidden = !canAsk;
     // DocumentFragment вместо N отдельных appendChild — на слабом
     // одноядерном CPU (реальный случай: техник тестировал на eMachines
     // E510, Celeron 900 2009 года) каждая вставка в живой DOM даёт браузеру

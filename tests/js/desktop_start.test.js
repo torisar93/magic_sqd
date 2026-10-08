@@ -15,7 +15,7 @@ async function scenario(code, { mode, prefetch, askWifi, device = null, confirm 
     modelWifi,
     contentEl: { after: (node) => docked.push(node) }, // «Начать установку» — в нижней панели под этапом
 
-    selectedApkPaths: () => ["/a.apk"], log() {}, render() {},
+    selectedApkPaths: () => ["/a.apk"], log() {}, render() {}, aiNotify() {},
     openStageRun: (o) => { runs.push(o); },
     finishRun: (o) => finishes.push(o),
     document: { querySelector: () => ({ close: () => calls.push(["dialog.close"]) }) },

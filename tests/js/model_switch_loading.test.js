@@ -33,10 +33,11 @@ module.exports = async function () {
     "const commandResults=new Map(), prefetchedStages=new Set(), failedStages=new Map(), done=new Set(), historyStack=[];",
     "function ensureMounted(){} function flushSessionLog(){} function log(){} function advanceAfter(){}",
     "function sessionHeaderLines(){ return []; } let lastLogAt=0; const fingerprinted=new Set(), hinted=new Set();",
+    "let appsActiveTab={}, flashBlockState={}, aiAdvice={}; const aiEvents=[]; function aiNotify(name){ aiEvents.push(name); }",
     "function render(){ renders.push({ key: model.key, stages: stages.map((s) => s.title), loadError }); }",
     slice(src, "  function updateSyncProgress(", "  // -- построение разметки", file),
     slice(src, "  async function open(selectedModel) {", "  // -- навигация", file),
-    "this.__state = () => ({ stages, loadError, loadingStatusEl });",
+    "this.__state = () => ({ stages, loadError, loadingStatusEl, aiEvents, aiAdvice });",
   ].join("\n");
 
   const calls = [];
@@ -95,6 +96,7 @@ module.exports = async function () {
   assert(state().stages[0].title === "Этап B", "поздний ответ модели A не перетёр этапы B");
   assert(state().loadingStatusEl === null, "режим загрузки снят");
   assert(ctx.window.__installLogSessionToken === "tB", "токен журнала — от модели B");
+  assert(state().aiEvents.join() === "model_opened", "панели ИИ — одно событие «модель открыта» (B): " + state().aiEvents.join());
 
   // --- сбой моста: ошибка на экране, а не вечная загрузка ---
   const openC = ctx.open({ key: "C" });

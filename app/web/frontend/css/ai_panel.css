@@ -1,0 +1,54 @@
+/* ИИ-мастер на ПК: панель слева (js/screens/ai_panel.js), программа справа — как в утверждённом макете
+   (_previews/ai-master, ПК). Сам чат — общий с Android css/ai_master.css. */
+:root { --ai-w: 380px; }
+#ai-panel { position: fixed; left: 0; top: 0; bottom: 0; width: var(--ai-w); z-index: 90;
+  border-right: 1px solid rgba(255, 255, 255, .08); box-shadow: 8px 0 30px rgba(0, 0, 0, .25); }
+#ai-panel[hidden] { display: none; }
+
+/* Кнопки и поле чата — свои: общие стили кнопок и полей программы (catalog-03.css, refinement05.css: высота 44px,
+   «стекло», тень) в узкой панели не нужны. */
+#ai-panel button { min-height: 0; height: auto; box-shadow: none; line-height: 1.25; }
+#ai-panel .ai-btn { background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .13); color: #e6eef0; }
+#ai-panel .ai-btn:hover { background: rgba(255, 255, 255, .09); }
+#ai-panel .ai-btn.primary, #ai-panel .ai-send { background: linear-gradient(135deg, #a8f1d8, #79cfb9); border-color: transparent; color: #0e1d1b; }
+#ai-panel .ai-btn.primary:hover, #ai-panel .ai-send:hover { background: linear-gradient(135deg, #b9f6e1, #8ad8c3); }
+#ai-panel .ai-chip { background: rgba(159, 233, 207, .07); border-color: rgba(159, 233, 207, .35); color: #bff3e1; border-radius: 999px; padding: 6px 11px; }
+#ai-panel .ai-chip:hover { background: rgba(159, 233, 207, .15); }
+#ai-panel .ai-small.on { border-color: rgba(255, 196, 120, .5); color: #ffd08a; }
+#ai-panel .ai-send { width: 34px; height: 34px; padding: 0; border-radius: 10px; }
+#ai-panel textarea { min-height: 22px; box-shadow: none; }
+
+/* Программа — справа от панели; окно этапа и окна программы — над программой, панель остаётся видна. */
+body.ai-open #app-shell { margin-left: var(--ai-w); width: calc(100% - var(--ai-w)); }
+body.ai-open .stage-run-overlay { left: var(--ai-w); }
+body.ai-open dialog::backdrop { left: var(--ai-w); }
+body.ai-open dialog:modal { left: var(--ai-w); max-width: calc(100vw - var(--ai-w) - 24px) !important; }
+
+/* Узкое окно: панель поверх программы, не сжимает её. */
+@media (max-width: 1099px) {
+  body.ai-open #app-shell { margin-left: 0; width: 100%; }
+  body.ai-open .stage-run-overlay, body.ai-open dialog::backdrop, body.ai-open dialog:modal { left: 0; }
+  body.ai-open dialog:modal { max-width: calc(100vw - 2em - 6px) !important; }
+  #ai-panel { box-shadow: 18px 0 60px rgba(0, 0, 0, .55); }
+}
+
+/* Кнопка «✦ ИИ» в шапке — рядом с «Лог». */
+#global-header .header-ai { display: flex; align-items: center; gap: 7px; white-space: nowrap; padding: 0 14px;
+  border: 1px solid rgba(159, 233, 207, .55); background: rgba(159, 233, 207, .12); color: #c9f5e6; font-weight: 600; }
+#global-header .header-ai:hover { background: rgba(159, 233, 207, .2); }
+#global-header .header-ai[aria-pressed="true"] { background: rgba(159, 233, 207, .26); }
+#global-header .header-ai[hidden] { display: none; }
+.header-ai-mark { font-size: 15px; line-height: 1; }
+
+/* Вкладка «✦ Совет ИИ» этапа «Приложения»: строка приложения, отметка ИИ справа и почему — под названием. */
+.ai-advice-row { flex-wrap: wrap; }
+.ai-advice-row > div { display: flex; align-items: center; gap: 10px; flex: 1 1 100%; }
+.ai-advice-row > div > label { flex: 1; min-width: 0; }
+.ai-advice-row .ai-app-badge { flex-shrink: 0; margin-left: 0; white-space: nowrap; }
+.ai-advice-row > .ai-reason { flex: 1 1 100%; margin: 2px 0 0 54px; font-size: 12.5px; line-height: 1.35; color: #8fa3a8; }
+.ai-advice-no { opacity: .8; }
+
+/* «✦ Спросить ИИ» под «Ничего не найдено» в каталоге. */
+.catalog-ask-ai { margin-left: 10px; padding: 6px 14px; border-radius: 999px; border: 1px solid rgba(159, 233, 207, .55);
+  background: rgba(159, 233, 207, .12); color: #c9f5e6; font-weight: 600; cursor: pointer; }
+.catalog-ask-ai[hidden] { display: none; }

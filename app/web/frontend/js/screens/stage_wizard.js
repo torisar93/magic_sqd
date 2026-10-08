@@ -46,6 +46,10 @@
   // Открытая вкладка этапа «Приложения» (apps_tabs.js) по индексу этапа — переживает
   // перерисовку этапа (например, после «+ Свой APK»), сбрасывается при смене модели.
   let appsActiveTab = {};
+  // ИИ-мастер (js/screens/ai_panel.js): совет по приложениям по индексу этапа apps — вкладка «✦ Совет ИИ»
+  // (сбрасывается при смене модели) и бар подключения текущего этапа (нажать «Подключить» по просьбе ИИ).
+  let aiAdvice = {};
+  let aiTransport = null;
   const done = new Set();
   let chosenVariants = {};
   let appSelection = {};
@@ -189,9 +193,22 @@
       const fp = await window.pywebview.api.install_device_fingerprint(serial);
       if (fp && (fp.name || fp.model || fp.device)) {
         log(`ADB подключён: device::ro.product.name=${fp.name};ro.product.model=${fp.model};ro.product.device=${fp.device}`);
+        aiFingerprints.set(serial, fp);
+        aiLastDevice = serial;
+        aiNotify("adb_connected", `${serial} (${fp.model || fp.name || "магнитола"})`);
         await suggestModel(fp);
       }
     } catch { /* отпечаток и подсказка необязательны */ }
+  }
+
+  // ИИ-мастер: какие магнитолы подключались (отпечаток — в состояние для сервера: история этой магнитолы) и события
+  // мастера для панели ИИ (js/screens/ai_panel.js пересылает их серверу: «подключилась», «этап сменился»…).
+  const aiFingerprints = new Map();
+  let aiLastDevice = null;
+  function aiNotify(name, detail) {
+    try {
+      window.dispatchEvent(new CustomEvent("magicsqd-ai", { detail: { name, detail: String(detail || "") } }));
+    } catch { /* панели ИИ может не быть */ }
   }
 
   // «Похоже, это другая машина» (components/device_hint.js, вариант 3 — окно с картинками моделей): магнитолу
@@ -257,7 +274,10 @@
     window.events.on("ask_input", (event) => showAskInputDialog(event));
     // Какое окно «что сделать» увидел техник (user_errors.js) — строкой в лог сессии: по ней разбор логов
     // на сервере отличает ошибку подключения/действий техника от сбоя программы.
-    window.StageRun.configure({ onUserError: (rule) => log(`Показано окно для техника: «${rule.title}»`) });
+    window.StageRun.configure({ onUserError: (rule) => {
+      log(`Показано окно для техника: «${rule.title}»`);
+      aiNotify("user_error", rule.title);
+    } });
     window.events.on("sync_progress", (event) => updateSyncProgress(
       event.done, event.total, event.files_done, event.files_total,
     ));
@@ -482,6 +502,9 @@
     runnerBusy = false;
     log(event.message);
     trackStageResult(event);
+    const finishedStage = stages[event.stage_index];
+    aiNotify(event.success ? "install_finished" : "install_failed",
+      `этап ${Number(event.stage_index) + 1} «${(finishedStage && finishedStage.title) || ""}»: ${event.message || ""}`);
     finishRun({ success: !!event.success, message: event.message, partial: !!event.partial, rollback: rollbackFor(event) },
       () => afterStageFinished(event));
   }
@@ -586,6 +609,7 @@
     appSelection = {};
     flashBlockState = {};
     appsActiveTab = {};
+    aiAdvice = {};
     personalApks = [];
     hasIntro = model.no_instruction;
     loadError = null;
@@ -663,6 +687,7 @@
     nextAction = () => advanceAfter(currentIndex);
     loadingStatusEl = loadingFillEl = null;
     render();
+    aiNotify("model_opened", model.display_label || model.name || "");
   }
 
   // Вместо этапа предыдущей модели — сразу, до первого ответа моста.
@@ -786,11 +811,13 @@
     currentIndex = index;
     nextAction = () => advanceAfter(currentIndex);
     render();
+    aiNotify("stage_changed", aiStageLine());
   }
 
   // -- рендеринг ------------------------------------------------------
   function render() {
     renderRevision++;
+    aiTransport = null;
     contentEl.classList.remove('installing-apps');
     contentEl.parentElement.classList.remove('installing-apps');
     clear(contentEl);
@@ -900,6 +927,7 @@
       contentEl.appendChild(transport.element);
       getDevice = transport.getDevice;
       transportCtl = transport;
+      aiTransport = transport;
     }
 
     if ((stage.instruction_html || stage.description) && !["qr_adb", "usb"].includes(stage.type)) {
@@ -1048,6 +1076,7 @@
     return {
       element: bar, getDevice: () => wifiSerial || deviceByLabel[select.value] || null,
       mode: () => (connection === "ask" ? askMode : connection), askWifi, refreshDevices,
+      wifiButton: wifiConnectBtn, refreshButton: refreshBtn,
     };
   }
 
@@ -1069,7 +1098,9 @@
       if (fullPage) iframe.style.height = "100%";
       block.appendChild(iframe);
       // srcdoc не всегда успевает попасть в атрибут при быстрой пересборке — пишем через contentWindow.
-      iframe.addEventListener("load", () => {}, { once: true });
+      iframe.addEventListener("load", () => { iframe.dataset.aiReady = "1"; }, { once: true });
+      // Инструкция самого этапа (не блока флешки) — ИИ-мастер прокручивает её к блоку по номеру (ai_panel.js).
+      if (stages[stage.index] === stage) iframe.dataset.aiStage = String(stage.index + 1);
       iframe.srcdoc = LabUI.reader(html, { title: fullPage ? stage.title || "Инструкция" : "" });
     } else if (stage.description) {
       block.appendChild(el("div", { class: "plain-text", text: stage.description }));
@@ -1172,7 +1203,7 @@
     if (!panel.isConnected) return;
     const addApk = chooser.tree.querySelector('.app-personal-apk-add');
     if (addApk) { addApk.textContent = '+ Свой APK'; tools.append(addApk); }
-    tabs = window.AppTabs.mount(chooser.tree, appTabGroups(chooser.tree), {
+    tabs = window.AppTabs.mount(chooser.tree, appTabGroups(chooser.tree, stage), {
       active: appsActiveTab[stage.index], search,
       onActiveChange: key => { appsActiveTab[stage.index] = key; },
     });
@@ -1193,7 +1224,7 @@
   // Разделы дерева buildAppsTree → вкладки: приложения модели, свои APK, категории общей
   // библиотеки (в том же порядке, что были разделы). Строки переезжают как есть — со своими
   // галочками и обработчиками; внутри chooser.tree они и остаются (его читает entries()).
-  function appTabGroups(tree) {
+  function appTabGroups(tree, stage) {
     const sections = new Map([...tree.querySelectorAll('.apps-section')].map(section => [section.dataset.sectionKey, section]));
     const rowsOf = key => {
       const body = sections.get(key)?.querySelector(':scope > .apps-section-body');
@@ -1207,7 +1238,29 @@
       if (!key?.startsWith('extra:')) continue;
       groups.push({ key, label: section.querySelector(':scope > .apps-section-header span')?.textContent || key.slice(6), rows: rowsOf(key) });
     }
+    const advice = stage && aiAdvice[stage.index];
+    if (advice) groups.unshift({ key: 'ai', label: '✦ Совет ИИ', rows: aiAdviceRows(tree, advice) });
     return groups;
+  }
+
+  // Строки вкладки «✦ Совет ИИ» — копии строк этих же приложений (с той же галочкой: дерево синхронизирует
+  // все строки одного APK, см. buildAppsTree: syncSelection) + отметка ИИ и почему.
+  function aiAdviceRows(tree, advice) {
+    const source = [...tree.querySelectorAll('.app-row')];
+    const rows = [];
+    const add = (item, kind) => {
+      const original = source.find(row => row.dataset.apkPath === item.path);
+      if (!original) return;
+      const row = original.cloneNode(true);
+      row.classList.add('ai-advice-row', `ai-advice-${kind}`);
+      // Отметка — рядом с подписью, не в ней: название приложения (entries) берётся из <label>.
+      row.querySelector('label')?.after(el('span', { class: `ai-app-badge ${kind}`, text: kind === 'yes' ? 'ИИ советует' : 'ИИ: не ставить' }));
+      if (item.why) row.append(el('p', { class: 'ai-reason', text: item.why }));
+      rows.push(row);
+    };
+    advice.picks.forEach(item => add(item, 'yes'));
+    advice.avoid.forEach(item => add(item, 'no'));
+    return rows;
   }
 
   function createAppChooser(panel, stage, choose, copy, preview, host, ready = () => {}) {
@@ -2239,6 +2292,7 @@
       const failToStart = (message) => {
         runnerBusy = false;
         log(message);
+        aiNotify("install_failed", `этап ${stage.index + 1} «${stage.title || ""}»: ${message}`);
         finishRun({ success: false, message }, () => render());
       };
       try {
@@ -2344,6 +2398,7 @@
           runnerBusy=false; activeCommand=null;
           const message=error.message||String(error);
           commandResults.set(key,{success:false,message}); log(message);
+          aiNotify("install_failed", `«${action.label || `Действие ${i+1}`}»: ${message}`);
           finishRun({ success: false, message }, () => render());
         }
       };
@@ -2359,5 +2414,225 @@
     flushSessionLog(false);
   }
 
-  window.stageWizard = { init, open, flushAbandoned, isBusy:()=>runnerBusy, goBack, canGoBack:()=>historyStack.length>0 };
+  // -- ИИ-мастер («Установка с ИИ», js/screens/ai_panel.js) ------------------------------------------------
+  // Панель ИИ видит мастер только через это: что открыто (состояние для сервера), инструкции этапов, кнопки
+  // (подсветить; нажать — обычным кликом, со всеми проверками и окнами программы) и совет по приложениям.
+  // Нажатия — только после «Да» техника в карточке чата (js/ai_master.js).
+  const AI_HANDS_OFF = /движени/i;  // «Разрешить работу в движении» ИИ не нажимает (техник — сам)
+
+  function aiStageLine() {
+    const stage = currentIndex >= 0 ? stages[currentIndex] : null;
+    return stage ? `этап ${currentIndex + 1} из ${stages.length} «${stage.title || TYPE_LABELS[stage.type] || ""}»` : "начало";
+  }
+
+  // Путь приложения так, как его знает сервер (от content/): cars/<модель>/files/… или apk/<категория>/<файл>.
+  function aiRelPath(path) {
+    const norm = String(path || "").split("\\").join("/");
+    const lower = norm.toLowerCase();
+    for (const root of ["/cars/", "/apk/"]) {
+      const at = lower.lastIndexOf(root);
+      if (at >= 0 && (root === "/apk/" || lower.indexOf("/files/", at) > 0)) return norm.slice(at + 1);
+    }
+    return norm.split("/").pop();
+  }
+
+  // Путь от сервера → путь в этой программе (по хвосту пути; APK каталога не шифруются и не переименовываются).
+  function aiLocalPath(serverPath, known) {
+    const tail = "/" + String(serverPath || "").split("\\").join("/").replace(/^\/+/, "").toLowerCase();
+    if (tail === "/") return null;
+    return known.find((path) => ("/" + String(path).split("\\").join("/").toLowerCase()).endsWith(tail)) || null;
+  }
+
+  function aiCommandButtons() {
+    return [...contentEl.querySelectorAll(".stage06-command")].map((card) => card.querySelector("button"));
+  }
+
+  function aiControls() {
+    const run = window.StageRun.current();
+    if (runnerBusy || !model) return run && !run.finished ? ["stop"] : [];
+    const list = [];
+    if (navNextBtn.style.display !== "none" && !navNextBtn.disabled) list.push("next");
+    if (historyStack.length) list.push("back");
+    if (document.querySelector(".stage-primary-actions > button.accent:not(:disabled)")) list.push("start_install");
+    if (aiTransport) list.push("connect");
+    aiCommandButtons().forEach((button, i) => { if (button && !button.disabled) list.push(`action:${i}`); });
+    return list;
+  }
+
+  function aiState() {
+    const stage = currentIndex >= 0 ? stages[currentIndex] : null;
+    const serial = (aiTransport && aiTransport.getDevice()) || aiLastDevice;
+    const fp = serial ? aiFingerprints.get(serial) : null;
+    const dialog = document.querySelector("dialog[open]");
+    const state = {
+      screen: model ? "wizard" : "catalog",
+      model: model ? window.DeviceHint.modelPath(model) : null,
+      stage: stage ? { index: currentIndex + 1, total: stages.length, type: stage.type, title: stage.title || "" }
+        : { index: 0, total: stages.length },
+      busy: runnerBusy,
+      controls: aiControls(),
+      device: serial ? { serial, key: fp ? window.DeviceHint.key(fp) : "", model: fp ? fp.model : "" } : null,
+      selected: Object.keys(appSelection).filter((path) => appSelection[path]).map(aiRelPath),
+      log_tail: sessionLog.slice(-30),
+    };
+    if (contentEl && contentEl.dataset.stageType === "loading") state.loading = true;
+    if (stage && stage.type === "check") state.options = stage.check_options || [];
+    if (stage && stage.type === "actions") state.actions = (stage.actions || []).map((a, i) => `action:${i} — ${a.label || ""}`);
+    if (stage && stage.type === "apps") state.apps_tab = appsActiveTab[stage.index] || "";
+    if (dialog) state.dialog = ((dialog.querySelector("h1,h2,h3") || {}).textContent || dialog.id || "окно программы").trim().slice(0, 120);
+    if (failedStages.size) state.failed = [...failedStages.values()];
+    if (loadError) state.error = loadError;
+    return state;
+  }
+
+  // Инструкция этапа (номер с 1) — тот же документ, что во фрейме этапа: по нему панель строит оглавление и фото.
+  function aiInstruction(number) {
+    const stage = stages[number - 1];
+    if (!stage || stage.closed_locked) return null;
+    const html = stage.instruction_html || (stage.type === "instruction" ? Instructions12.textDocument(stage.description || "") : "");
+    return html ? { html, title: stage.title || "" } : null;
+  }
+
+  // Прокрутить инструкцию открытого этапа к блоку (фрейм в песочнице — только сообщением, см. instructions12.js).
+  function aiFocus(number, block) {
+    if (!model || !contentEl) return false;  // каталог: мастер ещё не открывали
+    const frames = [...contentEl.querySelectorAll(`iframe[data-ai-stage="${Number(number)}"]`)];
+    if (!frames.length) return false;
+    const help = frames[0].closest("details");
+    if (help && !help.open) help.open = true;
+    const message = { type: "magicsqd-ai-focus", b: String(block) };
+    for (const frame of frames) {
+      const send = () => { try { frame.contentWindow.postMessage(message, "*"); } catch { /* фрейм уже убрали */ } };
+      if (frame.dataset.aiReady) send(); else frame.addEventListener("load", send, { once: true });
+    }
+    frames[0].closest(".instruction-block").scrollIntoView({ block: "nearest", behavior: "smooth" });
+    return true;
+  }
+
+  // Что подсветить или нажать: кнопка, вкладка, строка приложения. null — такого сейчас нет.
+  function aiElement(target) {
+    if (!model || !contentEl) return null;
+    const text = String(target || "");
+    const run = window.StageRun.current();
+    if (text === "next") return navNextBtn.style.display !== "none" ? navNextBtn : null;
+    if (text === "back") return document.getElementById("global-back");
+    if (text === "start_install") return document.querySelector(".stage-primary-actions > button.accent");
+    if (text === "stop") return run && !run.finished ? run.stopButton : null;
+    if (text === "connect") {
+      if (!aiTransport) return null;
+      return aiTransport.mode() === "wifi" ? aiTransport.wifiButton : aiTransport.refreshButton;
+    }
+    const action = /^action:(\d+)$/.exec(text);
+    if (action) return aiCommandButtons()[Number(action[1])] || null;
+    const tabs = [...contentEl.querySelectorAll(".apps-tab")];
+    if (text === "tab:advice") return tabs.find((tab) => tab.textContent.includes("Совет ИИ")) || null;
+    if (text === "tab:apps") return tabs.find((tab) => !tab.textContent.includes("Совет ИИ")) || null;
+    if (text === "tab:instruction") return contentEl.querySelector("details.lab-stage-help > summary, .instruction-block");
+    if (text.startsWith("app:")) {
+      const rows = [...contentEl.querySelectorAll(".app-row")];
+      const path = aiLocalPath(text.slice(4), rows.map((row) => row.dataset.apkPath));
+      const matches = rows.filter((row) => row.dataset.apkPath === path);
+      const row = matches.find((r) => !r.closest(".apps-tab-pane")?.hidden) || matches[0];
+      const pane = row && row.closest(".apps-tab-pane");
+      if (pane && pane.hidden) {  // строка на другой вкладке — открываем её (вкладки и панели в одном порядке)
+        const index = [...pane.parentElement.children].indexOf(pane);
+        tabs[index]?.click();
+      }
+      return row || null;
+    }
+    return null;
+  }
+
+  // Надпись кнопки для карточки «Нажать «…»?»: у доп. действия — его название, у остальных — текст кнопки.
+  function aiLabel(control) {
+    const node = aiElement(control);
+    if (!node) return "";
+    const card = node.closest(".stage06-command");
+    const text = card ? (card.querySelector("h3") || {}).textContent : node.textContent;
+    return String(text || "").replace(/\s+/g, " ").trim().slice(0, 60);
+  }
+
+  // Нажать кнопку по просьбе ИИ (после «Да» техника). {ok, output} — что вышло, текстом для ИИ.
+  async function aiPress(control) {
+    if (!model) return { ok: false, output: "Модель не открыта." };
+    if (control === "stop") {
+      const button = aiElement("stop");
+      if (!button) return { ok: false, output: "Сейчас нечего останавливать." };
+      button.click();
+      return { ok: true, output: "Нажата «Остановить»." };
+    }
+    if (runnerBusy) return { ok: false, output: "Идёт этап — дождитесь итога." };
+    if (document.querySelector("dialog[open]")) return { ok: false, output: "Открыто окно программы — сначала техник его закроет." };
+    if (control === "next") {
+      if (navNextBtn.style.display === "none" || navNextBtn.disabled) {
+        return { ok: false, output: "«Далее» сейчас нет: на этом этапе техник выбирает вариант." };
+      }
+      const before = currentIndex;
+      navNextBtn.click();
+      return { ok: true, output: currentIndex !== before ? `Открыт ${aiStageLine()}.` : "Нажата «Далее»." };
+    }
+    if (control === "back") {
+      if (!historyStack.length) return { ok: false, output: "Это первый этап — назад некуда." };
+      goBack();
+      return { ok: true, output: `Открыт ${aiStageLine()}.` };
+    }
+    if (control === "start_install") {
+      const start = aiElement("start_install");
+      if (!start || start.disabled) return { ok: false, output: "На этом этапе нет кнопки запуска." };
+      const chooser = contentEl.querySelector(".action-panel.apps-panel")?._appChooser;
+      if (chooser && !chooser.paths().length) return { ok: false, output: "Не отмечено ни одного приложения." };
+      start.click();
+      return { ok: true, output: `Нажата «${start.textContent.trim()}». Итог придёт событием.` };
+    }
+    if (control === "connect") {
+      if (!aiTransport) return { ok: false, output: "На этом этапе подключение не нужно." };
+      if (aiTransport.mode() === "wifi") {
+        aiTransport.wifiButton.click();
+        return { ok: true, output: "Открыто окно подключения по Wi-Fi — техник выбирает магнитолу в нём." };
+      }
+      const devices = (await aiTransport.refreshDevices()) || [];
+      return { ok: true, output: devices.length
+        ? "Список по USB: " + devices.map((d) => `${d.serial}${d.model ? ` (${d.model})` : ""} [${d.state}]`).join("; ")
+        : "По USB магнитола не найдена." };
+    }
+    const action = /^action:(\d+)$/.exec(String(control || ""));
+    if (action) {
+      const button = aiCommandButtons()[Number(action[1])];
+      const label = button ? button.closest(".stage06-command").querySelector("h3")?.textContent || "" : "";
+      if (!button || button.disabled) return { ok: false, output: "Такого действия на этом этапе нет." };
+      if (AI_HANDS_OFF.test(label)) return { ok: false, output: `«${label}» техник нажимает сам.` };
+      button.click();
+      return { ok: true, output: `Запущено «${label}». Итог придёт событием.` };
+    }
+    if (control === "disconnect") return { ok: false, output: "На компьютере отключать не нужно — достаточно вынуть кабель." };
+    return { ok: false, output: "Такой кнопки в программе нет." };
+  }
+
+  // Совет ИИ по приложениям: отметить picks, снять avoid (обязательные остаются), показать вкладку «✦ Совет ИИ».
+  function aiSelectApps(picks, avoid) {
+    if (!model) return { ok: false, output: "Модель не открыта." };
+    const current = currentIndex >= 0 ? stages[currentIndex] : null;
+    const target = current && current.type === "apps" ? current : stages.find((stage) => stage.type === "apps");
+    if (!target) return { ok: false, output: "У этой модели нет этапа выбора приложений." };
+    const known = Object.keys(appSelection).concat(personalApks.map((apk) => apk.path));
+    const advice = { picks: [], avoid: [] };
+    const missing = [];
+    const take = (list, kind) => (Array.isArray(list) ? list : []).forEach((item) => {
+      const path = aiLocalPath(item && item.path, known);
+      if (!path) { missing.push(String(item && item.path)); return; }
+      advice[kind].push({ path, why: String((item && item.why) || "") });
+      if (!runnerBusy) appSelection[path] = kind === "picks";
+    });
+    take(picks, "picks");
+    take(avoid, "avoid");
+    aiAdvice[target.index] = advice;
+    appsActiveTab[target.index] = "ai";
+    if (target === current && !runnerBusy && !activeRun) render();
+    return { ok: true, missing, output: `Отмечено: ${advice.picks.length}, не ставить: ${advice.avoid.length}`
+      + (missing.length ? `; нет в программе: ${missing.join(", ")}` : "") };
+  }
+
+  window.stageWizard = { init, open, flushAbandoned, isBusy:()=>runnerBusy, goBack, canGoBack:()=>historyStack.length>0,
+    ai: { state: aiState, instruction: aiInstruction, focus: aiFocus, element: aiElement, label: aiLabel, press: aiPress,
+          selectApps: aiSelectApps, model: () => model, relPath: aiRelPath } };
 })();
