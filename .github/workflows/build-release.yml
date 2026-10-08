@@ -108,64 +108,6 @@ jobs:
           name: MagicSQD_Setup
           path: installer_output/MagicSQD_Setup_*.exe
 
-  windows-win7:
-    runs-on: windows-latest
-    needs: tests
-    steps:
-      - uses: actions/checkout@v4
-
-      # 32-битный Python 3.8 — последняя версия CPython, ещё официально
-      # поддерживающая Windows 7 (см. шапку magic_sqd_win7.spec).
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.8"
-          architecture: x86
-
-      - name: Install Python deps (Win7 stack — PyQt5, не PySide2, см. spec)
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt PyQt5==5.15.4 PyQtWebEngine==5.15.4 qtpy
-
-      # См. комментарий в windows-desktop про env: вместо прямой подстановки
-      # ${{ secrets.X }} — та же самая правка, тот же баг (эти три файла
-      # ломались и в Win7-сборке ровно так же).
-      - name: Write local config files from secrets
-        shell: bash
-        env:
-          SERVER_JSON: ${{ secrets.MAGICSQD_SERVER_JSON }}
-          SUBMIT_JSON: ${{ secrets.MAGICSQD_SUBMIT_JSON }}
-          ADMIN_JSON: ${{ secrets.MAGICSQD_ADMIN_JSON }}
-        run: |
-          printf '%s' "$SERVER_JSON" > server.json
-          printf '%s' "$SUBMIT_JSON" > submit.json
-          printf '%s' "$ADMIN_JSON" > admin.json
-
-      - name: PyInstaller build (Win7)
-        run: python -m PyInstaller magic_sqd_win7.spec --noconfirm --distpath dist_win7 --workpath build_win7
-
-      # См. комментарий в windows-desktop — тот же баг, отдельный zip: старый
-      # platform-tools r29.0.6 (см. tools_win7/README.txt — свежий adb.exe
-      # падает на настоящей Windows 7), плюс тот же apksigner.jar/jre_minimal.
-      - name: Restore tools/ + cars/_shared (не в git, см. tools_win7/README.txt)
-        run: |
-          Invoke-WebRequest -Uri "https://magicsqd.ru/ci-tools/tools_win7.zip" -OutFile tools_ci.zip
-          New-Item -ItemType Directory -Force -Path dist_win7\magic_sqd\tools | Out-Null
-          Expand-Archive -Path tools_ci.zip -DestinationPath dist_win7\magic_sqd\tools -Force
-          New-Item -ItemType Directory -Force -Path dist_win7\magic_sqd\cars\_shared | Out-Null
-          Get-ChildItem cars\_shared -File | Copy-Item -Destination dist_win7\magic_sqd\cars\_shared
-
-      - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
-
-      - name: Build installer
-        shell: cmd
-        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_win7_x86.iss'
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MagicSQD_Setup_Win7
-          path: installer_output/MagicSQD_Setup_Win7_*.exe
-
   # macOS собирается ДВУМЯ нативными заданиями (github.com/actions/runner-images):
   #   • macos-arm64 — на macos-15 (Apple Silicon);
   #   • macos-intel — на macos-15-intel (БЕСПЛАТНЫЙ Intel-образ GitHub для
@@ -413,15 +355,14 @@ jobs:
           name: MagicSQD_Android
           path: installer_output/MagicSQD_Android_*.apk
 
-  # Только при пуше тега vX.Y.Z — собирает готовые артефакты трёх джобов
-  # выше в один GitHub Release. Имена НЕ переименовываем: app/web/api/
-  # update_api.py сам ищет ассет по регэкспу MagicSQD_Setup_X.Y.Z.exe /
-  # MagicSQD_Setup_Win7_X.Y.Z.exe (версия в имени, проверено по актуальному
-  # релизу v0.9.2) — ровно то имя, что и даёт installer.iss/
-  # installer_win7_x86.iss (OutputBaseFilename) без каких-либо изменений.
+  # Только при пуше тега vX.Y.Z — собирает готовые артефакты джобов выше в
+  # один GitHub Release. Имена НЕ переименовываем: app/web/api/update_api.py
+  # сам ищет ассет по регэкспу MagicSQD_Setup_X.Y.Z.exe (версия в имени,
+  # проверено по актуальному релизу v0.9.2) — ровно то имя, что и даёт
+  # installer.iss (OutputBaseFilename) без каких-либо изменений.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows-desktop, windows-win7, macos-arm64, macos-intel, android]
+    needs: [windows-desktop, macos-arm64, macos-intel, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -469,10 +410,9 @@ jobs:
           body_path: changelog.txt
           files: |
             artifacts/MagicSQD_Setup/MagicSQD_Setup_*.exe
-            artifacts/MagicSQD_Setup_Win7/MagicSQD_Setup_Win7_*.exe
             artifacts/MagicSQD_macOS_arm64/MagicSQD_*_arm64.dmg
             artifacts/MagicSQD_macOS_x86_64/MagicSQD_*_x86_64.dmg
             artifacts/MagicSQD_Android/MagicSQD_Android_*.apk
-          # Все пять артефактов (вкл. Intel-DMG из macos-intel) собираются в CI
+          # Все четыре артефакта (вкл. Intel-DMG из macos-intel) собираются в CI
           # и прикладываются к релизу автоматически — ручная догрузка на Mac
           # больше не нужна.

@@ -253,21 +253,6 @@ SDK в `android/local.properties: sdk.dir`). Intel-DMG для macOS собира
 `cars/*/usb_files` в инсталлятор не попадают (`Excludes` в `installer.iss`),
 они докачиваются программой по требованию (см. ниже).
 
-### Windows 7 (32-бит)
-
-Настоящий Windows 7 не поддерживает WebView2 и Python 3.12 (см. заголовок
-`installer_win7_x86.iss`) — поэтому это ОТДЕЛЬНАЯ 32-битная сборка: свой
-`.venv-win7` (Python 3.8), свой вход `main_web_win7.py`, интерфейс на
-PySide2/Qt5 вместо WebView2:
-
-```powershell
-.\.venv-win7\Scripts\pyinstaller magic_sqd_win7.spec --distpath dist_win7 --workpath build_win7
-```
-
-`--distpath`/`--workpath` обязательны — оба spec-файла собирают исполняемый
-файл с одинаковым именем (`magic_sqd`), без явных путей x64- и Win7-сборки
-затирали бы друг друга. Дальше `installer_win7_x86.iss` → `MagicSQD_Setup_Win7.exe`.
-
 ## Иконка
 
 `assets\icon.ico` — иконка `.exe` (зашивается в файл при сборке через

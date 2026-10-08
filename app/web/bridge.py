@@ -36,16 +36,8 @@ from ..version import APP_VERSION
 
 
 class WebApi:
-    def __init__(self, base_dir: Path, admin_mode: bool = False, is_win7: bool = False):
+    def __init__(self, base_dir: Path, admin_mode: bool = False):
         self.base_dir = base_dir
-        # Win7-сборка (см. main_web_win7.py) — QtWebEngine на старом железе
-        # реального техника (не в реестре, а на живой машине с "семёркой")
-        # оказался сильно медленнее WebView2: app.js ставит класс "low-perf"
-        # на <html>, отключающий backdrop-filter (см. css/tokens.css —
-        # blur() позади полупрозрачных элементов на КАЖДОЙ кнопке/диалоге,
-        # дорогой per-frame эффект, которого WebView2-сборка не замечает
-        # только благодаря аппаратному ускорению).
-        self.is_win7 = is_win7
         self.is_mac = sys.platform == "darwin"
         self.cars_dir = base_dir / "cars"
         self.apk_dir = base_dir / "apk"
@@ -95,7 +87,7 @@ class WebApi:
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner,
                              platform_name=self._install_log_platform())
         self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
-        self._update = UpdateApi(base_dir, is_win7=is_win7)
+        self._update = UpdateApi(base_dir)
         self._chat = ChatApi(base_dir, self.adb_path, self._auth)
         self._offline = OfflineApi(base_dir, self._scanner, self._auth)
         # Прочный журнал сессий (см. app/pending_install_logs.py) — если
@@ -137,7 +129,7 @@ class WebApi:
     def app_get_info(self) -> dict:
         return {
             "admin_mode": self.admin_mode, "debug_mode": self.debug_mode,
-            "client_id": self.client_id, "is_win7": self.is_win7,
+            "client_id": self.client_id,
             "is_mac": self.is_mac,
             "under_program_files": is_under_program_files(self.base_dir),
             "auth_email": self.auth_email,
@@ -348,15 +340,13 @@ class WebApi:
 
     # -- install_log_api --------------------------------------------------
     def _install_log_platform(self) -> str:
-        """"windows"/"win7"/"macos" — раньше тут было только "win7"/
-        "windows" (написано до macOS-порта), из-за чего установки с Mac
+        """"windows"/"macos" — до macOS-порта тут был только "windows" (и "win7"
+        у сборки под Windows 7, снятой 08.10.2026), из-за чего установки с Mac
         уходили в админку ПОМЕЧЕННЫМИ КАК WINDOWS (не терялись, а просто
         неверно подписывались — реальный найденный случай при разборе
         логов в админке). Значение "android" сюда не попадает — Android
         шлёт свои логи отдельно (см. android/.../install_log_bridge.py),
         этот класс — только desktop-сборки."""
-        if self.is_win7:
-            return "win7"
         if self.is_mac:
             return "macos"
         return "windows"
@@ -432,7 +422,7 @@ class WebApi:
     def flush_abandoned_install_log(self) -> None:
         """Аварийный запасной путь на случай, если окно закрыли раньше, чем
         JS успела сама отправить лог сессии (см. install_log_send выше) —
-        зовётся из main_web.py/main_web_win7.py в finally-блоке при закрытии
+        зовётся из main_web.py в finally-блоке при закрытии
         окна. Молча ничего не делает, если сессии в процессе не было, или
         JS уже её отправила. Синхронно (как и раньше) — окно к этому моменту
         уже закрыто, но теперь только ОДНУ попытку отправки именно этой

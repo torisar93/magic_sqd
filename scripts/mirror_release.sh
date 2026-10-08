@@ -39,7 +39,6 @@ while read -r name _ url; do curl -fsSL -o "$WORK/$name" "$url"; done < "$WORK/d
 # ключ в version.json → шаблон имени в релизе → стабильное имя на зеркале
 declare -a MAP=(
   "windows|MagicSQD_Setup_${VER}.exe|MagicSQD_Setup.exe"
-  "win7|MagicSQD_Setup_Win7_${VER}.exe|MagicSQD_Setup_Win7.exe"
   "android|MagicSQD_Android_${VER}.apk|MagicSQD_Android.apk"
   "macos_arm64|MagicSQD_${VER}_arm64.dmg|MagicSQD_arm64.dmg"
   "macos_x86_64|MagicSQD_${VER}_x86_64.dmg|MagicSQD_x86_64.dmg"

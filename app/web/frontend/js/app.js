@@ -530,12 +530,6 @@ window.addEventListener("pywebviewready", async () => {
   window.appInfo = info;
   const settingsPreferences = await window.pywebview.api.settings_preferences();
   document.documentElement.classList.toggle("reduce-motion", settingsPreferences.reduced_motion);
-  // Win7-сборка (QtWebEngine, не WebView2, см. bridge.py: WebApi.is_win7) —
-  // на реальном старом железе backdrop-filter (blur позади каждой кнопки/
-  // диалога) оказался очень тяжёлым без аппаратного ускорения; "low-perf"
-  // отключает его целиком (см. css/tokens.css), это не пользовательская
-  // настройка — от сборки, а не от предпочтения.
-  document.documentElement.classList.toggle("low-perf", info.is_win7);
 
   // ДО sync_startup() — иначе лог-события, которые синхронизация шлёт по
   // ходу (см. app/content_sync.py: sync_tree/list_files_recursive), летят в
@@ -635,7 +629,7 @@ window.addEventListener("pywebviewready", async () => {
   // update-dialog (см. dialogs.js) — там же и показывается прогресс.
   // Раньше пропускалось и для admin_mode тоже — имело смысл, пока
   // admin-сборка была ОТДЕЛЬНОЙ (публиковалась только вручную), но после
-  // объединения сборок (см. app/web/bridge.py: WebApi.is_win7/admin_mode)
+  // объединения сборок (см. app/web/bridge.py: WebApi.admin_mode)
   // admin_mode — это просто переключатель на той же самой установленной
   // копии, которой реально пользуются как рабочей; она не должна навсегда
   // переставать проверять обновления после одной разблокировки. debug_mode

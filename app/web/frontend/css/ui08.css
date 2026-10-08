@@ -1,6 +1,6 @@
 /* LAB08 — the catalogue uses the available viewport, controls share one centre. */
 /* Задел совместимости: движок без поддержки forgiving selector list (старый
-   Chromium в Qt5/PyQt5, Win7) роняет ВЕСЬ список селекторов через запятую,
+   Chromium/Safari) роняет ВЕСЬ список селекторов через запятую,
    если хоть один хочет :has() — держим фолбэк на .has-model-grid отдельным
    правилом, а не через запятую с :has(), иначе оба варианта отвалятся разом. */
 .app-shell.catalog-home #left-panel:has(.cat-grid[data-level="model"]) {

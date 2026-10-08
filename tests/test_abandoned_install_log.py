@@ -133,7 +133,7 @@ def test_session_sealed_before_adb_kill_server_on_close():
     # запуск), незапечатанная сессия уходила следующим запуском как вылет (Windows 1.0.41: №1040, №1115, №1230).
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
-    for name in ("main_web.py", "main_web_win7.py"):
+    for name in ("main_web.py",):
         source = (root / name).read_text(encoding="utf-8")
         finally_block = source[source.index('_log_step("webview.start() returned (normal close)")'):]
         assert finally_block.index("api.seal_abandoned_install_log()") < finally_block.index("kill_server(api.adb_path)"), name

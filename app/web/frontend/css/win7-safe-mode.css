@@ -1,9 +1,10 @@
-/* Аварийный режим для Win7 (старый Chromium в Qt5/PyQt5, см.
-   installer_win7_x86.iss). Класс html.win7-safe-mode ставится в dom.js
-   через feature-detection (тот же CSS.supports('selector(:has(*))'),
-   что уже используется для .has-model-grid — единственные два движка,
-   в которых вообще запускается это приложение, это WebView2 (x64) и этот
-   QtWebEngine (Win7), так что ложных срабатываний не бывает).
+/* Аварийный режим для старого движка без :has() — писался под Win7-сборку
+   (старый Chromium в Qt5/PyQt5; сама сборка снята 08.10.2026), имя класса
+   осталось. Класс html.win7-safe-mode ставится в dom.js через
+   feature-detection (тот же CSS.supports('selector(:has(*))'), что уже
+   используется для .has-model-grid): WebView2 на Windows и WKWebView на
+   свежей macOS его не получают, сработать может только старый WebKit
+   (macOS без Safari 15.4).
 
    Задача не "красиво", а "работает": без анимаций/переходов, с
    принудительным центрированием диалогов (нативное центрирование

@@ -30,7 +30,7 @@ PING_INTERVAL_SECONDS = 3 * 60
 
 class SyncApi:
     def __init__(self, base_dir, cars_dir, apk_dir, scanner_api, platform_name: str = "windows"):
-        # platform_name — "windows"/"win7"/"macos" для пульса (см. bridge.py:_install_log_platform)
+        # platform_name — "windows"/"macos" для пульса (см. bridge.py:_install_log_platform)
         self.platform_name = platform_name
         self.base_dir = base_dir
         self.cars_dir = cars_dir

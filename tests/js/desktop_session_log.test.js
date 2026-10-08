@@ -16,7 +16,7 @@ module.exports = async function () {
     model: { brand: "Belgee", display_label: "Belgee / S50", name: "S50", modification: "" },
     logFn: (line) => shown.push(line),
     window: {
-      appInfo: { app_version: "1.0.49", is_win7: false, client_id: "abc", os: "Windows 11 (сборка 26100, AMD64)" },
+      appInfo: { app_version: "1.0.49", client_id: "abc", os: "Windows 11 (сборка 26100, AMD64)" },
       pywebview: { api: {
         install_log_append: (...a) => { calls.push(["append", ...a]); return Promise.resolve(); },
         install_log_send: (...a) => { calls.push(["send", ...a]); },

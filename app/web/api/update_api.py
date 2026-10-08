@@ -14,12 +14,6 @@ app/content_sync.py:download_file, но без зависимости от не�
 завязан на server.json/content_config.py и свой протокол листинга, тут
 источники — GitHub API и простой version.json).
 
-Win7-сборка (is_win7=True, см. main_web_win7.py) ищет свой ассет
-(MagicSQD_Setup_Win7.exe) в том же GitHub-релизе и НЕ опрашивает свой
-сервер — тот зеркалирует только обычный x64-инсталлятор (см. UpdateApi.
-__init__). Установка тем же /VERYSILENT-путём — оба инсталлятора собраны
-Inno Setup и одинаково понимают эти флаги.
-
 macOS: если программа запущена из собственного .app и в его папку можно
 писать — обновляется сама (_worker_mac: скачать .dmg, проверить, положить
 новый .app рядом и подменить после закрытия; при сбое — откат); иначе
@@ -52,14 +46,13 @@ from ...version import APP_VERSION
 
 GITHUB_API_URL = "https://api.github.com/repos/torisar93/magic_sqd/releases"
 # С версии 0.8.0 сами файлы инсталляторов версионируются в имени (см.
-# installer.iss/installer_win7_x86.iss: OutputBaseFilename) — на GitHub
+# installer.iss: OutputBaseFilename) — на GitHub
 # у каждого релиза свой уникальный ассет, точное имя заранее не известно,
 # поэтому ищем по регэкспу вместо точного совпадения (_ASSET_RE ниже).
 # Свой сервер (см. server/backend.py:_handle_exe_upload) от версии
 # файла независим — ВСЕГДА перезаписывает под фиксированным именем
 # OWN_SERVER_ASSET_NAME, для него версионировать нечего.
 _ASSET_RE = re.compile(r"^MagicSQD_Setup_\d+\.\d+\.\d+\.exe$", re.IGNORECASE)
-_ASSET_RE_WIN7 = re.compile(r"^MagicSQD_Setup_Win7_\d+\.\d+\.\d+\.exe$", re.IGNORECASE)
 # Имена из macos-arm64 job в .github/workflows/build-release.yml (см. её же
 # комментарий про то, что x86_64 собирается вручную, а не в CI) —
 # соответствующий .dmg подбирается по реальной архитектуре машины техника
@@ -230,30 +223,19 @@ def update_bat_text(pid: int, installer_path: Path) -> str:
 
 
 class UpdateApi:
-    def __init__(self, base_dir: Path, is_win7: bool = False):
+    def __init__(self, base_dir: Path):
         self.base_dir = base_dir
-        self.is_win7 = is_win7
         self.is_mac = sys.platform == "darwin"
-        # Win7-сборка (см. installer_win7_x86.iss) публикует свой собственный
-        # инсталлятор в том же GitHub-релизе, что и обычная сборка (см.
-        # server/README.md §9 — один тег на цикл, три ассета). Свой сервер
-        # (магазин content_config.get_download_base_url) зеркалирует ТОЛЬКО
-        # обычную x64-сборку под фиксированным OWN_SERVER_ASSET_NAME (см.
-        # server/backend.py:_handle_exe_upload) — для Win7 своего зеркала
-        # нет, поэтому этот источник ниже пропускается. macOS — та же idea:
-        # свой сервер зеркалирует только Windows x64, поэтому здесь тоже
-        # только GitHub (см. _check_own_server), а нужный .dmg выбирается по
-        # архитектуре ЭТОГО процесса — НО platform.machine() сам по себе
-        # неотличим для "настоящего x86_64 Mac" и "x86_64-сборки под Rosetta
+        # macOS: нужный .dmg выбирается по архитектуре ЭТОГО процесса (и на
+        # GitHub, и на своём зеркале — см. _own_server_asset_key) — НО
+        # platform.machine() сам по себе неотличим для "настоящего x86_64 Mac" и "x86_64-сборки под Rosetta
         # на Apple Silicon" (в обоих случаях вернёт "x86_64"). Второй случай —
         # реальный застрявший клиент (2026-09-21): once собранная x86_64-копия
         # самообновлениями НИКОГДА не перейдёт на нативный arm64 без этой
         # проверки — _mac_is_translated() их различает, self._mac_wants_x64
         # True только для настоящего Intel Mac.
         self._mac_wants_x64 = platform.machine() == "x86_64" and not _mac_is_translated()
-        if is_win7:
-            self._asset_re = _ASSET_RE_WIN7
-        elif self.is_mac:
+        if self.is_mac:
             self._asset_re = _ASSET_RE_MAC_X64 if self._mac_wants_x64 else _ASSET_RE_MAC_ARM64
         else:
             self._asset_re = _ASSET_RE
@@ -280,15 +262,13 @@ class UpdateApi:
         """Ключ в version.json["assets"] для ЭТОЙ сборки (см. scripts/mirror_release.sh).
         self._mac_wants_x64 — см. __init__/_mac_is_translated (отличает настоящий Intel
         Mac от x86_64-сборки под Rosetta на Apple Silicon)."""
-        if self.is_win7:
-            return "win7"
         if self.is_mac:
             return "macos_x86_64" if self._mac_wants_x64 else "macos_arm64"
         return "windows"
 
     def _check_own_server(self) -> dict | None:
         """Своё зеркало magicsqd.ru/download/ — с 1.0.17 не только Windows x64: version.json несёт карту
-        assets {"windows","win7","macos_arm64","macos_x86_64","android"} → имя файла на зеркале (кладёт
+        assets {"windows","macos_arm64","macos_x86_64","android"} → имя файла на зеркале (кладёт
         scripts/mirror_release.sh). Нет карты (version.json записан старой карточкой «Загрузить на сервер»
         в админке) — как раньше, только Windows x64 под фиксированным OWN_SERVER_ASSET_NAME."""
         url = get_download_base_url(self.base_dir)

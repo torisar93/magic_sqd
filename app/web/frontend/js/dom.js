@@ -1,5 +1,5 @@
 // Полифилл Element.prototype.replaceChildren (DOM, Chromium 86+) — старый
-// Chromium в Qt5/PyQt5 (Win7-сборка, см. installer_win7_x86.iss) его не
+// движок (так было у снятой Win7-сборки на Qt5) его не
 // знает и падает TypeError'ом на каждом вызове. Тот же класс проблемы, что
 // и с ||=/&&=/??= (см. events.js) — новый интерфейс использует его
 // повсеместно, полифилл проще и безопаснее, чем переписывать каждый вызов.
@@ -10,7 +10,7 @@ if (typeof Element !== "undefined" && !Element.prototype.replaceChildren) {
   };
 }
 
-// Фолбэк для :has() (Chromium 105+) — старый Chromium в Qt5/PyQt5 (Win7)
+// Фолбэк для :has() (Chromium 105+, Safari 15.4+) — старый движок
 // его не понимает вообще, поэтому все правила вида
 // "#picker:has(.cat-grid[data-level=model])" (ui08.css/catalog11.css)
 // молча не применяются: цепочка #picker/.cat-screen никогда не получает

@@ -3,7 +3,7 @@
 // в таблице пользователей админки, см. server/backend.py: build_supporters): только имена и цвет
 // карточки, ни почт, ни сумм. Как файл попадает сюда — дело платформы (ПК: Python-мост, Android:
 // событие supporters_result): она зовёт Thanks.set(данные). Сама вёрстка — Thanks.block().
-// Без ??=/?. и т.п. — тот же старый Chromium в Win7-сборке, что и у остального фронтенда.
+// Без ??=/?. и т.п. — старые движки (WebView на старом Android, старый Safari), как и у остального фронтенда.
 (function () {
   const { el } = window.dom;
   const CACHE_KEY = "magicsqd_supporters_v2";

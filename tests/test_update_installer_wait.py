@@ -46,7 +46,7 @@ def test_spawn_writes_the_bat_with_our_pid(tmp_path, monkeypatch):
 
 
 def test_installers_force_close_whatever_holds_program_files():
-    for name in ("installer.iss", "installer_win7_x86.iss"):
+    for name in ("installer.iss",):
         text = (ROOT / name).read_text(encoding="utf-8")
         assert re.search(r"^CloseApplications=force$", text, re.M), name
         assert re.search(r"^CloseApplicationsFilter=\*\.exe,\*\.dll,\*\.pyd,\*\.chm$", text, re.M), name

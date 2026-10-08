@@ -54,11 +54,11 @@
 .button13:disabled,.button13[aria-disabled="true"],.button13[aria-busy="true"] {
   transform:none!important;transition:none!important;
 }
-html.reduce-motion .button13,html.low-perf .button13,
-html.reduce-motion .button13.button13-pointer,html.low-perf .button13.button13-pointer {
+html.reduce-motion .button13,
+html.reduce-motion .button13.button13-pointer {
   transform:none!important;transition:none!important;
 }
-html.reduce-motion .button13 .cat-visual,html.low-perf .button13 .cat-visual {
+html.reduce-motion .button13 .cat-visual {
   transform:none!important;transition:none!important;
 }
 @media (prefers-reduced-motion:reduce) {

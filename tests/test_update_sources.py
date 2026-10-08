@@ -12,7 +12,7 @@ import pytest
 from conftest import ROOT
 
 ANDROID_PY = ROOT / "android/app/src/main/python"
-FULL_ASSETS = {"windows": "MagicSQD_Setup.exe", "win7": "MagicSQD_Setup_Win7.exe", "android": "MagicSQD_Android.apk",
+FULL_ASSETS = {"windows": "MagicSQD_Setup.exe", "android": "MagicSQD_Android.apk",
                "macos_arm64": "MagicSQD_arm64.dmg", "macos_x86_64": "MagicSQD_x86_64.dmg"}
 
 
@@ -40,17 +40,16 @@ def write_version(server, version="v99.0.0", assets=FULL_ASSETS, **extra):
     (server.root / "version.json").write_text(json.dumps(data), encoding="utf-8")
 
 
-def make_desktop_api(tmp_path, monkeypatch, server, *, is_win7=False, is_mac=False, machine="arm64"):
+def make_desktop_api(tmp_path, monkeypatch, server, *, is_mac=False, machine="arm64"):
     from app.web.api import update_api
     monkeypatch.setattr(update_api, "get_download_base_url", lambda base_dir: server.url)
     monkeypatch.setattr(update_api.platform, "machine", lambda: machine)
     monkeypatch.setattr(update_api.sys, "platform", "darwin" if is_mac else "win32")
-    return update_api.UpdateApi(tmp_path, is_win7=is_win7)
+    return update_api.UpdateApi(tmp_path)
 
 
 @pytest.mark.parametrize("kind,expected", [
     (dict(), "MagicSQD_Setup.exe"),
-    (dict(is_win7=True), "MagicSQD_Setup_Win7.exe"),
     (dict(is_mac=True, machine="arm64"), "MagicSQD_arm64.dmg"),
     (dict(is_mac=True, machine="x86_64"), "MagicSQD_x86_64.dmg"),
 ])
@@ -65,7 +64,6 @@ def test_desktop_picks_asset_for_its_platform(tmp_path, monkeypatch, download_se
 def test_desktop_without_assets_map_is_windows_only(tmp_path, monkeypatch, download_server):
     write_version(download_server, assets=None)  # version.json от старой карточки админки
     assert make_desktop_api(tmp_path, monkeypatch, download_server)._check_own_server()["asset_name"] == "MagicSQD_Setup.exe"
-    assert make_desktop_api(tmp_path, monkeypatch, download_server, is_win7=True)._check_own_server() is None
     assert make_desktop_api(tmp_path, monkeypatch, download_server, is_mac=True)._check_own_server() is None
 
 

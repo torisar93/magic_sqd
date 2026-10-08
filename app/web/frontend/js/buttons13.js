@@ -9,7 +9,7 @@
   const stableSelector='.apps-section-header,.app-personal-apk-add,.model-list>.cat-card,.apps-tab';
   const pointer=matchMedia('(hover:hover) and (pointer:fine)');
   const motion=matchMedia('(prefers-reduced-motion:reduce)');
-  const reduced=()=>motion.matches||document.documentElement.matches('.reduce-motion,.low-perf');
+  const reduced=()=>motion.matches||document.documentElement.matches('.reduce-motion');
   const unavailable=el=>!el?.isConnected||el.matches(':disabled,[aria-disabled="true"],[aria-busy="true"]')||!!el.closest('[inert],[hidden],dialog:not([open])');
   const props=['--button13-background','--button13-strength','--button13-x','--button13-y','--button13-lift','--button13-rx','--button13-ry','--button14-mark-x','--button14-transform-time','--button14-press-scale'];
   const leaving=new Map();
