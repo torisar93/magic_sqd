@@ -3548,11 +3548,6 @@
       el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
       el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px", text: "Добро пожаловать!" }),
       el("p", { class: "stage-text welcome-disclaimer", text: "Программа предназначена для людей с техническими знаниями о работе Android-магнитол. Все действия вы выполняете на свой страх и риск." }),
-      el("p", {
-        class: "stage-text", style: "color: var(--text-dim)",
-        text: "Мобильная версия Magic SQD пока в стадии тестирования — что-то может работать нестабильно. " +
-          "Если найдёшь баг — дай знать нам.",
-      }),
       boostyLinksRow(),
       okButton,
     ], { dismissible: false });
