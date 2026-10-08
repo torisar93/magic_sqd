@@ -768,12 +768,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             val relative = root.relativize(file).toString().replace('\\', '/')
             if (!relative.startsWith("apk/") && !relative.startsWith("cars/")) return null
             if (System.currentTimeMillis() > labServerIconsUntil) {
-                val connection = java.net.URL("$BASE_URL/manifest.json").openConnection()
-                authUserCookie()?.let { connection.setRequestProperty("Cookie", it) }  // значки скрытых моделей
-                connection.connectTimeout = 8000
-                connection.readTimeout = 8000
-                val manifest = connection.getInputStream().bufferedReader().use { JSONObject(it.readText()) }
-                labServerIcons = manifest.optJSONObject("apk_icons") ?: JSONObject()
+                // Через Python (content_sync.open_url): с токеном официальной сборки и cookie вошедшего (значки скрытых
+                // моделей). Свой запрос отсюда шёл без токена — с закрытым каталогом 403 и заглушки (08.10.2026).
+                val icons = pyModule("mobile_bridge").callAttr("apk_icons", BASE_URL).toString()
+                if (icons.isEmpty()) throw IllegalStateException("manifest.json недоступен")
+                labServerIcons = JSONObject(icons)
                 labServerIconsUntil = System.currentTimeMillis() + 300000
             }
             val icon = labServerIcons.optString(relative)

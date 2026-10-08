@@ -14,7 +14,7 @@ import catalog_key
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
                            prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie,
-                           sync_early_access, sync_tree, model_on_server, prune_closed_stages)
+                           sync_early_access, sync_tree, model_on_server, prune_closed_stages, open_url)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version, read_early_access
 import offline_pack
 from wizard_spec import load_wizard_spec
@@ -84,9 +84,10 @@ def _parse_version(text: str) -> tuple:
 def device_models_refresh(base_url: str, cache_path: str) -> bool:
     """Таблица «магнитола → модель» для подсказки «Похоже, это другая машина» (content/device_models.json, см.
     server/device_models.py и desktop app/device_models.py) — копия в файлах приложения: при подключении по Wi-Fi ADB
-    телефон в сети магнитолы, без интернета. Сбой — остаётся прежняя копия."""
+    телефон в сети магнитолы, без интернета. Сбой — остаётся прежняя копия. Через open_url — с токеном сборки:
+    с закрытым каталогом голый urlopen получал 403 (08.10.2026)."""
     try:
-        with urllib.request.urlopen(f"{base_url}/device_models.json", timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+        with open_url(f"{base_url}/device_models.json", timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
             raw = resp.read()
         data = json.loads(raw.decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
@@ -131,9 +132,10 @@ def ui_bundle_mark_bad(root: str, rev: int) -> None:
 def supporters_fetch(base_url: str) -> str:
     """Список «Спасибо вам» (content/supporters.json, см. desktop app/supporters_client.py) — только
     имена и цвет карточки. Любой сбой — {} (например, телефон в Wi-Fi магнитолы без интернета): окно
-    «Всё готово» тогда покажет последний сохранённый в приложении список или обойдётся без блока."""
+    «Всё готово» тогда покажет последний сохранённый в приложении список или обойдётся без блока. Через
+    open_url — с токеном сборки (закрытый каталог, см. device_models_refresh)."""
     try:
-        with urllib.request.urlopen(f"{base_url}/supporters.json", timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+        with open_url(f"{base_url}/supporters.json", timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
             json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -149,6 +151,21 @@ def supporters_fetch(base_url: str) -> str:
                                "top": item.get("top") is True})
         return json.dumps({"people": people}, ensure_ascii=False)
     return "{}"
+
+
+def apk_icons(base_url: str) -> str:
+    """Поле "apk_icons" манифеста (путь APK → icons/<sha>.png) — значки ещё не скачанных APK в списке приложений
+    (WebBridge.serverApkIcon). Через open_url — с токеном сборки и cookie вошедшего (значки его скрытых моделей):
+    прямой запрос из Kotlin без токена с закрытым каталогом получал 403 (08.10.2026). Сбой — "" (Kotlin повторит
+    позже), иначе JSON-объект."""
+    try:
+        with open_url(f"{base_url}/manifest.json", timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError,
+            json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return ""
+    icons = data.get("apk_icons") if isinstance(data, dict) else None
+    return json.dumps(icons if isinstance(icons, dict) else {}, ensure_ascii=False)
 
 
 def check_update(current_version: str) -> str:
