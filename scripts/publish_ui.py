@@ -37,7 +37,7 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app import ed25519, ui_bundle  # noqa: E402
+from app import app_token, ed25519, ui_bundle  # noqa: E402
 
 HOST = "root@94.102.89.93"
 SSH_KEY = Path.home() / ".ssh" / "magicsqd_deploy"
@@ -248,14 +248,30 @@ def remove_old_zips(manifest: dict) -> None:
         print(f"  убраны старые архивы: {', '.join(stale)}")
 
 
+def official_headers() -> dict:
+    """Токен официальной сборки, как у программы: с 08.10.2026 каталог закрыт — /content без токена отвечает 403.
+    Секрет — app_build_secret из server.json рядом с программой (scripts/catalog_protection.py); нет его — {}."""
+    try:
+        secret = json.loads((ROOT / "server.json").read_text(encoding="utf-8")).get("app_build_secret")
+    except (OSError, ValueError):
+        return {}
+    secret = secret.strip().lower() if isinstance(secret, str) else ""
+    if not re.fullmatch(r"[0-9a-f]{64}", secret):
+        return {}
+    return app_token.AppToken(PUBLIC_URL, bytes.fromhex(secret), "publish-ui").header()
+
+
 def verify_public(platform: str, version: str, public: bytes) -> str:
-    """Как увидит программа: манифест и архив по HTTPS, проверка открытым ключом выпуска."""
-    with urllib.request.urlopen(f"{PUBLIC_URL}/{ui_bundle.MANIFEST_PATH}", timeout=30) as resp:
+    """Как увидит программа: манифест и архив по HTTPS с токеном сборки, проверка открытым ключом выпуска."""
+    headers = official_headers()
+    with urllib.request.urlopen(urllib.request.Request(f"{PUBLIC_URL}/{ui_bundle.MANIFEST_PATH}", headers=headers),
+                                timeout=30) as resp:
         manifest = json.loads(resp.read().decode("utf-8"))
     entry = ui_bundle._entry(manifest, platform, version)
     if entry is None or entry.get("rev") == 0:
         return "выключен"
-    with urllib.request.urlopen(f"{PUBLIC_URL}/ui/{entry['file']}", timeout=60) as resp:
+    with urllib.request.urlopen(urllib.request.Request(f"{PUBLIC_URL}/ui/{entry['file']}", headers=headers),
+                                timeout=60) as resp:
         data = resp.read()
     saved = ui_bundle.PUBLIC_KEY
     ui_bundle.PUBLIC_KEY = public
