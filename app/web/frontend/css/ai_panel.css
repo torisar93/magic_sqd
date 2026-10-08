@@ -16,6 +16,7 @@
 #ai-panel .ai-chip:hover { background: rgba(159, 233, 207, .15); }
 #ai-panel .ai-small.on { border-color: rgba(255, 196, 120, .5); color: #ffd08a; }
 #ai-panel .ai-send { width: 34px; height: 34px; padding: 0; border-radius: 10px; }
+#ai-panel .ai-btn.ai-icon { width: 28px; height: 28px; padding: 0; border-radius: 8px; }
 #ai-panel textarea { min-height: 22px; box-shadow: none; }
 
 /* Программа — справа от панели; окно этапа и окна программы — над программой, панель остаётся видна. */
@@ -23,6 +24,27 @@ body.ai-open #app-shell { margin-left: var(--ai-w); width: calc(100% - var(--ai-
 body.ai-open .stage-run-overlay { left: var(--ai-w); }
 body.ai-open dialog::backdrop { left: var(--ai-w); }
 body.ai-open dialog:modal { left: var(--ai-w); max-width: calc(100vw - var(--ai-w) - 24px) !important; }
+
+/* Название модели в шапке — не больше двух строк: длинное «Geely Monjaro — Дорест ОД» в узком окне раньше
+   ломалось в столбик и вылезало за шапку. */
+#global-header .global-context { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  line-height: 1.25; overflow-wrap: break-word; }
+
+/* Чат отнимает 380px — программе остаётся «узкое окно»: шапка компактнее (как refinement05.css при ≤1050px), «Лог» и
+   «✦ ИИ» — значками, почта на кнопке аккаунта — с многоточием. */
+@media (max-width: 1500px) {
+  body.ai-open #global-header { gap: 10px; padding: 16px 18px; }
+  body.ai-open #global-header .cat-logo { width: 120px; }
+  body.ai-open #global-header .cat-top-actions { gap: 6px; }
+  body.ai-open #global-header .global-context { font-size: 15px; }
+  body.ai-open #global-header .header-log > span:last-child,
+  body.ai-open #global-header .header-ai > span:last-child { display: none; }
+  body.ai-open #global-header .header-log, body.ai-open #global-header .header-ai { padding: 0 12px; }
+  body.ai-open #catalog-admin-toggle { display: block; max-width: 112px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; line-height: 26px; }
+  body.ai-open .wizard-content { padding: 24px; }
+  body.ai-open .wizard-nav { padding: 14px 24px; }
+}
 
 /* Узкое окно: панель поверх программы, не сжимает её. */
 @media (max-width: 1099px) {

@@ -15,7 +15,17 @@
 .ai-master .ai-btn.ai-small { border: 1px solid rgba(255, 255, 255, .13); background: rgba(255, 255, 255, .05); color: #cfe0e2;
   border-radius: 8px; padding: 4px 6px; font-size: 11px; flex: none; min-width: 26px; }
 .ai-master .ai-btn.ai-small.on { border-color: rgba(255, 196, 120, .5); color: #ffd08a; }
-.ai-master .ai-head .ai-close { font-size: 15px; line-height: 1; padding: 4px 7px; }
+/* Квадратные кнопки-значки в шапке чата (пауза, закрыть): значки нарисованы, одного размера и по центру. */
+.ai-master .ai-btn.ai-icon { width: 28px; height: 28px; min-width: 28px; padding: 0; display: inline-flex; align-items: center;
+  justify-content: center; gap: 3px; position: relative; font-size: 0; line-height: 0; }
+.ai-master .ai-pause::before, .ai-master .ai-pause::after { content: ""; display: block; width: 3px; height: 11px; border-radius: 1px;
+  background: currentColor; }
+.ai-master .ai-pause.on::before { width: 0; height: 0; margin-left: 3px; border-radius: 0; background: none;
+  border-left: 9px solid currentColor; border-top: 6px solid transparent; border-bottom: 6px solid transparent; }
+.ai-master .ai-pause.on::after { display: none; }
+.ai-master .ai-close::before, .ai-master .ai-close::after { content: ""; position: absolute; left: 50%; top: 50%; width: 13px;
+  height: 2px; margin: -1px 0 0 -6.5px; border-radius: 1px; background: currentColor; transform: rotate(45deg); }
+.ai-master .ai-close::after { transform: rotate(-45deg); }
 .ai-notice { margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; background: rgba(255, 255, 255, .05);
   border: 1px solid rgba(255, 255, 255, .1); color: #cfe0e2; flex-shrink: 0; }
 .ai-notice.warn { border-color: rgba(255, 196, 120, .4); background: rgba(40, 30, 14, .55); color: #ffd08a; }

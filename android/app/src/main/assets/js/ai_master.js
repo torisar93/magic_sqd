@@ -103,10 +103,18 @@
     var usage = el("div", "ai-limit", "");
     usage.hidden = true;
     head.appendChild(usage);
-    var pause = button("❚❚", "ai-small", function () { setPaused(!s.paused); });
+    // Пауза и «закрыть» — одинаковые квадратные кнопки; значки рисует CSS (ai_master.css), не символы шрифта:
+    // «❚❚» и «×» в разных шрифтах разного размера и не по центру.
+    var pause = button("", "ai-small ai-icon ai-pause", function () { setPaused(!s.paused); });
     pause.title = "Пауза: ИИ не будет сам продолжать и отвечать на события программы";
+    pause.setAttribute("aria-label", "Пауза");
     head.appendChild(pause);
-    if (options.onClose) head.appendChild(button("×", "ai-small ai-close", options.onClose));
+    if (options.onClose) {
+      var close = button("", "ai-small ai-icon ai-close", options.onClose);
+      close.title = "Закрыть";
+      close.setAttribute("aria-label", "Закрыть");
+      head.appendChild(close);
+    }
     var body = el("div", "ai-body");
     var notice = el("div", "ai-notice");
     notice.hidden = true;
@@ -179,8 +187,8 @@
     }
     function setPaused(value) {
       s.paused = value;
-      pause.textContent = value ? "▶" : "❚❚";
       pause.title = value ? "Продолжить: ИИ снова ведёт установку" : "Пауза: ИИ не будет сам продолжать и отвечать на события программы";
+      pause.setAttribute("aria-label", value ? "Продолжить" : "Пауза");
       pause.classList.toggle("on", value);
       setNotice(value ? "ИИ на паузе: сам не продолжает и не отвечает на события программы. Можно писать ему." : "", "");
       if (!value && s.outbox.length) sendTurn([]);

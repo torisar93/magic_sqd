@@ -32,6 +32,7 @@ body.ai-chat-shown #ai-sheet { display: flex; }
 #ai-sheet .ai-chip { background: rgba(159, 233, 207, .07); border-color: rgba(159, 233, 207, .35); color: #bff3e1; border-radius: 999px; padding: 7px 12px; }
 #ai-sheet .ai-small.on { border-color: rgba(255, 196, 120, .5); color: #ffd08a; }
 #ai-sheet .ai-send { width: 38px; height: 38px; padding: 0; border-radius: 11px; }
+#ai-sheet .ai-btn.ai-icon { width: 32px; height: 32px; padding: 0; border-radius: 9px; }
 #ai-sheet textarea { min-height: 22px; box-shadow: none; font-size: 15px; }
 #ai-sheet .ai-msg { font-size: 14.5px; }
 
