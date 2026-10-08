@@ -198,7 +198,10 @@
       cap.appendChild(el("span", "", "Инструкция, этап " + stage + " · " + block));
       var link = el("a", "", "Показать в инструкции");
       link.href = "#";
-      link.addEventListener("click", function (e) { e.preventDefault(); program.focus(stage, block); });
+      link.addEventListener("click", function (e) {  // телефон: сначала открыть саму инструкцию (program.reveal)
+        e.preventDefault();
+        (program.reveal || program.focus)(stage, block);
+      });
       cap.appendChild(link);
       fig.appendChild(cap);
       return fig;
@@ -404,9 +407,11 @@
     async function runAction(a) {
       var args = a.args || {};
       if (a.tool === "focus_block") {
-        program.focus(args.stage, args.block);
+        var note = program.focus(args.stage, args.block);  // телефон: «отметил во вкладке «Инструкция»»
+        if (typeof note === "string" && note) event("✦", note);
       } else if (a.tool === "highlight") {
-        program.highlight(args.target);
+        var hint = program.highlight(args.target);
+        if (typeof hint === "string" && hint) event("✦", hint);
       } else if (a.tool === "select_apps") {
         var advice = program.selectApps(args.picks || [], args.avoid || []);
         event("✦", "Совет по приложениям — во вкладке «✦ Совет ИИ».");

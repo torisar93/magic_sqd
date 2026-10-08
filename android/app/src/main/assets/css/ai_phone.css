@@ -1,0 +1,45 @@
+/* ИИ-мастер на телефоне (js/ai_phone.js): вкладки «✦ ИИ / Инструкция» в шапке, чат на весь экран под шапкой —
+   вариант Б утверждённого макета (_previews/ai-master). Сам чат — общий с ПК css/ai_master.css. */
+
+/* Кнопка «✦ ИИ» в шапке — рядом с «Лог»; видна, если сервер включил функцию этому технику. */
+.topbar .ai-top-btn { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; min-width: 0; height: 36px;
+  padding: 0 11px !important; border-radius: 10px; border: 1px solid rgba(159, 233, 207, .55); background: rgba(159, 233, 207, .12);
+  color: #c9f5e6; font-weight: 600; font-size: 14px; }
+.topbar .ai-top-btn[hidden] { display: none; }
+.ai-top-mark { font-size: 14px; line-height: 1; }
+
+/* Вкладки в шапке на месте названия, пока чат ИИ включён. */
+body.ai-mode .topbar .title { display: none; }
+.topbar .ai-seg { flex: 1; min-width: 0; display: flex; gap: 3px; padding: 3px; border-radius: 12px;
+  background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .1); }
+.topbar .ai-seg[hidden] { display: none; }
+.topbar .ai-seg button { flex: 1; min-width: 0; height: 36px; padding: 0 6px !important; border-radius: 9px; border: 1px solid transparent;
+  background: transparent; color: #a9bcbf; font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .ai-seg button.on { background: rgba(159, 233, 207, .16); color: #c9f5e6; border-color: rgba(159, 233, 207, .4); }
+.topbar .ai-seg .ai-seg-program { position: relative; }
+.topbar .ai-seg.has-mark .ai-seg-program::after { content: ""; position: absolute; top: 5px; right: 6px; width: 8px; height: 8px;
+  border-radius: 50%; background: #9fe9cf; box-shadow: 0 0 0 2px #1b252d; }
+
+/* Чат — под шапкой на весь экран; окна программы и окно этапа — поверх него. */
+#ai-sheet { display: none; position: fixed; left: 0; right: 0; top: 62px; bottom: 0; height: auto; z-index: 60; }  /* высоту задают top/bottom */
+body.ai-chat-shown #ai-sheet { display: flex; }
+#ai-sheet .ai-head { padding-top: 12px; }
+
+/* Кнопки и поле чата — свои: общие стили кнопок программы (высота 44px, «стекло») здесь не нужны. */
+#ai-sheet button { min-height: 0; height: auto; box-shadow: none; line-height: 1.25; }
+#ai-sheet .ai-btn { background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .13); color: #e6eef0; }
+#ai-sheet .ai-btn.primary, #ai-sheet .ai-send { background: linear-gradient(135deg, #a8f1d8, #79cfb9); border-color: transparent; color: #0e1d1b; }
+#ai-sheet .ai-chip { background: rgba(159, 233, 207, .07); border-color: rgba(159, 233, 207, .35); color: #bff3e1; border-radius: 999px; padding: 7px 12px; }
+#ai-sheet .ai-small.on { border-color: rgba(255, 196, 120, .5); color: #ffd08a; }
+#ai-sheet .ai-send { width: 38px; height: 38px; padding: 0; border-radius: 11px; }
+#ai-sheet textarea { min-height: 22px; box-shadow: none; font-size: 15px; }
+#ai-sheet .ai-msg { font-size: 14.5px; }
+
+/* Вкладка «✦ Совет ИИ» этапа «Приложения»: отметка ИИ справа и почему — под названием. */
+/* Строка — flex с order (catalog-03/ui07.css): значок 0, название 1, отметка 2, галочка 4, «почему» — строкой ниже. */
+.app-choice.ai-advice-row { flex-wrap: wrap; }
+.app-choice.ai-advice-row .app-choice-name { order: 1; flex: 1 1 0%; min-width: 0; }
+.app-choice.ai-advice-row .ai-app-badge { order: 2; margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+.app-choice.ai-advice-row input { order: 4; margin-left: 0; }
+.app-choice.ai-advice-row > .ai-reason { order: 5; flex: 1 1 100%; margin: -4px 0 0 52px; font-size: 12.5px; line-height: 1.35; color: #8fa3a8; }
+.ai-advice-no { opacity: .8; }

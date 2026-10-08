@@ -19,6 +19,7 @@ module.exports = async function () {
     onAdbStageResult: (e) => stageResults.push(e),
     document: { querySelector: () => ({ close: () => calls.push(["dialog.close"]) }) },
     promptHostPicker: (title, port, onSubmit, opts) => { picker = { title, port, onSubmit, opts }; },
+    aiNotify() {},  // ИИ-мастер (js/ai_phone.js) здесь не нужен
   };
   const api = run(code + "\nthis.__api={beginWifiInstall,onApkDownloadDone,cancelWifiInstall,onAdbConnectResult,getFlow:()=>wifiInstallFlow};", ctx).__api;
 

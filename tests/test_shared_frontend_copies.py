@@ -82,6 +82,7 @@ def test_device_hint_is_included_on_both_platforms(index, css, js):
 
 @pytest.mark.parametrize("index, core, panel", [
     (DESKTOP / "index.html", "js/ai_master.js", "js/screens/ai_panel.js"),
+    (ANDROID / "index.html", "js/ai_master.js", "js/ai_phone.js"),
 ])
 def test_ai_master_core_is_loaded_before_platform_panel(index, core, panel):
     # «Установка с ИИ»: панель платформы создаёт чат общим ядром — оно должно быть уже загружено.

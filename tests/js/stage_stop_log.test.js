@@ -17,6 +17,7 @@ module.exports = async function () {
     failedStages: new Map(),
     log: (line) => logs.push(line),
     finishRun: (outcome) => runs.push(outcome),
+    aiNotify() {},  // ИИ-мастер (js/ai_phone.js) здесь не нужен
   };
   const api = run(code + "\nthis.__api={onAdbStageResult};", ctx).__api;
 

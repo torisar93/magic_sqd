@@ -216,7 +216,7 @@
   // разбор логов на сервере отличает ошибку подключения/действий техника от сбоя программы.
   window.StageRun.configure({
     openLog: () => setLogOpen(true),
-    onUserError: (rule) => log(`Показано окно для техника: «${rule.title}»`),
+    onUserError: (rule) => { log(`Показано окно для техника: «${rule.title}»`); aiNotify("user_error", rule.title); },
   });
 
   function onRunClosed() {
@@ -1053,6 +1053,10 @@
   // техник просто нажал «Далее» (тот же фикс, что в desktop stage_wizard.js:
   // failedStages). Этапы "actions" не считаем — их кнопки необязательны.
   let failedStages = new Map();
+  // ИИ-мастер (js/ai_phone.js): совет по приложениям по индексу этапа apps (вкладка «✦ Совет ИИ», сбрасывается при
+  // смене модели) и отпечаток подключённой магнитолы — для состояния, которое ИИ получает с каждым ходом.
+  let aiAdvice = {};
+  let aiBanner = "";
   // Выбор техника на apps-этапах с apps_connection == "ask" (провод/Wi-Fi) —
   // по index этапа, чтобы сохранялся при переходах назад-вперёд в рамках
   // одного мастера (аналог appsSelection). См. connectionModeFor.
@@ -1090,6 +1094,7 @@
     personalApks = [];
     installCompletedShown = false;
     failedStages = new Map();
+    aiAdvice = {};
     wifiInstallFlow = null;
     prefetchedFiles = new Set();
     prefetchRequested.clear();
@@ -1177,10 +1182,12 @@
     }
     currentIndex = 0;
     render();
+    aiNotify("model_opened", model ? model.display_label || model.name || "" : "");
   }
 
   function setAdbStatus(connected, text) {
     adbConnected = connected;
+    if (!connected) aiBanner = "";
     adbStatusEl.textContent = text;
     adbStatusEl.title = text;
     adbStatusEl.classList.toggle("connected", connected);
@@ -1315,11 +1322,14 @@
       setAdbStatus(true, label ? `Подключено · ${label}` : "ADB подключено");
       adbStatusEl.title = banner || "ADB подключено";
       log(banner ? `ADB подключён: ${banner}` : "ADB подключён.");
+      aiBanner = banner;
+      aiNotify("adb_connected", label || "магнитола");
       if (flow) { wifiInstallFlow = null; flow.proceed(); }
       else if (banner) suggestModel(banner);
     } else {
       setAdbStatus(false, "ADB: не подключено");
       log(`ADB: не удалось подключиться — ${r.reason || "?"}`);
+      aiNotify("connect_failed", r.reason || "не удалось подключиться");
       if (flow) askWifiForInstall(flow, r.reason || "не удалось подключиться");
       const stage = stages[currentIndex];
       if (r.no_device && stage && connectionModeFor(stage) !== "wifi") showOtgHintModal();
@@ -1551,6 +1561,8 @@
       : stoppedByUser ? "Этап остановлен пользователем."
       : `Этап завершился с ошибкой: ${r.reason || "?"}`);
     const finishedStage = stages.find(item => item.index === event.index);
+    aiNotify(r.success ? "install_finished" : "install_failed", `этап ${event.index + 1} «${(finishedStage && finishedStage.title) || ""}»: `
+      + (r.success ? (r.message || "выполнен") : stoppedByUser ? "остановлен техником" : (r.reason || "ошибка")));
     if (finishedStage && finishedStage.type !== "actions") {
       if (r.success) failedStages.delete(event.index);
       else failedStages.set(event.index, finishedStage.title || `этап ${event.index + 1}`);
@@ -1813,6 +1825,7 @@
     if (closePhotoLightbox()) return "handled";
     if (closeDismissibleModal()) return "handled";
     if (logOverlayEl.classList.contains("open")) { setLogOpen(false); return "handled"; }
+    if (window.aiPhone && window.aiPhone.back()) return "handled";
     if (screenWizard.classList.contains("active")) {
       if(labInstallBusy){log("Нажата «Назад» во время операции — программа попросила дождаться её окончания.",false,true);showLabBusyNotice();return "handled";}
       if (historyStack.length) { goBack(); return "handled"; }
@@ -1941,6 +1954,7 @@
     currentIndex = index;
     nextAction = () => advanceAfter(currentIndex);
     render();
+    aiNotify("stage_changed", aiStageLine());
   }
 
   // Лайтбокс фото инструкции (см. app/instruction_html.py: LIGHTBOX_SCRIPT)
@@ -2470,7 +2484,7 @@
       tools.querySelector('.app-personal-apk-add')?.remove();
       const addApk = body.querySelector('.app-personal-apk-add');
       if (addApk) { addApk.textContent = '+ Свой APK'; tools.append(addApk); }
-      draft.tabs = window.AppTabs.mount(body, appTabGroups(body), {
+      draft.tabs = window.AppTabs.mount(body, appTabGroups(body, stage, draft), {
         listTag: 'ul', listClass: 'stage-apps-list', search, active: appsActiveTabs[stage.index],
         onActiveChange: key => { appsActiveTabs[stage.index] = key; },
       });
@@ -2485,7 +2499,7 @@
 
   // Разделы renderApkTree → вкладки: приложения модели, свои APK, выбранные на других этапах,
   // категории общей библиотеки. Строки переезжают как есть — со своими галочками и «i».
-  function appTabGroups(body) {
+  function appTabGroups(body, stage, draft) {
     const rowsIn = (...nodes) => nodes.flatMap(node => node ? [...node.querySelectorAll('li.app-choice')] : []);
     const groups = [
       { key: 'model', label: 'Для этой модели', rows: rowsIn(body.querySelector('.apps-section-required'), body.querySelector('.apps-section-optional')) },
@@ -2496,7 +2510,40 @@
       const label = details.querySelector(':scope > summary')?.textContent || 'Без категории';
       groups.push({ key: `extra:${label}`, label, rows: rowsIn(details) });
     });
+    const advice = stage && aiAdvice[stage.index];
+    if (advice && draft) groups.unshift({ key: 'ai', label: '✦ Совет ИИ', rows: aiAdviceRows(body, advice, draft) });
     return groups;
+  }
+
+  // Строки «✦ Совет ИИ» — копии строк этих же приложений: галочка общая (draft.updateCount отмечает все строки одного
+  // APK), плюс отметка ИИ и почему. Копия без обработчиков — свои вешаем здесь.
+  function aiAdviceRows(body, advice, draft) {
+    const source = [...body.querySelectorAll('li.app-choice')];
+    const rows = [];
+    const add = (item, kind) => {
+      const original = source.find(row => row.dataset.apkPath === item.path);
+      if (!original) return;
+      const row = original.cloneNode(true);
+      row.classList.remove('description-open');
+      row.querySelectorAll('.apk-info-btn, .apk-desc, .app-personal-apk-remove').forEach(node => node.remove());
+      row.classList.add('ai-advice-row', `ai-advice-${kind}`);
+      row.querySelector('.app-choice-name')?.after(el('span', { class: `ai-app-badge ${kind}`, text: kind === 'yes' ? 'ИИ советует' : 'ИИ: не ставить' }));
+      if (item.why) row.append(el('p', { class: 'ai-reason', text: item.why }));
+      const box = row.querySelector('input');
+      box.addEventListener('change', () => {
+        if (box.checked) draft.selected.add(item.path); else draft.selected.delete(item.path);
+        draft.updateCount();
+      });
+      row.addEventListener('click', (event) => {
+        if (box.disabled || event.target.closest('input, button, a')) return;
+        box.checked = !box.checked;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      rows.push(row);
+    };
+    advice.picks.forEach(item => add(item, 'yes'));
+    advice.avoid.forEach(item => add(item, 'no'));
+    return rows;
   }
 
   function openAppSelection(stage) {
@@ -3272,8 +3319,10 @@
       // WebViewAssetLoader) — картинки отображаются и внутри iframe тоже,
       // тот же origin.
       {
-        const iframe = el("iframe", { class: "stage-instruction-frame", title: stage.title || "Инструкция", scrolling: "no" });
+        const iframe = el("iframe", { class: "stage-instruction-frame", title: stage.title || "Инструкция", scrolling: "no",
+                                      "data-ai-stage": String(stage.index + 1) });
         iframe.addEventListener("load", () => {
+          iframe.dataset.aiReady = "1";  // ИИ-мастер прокручивает инструкцию к блоку по номеру (js/ai_phone.js)
           try {
             const doc = iframe.contentDocument;
             // iframe — отдельный browsing context: если внутри него самого
@@ -3975,6 +4024,267 @@
     ]);
     if (overlay.querySelector(".thanks")) overlay.querySelector(".modal-box").classList.add("has-thanks");
   }
+
+  // -- ИИ-мастер («Установка с ИИ», js/ai_phone.js) -------------------------------------------------------
+  // Чат ИИ видит мастер только через window.__aiWizard: что открыто (состояние для сервера), инструкции этапов,
+  // кнопки (подсветить; нажать — обычным кликом, со всеми проверками и окнами программы) и совет по приложениям.
+  // Нажатия — только после «Да» техника в карточке чата (js/ai_master.js — общее с ПК ядро). Как на ПК
+  // (screens/stage_wizard.js: stageWizard.ai).
+  const AI_HANDS_OFF = /движени/i;  // «Разрешить работу в движении» ИИ не нажимает (техник — сам)
+
+  function aiNotify(name, detail) {
+    try { window.dispatchEvent(new CustomEvent("magicsqd-ai", { detail: { name, detail: String(detail || "") } })); }
+    catch (e) { /* чата ИИ может не быть */ }
+  }
+
+  function aiStageLine() {
+    const stage = stages[currentIndex];
+    return stage ? `этап ${currentIndex + 1} из ${stages.length} «${stage.title || stage.type || ""}»` : "начало";
+  }
+
+  // Путь приложения так, как его знает сервер (от content/): cars/<модель>/files/… или apk/<категория>/<файл>.
+  function aiRelPath(path) {
+    const norm = String(path || "").split("\\").join("/");
+    const lower = norm.toLowerCase();
+    for (const root of ["/cars/", "/apk/"]) {
+      const at = lower.lastIndexOf(root);
+      if (at >= 0 && (root === "/apk/" || lower.indexOf("/files/", at) > 0)) return norm.slice(at + 1);
+    }
+    return norm.split("/").pop();
+  }
+
+  // Путь от сервера → путь в этой программе (по хвосту пути: APK каталога не шифруются и не переименовываются).
+  function aiLocalPath(serverPath, known) {
+    const tail = "/" + String(serverPath || "").split("\\").join("/").replace(/^\/+/, "").toLowerCase();
+    if (tail === "/") return null;
+    return known.find((path) => ("/" + String(path).split("\\").join("/").toLowerCase()).endsWith(tail)) || null;
+  }
+
+  function aiOnWizard() {
+    return !!model && screenWizard.classList.contains("active") && stages.length > 0;
+  }
+
+  function aiStartButton() {
+    const stage = stages[currentIndex];
+    if (!aiOnWizard() || !stage) return null;
+    if (stage.type === "apps") return document.querySelector(".apps-install-start");
+    if (stage.type === "adb") return wizardContentEl.querySelector('.stage-page[data-stage-type="adb"] .flow-card button.accent');
+    return null;
+  }
+
+  function aiActionButtons() {
+    if (!aiOnWizard()) return [];
+    return [...wizardContentEl.querySelectorAll(".flow-action-card")].map((card) => card.querySelector("button.usb-step-action"));
+  }
+
+  function aiControls() {
+    const run = window.StageRun.current();
+    if (labInstallBusy || !aiOnWizard()) return run && !run.finished ? ["stop"] : [];
+    const list = [];
+    if (wizardNextBtn.style.display !== "none" && !wizardNextBtn.disabled) list.push("next");
+    if (historyStack.length) list.push("back");
+    if (aiStartButton() && !aiStartButton().disabled) list.push("start_install");
+    if (adbBarEl.style.display !== "none" && !adbConnectBtn.disabled) list.push("connect");
+    if (adbConnected) list.push("disconnect");
+    aiActionButtons().forEach((button, i) => { if (button && !button.disabled) list.push(`action:${i}`); });
+    return list;
+  }
+
+  function aiState() {
+    const stage = aiOnWizard() ? stages[currentIndex] : null;
+    const fp = aiBanner && window.DeviceHint ? DeviceHint.fromBanner(aiBanner) : null;
+    const state = {
+      screen: aiOnWizard() ? "wizard" : "catalog",
+      model: model ? DeviceHint.modelPath(model) : null,
+      stage: stage ? { index: currentIndex + 1, total: stages.length, type: stage.type, title: stage.title || "" }
+        : { index: 0, total: stages.length },
+      busy: labInstallBusy,
+      controls: aiControls(),
+      device: adbConnected ? { key: (fp && DeviceHint.key(fp)) || "", model: (fp && fp.model) || "" } : null,
+      selected: [...globalSelectedApks].map(aiRelPath),
+      log_tail: sessionLog.slice(-30),
+    };
+    if (model && !stages.length && screenWizard.classList.contains("active")) state.loading = true;
+    if (stage && stage.type === "check") state.options = stage.check_options || [];
+    if (stage && stage.type === "actions") state.actions = (stage.actions || []).map((a, i) => `action:${i} — ${a.label || a.kind || ""}`);
+    if (stage && stage.type === "apps") state.apps_tab = appsActiveTabs[stage.index] || "";
+    const box = document.querySelector("dialog[open], .modal-overlay .modal-box");
+    if (box) state.dialog = ((box.querySelector("h1,h2,h3,p") || {}).textContent || "окно программы").trim().slice(0, 120);
+    if (failedStages.size) state.failed = [...failedStages.values()];
+    return state;
+  }
+
+  // Инструкция этапа (номер с 1) — тот же документ, что во фрейме этапа: по нему чат строит оглавление и фото.
+  function aiInstruction(number) {
+    const stage = stages[number - 1];
+    if (!stage || stage.closed_locked) return null;
+    const html = stage.instruction_html || (stage.type === "instruction" ? Instructions12.textDocument(stage.description || "") : "");
+    return html ? { html, title: stage.title || "" } : null;
+  }
+
+  // Подсветить блок инструкции открытого этапа: место блока фрейм сообщит сам (magicsqd-ai-focus-at), прокручивает
+  // страницу мастера js/ai_phone.js — у фрейма на телефоне своей прокрутки нет.
+  function aiFocus(number, block) {
+    if (!aiOnWizard()) return null;
+    const frame = wizardContentEl.querySelector(`iframe[data-ai-stage="${Number(number)}"]`);
+    if (!frame) return null;
+    const message = { type: "magicsqd-ai-focus", b: String(block) };
+    const send = () => { try { frame.contentWindow.postMessage(message, "*"); } catch (e) { /* фрейм уже убрали */ } };
+    if (frame.dataset.aiReady) send(); else frame.addEventListener("load", send, { once: true });
+    return frame;
+  }
+
+  // Что подсветить или нажать: кнопка, вкладка, строка приложения. null — такого сейчас нет.
+  function aiElement(target) {
+    const text = String(target || "");
+    const run = window.StageRun.current();
+    if (text === "stop") return run && !run.finished ? run.stopButton : null;
+    if (!aiOnWizard()) return null;
+    if (text === "next") return wizardNextBtn.style.display !== "none" ? wizardNextBtn : null;
+    if (text === "back") return historyStack.length ? wizardBackBtn : null;
+    if (text === "start_install") return aiStartButton();
+    if (text === "connect") return adbBarEl.style.display !== "none" ? adbConnectBtn : null;
+    const action = /^action:(\d+)$/.exec(text);
+    if (action) return aiActionButtons()[Number(action[1])] || null;
+    const tabs = [...wizardContentEl.querySelectorAll(".apps-tab")];
+    if (text === "tab:advice") return tabs.find((tab) => tab.textContent.includes("Совет ИИ")) || null;
+    if (text === "tab:apps") return tabs.find((tab) => !tab.textContent.includes("Совет ИИ")) || null;
+    if (text.startsWith("app:")) {
+      const rows = [...wizardContentEl.querySelectorAll("li.app-choice")];
+      const path = aiLocalPath(text.slice(4), rows.map((row) => row.dataset.apkPath));
+      const matches = rows.filter((row) => row.dataset.apkPath === path);
+      const row = matches.find((r) => !(r.closest(".apps-tab-pane") || {}).hidden) || matches[0];
+      const pane = row && row.closest(".apps-tab-pane");
+      if (pane && pane.hidden) {  // строка на другой вкладке — открываем её (вкладки и панели в одном порядке)
+        const index = [...pane.parentElement.children].indexOf(pane);
+        if (tabs[index]) tabs[index].click();
+      }
+      return row || null;
+    }
+    return null;
+  }
+
+  // Надпись кнопки для карточки «Нажать «…»?»: у доп. действия — его название, у остальных — текст кнопки.
+  function aiLabel(control) {
+    const action = /^action:(\d+)$/.exec(String(control || ""));
+    const stage = stages[currentIndex];
+    if (action && stage && stage.actions && stage.actions[Number(action[1])]) return stage.actions[Number(action[1])].label || "";
+    const node = aiElement(control);
+    return node ? String(node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60) : "";
+  }
+
+  // Нажать кнопку по просьбе ИИ (после «Да» техника). {ok, output} — что вышло, текстом для ИИ.
+  async function aiPress(control) {
+    if (control === "stop") {
+      const button = aiElement("stop");
+      if (!button) return { ok: false, output: "Сейчас нечего останавливать." };
+      button.click();
+      return { ok: true, output: "Нажата «Остановить»." };
+    }
+    if (!aiOnWizard()) return { ok: false, output: "Модель не открыта." };
+    if (labInstallBusy) return { ok: false, output: "Идёт этап — дождитесь итога." };
+    if (document.querySelector("dialog[open], .modal-overlay")) return { ok: false, output: "Открыто окно программы — сначала техник его закроет." };
+    const stage = stages[currentIndex];
+    if (control === "next") {
+      if (wizardNextBtn.style.display === "none" || wizardNextBtn.disabled) {
+        return { ok: false, output: "«Далее» сейчас нет: на этом этапе техник выбирает вариант." };
+      }
+      const before = currentIndex;
+      wizardNextBtn.click();
+      return { ok: true, output: currentIndex !== before ? `Открыт ${aiStageLine()}.` : "Нажата «Далее»." };
+    }
+    if (control === "back") {
+      if (!historyStack.length) return { ok: false, output: "Это первый этап — назад некуда." };
+      goBack();
+      return { ok: true, output: `Открыт ${aiStageLine()}.` };
+    }
+    if (control === "start_install") {
+      const start = aiStartButton();
+      if (!start || start.disabled) return { ok: false, output: "На этом этапе нет кнопки запуска." };
+      if (stage.type === "apps" && !selectedAppsForStage(stage).entries.length) return { ok: false, output: "Не отмечено ни одного приложения." };
+      if (!adbConnected && !(stage.type === "apps" && connectionModeFor(stage) === "wifi")) {
+        return { ok: false, output: "ADB не подключён — сначала «Подключить ADB»." };
+      }
+      start.click();
+      return { ok: true, output: `Нажата «${String(start.textContent || "").trim()}». Итог придёт событием.` };
+    }
+    if (control === "connect") {
+      if (adbBarEl.style.display === "none" || adbConnectBtn.disabled) return { ok: false, output: "На этом этапе подключение не нужно." };
+      onAdbConnect();
+      return { ok: true, output: connectionModeFor(stage) === "wifi"
+        ? "Открыто окно подключения по Wi-Fi — техник выбирает магнитолу в нём."
+        : "Подключаюсь по USB — итог придёт событием." };
+    }
+    if (control === "disconnect") {
+      if (!adbConnected) return { ok: false, output: "ADB и так не подключён." };
+      Bridge.call("adb_disconnect", {});
+      setAdbStatus(false, "ADB: не подключено");
+      log("ADB отключён по просьбе ИИ-мастера (с согласия техника).");
+      return { ok: true, output: "ADB отключён." };
+    }
+    const action = /^action:(\d+)$/.exec(String(control || ""));
+    if (action) {
+      const button = aiActionButtons()[Number(action[1])];
+      const label = aiLabel(control);
+      if (!button || button.disabled) return { ok: false, output: "Такого действия на этом этапе нет." };
+      if (AI_HANDS_OFF.test(label)) return { ok: false, output: `«${label}» техник нажимает сам.` };
+      button.click();
+      return { ok: true, output: `Запущено «${label}». Итог придёт событием.` };
+    }
+    return { ok: false, output: "Такой кнопки в программе нет." };
+  }
+
+  // Совет ИИ по приложениям: отметить picks, снять avoid (обязательные остаются), показать вкладку «✦ Совет ИИ».
+  function aiSelectApps(picks, avoid) {
+    if (!model || !stages.length) return { ok: false, output: "Модель не открыта." };
+    const current = aiOnWizard() ? stages[currentIndex] : null;
+    const target = current && current.type === "apps" ? current : stages.find((stage) => stage.type === "apps");
+    if (!target) return { ok: false, output: "У этой модели нет этапа выбора приложений." };
+    const lists = stageApkLists(target);
+    const known = [...lists.required, ...lists.optional, ...apkLibrary, ...personalApks].map((apk) => apk.path);
+    const advice = { picks: [], avoid: [] };
+    const missing = [];
+    const take = (list, kind) => (Array.isArray(list) ? list : []).forEach((item) => {
+      const path = aiLocalPath(item && item.path, known);
+      if (!path) { missing.push(String(item && item.path)); return; }
+      advice[kind].push({ path, why: String((item && item.why) || "") });
+      if (labInstallBusy) return;
+      if (kind === "picks") globalSelectedApks.add(path); else globalSelectedApks.delete(path);
+    });
+    take(picks, "picks");
+    take(avoid, "avoid");
+    // как applyAppSelection: выбор этапов — только из отмеченного
+    for (const stored of Object.values(appsSelection)) stored.optional = new Set([...stored.optional].filter((path) => globalSelectedApks.has(path)));
+    aiAdvice[target.index] = advice;
+    appsActiveTabs[target.index] = "ai";
+    if (target === current && !labInstallBusy && !activeRun) render();
+    return { ok: true, missing, output: `Отмечено: ${advice.picks.length}, не ставить: ${advice.avoid.length}`
+      + (missing.length ? `; нет в программе: ${missing.join(", ")}` : "") };
+  }
+
+  // Открыть модель по совету ИИ (после «Да»): как выбор в каталоге — с окнами раннего доступа и «способ не проверен».
+  async function aiOpenModel(key) {
+    const hit = findCatalogModel(String(key || ""));
+    if (!hit) return { ok: false, output: "Такой модели нет в каталоге этой программы." };
+    if (labInstallBusy) return { ok: false, output: "Идёт этап — модель сейчас не сменить." };
+    selectModel(hit.model);
+    const until = Date.now() + 60000;  // файлы модели могут докачиваться
+    while (Date.now() < until) {
+      if (model && DeviceHint.modelPath(model) === key && stages.length) return { ok: true, output: `Открыта модель ${key}.` };
+      if (document.querySelector(".modal-overlay") && !(model && DeviceHint.modelPath(model) === key)) {
+        return { ok: false, output: "Программа показала окно (ранний доступ или способ не проверен) — техник решает сам." };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    return { ok: false, output: "Модель не открылась (нет связи?)." };
+  }
+
+  window.__aiWizard = {
+    state: aiState, instruction: aiInstruction, focus: aiFocus, element: aiElement, label: aiLabel, press: aiPress,
+    selectApps: aiSelectApps, openModel: aiOpenModel, relPath: aiRelPath,
+    model: () => (model ? { key: DeviceHint.modelPath(model), title: model.display_label || model.name || "" } : null),
+    contentEl: () => wizardContentEl, onWizard: aiOnWizard,
+  };
 
   document.addEventListener("DOMContentLoaded", () => {
     screenPicker = document.getElementById("screen-picker");

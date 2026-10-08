@@ -92,6 +92,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // распределение по версиям в админке; тот же интервал, что на desktop (sync_api.PING_INTERVAL_SECONDS).
         private const val PING_URL = "https://magicsqd.ru/ping"
         private const val PING_INTERVAL_MS = 3L * 60 * 1000
+        // ИИ-мастер: команда ИИ на магнитоле (aiShell) — дольше обычной консоли (dumpsys бывает медленным), вывод — ИИ.
+        private const val AI_SHELL_TIMEOUT_MS = 30_000
+        private const val AI_OUTPUT_LIMIT = 8000
     }
 
     // AdbSession/UsbFlashSession — общие на процесс синглтоны БЕЗ внутренней
@@ -254,6 +257,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     "{}"
                 }
                 "chat_confirm_command" -> { chatConfirmCommand(args.getString("command")); "{}" }
+                "ai_call" -> { aiCall(args.getString("id"), args.getString("path"), args.optString("payload", "")); "{}" }
+                "ai_shell" -> {
+                    aiShell(args.getString("id"), args.getString("cmd"), args.optString("mode", "auto"), args.optBoolean("busy", false))
+                    "{}"
+                }
                 "report_send" -> {
                     reportSend(
                         args.optString("brand", ""), args.optString("model", ""),
@@ -1096,6 +1104,68 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             pushEvent(JSONObject().put("kind", "chat_command_result")
                 .put("command", trimmed).put("output", text).put("ok", ok))
         }.start()
+    }
+
+    /** ИИ-мастер («Установка с ИИ», js/ai_phone.js): запрос к серверу (/chat/ai/status|start|turn, python/ai_bridge.py)
+     * в фоне — ход сервера бывает до ~35 с, синхронный мост держал бы интерфейс. Ответ — событием ai_reply с тем же id;
+     * нет связи — {"network_error": …}: чат копит ввод и повторяет, когда связь вернётся. */
+    private fun aiCall(id: String, path: String, payload: String) {
+        val cookie = authUserCookie() ?: ""
+        Thread {
+            val body = try {
+                val json = if (path == "start") {
+                    // чья это программа — для админки и истории магнитолы (как app/web/api/ai_api.py на ПК)
+                    JSONObject(payload.ifEmpty { "{}" })
+                        .put("client_id", getOrCreateClientId()).put("platform", "android")
+                        .put("app_version", context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "")
+                        .toString()
+                } else payload
+                JSONObject(pyModule("ai_bridge").callAttr("call", CHAT_URL, path, CHAT_KEY, cookie, json).toString())
+            } catch (e: Exception) {
+                JSONObject().put("network_error", e.message ?: "неизвестная ошибка")
+            }
+            pushEvent(JSONObject().put("kind", "ai_reply").put("id", id).put("body", body))
+        }.start()
+    }
+
+    /** Команда ИИ в shell магнитолы: сначала та же политика, что на ПК и сервере (ai_policy.py: сама — только читающие,
+     * во время установки — ничего), потом под общим замком ADB-операций (runExclusive — не вклинится в установку).
+     * Итог — событием ai_shell_result. */
+    private fun aiShell(id: String, cmd: String, mode: String, busy: Boolean) {
+        fun reply(ok: Boolean, output: String) =
+            pushEvent(JSONObject().put("kind", "ai_shell_result").put("id", id).put("ok", ok).put("output", output))
+        val check = try {
+            JSONObject(pyModule("ai_bridge").callAttr("check_shell", cmd, mode, busy).toString())
+        } catch (e: Exception) {
+            reply(false, "Не выполнено: ${e.message}")
+            return
+        }
+        if (!check.optBoolean("ok")) {
+            reply(false, "Не выполнено: ${check.optString("reason")}.")
+            return
+        }
+        val command = check.optString("cmd")
+        runExclusive({ reply(false, "Не выполнено: идёт другая операция с магнитолой.") }) {
+            if (!AdbSession.isConnected) {
+                reply(false, "Магнитола не подключена по ADB.")
+                return@runExclusive
+            }
+            try {
+                when (val r = AdbSession.shell(command, {}, AI_SHELL_TIMEOUT_MS)) {
+                    is AdbShellResult.Output -> {
+                        val text = r.text.trim().ifEmpty { "(пустой вывод)" }
+                        reply(true, if (text.length > AI_OUTPUT_LIMIT) text.take(AI_OUTPUT_LIMIT) + "\n…[обрезано, всего ${text.length} символов]" else text)
+                    }
+                    is AdbShellResult.Rejected -> reply(false, "Команда отклонена устройством: ${r.reason}")
+                    is AdbShellResult.Failed -> reply(false, "Ошибка: ${r.reason}")
+                }
+            } catch (e: AdbLinkLostException) {  // ответ чату — всегда, иначе он ждал бы до таймаута
+                AdbSession.markLinkLost()
+                reply(false, "Связь с магнитолой оборвалась — переподключитесь.")
+            } catch (e: Exception) {
+                reply(false, "Ошибка: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
     }
 
     /** Ручной ввод произвольной shell-команды из развёрнутой карточки лога

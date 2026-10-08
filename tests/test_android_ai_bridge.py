@@ -73,3 +73,17 @@ def test_check_shell(bridge):
     assert json.loads(ai_bridge.check_shell("settings put global x 1", "auto", False))["ok"] is False
     assert json.loads(ai_bridge.check_shell("settings put global x 1", "confirm", False))["ok"] is True
     assert json.loads(ai_bridge.check_shell("pm list packages", "auto", True))["ok"] is False
+
+
+def test_webbridge_routes_ai_calls_through_policy_and_adb_lock():
+    """WebBridge.kt: ai_call/ai_shell — асинхронно (ответ событием с id), команда — сначала политика (check_shell),
+    потом под общим замком ADB-операций (runExclusive), как установка и консоль."""
+    kotlin = (ROOT / "android/app/src/main/java/ru/magicsqd/mobile/WebBridge.kt").read_text(encoding="utf-8")
+    assert '"ai_call" -> { aiCall(' in kotlin and '"ai_shell" -> {' in kotlin
+    shell = kotlin[kotlin.index("private fun aiShell("):]
+    shell = shell[:shell.index("\n    }\n") + 6]
+    assert shell.index('callAttr("check_shell"') < shell.index("runExclusive(")
+    assert '"ai_shell_result"' in shell and "AdbSession.shell(command" in shell
+    call = kotlin[kotlin.index("private fun aiCall("):]
+    call = call[:call.index("\n    }\n") + 6]
+    assert 'pyModule("ai_bridge").callAttr("call"' in call and '"ai_reply"' in call and "Thread {" in call
