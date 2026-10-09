@@ -232,13 +232,41 @@ object AdbPermissions {
         return packages.sorted()
     }
 
-    private fun pmPackages(flag: String, log: (String) -> Unit): List<String> =
-        shellText("pm list packages $flag".trim(), log).lineSequence()
-            .map { it.trim() }
-            .filter { it.startsWith("package:") }
-            .map { it.removePrefix("package:").trim() }
-            .filter { it.isNotEmpty() }
-            .toList()
+    /** Магнитола иногда отвечает на pm list packages пустым выводом — ни одной строки «package:» («Не удалось получить
+     * список приложений»: ~16% нажатий кнопок «Доп. действий» с №3600, на Haval H3/H7 ~39%; №4374, №4533, №4543), а что
+     * она ответила, раньше не писалось. Теперь — повтор с паузой и, если так и не вышло, её ответ в журнал. Как ПК:
+     * cars/_shared/adb_permissions._pm_packages. */
+    private fun pmPackages(flag: String, log: (String) -> Unit): List<String> {
+        val command = "pm list packages $flag".trim()
+        var answer = ""
+        for (attempt in 0 until PM_LIST_TRIES) {
+            if (attempt > 0) Thread.sleep(PM_LIST_PAUSE_MS)
+            val r = safeShell(command, log, PM_LIST_TIMEOUT_MS)
+            answer = when (r) {
+                is AdbShellResult.Output -> r.text
+                is AdbShellResult.Rejected -> "поток сразу закрыт (${r.reason})"
+                is AdbShellResult.Failed -> r.reason
+            }
+            val packages = answer.lineSequence()
+                .map { it.trim() }
+                .filter { it.startsWith("package:") }
+                .map { it.removePrefix("package:").trim() }
+                .filter { it.isNotEmpty() }
+                .toList()
+            if (packages.isNotEmpty()) {
+                if (attempt > 0) log("Список приложений получен с ${attempt + 1}-й попытки ($command).")
+                return packages
+            }
+            if (!AdbSession.isConnected) break // связь потеряна — повторять незачем
+        }
+        val head = answer.trim().lines().joinToString(" ⏎ ").take(300).ifBlank { "пусто" }
+        log("Магнитола не отдала список приложений ($command): ответ «$head».")
+        return emptyList()
+    }
+
+    private const val PM_LIST_TRIES = 3
+    private const val PM_LIST_PAUSE_MS = 2_000L
+    private const val PM_LIST_TIMEOUT_MS = 20_000
 
     // Метка в /system/app/<пакет>/ — одна строка: «magicsqd» или «magicsqd mock_location» (GPS-приложение).
     private const val SYSTEM_APP_MARKERS_COMMAND =

@@ -964,8 +964,14 @@ class InstallEngine(
                     val dexShell = INSTALL_METHODS.first { it.first == "dex_shell_install" }.second
                     when (val update = perform(dexShell, apk, { stagedPath() })) {
                         is AdbInstallResult.Success -> { attempt = update; updatedByDex = true }
-                        is AdbInstallResult.Failed -> log("  ↳ dex-хелпер не обновил: " +
-                            update.reason.split(Regex("\\s+")).joinToString(" ").take(300))
+                        is AdbInstallResult.Failed -> {
+                            log("  ↳ dex-хелпер не обновил: " + update.reason.split(Regex("\\s+")).joinToString(" ").take(300))
+                            // Отказ из-за версии или подписи — остальные способы упрутся в то же: итог сразу, без перебора
+                            // pm-способов (логи №4413, №4532 — стоит RuStore новее; №4020 — другая подпись).
+                            if (newerVersionInstalled(update.reason) || definitiveRejection(file.name, update.reason) != null) {
+                                attempt = update
+                            }
+                        }
                     }
                 }
                 when (val r = attempt) {
