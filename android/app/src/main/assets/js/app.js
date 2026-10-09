@@ -2212,7 +2212,7 @@
           pendingPackagesCallback = (packages) => {
             btn.disabled=false;
             if (!page.isConnected || labInstallBusy) return;
-            if (!packages.length) { note.textContent='Не удалось получить список приложений.';log(note.textContent);return; }
+            if (!packages.length) { note.textContent='Не удалось получить список приложений: магнитола его не отдала. Подождите несколько секунд и нажмите «Выполнить» ещё раз.';log(note.textContent);return; }
             note.textContent='Выберите приложение.';
             promptPackagePicker("Выберите приложение", packages, (pkg) => {
               if (!page.isConnected || labInstallBusy) return;
