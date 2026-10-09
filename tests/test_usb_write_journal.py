@@ -133,3 +133,50 @@ def test_file_counts_are_proper_russian(n, text):
 @pytest.mark.parametrize("n, text", [(1, "1 файла"), (3, "3 файлов"), (11, "11 файлов"), (21, "21 файла")])
 def test_counts_after_iz_are_genitive(n, text):
     assert usb_api._of_files(n) == text  # «записано 2 из 3 файлов»
+
+
+# Нечего писать (лог №4505, ПК 1.1.1, Belgee S50): список файлов этапа — 403, программа отформатировала флешку,
+# записала 0 файлов и сказала «Флешка: записано». Так же без интернета (№1878, №2597, №2941). Теперь флешку не трогаем.
+
+def _nothing_downloaded(env, monkeypatch, problem):
+    block = env.stage["flash_blocks"][0]
+    for raw in block["files"]:
+        Path(raw).unlink()
+    shutil.rmtree(env.api.base_dir / "cars" / "_shared" / "freetuga")
+    monkeypatch.setattr(usb_api, "sync_model_files", lambda *a, log, **k: log(problem) if problem else 0)
+    formatted = []
+    monkeypatch.setattr(usb_api, "format_drive", lambda *a, **k: formatted.append(a))
+    env.api._worker(env.model, env.stage, 0, None, [], str(env.drive), True, "FAT32", block)
+    assert formatted == []  # не форматировали
+    assert not any(line.startswith("Пишу на флешку") for line in journal(env))
+    finished = env.events[-1]
+    assert finished["kind"] == "usb_finished" and finished["success"] is False
+    return finished["message"]
+
+
+def test_server_refusal_leaves_the_drive_untouched(env, monkeypatch):
+    message = _nothing_downloaded(env, monkeypatch, "Не удалось получить список файлов с сервера (cars/Belgee/S50/"
+                                  "files/flash_1): Сервер вернул ошибку 403 для https://magicsqd.ru/content/cars/")
+    assert message == ("Сервер не пустил к файлам модели (ошибка 403) — перезапустите программу и нажмите «Записать» "
+                       "ещё раз. Флешку программа не трогала.")
+
+
+def test_no_internet_names_what_did_not_download(env, monkeypatch):
+    message = _nothing_downloaded(env, monkeypatch, "Не удалось скачать update.bin: Ошибка скачивания cars/Belgee/S50/"
+                                  "files/update.bin: <urlopen error [Errno 11001] getaddrinfo failed>")
+    assert message.startswith("Файлы для флешки не скачались (Не удалось скачать update.bin: ")
+    assert message.endswith("Проверьте интернет и нажмите «Записать» ещё раз. Флешку программа не трогала.")
+
+
+def test_step_without_files_and_apps_says_there_is_nothing_to_write(env, monkeypatch):
+    assert _nothing_downloaded(env, monkeypatch, None) == (
+        "Записывать нечего: у этого шага нет файлов для флешки, и приложения не выбраны. Флешку программа не трогала.")
+
+
+def test_partial_download_is_written_with_a_warning(env, monkeypatch):
+    monkeypatch.setattr(usb_api, "ensure_apks_downloaded",
+                        lambda *a, log, **k: log("Не удалось скачать Data_Belgee_2.3.apk: нет связи"))
+    run(env)
+    lines = journal(env)
+    assert "Скачалось не всё (подробности выше) — на флешку пойдут только скачанные файлы." in lines
+    assert env.events[-1]["kind"] == "usb_finished" and env.events[-1]["success"] is True

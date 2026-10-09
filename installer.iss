@@ -76,6 +76,26 @@ Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\app"
 
 [Files]
+; server.json/submit.json/admin.json — ПЕРВЫМИ, раньше файлов программы: тихое обновление (update_api.py)
+; бывает, что программу запускают раньше, чем установщик допишет всё, — новый exe со старым server.json
+; (без app_build_secret) оставался без ключа закрытого каталога: всё 403, флешка — 0 файлов (лог №4505,
+; ПК 1.1.1, 09.10.2026).
+; Адрес своего сервера (cars/apk) и ключ для "Отправить на проверку" —
+; чтобы конечному пользователю не пришлось создавать эти файлы руками
+; (см. app/content_config.py, app/submit_config.py, server/README.md §7).
+; Не в git — свои для боевого сервера, лежат рядом с installer.iss.
+Source: "server.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "submit.json"; DestDir: "{app}"; Flags: ignoreversion
+; Адрес админ-API (см. app/admin_config.py) — раньше шёл только в отдельной
+; admin-сборке (admin_installer.iss, убрана), теперь один и тот же exe для
+; всех: функции администратора по умолчанию скрыты (см. app/web/bridge.py:
+; WebApi.__init__), включаются либо тихим автовходом сохранёнными логином/
+; паролем, либо явной разблокировкой ("Настройки" → 10 тапов по версии →
+; вход). Без этого файла раздел "О приложении" не найдёт, куда входить.
+; Содержимое не секретное (просто адрес сервера), поэтому в общем
+; установщике безопасно.
+Source: "admin.json"; DestDir: "{app}"; Flags: ignoreversion
+
 ; apk/ (общая библиотека APK) и cars/*/files, cars/*/usb_files (payload
 ; конкретных моделей — прошивки и т.п.) сюда не идут: content_sync.py
 ; докачивает их с сервера сам — по кнопке "Скачать" и перед установкой
@@ -93,22 +113,6 @@ Type: filesandordirs; Name: "{app}\app"
 ; "_shared\*" (один "*") исключил бы и их — проверено отдельно, не ставить
 ; обратно без такой же проверки.
 Source: "dist\magic_sqd\*"; DestDir: "{app}"; Excludes: "apk,files,usb_files,__pycache__,_shared\*\*"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; Адрес своего сервера (cars/apk) и ключ для "Отправить на проверку" —
-; чтобы конечному пользователю не пришлось создавать эти файлы руками
-; (см. app/content_config.py, app/submit_config.py, server/README.md §7).
-; Не в git — свои для боевого сервера, лежат рядом с installer.iss.
-Source: "server.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "submit.json"; DestDir: "{app}"; Flags: ignoreversion
-; Адрес админ-API (см. app/admin_config.py) — раньше шёл только в отдельной
-; admin-сборке (admin_installer.iss, убрана), теперь один и тот же exe для
-; всех: функции администратора по умолчанию скрыты (см. app/web/bridge.py:
-; WebApi.__init__), включаются либо тихим автовходом сохранёнными логином/
-; паролем, либо явной разблокировкой ("Настройки" → 10 тапов по версии →
-; вход). Без этого файла раздел "О приложении" не найдёт, куда входить.
-; Содержимое не секретное (просто адрес сервера), поэтому в общем
-; установщике безопасно.
-Source: "admin.json"; DestDir: "{app}"; Flags: ignoreversion
 
 ; WebView2 Runtime Bootstrapper (официальный, ~2 МБ, качает подходящую под
 ; архитектуру машины Evergreen-версию рантайма с серверов Microsoft) — без

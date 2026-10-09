@@ -53,6 +53,17 @@ def test_installers_force_close_whatever_holds_program_files():
         assert 'Type: filesandordirs; Name: "{app}\\_internal"' in text, name  # чистка _internal остаётся
 
 
+def test_server_json_is_installed_before_the_program():
+    """Новый exe со старым server.json (без app_build_secret) остаётся без ключа закрытого каталога — всё 403, а
+    флешка писалась пустой (лог №4505, ПК 1.1.1: программу запустили посреди тихого обновления). Поэтому файлы
+    настроек ставятся раньше файлов программы."""
+    text = (ROOT / "installer.iss").read_text(encoding="utf-8")
+    files = text[text.index("[Files]"):text.index("[Icons]")]
+    program = files.index('Source: "dist\\magic_sqd\\*"')
+    for name in ("server.json", "submit.json", "admin.json"):
+        assert files.index(f'Source: "{name}"') < program, name
+
+
 def test_broken_install_gets_a_plain_message():
     text = broken_install_message(FileNotFoundError("Cannot find win-arm64"))
     assert text.startswith("Файлы программы повреждены") and "удалять программу не нужно" in text

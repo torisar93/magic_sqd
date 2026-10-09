@@ -103,6 +103,22 @@ class _DownloadMeter:
         return report
 
 
+def _nothing_to_write(problems: list[str]) -> str:
+    """Итог, когда для флешки нет ни одного файла. Раньше программа форматировала флешку, писала 0 файлов и говорила
+    «Флешка: записано» (лог №4505, ПК 1.1.1: список файлов этапа — 403; так же без интернета — №1878, №2597, №2941).
+    Теперь флешку не трогаем вовсе, а причина — из того, что не скачалось (problems — строки «Не удалось…»)."""
+    if any("ошибку 403" in problem for problem in problems):
+        # Так отвечает закрытый каталог программе без ключа сборки — например, запущенной прямо во время обновления.
+        return ("Сервер не пустил к файлам модели (ошибка 403) — перезапустите программу и нажмите «Записать» ещё "
+                "раз. Флешку программа не трогала.")
+    if problems:
+        first = problems[0].strip().rstrip(".")
+        first = first if len(first) <= 200 else first[:200] + "…"
+        return (f"Файлы для флешки не скачались ({first}). Проверьте интернет и нажмите «Записать» ещё раз. "
+                "Флешку программа не трогала.")
+    return "Записывать нечего: у этого шага нет файлов для флешки, и приложения не выбраны. Флешку программа не трогала."
+
+
 def _drive_to_dict(d) -> dict:
     return {"letter": d.letter, "label": d.label, "total_bytes": d.total_bytes,
             "free_bytes": d.free_bytes, "display": d.display}
@@ -258,22 +274,39 @@ class UsbApi:
         self._written = None
         items: list[dict] = []
         write_started: float | None = None
+        problems: list[str] = []  # что не скачалось («Не удалось…») — для итога, если писать окажется нечего
+
+        def prepare_log(message) -> None:
+            if str(message).startswith("Не удалось"):
+                problems.append(str(message))
+            self._log(message)
+
         try:
             prepare_started = time.monotonic()
             meter = _DownloadMeter(stage_index, self._progress)
-            sync_model_files(self.base_dir, model, log=self._log,
+            sync_model_files(self.base_dir, model, log=prepare_log,
                              check_cancelled=self._check_cancelled,
                              on_progress=meter.step())
             ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apk_paths,
-                                    log=self._log, check_cancelled=self._check_cancelled,
+                                    log=prepare_log, check_cancelled=self._check_cancelled,
                                     on_progress=meter.step())
             shared_folder = flash_block.get("shared_folder") if flash_block else stage.get("usb_shared_folder")
             if shared_folder:
                 sync_shared_folder(self.base_dir, shared_folder,
-                                    log=self._log, check_cancelled=self._check_cancelled,
+                                    log=prepare_log, check_cancelled=self._check_cancelled,
                                     on_progress=meter.step())
             if meter.bytes:
                 self._journal(f"Скачано перед записью: {_mb(meter.bytes)} за {_took(time.monotonic() - prepare_started)}.")
+
+            # Список файлов (тот же, что list_items() уже отдал фронтенду до старта, см. её докстринг) — ДО
+            # форматирования: если писать нечего, флешку не трогаем вовсе (см. _nothing_to_write).
+            items = (_scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths) if flash_block
+                     else _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths))
+            if not items:
+                self._finish(False, _nothing_to_write(problems))
+                return
+            if problems:
+                self._journal("Скачалось не всё (подробности выше) — на флешку пойдут только скачанные файлы.")
 
             new_mount = None
             if do_format:
@@ -306,13 +339,6 @@ class UsbApi:
                     self._finish(False, "Остановлено пользователем после форматирования.")
                     return
 
-            # Пересчитываем список файлов (тот же, что list_items() уже
-            # отдал фронтенду до старта, см. её докстринг) — только чтобы
-            # узнать files_total к этому моменту; сами файлы к этому моменту
-            # уже докачаны шагами выше (sync_model_files/ensure_apks_downloaded/
-            # sync_shared_folder), так что список не должен разъехаться.
-            items = (_scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths) if flash_block
-                     else _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths))
             # Пишем svlog.flag — со флешки уходит svengmode.flag прошлого шага (и наоборот), см. TRIGGER_FLAGS.
             remove_other_trigger_flags(drive_root, [item["name"] for item in items], self._log)
             self._journal(f"Пишу на флешку {drive_root}: {_files(len(items))}, {_mb(sum(i['size'] for i in items))}"
