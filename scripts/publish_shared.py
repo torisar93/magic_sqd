@@ -18,7 +18,9 @@ from __future__ import annotations
 import argparse
 import difflib
 import hashlib
+import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -28,7 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app import code_signing, ed25519  # noqa: E402
+from app import app_token, code_signing, ed25519  # noqa: E402
 
 HOST = "root@94.102.89.93"
 SSH_KEY = Path.home() / ".ssh" / "magicsqd_deploy"
@@ -121,10 +123,26 @@ def show_diff(name: str, local: bytes) -> None:
         print(f"    … ещё {len(diff) - 40} строк")
 
 
+def official_headers() -> dict:
+    """Токен официальной сборки, как у программы: с 08.10.2026 каталог закрыт — /content без токена отвечает 403
+    (scripts/publish_ui.py — то же). Секрет — app_build_secret из server.json рядом с программой; нет его — {}."""
+    try:
+        secret = json.loads((ROOT / "server.json").read_text(encoding="utf-8")).get("app_build_secret")
+    except (OSError, ValueError):
+        return {}
+    secret = secret.strip().lower() if isinstance(secret, str) else ""
+    if not re.fullmatch(r"[0-9a-f]{64}", secret):
+        return {}
+    return app_token.AppToken(PUBLIC_URL, bytes.fromhex(secret), "publish-shared").header()
+
+
 def verify_public(name: str) -> str:
-    with urllib.request.urlopen(f"{PUBLIC_URL}/{name}", timeout=30) as resp:
+    """Как увидит программа: модуль и подпись по HTTPS с токеном сборки."""
+    headers = official_headers()
+    with urllib.request.urlopen(urllib.request.Request(f"{PUBLIC_URL}/{name}", headers=headers), timeout=30) as resp:
         data = resp.read()
-    with urllib.request.urlopen(f"{PUBLIC_URL}/{name}{code_signing.SIG_SUFFIX}", timeout=30) as resp:
+    with urllib.request.urlopen(urllib.request.Request(f"{PUBLIC_URL}/{name}{code_signing.SIG_SUFFIX}",
+                                                       headers=headers), timeout=30) as resp:
         sig = resp.read().decode("ascii", "replace")
     return "подпись верна (HTTPS)" if code_signing.verify(name, data, sig) else "ПОДПИСЬ НЕ СХОДИТСЯ"
 
