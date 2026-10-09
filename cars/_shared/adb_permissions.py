@@ -130,14 +130,53 @@ _SYSTEM_APP_MARKERS_COMMAND = 'for f in /system/app/*/.magicsqd; do [ -f "$f" ] 
 _OUR_SYSTEM_APP_RE = re.compile(r"^/system/app/([\w.]+)/\.magicsqd(?:[ \t]+(.*))?$", re.MULTILINE)
 
 
-def _pm_packages(ctx, flag: str = "") -> list[str]:
-    result = ctx.shell(f"pm list packages {flag}".strip(), check=False)
+# Магнитола иногда отвечает на pm list packages пустым выводом — ни одной строки «package:» (Android, кнопки «Доп.
+# действий»: ~16% нажатий с №3600, на Haval H3/H7 ~39%; №4374, №4533 — 12 раз подряд, №4543 — 8). Что именно она
+# ответила, раньше не писалось. Теперь — повтор с паузой и, если так и не вышло, её ответ и код возврата в журнал.
+_PM_LIST_TRIES = 3
+_PM_LIST_PAUSE = 2.0  # секунд между попытками
+_PM_LIST_TIMEOUT = 20  # секунд на одну попытку
+
+
+def _packages_in(result) -> list[str]:
     packages = []
-    for line in (result.stdout or "").splitlines():
+    for line in (getattr(result, "stdout", "") or "").splitlines():
         line = line.strip()
         if line.startswith("package:"):
             packages.append(line[len("package:"):].strip())
     return packages
+
+
+def _answer_for_log(result) -> str:
+    text = ((getattr(result, "stdout", "") or "") + (getattr(result, "stderr", "") or "")).strip()
+    head = " ⏎ ".join(text.splitlines())[:300] if text else "пусто"
+    code = getattr(result, "returncode", None)
+    return f"ответ «{head}»" + (f", код {code}" if code is not None else "")
+
+
+def _pause(ctx, seconds: float) -> None:
+    sleep = getattr(ctx, "sleep", None)  # ctx.sleep следит за «Остановить»; у старых и тестовых ctx его нет
+    if callable(sleep):
+        sleep(seconds)
+    else:
+        import time
+        time.sleep(seconds)
+
+
+def _pm_packages(ctx, flag: str = "") -> list[str]:
+    command = f"pm list packages {flag}".strip()
+    result = None
+    for attempt in range(_PM_LIST_TRIES):
+        if attempt:
+            _pause(ctx, _PM_LIST_PAUSE)
+        result = ctx.shell(command, check=False, timeout=_PM_LIST_TIMEOUT)
+        packages = _packages_in(result)
+        if packages:
+            if attempt:
+                ctx.log(f"Список приложений получен с {attempt + 1}-й попытки ({command}).")
+            return packages
+    ctx.log(f"Магнитола не отдала список приложений ({command}, попыток: {_PM_LIST_TRIES}): {_answer_for_log(result)}.")
+    return []
 
 
 def _system_app_markers(ctx) -> dict[str, str]:
@@ -476,15 +515,24 @@ def launch_main_activity(ctx, package: str) -> None:
                 "открылось — его закрывает прошивка магнитолы или у него нет окна.")
 
 
-def _is_system_package(ctx, package: str) -> bool:
+def _is_system_package(ctx, package: str) -> "bool | None":
     """Штатное (системное) приложение магнитолы. Владелец, 2026-09-26: удалять и отключать их через
     программу нельзя — в списке выбора их больше нет (list_installed_packages без third_party_only=False),
     а это — на случай ручного ввода имени («Ввести вручную...») и старых моделей. Раньше техники так
-    отключили сам «android» (лог #1013 — pm ответил «new state: disabled-user»)."""
-    result = ctx.shell("pm list packages -s", check=False)
-    if f"package:{package}" not in {line.strip() for line in (result.stdout or "").splitlines()}:
+    отключили сам «android» (лог #1013 — pm ответил «new state: disabled-user»).
+    None — не узнать: магнитола не отдала список штатных (пустым он не бывает, см. _pm_packages), и в списке
+    сторонних приложения тоже нет. Раньше пустой ответ значил «не штатное» — и введённое вручную штатное
+    приложение удалилось бы."""
+    system = _pm_packages(ctx, "-s")
+    if not system:
+        return False if package in _pm_packages(ctx, "-3") else None
+    if package not in system:
         return False
     return package not in _system_apps_by_us(ctx)
+
+
+_STOCK_UNKNOWN = ("магнитола не отдала список штатных приложений, а без него программа не трогает приложение — "
+                  "вдруг оно штатное. Подождите несколько секунд и повторите.")
 
 
 def _adb_output(ctx, *args) -> str:
@@ -525,7 +573,11 @@ def uninstall_app(ctx, package: str) -> None:
     if package in _system_apps_by_us(ctx):
         _remove_system_app(ctx, package)
         return
-    if _is_system_package(ctx, package):
+    stock = _is_system_package(ctx, package)
+    if stock is None:
+        ctx.log(f"Не удалось удалить: {_STOCK_UNKNOWN}")
+        return
+    if stock:
         ctx.log("Не удалось удалить: это штатное приложение магнитолы — удалять его через программу нельзя.")
         return
     result = ctx.shell(f"pm uninstall {package}", check=False)
@@ -567,7 +619,11 @@ def disable_app(ctx, package: str) -> None:
     установленным, просто не запускается и пропадает из лаунчера, обратимо
     через enable_app ниже."""
     ctx.log(f"Отключаю приложение: {package}")
-    if _is_system_package(ctx, package):
+    stock = _is_system_package(ctx, package)
+    if stock is None:
+        ctx.log(f"Не удалось отключить: {_STOCK_UNKNOWN}")
+        return
+    if stock:
         ctx.log("Не удалось отключить: это штатное приложение магнитолы — отключать его через программу нельзя.")
         return
     _set_enabled_state(ctx, f"pm disable-user --user 0 {package}", "отключить")

@@ -29,9 +29,20 @@ def _load_module():
 adb_permissions = _load_module()
 
 
+_SYSTEM = "package:android\npackage:com.android.systemui\n"
+
+
 def _make_ctx(stdout="", stderr=""):
+    """stdout/stderr — ответ на pm uninstall; список штатных (pm list packages -s) — как у настоящей магнитолы: пустым
+    он не бывает, а пустой ответ программа теперь понимает как «не узнать» и приложение не трогает."""
     log = []
-    ctx = SimpleNamespace(log=log.append, shell=lambda command, **kwargs: SimpleNamespace(stdout=stdout, stderr=stderr))
+
+    def shell(command, **kwargs):
+        if command == "pm list packages -s":
+            return SimpleNamespace(stdout=_SYSTEM, stderr="")
+        return SimpleNamespace(stdout=stdout, stderr=stderr)
+
+    ctx = SimpleNamespace(log=log.append, shell=shell, sleep=lambda seconds: None)
     return ctx, log
 
 
@@ -42,12 +53,12 @@ def test_uninstall_app_reports_success():
 
 
 def test_uninstall_app_reports_failure_instead_of_fake_gotovo():
-    """Регрессия на лог #536: pm uninstall системного пакета обычно отвечает
-    Failure — раньше это всё равно печаталось как "Готово."."""
+    """Регрессия на лог #536: pm uninstall отвечает Failure — раньше это всё равно печаталось как "Готово.".
+    (Там был сам «android» — штатные с 1.0.42 отсекаются раньше, здесь пакет не из списка штатных.)"""
     ctx, log = _make_ctx(stdout="Failure [DELETE_FAILED_INTERNAL_ERROR]\n")
-    adb_permissions.uninstall_app(ctx, "android")
+    adb_permissions.uninstall_app(ctx, "com.example.app")
     assert log == [
-        "Удаляю приложение: android",
+        "Удаляю приложение: com.example.app",
         "Не удалось удалить: Failure [DELETE_FAILED_INTERNAL_ERROR]",
     ]
 
@@ -76,9 +87,10 @@ def test_disable_app_reports_success():
 
 
 def test_disable_app_reports_refusal():
+    # Пакет не из списка штатных (их программа отсекает раньше), но прошивка его защищает сама.
     ctx, log = _make_ctx(stderr="Exception occurred while executing: java.lang.SecurityException: "
-                                "Cannot disable a protected package: android\n")
-    adb_permissions.disable_app(ctx, "android")
+                                "Cannot disable a protected package: com.baidu.carlife\n")
+    adb_permissions.disable_app(ctx, "com.baidu.carlife")
     assert log[-1].startswith("Не удалось отключить: ") and "SecurityException" in log[-1]
 
 
@@ -102,7 +114,7 @@ def _ctx_by_command(responses):
         commands.append(command)
         return SimpleNamespace(stdout=responses.get(command, ""), stderr="")
 
-    return SimpleNamespace(log=log.append, shell=shell), log, commands
+    return SimpleNamespace(log=log.append, shell=shell, sleep=lambda seconds: None), log, commands
 
 
 SYSTEM_LIST = "package:android\npackage:com.android.systemui\npackage:com.geely.launcher3\n"
@@ -139,3 +151,68 @@ def test_enable_is_not_restricted():
     ctx, log, _ = _ctx_by_command({"pm list packages -s": SYSTEM_LIST, "pm enable android": "Package android new state: enabled\n"})
     adb_permissions.enable_app(ctx, "android")
     assert log[-1] == "Готово."
+
+
+def test_unknown_stock_list_refuses_instead_of_removing():
+    """Магнитола иногда отвечает на pm list packages пустым выводом (логи №4374, №4543). Раньше пустой список штатных
+    значил «не штатное» — введённое вручную штатное приложение удалилось бы. Теперь — отказ с понятной причиной."""
+    ctx, log, commands = _ctx_by_command({"pm uninstall com.android.systemui": "Success\n"})
+    adb_permissions.uninstall_app(ctx, "com.android.systemui")
+    assert log[-1].startswith("Не удалось удалить: магнитола не отдала список штатных приложений")
+    assert commands.count("pm list packages -s") == adb_permissions._PM_LIST_TRIES
+    assert not any(c.startswith("pm uninstall") for c in commands)
+    ctx, log, commands = _ctx_by_command({})
+    adb_permissions.disable_app(ctx, "com.android.systemui")
+    assert log[-1].startswith("Не удалось отключить: магнитола не отдала список штатных приложений")
+    assert not any(c.startswith("pm disable") for c in commands)
+
+
+def test_unknown_stock_list_but_listed_as_third_party_is_removed():
+    # Список штатных не пришёл, но в списке сторонних приложение есть — значит, не штатное.
+    ctx, log, commands = _ctx_by_command({"pm list packages -3": "package:ru.yandex.music\n",
+                                          "pm uninstall ru.yandex.music": "Success\n"})
+    adb_permissions.uninstall_app(ctx, "ru.yandex.music")
+    assert log[-1] == "Готово."
+    assert "pm uninstall ru.yandex.music" in commands
+
+
+def _ctx_with_answers(answers):
+    """Ответы на одну и ту же команду по очереди: (stdout, код возврата)."""
+    log, commands, pauses = [], [], []
+
+    def shell(command, check=True, timeout=120):
+        commands.append((command, timeout))
+        stdout, code = answers.pop(0) if answers else ("", 0)
+        return SimpleNamespace(stdout=stdout, stderr="", returncode=code)
+
+    return SimpleNamespace(log=log.append, shell=shell, sleep=pauses.append), log, commands, pauses
+
+
+def test_package_list_retried_when_unit_answers_empty():
+    ctx, log, commands, pauses = _ctx_with_answers([("", 0), ("package:ru.yandex.music\n", 0)])
+    assert adb_permissions._pm_packages(ctx, "-3") == ["ru.yandex.music"]
+    assert [c for c, _ in commands] == ["pm list packages -3", "pm list packages -3"]
+    assert pauses == [adb_permissions._PM_LIST_PAUSE]
+    assert log == ["Список приложений получен с 2-й попытки (pm list packages -3)."]
+
+
+def test_package_list_answer_logged_when_never_received():
+    ctx, log, commands, pauses = _ctx_with_answers([("", 0), ("Error: binder\nfailed", 255), ("", 0)])
+    assert adb_permissions._pm_packages(ctx, "-3") == []
+    assert len(commands) == adb_permissions._PM_LIST_TRIES and len(pauses) == adb_permissions._PM_LIST_TRIES - 1
+    assert all(timeout == adb_permissions._PM_LIST_TIMEOUT for _, timeout in commands)
+    assert log == ["Магнитола не отдала список приложений (pm list packages -3, попыток: 3): ответ «пусто», код 0."]
+
+
+def test_package_list_answer_text_is_logged():
+    ctx, log, _, _ = _ctx_with_answers([("Error: binder\nfailed", 255)] * 3)
+    assert adb_permissions._pm_packages(ctx, "-3") == []
+    assert log == ["Магнитола не отдала список приложений (pm list packages -3, попыток: 3): ответ «Error: binder ⏎ "
+                   "failed», код 255."]
+
+
+def test_package_list_first_try_is_silent():
+    ctx, log, commands, pauses = _ctx_with_answers([("package:a.b\npackage:c.d\n", 0)])
+    assert adb_permissions._pm_packages(ctx, "-3") == ["a.b", "c.d"]
+    assert len(commands) == 1 and pauses == [] and log == []
+

@@ -91,7 +91,10 @@ def _adb_permissions():
 
 def test_uninstall_button_uses_helper_in_new_versions_only():
     adb_permissions = _adb_permissions()
-    closed = lambda command, **kw: SimpleNamespace(stdout="", stderr="error: closed")
+    # Как на Geely OneOS/Monji: список приложений pm отдаёт, а pm uninstall закрыт прошивкой.
+    lists = {"pm list packages -s": "package:android\n", "pm list packages -3": "package:ru.kinopoisk\n"}
+    closed = lambda command, **kw: SimpleNamespace(stdout=lists.get(command, ""),
+                                                   stderr="" if command in lists else "error: closed")
     log = []
     new = SimpleNamespace(log=log.append, shell=closed, uninstall_via_helper=lambda package: True)
     adb_permissions.uninstall_app(new, "ru.kinopoisk")
