@@ -559,6 +559,49 @@ def _remove_system_app(ctx, package: str) -> None:
     ctx.log("Готово: приложение удалено из системной папки — оно исчезнет с магнитолы после перезагрузки.")
 
 
+# Свой dex-хелпер удаления (helpers/uninstall_helper: PackageInstaller от имени shell, как pm) — для магнитол, где
+# закрыт pm uninstall. В именах файла и класса НЕТ слова «uninstall»: эти прошивки (Geely OneOS/Monji, VOLGA/N155,
+# Jetour T2) отклоняют ЛЮБУЮ shell-команду с ним. Хелпер программы (uninstall_helper.dex, класс MagicSqdUninstaller)
+# поэтому за 21 попытку в 1.0.51–1.1.1 не сработал ни разу — отклонялись даже chmod и rm его файла (лог №4649), а те же
+# команды с dex_shell_helper.dex проходят. Файл приходит с каталогом в cars/_shared рядом с этим модулем.
+_PKG_HELPER_DEX = "msqd_pkg_helper.dex"
+_PKG_HELPER_REMOTE = "/data/local/tmp/" + _PKG_HELPER_DEX
+_PKG_HELPER_CLASS = "MagicSqdPkgHelper"
+_PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9_.]+")
+
+
+def _remove_with_helper(ctx, package: str):
+    """Удалить своим dex-хелпером. True — удалено, False — не вышло (причина в журнале), None — хелпера нет (файл ещё не
+    скачан или у программы нет ctx.adb) — тогда прежний путь."""
+    from pathlib import Path
+    shared = getattr(ctx, "shared_dir", None)
+    local = (Path(shared) if shared else Path(__file__).resolve().parent) / _PKG_HELPER_DEX
+    if not local.is_file() or not callable(getattr(ctx, "adb", None)) or not _PACKAGE_NAME_RE.fullmatch(package or ""):
+        return None
+    ctx.log("Магнитола не пускает pm uninstall — удаляю через dex-хелпер...")
+    try:
+        pushed = ctx.adb("push", str(local), _PKG_HELPER_REMOTE, check=False, timeout=60)
+    except Exception as exc:  # noqa: BLE001 — на телефоне сбой заливки — AdbError
+        ctx.log(f"dex-хелпер не удалил: не записался на магнитолу ({exc})")
+        return False
+    if getattr(pushed, "returncode", 0) not in (0, None):
+        ctx.log("dex-хелпер не удалил: не записался на магнитолу (" + (_answer_text(pushed) or "adb push не сработал") + ")")
+        return False
+    ctx.shell(f"chmod 644 {_PKG_HELPER_REMOTE}", check=False)
+    result = ctx.shell(f"CLASSPATH={_PKG_HELPER_REMOTE} app_process /data/local/tmp {_PKG_HELPER_CLASS} {package}",
+                       check=False, timeout=90)
+    ctx.shell(f"rm -f {_PKG_HELPER_REMOTE}", check=False)
+    text = _answer_text(result)
+    if "success" in text.lower() and "failure" not in text.lower():
+        return True
+    ctx.log(f"dex-хелпер не удалил: {text or 'хелпер не ответил'}")
+    return False
+
+
+def _answer_text(result) -> str:
+    return " ".join(((getattr(result, "stdout", "") or "") + " " + (getattr(result, "stderr", "") or "")).split())
+
+
 def uninstall_app(ctx, package: str) -> None:
     """Удаляет стороннее приложение (pm uninstall) — в отличие от disable_app,
     СТИРАЕТ его с магнитолы полностью. Штатные удалять нельзя (см.
@@ -585,11 +628,15 @@ def uninstall_app(ctx, package: str) -> None:
     if "success" in text.lower() and "failure" not in text.lower():
         ctx.log("Готово.")
     elif "error: closed" in text.lower():
-        # Geely OneOS/Monji, VOLGA/N155, Jetour T2: pm закрыт прошивкой (логи #797, #962, №1746). С 1.0.51 программа
-        # удаляет dex-хелпером (InstallContext.uninstall_via_helper); у старых версий метода нет — как раньше,
+        # Geely OneOS/Monji, VOLGA/N155, Jetour T2: pm закрыт прошивкой (логи #797, #962, №1746) — удаляем своим
+        # dex-хелпером (_remove_with_helper); нет его — хелпером программы (InstallContext.uninstall_via_helper, с
+        # 1.0.51, имя со словом «uninstall» — на этих прошивках не срабатывает); у старых версий нет и его — как раньше,
         # владелец (2026-09-25): пусть удаляют штатно на самой магнитоле.
-        via_helper = getattr(ctx, "uninstall_via_helper", None)
-        if via_helper is not None and via_helper(package):
+        removed = _remove_with_helper(ctx, package)
+        if removed is None:
+            via_helper = getattr(ctx, "uninstall_via_helper", None)
+            removed = via_helper is not None and via_helper(package)
+        if removed:
             ctx.log("Готово.")
         else:
             ctx.log("Не удалось удалить: эта магнитола не даёт удалять приложения через программу — "

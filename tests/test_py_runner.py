@@ -289,6 +289,19 @@ def test_real_uninstall_falls_back_to_helper_when_pm_is_closed(android, real_sha
     assert bridge.helper_removed == ["com.foo"] and bridge.logs[-1] == "Готово."
 
 
+def test_real_uninstall_uses_own_helper_without_the_word_uninstall(android, real_shared):
+    """Прошивки, закрывшие pm uninstall, отклоняют любую команду со словом «uninstall» (лог №4649) — свой хелпер каталога
+    (msqd_pkg_helper.dex, класс MagicSqdPkgHelper) зовётся так, чтобы этого слова в командах не было."""
+    (real_shared / "msqd_pkg_helper.dex").write_bytes((ROOT / "cars/_shared/msqd_pkg_helper.dex").read_bytes())
+    bridge = FakeBridge({"pm list packages -s": ("package:android", 0), "pm uninstall com.foo": ("error: closed", None),
+                         "CLASSPATH=/data/local/tmp/msqd_pkg_helper.dex app_process": ("Success", 0)})
+    assert android.call(bridge, real_shared, "adb_permissions", "uninstall_app", ["com.foo"])["ok"] is True
+    assert bridge.logs[-1] == "Готово." and bridge.helper_removed == []
+    assert "push msqd_pkg_helper.dex /data/local/tmp/msqd_pkg_helper.dex" in bridge.commands
+    assert "CLASSPATH=/data/local/tmp/msqd_pkg_helper.dex app_process /data/local/tmp MagicSqdPkgHelper com.foo" in bridge.commands
+    assert [c for c in bridge.commands if "uninstall" in c.lower()] == ["pm uninstall com.foo"]
+
+
 def test_real_list_packages_and_grant(android, real_shared):
     bridge = FakeBridge({"pm list packages -3": ("package:com.b\npackage:com.a", 0)})
     assert android.call(bridge, real_shared, "adb_permissions", "list_installed_packages", [True]) == {

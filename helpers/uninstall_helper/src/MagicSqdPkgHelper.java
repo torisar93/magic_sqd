@@ -16,21 +16,25 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Удаление приложения от имени shell через PackageInstaller — для магнитол, где adb не пускает «pm uninstall»
- * (VOLGA/Geely N155, Geely OneOS/Monji: OPEN «shell:pm uninstall …» сразу закрывается, откат в сток упирался в
+ * (VOLGA/Geely N155, Geely OneOS/Monji, Jetour T2: OPEN «shell:pm uninstall …» сразу закрывается, откат в сток упирался в
  * «удалите штатно», логи №797, №962, №1664, №1746). Запуск тот же, что у хелпера установки dex_shell_helper.dex:
  *
- *   CLASSPATH=/data/local/tmp/uninstall_helper.dex app_process /data/local/tmp MagicSqdUninstaller &lt;пакет&gt;
+ *   CLASSPATH=/data/local/tmp/msqd_pkg_helper.dex app_process /data/local/tmp MagicSqdPkgHelper &lt;пакет&gt;
+ *
+ * В именах файла и класса НЕТ слова «uninstall»: эти прошивки отклоняют ЛЮБУЮ shell-команду с ним — прежний
+ * хелпер (uninstall_helper.dex, тот же код под старым именем) за 21 попытку в 1.0.51–1.1.1 не сработал ни разу,
+ * отклонялись даже chmod и rm его файла (лог №4649). Аргументы — только имя пакета.
  *
  * Печатает «Success» или «Failure [причина]» (как сама команда pm), код выхода 0 / 1, 2 — неверный вызов.
  * Приём — как у pm (PackageManagerShellCommand.LocalIntentReceiver): итог приходит в свой IIntentSender.
  * Сборка — build.sh рядом (stubs/ — заглушки скрытых классов только для компиляции, в .dex не попадают).
  */
-public final class MagicSqdUninstaller {
+public final class MagicSqdPkgHelper {
     private static final int TIMEOUT_SECONDS = 60;
 
     public static void main(String[] args) {
         if (args.length != 1 || args[0].isEmpty()) {
-            System.err.println("Usage: MagicSqdUninstaller <package>");
+            System.err.println("Usage: MagicSqdPkgHelper <package>");
             System.exit(2);
         }
         try {
