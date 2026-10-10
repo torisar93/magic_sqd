@@ -216,3 +216,43 @@ def test_package_list_first_try_is_silent():
     assert adb_permissions._pm_packages(ctx, "-3") == ["a.b", "c.d"]
     assert len(commands) == 1 and pauses == [] and log == []
 
+
+
+# Haval H3/H7 иногда отвечают на «pm list packages -3» пустым списком с кодом 0 (логи №4374, №4780) — тогда список
+# сторонних собирается как «все минус штатные», но только если список штатных пришёл.
+
+def _ctx_lists(third, everything, system):
+    log, commands = [], []
+    answers = {"pm list packages -3": third, "pm list packages": everything, "pm list packages -s": system}
+
+    def shell(command, check=True, timeout=120):
+        commands.append(command)
+        return SimpleNamespace(stdout=answers.get(command, ""), stderr="", returncode=0)
+
+    return SimpleNamespace(log=log.append, shell=shell, sleep=lambda seconds: None), log, commands
+
+
+def test_empty_third_party_list_is_rebuilt_from_all_minus_system():
+    ctx, log, commands = _ctx_lists("", "package:android\npackage:ru.vk.store\npackage:com.gwm.split\n", "package:android\n")
+    assert adb_permissions.list_installed_packages(ctx) == ["com.gwm.split", "ru.vk.store"]
+    assert log[-1] == "Список сторонних приложений собран иначе — все приложения минус штатные (2)."
+    assert commands.count("pm list packages -3") == adb_permissions._PM_LIST_TRIES
+    assert commands.count("pm list packages") == 1 and commands.count("pm list packages -s") == 1
+
+
+def test_without_system_list_stock_apps_are_not_offered():
+    ctx, log, _ = _ctx_lists("", "package:android\npackage:ru.vk.store\n", "")
+    assert adb_permissions.list_installed_packages(ctx) == []
+    assert not any("собран иначе" in line for line in log)
+
+
+def test_truly_empty_third_party_list_stays_empty():
+    ctx, log, _ = _ctx_lists("", "package:android\n", "package:android\n")
+    assert adb_permissions.list_installed_packages(ctx) == []
+    assert not any("собран иначе" in line for line in log)
+
+
+def test_normal_answer_needs_no_extra_commands():
+    ctx, log, commands = _ctx_lists("package:ru.vk.store\n", "", "")
+    assert adb_permissions.list_installed_packages(ctx) == ["ru.vk.store"]
+    assert commands == ["pm list packages -3", adb_permissions._SYSTEM_APP_MARKERS_COMMAND] and log == []

@@ -302,6 +302,15 @@ def test_real_uninstall_uses_own_helper_without_the_word_uninstall(android, real
     assert [c for c in bridge.commands if "uninstall" in c.lower()] == ["pm uninstall com.foo"]
 
 
+def test_real_list_rebuilt_when_third_party_answer_is_empty(android, real_shared):
+    # Haval H3/H7: «pm list packages -3» — пусто с кодом 0 (№4374, №4780); все минус штатные — тот же список.
+    bridge = FakeBridge({"pm list packages -3": ("", 0), "pm list packages -s": ("package:android", 0),
+                         "pm list packages": ("package:android\npackage:com.b\npackage:com.a", 0)})
+    assert android.call(bridge, real_shared, "adb_permissions", "list_installed_packages", [True]) == {
+        "ok": True, "result": ["com.a", "com.b"]}
+    assert "Список сторонних приложений собран иначе — все приложения минус штатные (2)." in bridge.logs
+
+
 def test_real_list_packages_and_grant(android, real_shared):
     bridge = FakeBridge({"pm list packages -3": ("package:com.b\npackage:com.a", 0)})
     assert android.call(bridge, real_shared, "adb_permissions", "list_installed_packages", [True]) == {

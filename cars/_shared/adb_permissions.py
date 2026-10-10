@@ -163,10 +163,10 @@ def _pause(ctx, seconds: float) -> None:
         time.sleep(seconds)
 
 
-def _pm_packages(ctx, flag: str = "") -> list[str]:
+def _pm_packages(ctx, flag: str = "", tries: int = _PM_LIST_TRIES) -> list[str]:
     command = f"pm list packages {flag}".strip()
     result = None
-    for attempt in range(_PM_LIST_TRIES):
+    for attempt in range(tries):
         if attempt:
             _pause(ctx, _PM_LIST_PAUSE)
         result = ctx.shell(command, check=False, timeout=_PM_LIST_TIMEOUT)
@@ -175,7 +175,7 @@ def _pm_packages(ctx, flag: str = "") -> list[str]:
             if attempt:
                 ctx.log(f"Список приложений получен с {attempt + 1}-й попытки ({command}).")
             return packages
-    ctx.log(f"Магнитола не отдала список приложений ({command}, попыток: {_PM_LIST_TRIES}): {_answer_for_log(result)}.")
+    ctx.log(f"Магнитола не отдала список приложений ({command}, попыток: {tries}): {_answer_for_log(result)}.")
     return []
 
 
@@ -228,11 +228,25 @@ def list_installed_packages(ctx, third_party_only=True):
     записей неудобно листать ради обычно нужных технику сторонних APK.
     Поставленные программой в /system/app — в списке (см. _system_apps_by_us),
     если Android их уже видит (после перезагрузки)."""
-    packages = _pm_packages(ctx, "-3" if third_party_only else "")
-    if third_party_only:
-        ours = _system_apps_by_us(ctx)
-        if ours:
-            packages += sorted((ours & set(_pm_packages(ctx, "-s"))) - set(packages))
+    if not third_party_only:
+        return sorted(_pm_packages(ctx, ""))
+    packages = _pm_packages(ctx, "-3")
+    system = None
+    if not packages:
+        # Haval H3/H7 (sa8155) иногда отвечают на «pm list packages -3» пустым списком с кодом 0 — и телефону, и ПК
+        # (логи №4374, №4780), хотя сторонние приложения стоят. Тогда — все пакеты минус штатные: тот же список,
+        # спрошенный иначе. Только если список штатных пришёл — иначе в выбор попали бы и штатные.
+        everything = _pm_packages(ctx, "", tries=1)
+        system = set(_pm_packages(ctx, "-s", tries=1))
+        if everything and system:
+            packages = sorted(set(everything) - system)
+            if packages:
+                ctx.log(f"Список сторонних приложений собран иначе — все приложения минус штатные ({len(packages)}).")
+    ours = _system_apps_by_us(ctx)
+    if ours:
+        if system is None:
+            system = set(_pm_packages(ctx, "-s"))
+        packages += sorted((ours & system) - set(packages))
     return sorted(packages)
 
 
