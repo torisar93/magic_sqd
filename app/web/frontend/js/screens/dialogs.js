@@ -476,140 +476,14 @@
   })();
 
   // ==================================================================
-  // Войти в админку — либо необязательно (open(), просто логин без выгрузки
-  // cars/apk, см. app/web/api/admin_api.py:login_only, чтобы получить
-  // кешированную сессию для "Добавить APK.../Файлы на сервере..." без
-  // похода в тяжёлую "Выгрузить на сервер..." — сейчас вызывается только
-  // из pending_list.js, когда список заявок сам сообщает "Сначала
-  // войдите..." из-за истёкшей сессии; отдельной постоянной кнопки для
-  // этого больше нет — только 10 тапов), либо через openUnlock() —
-  // разблокировка функций администратора из "Настроек" (10 тапов по версии
-  // в "О приложении", см. settings.js). Раньше это была отдельная
-  // admin-сборка (admin_main_web.py) с обязательным входом до показа
-  // остального интерфейса — теперь одна программа, отдельного "жёсткого"
-  // режима больше нет.
-  // ==================================================================
-  const adminLogin = (() => {
-    let dialog, usernameEl, passwordEl, rememberEl, rememberRow, statusEl, startBtn, closeBtn, forgetBtn, titleEl, hintEl;
-    let onUnlocked = null;
-
-    function init() {
-      dialog = document.getElementById("admin-login-dialog");
-      usernameEl = document.getElementById("admin-login-username");
-      passwordEl = document.getElementById("admin-login-password");
-      rememberEl = document.getElementById("admin-login-remember");
-      rememberRow = document.getElementById("admin-login-remember-row");
-      statusEl = document.getElementById("admin-login-status");
-      startBtn = document.getElementById("admin-login-start");
-      closeBtn = document.getElementById("admin-login-close");
-      forgetBtn = document.getElementById("admin-login-forget");
-      titleEl = document.getElementById("admin-login-title");
-      hintEl = document.getElementById("admin-login-hint");
-
-      startBtn.addEventListener("click", onStart);
-      closeBtn.addEventListener("click", () => dialog.close());
-      forgetBtn.addEventListener("click", onForget);
-    }
-
-    async function open() {
-      onUnlocked = null;
-      const info = await window.pywebview.api.admin_get_info();
-      if (!info.available) {
-        await window.notice("Не найден admin.json рядом с программой — без него неизвестно, куда входить.");
-        return;
-      }
-      titleEl.textContent = "Войти в админку";
-      hintEl.textContent = "Только вход — ничего не выгружает. Сессия переиспользуется другими кнопками "
-        + '("Добавить APK...", "Файлы на сервере..."), пока открыта программа.';
-      hintEl.style.display = "";
-      rememberRow.style.display = "";
-      closeBtn.style.display = "";
-      forgetBtn.style.display = "";
-      document.getElementById("admin-login-server-label").textContent = `Сервер: ${info.base_url}`;
-      usernameEl.value = "";
-      passwordEl.value = "";
-      rememberEl.checked = false;
-      statusEl.textContent = "";
-      startBtn.disabled = false;
-      dialog.showModal();
-    }
-
-    // Разблокировка функций администратора (см. settings.js) — успешный
-    // вход сразу включает admin_mode на весь текущий сеанс (см.
-    // app/web/bridge.py: admin_login) И запоминается для следующих запусков
-    // (см. admin_config.save_saved_login, WebApi.__init__: try_saved_login)
-    // — здесь это не опционально, чекбокс "Запомнить меня" скрыт и всегда
-    // считается включённым, иначе разблокировка не переживала бы перезапуск
-    // и теряла бы смысл. onSuccess вызывается сразу после закрытия диалога.
-    function openUnlock(onSuccess) {
-      (async () => {
-        const info = await window.pywebview.api.admin_get_info();
-        if (!info.available) {
-          await window.notice("Не найден admin.json рядом с программой — без него неизвестно, куда входить.");
-          return;
-        }
-        onUnlocked = onSuccess;
-        titleEl.textContent = "Разблокировать функции администратора";
-        hintEl.textContent = "Вход сохранится на этом компьютере — при следующих запусках функции "
-          + "администратора будут видны сразу, без повторного входа.";
-        hintEl.style.display = "";
-        rememberRow.style.display = "none";
-        closeBtn.style.display = "";
-        forgetBtn.style.display = "none";
-        document.getElementById("admin-login-server-label").textContent = `Сервер: ${info.base_url}`;
-        usernameEl.value = "";
-        passwordEl.value = "";
-        rememberEl.checked = true;
-        statusEl.textContent = "";
-        startBtn.disabled = false;
-        dialog.showModal();
-      })();
-    }
-
-    async function onStart() {
-      const username = usernameEl.value.trim();
-      const password = passwordEl.value;
-      if (!username || !password) {
-        await window.notice("Введите логин и пароль.");
-        return;
-      }
-      startBtn.disabled = true;
-      statusEl.textContent = "Вхожу...";
-      const result = await window.pywebview.api.admin_login(username, password, rememberEl.checked);
-      startBtn.disabled = false;
-      if (!result.ok) {
-        statusEl.textContent = result.error;
-        return;
-      }
-      statusEl.textContent = "Вход выполнен.";
-      dialog.close();
-      if (onUnlocked) {
-        const callback = onUnlocked;
-        onUnlocked = null;
-        callback();
-      }
-    }
-
-    async function onForget() {
-      await window.pywebview.api.admin_forget_saved_login();
-      rememberEl.checked = false;
-      statusEl.textContent = "Сохранённый вход забыт.";
-    }
-
-    return { init, open, openUnlock };
-  })();
-
-  // ==================================================================
   // Выгрузить на сервер (только admin_mode, открывается из js/app.js)
   // ==================================================================
   const admin = (() => {
-    let dialog, usernameEl, passwordEl, progressEl, logEl, startBtn;
+    let dialog, progressEl, logEl, startBtn;
     let running = false;
 
     function init() {
       dialog = document.getElementById("admin-dialog");
-      usernameEl = document.getElementById("admin-username");
-      passwordEl = document.getElementById("admin-password");
       progressEl = document.getElementById("admin-progress");
       logEl = document.getElementById("admin-log");
       startBtn = document.getElementById("admin-start");
@@ -636,8 +510,6 @@
         return;
       }
       document.getElementById("admin-server-label").textContent = `Сервер: ${info.base_url}`;
-      usernameEl.value = "";
-      passwordEl.value = "";
       clear(logEl);
       running = false;
       startBtn.disabled = false;
@@ -647,22 +519,22 @@
     }
 
     async function onStart() {
-      const username = usernameEl.value.trim();
-      const password = passwordEl.value;
-      if (!username || !password) {
-        await window.notice("Введите логин и пароль.");
-        return;
-      }
+      // Единый вход: выгрузка — по сессии аккаунта администратора; нет её — тот же вход, и выгрузка начнётся сама.
+      if (!(await window.authDialog.requireLogin({ needAdmin: true, reason: "Выгрузка на сервер" }))) return;
       startBtn.disabled = true;
       running = true;
       progressEl.style.display = "";
       progressEl.classList.add("indeterminate");
-      const result = await window.pywebview.api.admin_start_upload(username, password);
+      const result = await window.pywebview.api.admin_start_upload();
       if (!result.ok) {
         running = false;
         startBtn.disabled = false;
         progressEl.style.display = "none";
         progressEl.classList.remove("indeterminate");
+        if (result.need_login && (await window.authDialog.requireLogin({ needAdmin: true, reason: "Выгрузка на сервер" }))) {
+          onStart();
+          return;
+        }
         log(result.error);
       }
     }
@@ -673,6 +545,10 @@
       progressEl.style.display = "none";
       progressEl.classList.remove("indeterminate");
       log(event.message);
+      if (event.need_login && (await window.authDialog.requireLogin({ needAdmin: true, reason: "Выгрузка на сервер" }))) {
+        onStart();  // вход истёк посреди выгрузки — после входа начинаем заново (заливка слиянием, повтор безопасен)
+        return;
+      }
       if (event.success) await window.notice(event.message);
       else await window.notice(event.message, { title: "Ошибка", danger: true });
     }
@@ -696,6 +572,7 @@
     let dialog, categorySelect, fileLabel, nameInput, descriptionInput, progressEl, logEl, addBtn;
     let mockRow, mockCheckbox;
     let pickedFile = null;
+    let lastAdd = null;  // аргументы последнего «Добавить» — для повтора после входа
     let publishing = false;
 
     function init() {
@@ -789,11 +666,12 @@
         await window.notice("Введите название приложения.");
         return;
       }
+      // Единый вход: публикация на сервер — по сессии аккаунта администратора.
+      if (!(await window.authDialog.requireLogin({ needAdmin: true, reason: "Добавление APK в библиотеку" }))) return;
+      lastAdd = [pickedFile.path, name, descriptionInput.value.trim(), categorySelect.value, mockCheckbox.checked];
       addBtn.disabled = true;
       setPublishing(true);
-      const result = await window.pywebview.api.admin_add_apk(
-        pickedFile.path, name, descriptionInput.value.trim(), categorySelect.value, mockCheckbox.checked
-      );
+      const result = await window.pywebview.api.admin_add_apk(...lastAdd);
       addBtn.disabled = false;
       if (!result.ok) {
         setPublishing(false);
@@ -810,8 +688,15 @@
       // публикация идёт в фоне на стороне Python и может занять время (сеть).
     }
 
-    function onPublishFinished() {
+    async function onPublishFinished(event) {
       setPublishing(false);
+      // Вход истёк, пока шла публикация: после входа публикуем тот же файл ещё раз (повтор безопасен).
+      if (event && event.need_login && lastAdd
+          && (await window.authDialog.requireLogin({ needAdmin: true, reason: "Публикация APK" }))) {
+        setPublishing(true);
+        const result = await window.pywebview.api.admin_add_apk(...lastAdd);
+        if (!result.ok) { setPublishing(false); log(result.error); }
+      }
     }
 
     function onClose() {
@@ -1014,7 +899,6 @@
   function initDialogs() {
     usb.init();
     report.init();
-    adminLogin.init();
     admin.init();
     adminApk.init();
     update.init();
@@ -1024,7 +908,6 @@
   window.videoDialog = videoModal;
   window.usbDialog = usb;
   window.reportDialog = report;
-  window.adminLoginDialog = adminLogin;
   window.adminDialog = admin;
   window.adminApkDialog = adminApk;
   window.updateDialog = update;

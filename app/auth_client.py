@@ -3,13 +3,11 @@
 библиотека (http.client) — тот же приём, что и app/admin_client.py:
 никакого cookie jar, cookie-строка передаётся руками между вызовами.
 
-Вход через /auth/login у аккаунта с правами администратора приложения
-(см. set_user_is_admin на сервере) выдаёт СРАЗУ ДВЕ cookie одним ответом —
-свою (magicsqd_user_session) и ADMIN_SESSION_COOKIE (см. _handle_auth_login).
-Вторую нужно передать в admin_client.set_cached_session(), чтобы весь уже
-существующий admin_client.py (upload_model, browse_tree и т.п.) продолжил
-работать без единой правки — это и есть "слияние" входа под одну кнопку,
-без переделки серверной части, которой уже пользуется веб-админка."""
+Единый вход (11.10): сессия аккаунта (magicsqd_user_session) — единственная. У аккаунта с правами
+администратора сервер принимает её и в /admin/api/* (см. BackendHandler._is_authenticated), поэтому
+auth_api кладёт ЕЁ в кеш admin_client (set_cached_session) — отдельная админ-сессия и вход по
+логину/паролю веб-кабинета программе больше не нужны. Ответы /auth/login и /auth/me передаются в
+интерфейс целиком (_account) — новые поля аккаунта доходят до окна аккаунта без выпуска программы."""
 from __future__ import annotations
 import http.client
 import json
@@ -17,7 +15,9 @@ from urllib.parse import quote, urlsplit
 
 
 class AuthClientError(RuntimeError):
-    pass
+    def __init__(self, message: str = "", status: int | None = None):
+        super().__init__(message)
+        self.status = status  # HTTP-код ответа сервера (401 — вход истёк); None — до сервера не достучались
 
 
 def _connect(base_url: str, timeout: int = 30):
@@ -49,7 +49,7 @@ def _request(base_url: str, method: str, path: str, *, body: dict | None = None,
             payload = {}
         cookies = [v.split(";", 1)[0] for v in response.msg.get_all("Set-Cookie", [])]
         if response.status != 200:
-            raise AuthClientError(payload.get("error") or raw.decode("utf-8", "replace"))
+            raise AuthClientError(payload.get("error") or raw.decode("utf-8", "replace"), status=response.status)
         return payload, cookies
     except (OSError, http.client.HTTPException) as exc:
         raise AuthClientError(f"Не удалось связаться с сервером: {exc}") from exc
@@ -61,15 +61,23 @@ def register(base_url: str, email: str, password: str) -> None:
     _request(base_url, "POST", "/auth/register", body={"email": email, "password": password})
 
 
+def _account(payload: dict, email: str | None = None) -> dict:
+    """Ответ сервера об аккаунте целиком (кроме ok): email, is_admin, subscriber, session_expires_at и всё, что
+    сервер добавит позже, — интерфейс получает новые поля без нового выпуска программы."""
+    data = {key: value for key, value in payload.items() if key != "ok"}
+    data["email"] = payload.get("email") or email
+    data["is_admin"] = bool(payload.get("is_admin"))
+    data["subscriber"] = bool(payload.get("subscriber"))
+    return data
+
+
 def login(base_url: str, email: str, password: str) -> dict:
-    """Возвращает {"email", "is_admin", "user_cookie", "admin_cookie" | None}."""
+    """Ответ /auth/login (см. _account) + "user_cookie" — сессия аккаунта, она же для админки."""
     payload, cookies = _request(base_url, "POST", "/auth/login", body={"email": email, "password": password})
     user_cookie = next((c for c in cookies if c.startswith("magicsqd_user_session=")), None)
-    admin_cookie = next((c for c in cookies if c.startswith("magicsqd_admin_session=")), None)
     if not user_cookie:
         raise AuthClientError("Сервер не выдал сессию входа.")
-    return {"email": payload.get("email", email), "is_admin": bool(payload.get("is_admin")),
-            "subscriber": bool(payload.get("subscriber")), "user_cookie": user_cookie, "admin_cookie": admin_cookie}
+    return {**_account(payload, email), "user_cookie": user_cookie}
 
 
 def logout(base_url: str, user_cookie: str) -> None:
@@ -98,11 +106,9 @@ def forgot_password(base_url: str, email: str) -> None:
 
 
 def me(base_url: str, user_cookie: str) -> dict:
-    """{"email", "is_admin"} — бросает AuthClientError (в т.ч. на 401), если
-    сессия невалидна/истекла."""
+    """Ответ /auth/me (см. _account) — бросает AuthClientError (в т.ч. на 401), если сессия невалидна/истекла."""
     payload, _ = _request(base_url, "GET", "/auth/me", cookie=user_cookie)
-    return {"email": payload.get("email"), "is_admin": bool(payload.get("is_admin")),
-            "subscriber": bool(payload.get("subscriber"))}
+    return _account(payload)
 
 
 def my_cars(base_url: str, user_cookie: str, all_states: bool = False) -> list[dict]:

@@ -1,11 +1,10 @@
 """Аккаунт техника (регистрация/вход/выход, синхронизация СВОИХ заявок на
 модерации между устройствами) — см. app/auth_client.py, server/backend.py:
-протокол /auth/*. Единая кнопка "Войти" в приложении: если у аккаунта есть
-права администратора (см. server/backend.py: set_user_is_admin), вход
-заодно поднимает и admin_mode — тем же самым, уже полностью рабочим
-admin_client.py/ADMIN_SESSION_COOKIE, которым пользуется отдельный
-веб-кабинет разработчика (см. auth_client.login: сервер сам присылает обе
-cookie одним ответом)."""
+протокол /auth/*. Единый вход (11.10): одна сессия — аккаунта. Если у аккаунта есть права администратора
+(server/backend.py: set_user_is_admin), она же кладётся в кеш admin_client (сервер принимает её в
+/admin/api/*), и включается admin_mode. Отдельной админ-сессии и входа по логину/паролю веб-кабинета у
+программы нет. Состояние аккаунта (account) передаётся в интерфейс целиком — срок входа и будущие поля
+сервера доходят до окна аккаунта без выпуска программы."""
 from __future__ import annotations
 import threading
 from pathlib import Path
@@ -14,7 +13,7 @@ from urllib.parse import urlparse
 from ..events import event_bridge
 from ... import pending_submissions
 from ...admin_config import get_admin_base_url
-from ...admin_client import get_cached_session, set_cached_session, clear_cached_session
+from ...admin_client import set_cached_session, clear_cached_session
 from ...auth_client import AuthClientError, change_password as _change_password, download_my_car, \
     forgot_password as _forgot_password, login as _login, logout as _logout, me as _me, \
     my_cars as _my_cars, register as _register
@@ -34,6 +33,9 @@ class AuthApi:
         # вызов, тот же приём, что и у admin_client._session_cache.
         self._email: str | None = None
         self._user_cookie: str | None = None
+        # Последний ответ сервера об аккаунте (auth_client._account): email, is_admin, subscriber,
+        # session_expires_at, … — для окна аккаунта (state/refresh).
+        self._account: dict = {}
 
     @property
     def user_cookie(self) -> str | None:
@@ -53,14 +55,23 @@ class AuthApi:
         base_url = self._auth_base_url()
         set_auth_cookie(user_cookie, urlparse(base_url).hostname if base_url else None)
 
-    def _apply_admin_cookie(self, admin_cookie: str | None) -> None:
+    def _apply_account(self, account: dict | None) -> None:
+        """Запоминает состояние аккаунта и даёт admin_client ту же сессию аккаунта, если у него есть права
+        администратора (сервер принимает её в /admin/api/*); иначе кеш админки пуст."""
+        self._account = dict(account or {})
         admin_base = get_admin_base_url(self.base_dir)
         if not admin_base:
             return
-        if admin_cookie:
-            set_cached_session(admin_base, admin_cookie)
+        if self._user_cookie and self._account.get("is_admin"):
+            set_cached_session(admin_base, self._user_cookie)
         else:
             clear_cached_session(admin_base)
+
+    def state(self) -> dict:
+        """Что известно об аккаунте сейчас, без похода в сеть — для интерфейса (кнопка и окно аккаунта)."""
+        if not self._email:
+            return {"ok": False}
+        return {"ok": True, **self._account, "email": self._email}
 
     # ------------------------------------------------------------------
     def register(self, email: str, password: str) -> dict:
@@ -87,13 +98,13 @@ class AuthApi:
             result = _login(base_url, email, password)
         except AuthClientError as exc:
             return {"ok": False, "error": str(exc)}
+        account = {key: value for key, value in result.items() if key != "user_cookie"}
         self._set_session(result["email"], result["user_cookie"])
-        self._apply_admin_cookie(result["admin_cookie"])
+        self._apply_account(account)
         if remember:
-            save_saved_session(self.base_dir, result["email"], result["user_cookie"], result["admin_cookie"])
+            save_saved_session(self.base_dir, result["email"], result["user_cookie"], None)
         self.sync_my_cars()
-        return {"ok": True, "email": result["email"], "is_admin": result["is_admin"],
-                "subscriber": result.get("subscriber", False)}
+        return {"ok": True, **account}
 
     def logout(self) -> dict:
         base_url = self._auth_base_url()
@@ -103,7 +114,7 @@ class AuthApi:
             except AuthClientError:
                 pass  # сессия и так истекла/недоступна — на клиенте всё равно чистим
         self._set_session(None, None)
-        self._apply_admin_cookie(None)
+        self._apply_account(None)
         clear_saved_session(self.base_dir)
         return {"ok": True}
 
@@ -122,9 +133,8 @@ class AuthApi:
         # change_password), иначе следующий же запрос (например,
         # sync_my_cars) получил бы 401 сразу после успешной смены пароля.
         self._set_session(self._email, new_cookie)
-        admin_base = get_admin_base_url(self.base_dir)
-        admin_cookie = get_cached_session(admin_base) if admin_base else None
-        save_saved_session(self.base_dir, self._email, new_cookie, admin_cookie)
+        self._apply_account(self._account)  # админке — тоже новая сессия
+        save_saved_session(self.base_dir, self._email, new_cookie, None)
         return {"ok": True}
 
     def forgot_password(self, email: str) -> dict:
@@ -141,44 +151,53 @@ class AuthApi:
         return {"ok": True}
 
     def status(self) -> dict:
-        """Тихая проверка сохранённой сессии — вызывается один раз при
-        старте (см. bridge.py), ДО показа UI входа. {"ok": False} без
-        текста ошибки, если сессии нет/истекла — дальше просто показывается
-        обычная кнопка "Войти", объяснять нечего (та же логика, что и у
-        admin_api.py:try_saved_login)."""
+        """Тихая проверка сохранённой сессии — вызывается один раз при старте (см. bridge.py), ДО показа
+        интерфейса. Вход истёк (сервер ответил 401) — {"ok": False, "expired": True, "email": …}: окно
+        аккаунта покажет «Вход истёк» с уже вписанной почтой. Нет сети — сессию НЕ выбрасываем (она может быть
+        жива): {"ok": False, "offline": True}."""
         base_url = self._auth_base_url()
         if base_url is None:
             return {"ok": False}
         saved = load_saved_session(self.base_dir)
         if saved is None:
             return {"ok": False}
-        # Админ-cookie восстанавливаем СРАЗУ и оптимистично (может быть уже
-        # просрочена — 24ч, короче 30-дневной сессии техника) — первый же
-        # настоящий admin_client-вызов сам обнаружит 401 и почистит её;
-        # никакого вреда от попытки нет.
-        self._apply_admin_cookie(saved["admin_cookie"])
         try:
             info = _me(base_url, saved["user_cookie"])
-        except AuthClientError:
-            clear_saved_session(self.base_dir)
-            self._apply_admin_cookie(None)
-            return {"ok": False}
+        except AuthClientError as exc:
+            if exc.status == 401:
+                clear_saved_session(self.base_dir)
+                self._apply_account(None)
+                return {"ok": False, "expired": True, "email": saved.get("email")}
+            return {"ok": False, "offline": True, "email": saved.get("email")}
         self._set_session(info["email"], saved["user_cookie"])
+        self._apply_account(info)
         self.sync_my_cars()
-        return {"ok": True, "email": info["email"], "is_admin": info["is_admin"],
-                "subscriber": info.get("subscriber", False)}
+        return {"ok": True, **info}
 
-    def refresh_subscriber(self) -> dict:
-        """Свежий статус «подписчик Boosty» (владелец выставляет его вручную и он может измениться,
-        пока программа открыта) — для цвета кнопки аккаунта."""
+    def refresh(self) -> dict:
+        """Свежее состояние аккаунта с сервера (окно аккаунта открыли, админ-действию отказали): продлевает
+        вход и обновляет срок, права, подписку. Вход истёк — {"ok": False, "expired": True, "email": …}."""
         base_url = self._auth_base_url()
         if not (base_url and self._user_cookie):
             return {"ok": False}
         try:
             info = _me(base_url, self._user_cookie)
-        except AuthClientError:
-            return {"ok": False}
-        return {"ok": True, "subscriber": info.get("subscriber", False)}
+        except AuthClientError as exc:
+            if exc.status == 401:
+                email = self._email
+                self._set_session(None, None)
+                self._apply_account(None)
+                clear_saved_session(self.base_dir)
+                return {"ok": False, "expired": True, "email": email}
+            return {"ok": False, "offline": True, **self.state()}
+        self._apply_account(info)
+        return {"ok": True, **info}
+
+    def refresh_subscriber(self) -> dict:
+        """Свежий статус «подписчик Boosty» (владелец выставляет его вручную и он может измениться,
+        пока программа открыта) — для цвета кнопки аккаунта."""
+        result = self.refresh()
+        return {"ok": True, "subscriber": result.get("subscriber", False)} if result.get("ok") else {"ok": False}
 
     # ------------------------------------------------------------------
     def sync_my_cars(self) -> dict:

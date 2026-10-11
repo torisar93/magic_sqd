@@ -169,3 +169,30 @@ dialog#admin-manager-dialog.menus13-admin-dialog {width:min(1100px,calc(100vw - 
   .catalog-admin-popover.menus13-account {right:14px;max-width:calc(100vw - 28px);}
 }
 @media(prefers-reduced-motion:reduce) {.settings13-toggle input[type=checkbox],.settings13-toggle input[type=checkbox]::before {transition:none;}}
+/* Единый вход (11.10, вариант 3 владельца): кнопка аккаунта — значок в ряду с соседними, у администратора мятная
+   рамка; точка в углу — мятная (вход в порядке) или красная (вход истёк). См. auth_dialog.js: renderToggle. */
+#catalog-admin-toggle.account-icon {position:relative;width:44px;min-width:44px;height:44px;padding:0!important;display:inline-grid;place-items:center;}
+#catalog-admin-toggle.account-icon>.ui-icon {width:22px;height:22px;min-width:22px;flex-basis:22px;}
+#catalog-admin-toggle.account-icon.is-admin {color:var(--accent)!important;border-color:rgba(160,239,218,.62)!important;}
+#catalog-admin-toggle.account-icon.is-expired {border-color:rgba(255,107,94,.45)!important;}
+body.ai-open #catalog-admin-toggle.account-icon {display:inline-grid;max-width:none;}
+.account-dot {position:absolute;right:6px;top:6px;width:9px;height:9px;border-radius:50%;box-shadow:0 0 0 2px #1b252d;pointer-events:none;}
+.account-dot.ok {background:var(--accent);}
+.account-dot.off {background:#ff6b5e;}
+/* Срок входа — под «Вы вошли как». */
+.account-session {display:flex;gap:11px;align-items:flex-start;margin:0 0 15px;padding:12px 14px;border-radius:12px;background:rgba(160,239,218,.07);border:1px solid rgba(160,239,218,.22);}
+.account-session[hidden] {display:none;}
+.account-session>.ui-icon {width:18px;height:18px;min-width:18px;flex-basis:18px;margin-top:1px;color:var(--accent);}
+.account-session b {display:block;font-size:13.5px;font-weight:600;color:var(--text);}
+.account-session div>span {display:block;font-size:12px;color:var(--menus13-muted);margin-top:3px;line-height:1.45;}
+/* Пояснение над формой: зачем вход (окно входа из действия), «Вход истёк», «Нет связи», «Нужны права». */
+.account-note {margin:20px 24px 0;padding:12px 14px;border-radius:12px;background:rgba(160,239,218,.07);border:1px solid rgba(160,239,218,.22);}
+.account-note[hidden] {display:none;}
+.account-note[data-kind=warn] {background:rgba(240,164,58,.1);border-color:rgba(240,164,58,.4);}
+.account-note b {display:block;font-size:13.5px;font-weight:600;}
+.account-note span {display:block;font-size:12.5px;color:var(--menus13-muted);margin-top:4px;line-height:1.45;}
+.account-note+#catalog-account-guest {padding-top:16px;}
+/* Окно входа из действия: тот же попап по центру, в своём модальном <dialog> (поверх редактора и других окон). */
+dialog.account-modal {padding:0!important;margin:auto!important;border:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;overflow:visible!important;max-height:none!important;width:fit-content!important;max-width:calc(100vw - 32px)!important;}
+dialog.account-modal::backdrop {background:rgba(4,9,11,.62);backdrop-filter:blur(3px);}
+#catalog-admin-popover.is-modal {position:static!important;display:block;margin:0;max-height:calc(100vh - 48px);box-shadow:0 24px 80px #0008;}

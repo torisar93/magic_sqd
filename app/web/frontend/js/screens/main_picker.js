@@ -120,6 +120,8 @@
       loggedinEl: container.querySelector("#catalog-account-loggedin"),
     });
     const closeAccountPopover = () => {
+      // Окно входа из действия (authDialog.requireLogin) — свой модальный <dialog>, закрывается им самим.
+      if (adminPopoverEl.classList.contains("is-modal")) return;
       adminPopoverEl.hidden = true;
       adminToggleEl.setAttribute("aria-expanded", "false");
     };

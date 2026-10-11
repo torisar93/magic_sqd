@@ -1,7 +1,7 @@
 // Визуальный редактор-граф этапов установки — единственный редактор "Добавить/
 // Изменить машину" (старый текстовый мастер car_wizard.js/список+форма
 // удалён после сравнения, см. историю). Использует ТОТ ЖЕ бридж
-// (car_load_spec/car_save/car_get_publish_target/car_admin_login) и ТУ ЖЕ
+// (car_load_spec/car_save/car_get_publish_target; вход — authDialog.requireLogin) и ТУ ЖЕ
 // панель тип-специфичных полей (car_step_fields.js) — ничего в install.py/
 // stages.py/установке у техника не меняется, это только способ
 // редактировать NewCarSpec.
@@ -82,6 +82,7 @@
   // Окно «Сохранение модели» (components/modal.js: busyDialog) — от «Сохранить» до
   // car_save_finished: этапы и процент отправки на сервер, итог — отдельным окном.
   let saveBusy = null;
+  let lastSave = null;  // последнее сохранение — повтор после входа (см. startSave)
   // «Кто видит» (скрытые модели для групп пользователей, см. server/user_groups.py) — выбор
   // у кнопки сохранения, только у администратора. accessInitial — что было при открытии:
   // не меняли — car_save получает null, и доступ модели на сервере не трогается.
@@ -176,7 +177,6 @@
     viewportEl.addEventListener("mousedown", onViewportMouseDown);
     viewportEl.addEventListener("wheel", onWheelZoom, { passive: false });
 
-    initAdminLoginDialog();
 
     window.events.on("car_save_log", (event) => {
       logFn(event.text);
@@ -198,6 +198,15 @@
       // Итог публикации — явно (владелец, 2026-09-23: посмотрел сервер посреди загрузки
       // и решил, что файлы не дошли; неудачная публикация тоже была лишь строкой в журнале).
       const publish = event.success ? event.publish : null;
+      if (publish && publish.need_login && lastSave) {
+        const save = lastSave;
+        window.authDialog.requireLogin({ needAdmin: true, reason: `Публикация модели «${save.label}»` }).then((ok) => {
+          if (ok) startSave(save);
+          else window.notice("Модель сохранена на этом компьютере, но на сервер не опубликована: нужен вход администратора.",
+            { title: "Не опубликовано", danger: true });
+        });
+        return;
+      }
       if (publish && publish.mode === "admin" && publish.ok) {
         window.notice("Модель сохранена и опубликована на сервере. Техники получат изменения при следующем открытии модели.",
           { title: "Опубликовано" });
@@ -219,43 +228,6 @@
         window.notice(event.message, { title: "Не удалось сохранить", danger: true });
       }
     });
-  }
-
-  // -- вход в админку перед первым сохранением за запуск -------------------
-  // (перенесено из старого текстового мастера car_wizard.js — с переходом
-  // на визуальный редактор как единственный он тут больше не нужен)
-  function initAdminLoginDialog() {
-    const dlg = document.getElementById("graph-admin-login-dialog");
-    const errorEl = document.getElementById("graph-admin-login-error");
-    let resolveFn = null;
-
-    document.getElementById("graph-admin-login-submit").addEventListener("click", async () => {
-      const username = document.getElementById("graph-admin-login-username").value.trim();
-      const password = document.getElementById("graph-admin-login-password").value;
-      if (!username || !password) return;
-      const baseUrl = dlg.dataset.baseUrl;
-      const result = await window.pywebview.api.car_admin_login(baseUrl, username, password);
-      if (result.ok) {
-        dlg.close();
-        resolveFn(true);
-      } else {
-        errorEl.textContent = result.error;
-        errorEl.style.display = "";
-      }
-    });
-    document.getElementById("graph-admin-login-cancel").addEventListener("click", () => {
-      dlg.close();
-      resolveFn(false);
-    });
-
-    window._openAdminLoginDialog = (baseUrl) => {
-      dlg.dataset.baseUrl = baseUrl;
-      document.getElementById("graph-admin-login-username").value = "";
-      document.getElementById("graph-admin-login-password").value = "";
-      errorEl.style.display = "none";
-      dlg.showModal();
-      return new Promise((resolve) => { resolveFn = resolve; });
-    };
   }
 
   function setMainProgressVisible(visible) {
@@ -1085,22 +1057,34 @@
       return;
     }
 
-    const target = await window.pywebview.api.car_get_publish_target();
-    if (target.mode === "admin" && !target.session_cached) {
-      const ok = await window._openAdminLoginDialog(target.base_url);
-      if (!ok) return; // пользователь отменил вход — не начинаем сохранение вовсе
-    }
-
     const label = modification ? `${brand} / ${model} — ${modification}` : `${brand} / ${model}`;
-    const result = await window.pywebview.api.car_save(specToJson(), editModelKey, access);
-    if (!result.ok) {
-      await window.notice(result.error, { title: "Сохранение", danger: true });
+    // Вход истёк (красная точка на кнопке аккаунта) — сначала войти снова: у администратора от этого зависит,
+    // опубликуется модель или уйдёт на проверку. Отменили вход — сохраняем как есть.
+    if (window.authDialog.isExpired()) await window.authDialog.requireLogin({ reason: `Сохранение модели «${label}»` });
+    const target = await window.pywebview.api.car_get_publish_target();
+    // Единый вход: публикация администратором — по сессии аккаунта. requireLogin тихо продлевает вход и
+    // спрашивает пароль, только если он действительно нужен; отменили вход — не начинаем сохранение вовсе.
+    if (target.mode === "admin"
+        && !(await window.authDialog.requireLogin({ needAdmin: true, reason: `Публикация модели «${label}»` }))) {
       return;
     }
-    logFn(`Сохраняю «${label}»...`);
-    setMainProgressVisible(true);
-    saveBusy = window.busyDialog("Сохранение модели", `Сохраняем «${label}»…`);
+    if (!(await startSave({ spec: specToJson(), editModelKey, access, label }))) return;
     dialog.close();
+  }
+
+  // Сохранение (локально + публикация/отправка) в фоне; save запоминается — если сервер отказал из-за
+  // истёкшего входа (publish.need_login), после входа сохранение повторяется само теми же данными.
+  async function startSave(save) {
+    lastSave = save;
+    const result = await window.pywebview.api.car_save(save.spec, save.editModelKey, save.access);
+    if (!result.ok) {
+      await window.notice(result.error, { title: "Сохранение", danger: true });
+      return false;
+    }
+    logFn(`Сохраняю «${save.label}»...`);
+    setMainProgressVisible(true);
+    saveBusy = window.busyDialog("Сохранение модели", `Сохраняем «${save.label}»…`);
+    return true;
   }
 
   // ------------------------------------------------------------------
@@ -1144,13 +1128,7 @@
       return; // общий обработчик car_save_finished уже показал причину
     }
     logFn("Публикую заявку...");
-    const publishResult = await window.pywebview.api.submissions_publish(editModelKey);
-    if (!publishResult.ok) {
-      setPendingButtonsDisabled(false);
-      await window.notice(publishResult.error, { title: "Публикация", danger: true });
-      return;
-    }
-    const finishedEvent = await waitForEvent("submissions_finished");
+    const finishedEvent = await window.pendingList.runOp(() => window.pywebview.api.submissions_publish(editModelKey));
     setPendingButtonsDisabled(false);
     if (!finishedEvent.success) {
       await window.notice(finishedEvent.message, { title: "Публикация", danger: true });
@@ -1168,13 +1146,7 @@
       { title: "Отклонить заявку" });
     if (!ok) return;
     setPendingButtonsDisabled(true);
-    const result = await window.pywebview.api.submissions_reject(pendingSubmissionName);
-    if (!result.ok) {
-      setPendingButtonsDisabled(false);
-      await window.notice(result.error, { title: "Отклонение", danger: true });
-      return;
-    }
-    const finishedEvent = await waitForEvent("submissions_finished");
+    const finishedEvent = await window.pendingList.runOp(() => window.pywebview.api.submissions_reject(pendingSubmissionName));
     setPendingButtonsDisabled(false);
     if (!finishedEvent.success) {
       await window.notice(finishedEvent.message, { title: "Отклонение", danger: true });

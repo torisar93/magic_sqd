@@ -1,10 +1,8 @@
 // Раздел "На модерации" (только admin_mode, см. app.js) — заявки клиентов
 // с сайта, см. app/web/api/submissions_api.py. Не запрашивает список сама
-// по себе при старте — до первого явного входа в админку (10 тапов по
-// версии в Настройках, или "Выгрузить на сервер...") submissions_list()
-// почти всегда вернёт "Сначала войдите...", и дёргать это молча на каждом
-// запуске приложения было бы просто раздражающим шумом — ждём клика
-// "Обновить" (или успешного логина где-то ещё в программе).
+// по себе при старте — ждёт клика "Обновить". Вход — аккаунт администратора
+// (единый вход): нет входа или он истёк — ответ {need_login}, открывается
+// окно входа, после него операция повторяется сама (runOp).
 (function () {
   const { el, clear } = window.dom;
 
@@ -35,13 +33,26 @@
     document.getElementById("pending-refresh-btn").disabled = busy;
   }
 
+  // Операция с заявкой одним результатом: запуск + итог фоновой работы ({success, message, ...}).
+  // Нужен вход — окно входа и повтор (authDialog.retryAfterLogin). Ею же пользуется редактор (graph_wizard.js).
+  function runOp(start, reason = "Заявки на модерации") {
+    return window.authDialog.retryAfterLogin(async () => {
+      const result = await start();
+      if (!result.ok) return { success: false, message: result.error, need_login: result.need_login };
+      return waitForEvent("submissions_finished");
+    }, reason);
+  }
+
   function renderEmpty(text, showLoginLink) {
     clear(listEl);
     const li = el("li", { class: "empty", text });
     listEl.appendChild(li);
     if (showLoginLink) {
       const link = el("li", { class: "empty" });
-      const btn = el("button", { text: "Войти в админку...", onclick: () => window.adminLoginDialog.open() });
+      const btn = el("button", { text: "Войти", onclick: async () => {
+        // Единый вход: тот же вход в аккаунт администратора, после него список заявок загружается заново.
+        if (await window.authDialog.requireLogin({ needAdmin: true, reason: "Заявки на модерации" })) reload();
+      } });
       link.appendChild(btn);
       listEl.appendChild(link);
     }
@@ -55,7 +66,7 @@
     catch (_) { renderEmpty("Не удалось загрузить заявки. Повторите обновление."); return; }
     finally { setBusy(false); }
     if (!result.ok) {
-      renderEmpty(result.error, /войдите/i.test(result.error || ""));
+      renderEmpty(result.error, Boolean(result.need_login));
       return;
     }
     countEl.textContent = result.items.length ? `(${result.items.length})` : "";
@@ -110,14 +121,8 @@
 
   async function openItem(item) {
     setBusy(true);
-    const result = await window.pywebview.api.submissions_stage(
-      item.name, item.brand, item.model, item.modification);
-    if (!result.ok) {
-      setBusy(false);
-      await window.notice(result.error, { title: "Заявка", danger: true });
-      return;
-    }
-    const event = await waitForEvent("submissions_finished");
+    const event = await runOp(() => window.pywebview.api.submissions_stage(
+      item.name, item.brand, item.model, item.modification));
     setBusy(false);
     if (!event.success) {
       await window.notice(event.message, { title: "Заявка", danger: true });
@@ -139,7 +144,8 @@
     clear(filesListEl);
     filesListEl.appendChild(el("li", { class: "empty", text: "Загружаю список файлов..." }));
     filesDialog.showModal();
-    const result = await window.pywebview.api.submissions_peek(model.submission_name);
+    const result = await window.authDialog.retryAfterLogin(
+      () => window.pywebview.api.submissions_peek(model.submission_name), "Заявки на модерации");
     clear(filesListEl);
     if (!result.ok) {
       filesListEl.appendChild(el("li", { class: "empty", text: result.error }));
@@ -165,12 +171,8 @@
         { title: "Публикация", danger: true });
       return;
     }
-    const result = await window.pywebview.api.submissions_publish(currentFilesModel.key);
-    if (!result.ok) {
-      await window.notice(result.error, { title: "Публикация", danger: true });
-      return;
-    }
-    const event = await waitForEvent("submissions_finished");
+    const key = currentFilesModel.key;
+    const event = await runOp(() => window.pywebview.api.submissions_publish(key));
     if (!event.success) {
       await window.notice(event.message, { title: "Публикация", danger: true });
       return;
@@ -184,12 +186,8 @@
     if (!currentFilesModel) return;
     const ok = await window.confirmDialog("Отклонить эту заявку? Это необратимо.", { title: "Отклонить заявку" });
     if (!ok) return;
-    const result = await window.pywebview.api.submissions_reject(currentFilesModel.submission_name);
-    if (!result.ok) {
-      await window.notice(result.error, { title: "Отклонение", danger: true });
-      return;
-    }
-    const event = await waitForEvent("submissions_finished");
+    const name = currentFilesModel.submission_name;
+    const event = await runOp(() => window.pywebview.api.submissions_reject(name));
     if (!event.success) {
       await window.notice(event.message, { title: "Отклонение", danger: true });
       return;
@@ -203,13 +201,7 @@
       { title: "Отклонить заявку" });
     if (!ok) return;
     setBusy(true);
-    const result = await window.pywebview.api.submissions_reject(item.name);
-    if (!result.ok) {
-      setBusy(false);
-      await window.notice(result.error, { title: "Отклонение", danger: true });
-      return;
-    }
-    const event = await waitForEvent("submissions_finished");
+    const event = await runOp(() => window.pywebview.api.submissions_reject(item.name));
     setBusy(false);
     if (!event.success) {
       await window.notice(event.message, { title: "Отклонение", danger: true });
@@ -220,5 +212,5 @@
 
   window.events.on("submissions_log", (event) => console.log("[submissions]", event.text));
 
-  window.pendingList = { init, reload };
+  window.pendingList = { init, reload, runOp };
 })();

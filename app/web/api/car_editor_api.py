@@ -26,7 +26,7 @@ import webview
 from ..events import event_bridge
 from ...admin_client import (AdminClientError, AdminEndpointMissing, AdminUploadCancelled,
                              cleanup_stale_model_files, clear_cached_session, delete_cars_path,
-                             get_cached_session, get_model_access, login, set_cached_session,
+                             get_cached_session, get_model_access,
                              set_closed_access, set_model_access, upload_model)
 from ...admin_config import get_admin_base_url
 from ...car_generator import (FLASH_BLOCK_ID_RE, FLASH_STEP_TYPES, INVALID_NAME_CHARS, ActionSpec,
@@ -506,14 +506,6 @@ class CarEditorApi:
                 "all_groups": data.get("all_groups") or [], "early_open_at": data.get("early_open_at"),
                 "closed": data.get("closed") or {"subscribers": True, "groups": []}}
 
-    def admin_login(self, base_url: str, username: str, password: str) -> dict:
-        try:
-            cookie = login(base_url, username, password)
-        except AdminClientError as exc:
-            return {"ok": False, "error": str(exc)}
-        set_cached_session(base_url, cookie)
-        return {"ok": True}
-
     # -- сохранение (создание/правка) — фоновый поток, прогресс через events --
     def save(self, spec_data: dict, edit_model_key: str | None, admin_mode: bool = False,
              access: dict | None = None) -> dict:
@@ -690,7 +682,9 @@ class CarEditorApi:
                 self._log("Публикация отменена (локально сохранено).")
             except AdminClientError as exc:
                 if "истекла" in str(exc):
+                    # Единый вход: интерфейс откроет окно входа и повторит публикацию (локально уже сохранено).
                     clear_cached_session(admin_base_url)
+                    publish["need_login"] = True
                 publish["error"] = str(exc)
                 self._log(f"Не опубликовано на сервере: {exc}")
             except Exception as exc:  # noqa: BLE001 - см. докстринг ниже

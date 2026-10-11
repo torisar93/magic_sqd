@@ -25,6 +25,7 @@ import threading
 from pathlib import Path
 
 from ..events import event_bridge
+from .admin_api import NEED_LOGIN_TEXT
 from ... import pending_submissions
 from ...admin_client import (AdminClientError, clear_cached_session, cleanup_stale_model_files,
                               delete_submission, download_submission, get_cached_session,
@@ -45,14 +46,21 @@ class SubmissionsApi:
     def _running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    # -- сессия (та же кешированная cookie, что и "Выгрузить на сервер...") --
+    # -- сессия: аккаунт администратора (единый вход, 11.10 — её кладёт в кеш admin_client auth_api) --
     def _require_session(self):
         if not self.base_url:
             return {"ok": False, "error": "admin.json не настроен."}
         cookie = get_cached_session(self.base_url)
         if not cookie:
-            return {"ok": False, "error": 'Сначала войдите через "Выгрузить на сервер...".'}
+            return {"ok": False, "need_login": True, "error": NEED_LOGIN_TEXT}
         return self.base_url, cookie
+
+    def _error(self, exc: AdminClientError) -> dict:
+        """Истёк вход — {"need_login": True}: интерфейс откроет вход и повторит действие."""
+        if "истекла" in str(exc):
+            clear_cached_session(self.base_url)
+            return {"ok": False, "need_login": True, "error": NEED_LOGIN_TEXT}
+        return {"ok": False, "error": str(exc)}
 
     # -- список/превью — короткие GET, без фонового потока -------------------
     def list(self) -> dict:
@@ -63,9 +71,7 @@ class SubmissionsApi:
         try:
             items = list_submissions(base_url, cookie)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         for item in items:
             item["staged"] = pending_submissions.is_staged(self.base_dir, item["name"])
         return {"ok": True, "items": items}
@@ -78,9 +84,7 @@ class SubmissionsApi:
         try:
             items = peek_submission(base_url, cookie, name)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         return {"ok": True, "items": items}
 
     # -- стейджинг: скачать + распаковать + зарегистрировать в ScannerApi ---
@@ -124,9 +128,8 @@ class SubmissionsApi:
             model_dict = self._scanner_api.register_pending(model_info)
             self._finish("stage", True, "Готово.", extra={"model": model_dict})
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            self._finish("stage", False, str(exc))
+            error = self._error(exc)
+            self._finish("stage", False, error["error"], extra={"need_login": bool(error.get("need_login"))})
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
             self._finish("stage", False, f"Неожиданная ошибка: {exc}")
         finally:
@@ -172,9 +175,8 @@ class SubmissionsApi:
             self._scanner_api.unregister_pending(key)
             self._finish("publish", True, "Опубликовано.")
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            self._finish("publish", False, str(exc))
+            error = self._error(exc)
+            self._finish("publish", False, error["error"], extra={"need_login": bool(error.get("need_login"))})
         except Exception as exc:  # noqa: BLE001
             self._finish("publish", False, f"Неожиданная ошибка: {exc}")
 
@@ -199,8 +201,8 @@ class SubmissionsApi:
             self._scanner_api.unregister_pending_by_submission(name)
             self._finish("reject", True, "Отклонено.")
         except AdminClientError as exc:
-            clear_cached_session(base_url)
-            self._finish("reject", False, str(exc))
+            error = self._error(exc)
+            self._finish("reject", False, error["error"], extra={"need_login": bool(error.get("need_login"))})
         except Exception as exc:  # noqa: BLE001
             self._finish("reject", False, f"Неожиданная ошибка: {exc}")
 

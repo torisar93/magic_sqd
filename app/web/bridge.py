@@ -28,6 +28,7 @@ from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
 from .. import catalog_setup, client_config, ui_bundle
+from ..admin_config import clear_saved_login
 from ..adb_utils import find_adb_path
 from ..pending_install_logs import (
     append_current, finalize_to_queue, recover_stale_current, seal_abandoned_session, send_one, send_queue,
@@ -73,16 +74,15 @@ class WebApi:
         # аккаунта техника (auth_config.py, НЕ логин/пароль в открытом виде,
         # а уже выданный сервером токен) сама включает admin_mode, если у
         # этого аккаунта есть права администратора (см. AuthApi.status —
-        # заодно поднимает и кешированную ADMIN_SESSION_COOKIE, которой
-        # пользуется весь существующий admin_client.py). Старый отдельный
-        # admin_saved_login.json (AdminApi.try_saved_login) оставлен как
-        # запасной путь для уже разблокировавших админ-режим ДО этой правки
-        # — но новых входов через него больше нет, только через auth_login.
+        # та же сессия аккаунта кладётся и в кеш admin_client.py).
+        # Единый вход (11.10): права администратора — только по аккаунту. Прежний вход по логину/паролю
+        # веб-кабинета хранил их на диске (admin_saved_login.json) — стираем этот след при каждом запуске.
+        clear_saved_login(base_dir)
         auth_status = self._auth.status()
+        self.auth_startup = auth_status  # интерфейсу: вошёл / вход истёк / нет сети (app_get_info)
         self.auth_email = auth_status.get("email") if auth_status.get("ok") else None
         self.auth_subscriber = bool(auth_status.get("subscriber")) if auth_status.get("ok") else False
-        self.admin_mode = (admin_mode or auth_status.get("is_admin", False)
-                            or self._admin.try_saved_login().get("ok", False))
+        self.admin_mode = admin_mode or bool(auth_status.get("is_admin"))
         self._car_editor = CarEditorApi(base_dir, self.cars_dir, self._scanner, self._auth)
         self._submissions = SubmissionsApi(base_dir, self.cars_dir, self._scanner)
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner,
@@ -136,6 +136,9 @@ class WebApi:
             "under_program_files": is_under_program_files(self.base_dir),
             "auth_email": self.auth_email,
             "auth_subscriber": self.auth_subscriber,
+            # Всё об аккаунте (email, is_admin, subscriber, session_expires_at, expired/offline …) — для кнопки
+            # и окна аккаунта; новые поля сервера доходят сюда без выпуска программы.
+            "auth_account": self.auth_startup,
             "app_version": APP_VERSION,
             "os": os_description(),
             # Выпуск интерфейса с сервера (app/ui_bundle.py); 0 — встроенный.
@@ -446,36 +449,8 @@ class WebApi:
     def admin_get_info(self) -> dict:
         return self._admin.get_info()
 
-    def admin_login(self, username: str, password: str, remember: bool = False) -> dict:
-        # Единственный вход в админку теперь (см. WebApi.__init__ — отдельной
-        # admin-сборки больше нет) — успешный логин сразу включает admin_mode
-        # для текущего сеанса (см. settings.js: 10 тапов по версии в "О
-        # приложении" → dialogs.js: adminLogin.openUnlock).
-        result = self._admin.login_only(username, password, remember)
-        if result.get("ok"):
-            self.admin_mode = True
-            self._settings.admin_mode = True
-        return result
-
-    def admin_try_saved_login(self) -> dict:
-        return self._admin.try_saved_login()
-
-    def admin_forget_saved_login(self) -> dict:
-        return self._admin.forget_saved_login()
-
-    def admin_logout(self) -> dict:
-        """Выход из режима администратора в текущем сеансе — обратное к
-        admin_login (см. выше): чистит сохранённый логин/пароль и
-        кешированную сессию (см. AdminApi.logout), и сразу выключает
-        admin_mode здесь и в SettingsApi, без перезапуска программы."""
-        result = self._admin.logout()
-        if result.get("ok"):
-            self.admin_mode = False
-            self._settings.admin_mode = False
-        return result
-
-    def admin_start_upload(self, username: str, password: str) -> dict:
-        return self._admin.start_upload(username, password)
+    def admin_start_upload(self) -> dict:
+        return self._admin.start_upload()
 
     # -- auth_api (единая кнопка "Войти" — аккаунт техника, заодно и
     # admin_mode, если у аккаунта есть права, см. app/web/api/auth_api.py) --
@@ -501,6 +476,26 @@ class WebApi:
             self.admin_mode = False
             self._settings.admin_mode = False
             self._sync.resync_catalog()
+        return result
+
+    def auth_state(self) -> dict:
+        """Что известно об аккаунте сейчас (без сети) — кнопка и окно аккаунта."""
+        return self._auth.state()
+
+    def auth_refresh(self) -> dict:
+        """Свежее состояние аккаунта с сервера (продлевает вход): срок, права, подписка. Вход истёк —
+        {"expired": True}: режим администратора выключается, интерфейс показывает «Вход истёк»."""
+        result = self._auth.refresh()
+        if result.get("ok"):
+            self.auth_email = result.get("email")
+            self.auth_subscriber = bool(result.get("subscriber"))
+            self.admin_mode = bool(result.get("is_admin"))
+            self._settings.admin_mode = self.admin_mode
+        elif result.get("expired"):
+            self.auth_email = None
+            self.auth_subscriber = False
+            self.admin_mode = False
+            self._settings.admin_mode = False
         return result
 
     def auth_refresh_subscriber(self) -> dict:
@@ -573,9 +568,6 @@ class WebApi:
 
     def car_get_publish_target(self) -> dict:
         return self._car_editor.get_publish_target(self.admin_mode)
-
-    def car_admin_login(self, base_url: str, username: str, password: str) -> dict:
-        return self._car_editor.admin_login(base_url, username, password)
 
     def car_get_access(self, edit_model_key) -> dict:
         return self._car_editor.get_access(edit_model_key, self.admin_mode)

@@ -1,16 +1,14 @@
-"""Обёртка admin_client.py/admin_config.py для диалога "Выгрузить на сервер"
-(только в админ-сборке) — портировано из app/admin_upload_dialog.py. Тот же
-воркер-поток (логин -> upload_dir(cars) -> upload_dir(apk)), прогресс через
-app/web/events.py вместо queue.Queue+self.after(100, ...).
+"""Обёртка admin_client.py/admin_config.py для диалога "Выгрузить на сервер" — воркер-поток
+(upload_dir(cars) -> upload_dir(apk)) по сессии аккаунта администратора (единый вход, 11.10: см.
+NEED_LOGIN_TEXT ниже), прогресс через app/web/events.py.
 
 Плюс диалог "Добавить APK в общую библиотеку..." (см. add_apk/
 list_apk_categories/create_apk_category) — управление
 cars-независимой общей папкой apk/ (категории — подпапки верхнего уровня,
 см. app/scanner.py:scan_apks) прямо из программы, без похода руками в
 проводник: копирует файл, пишет рядом <файл>.json с "красивым" именем/
-описанием (тот же формат, что уже читает scan_apk_dir), и, если уже
-выполнен вход через "Выгрузить на сервер..." в эту же сессию (см.
-get_cached_session), публикует ТОЛЬКО этот файл на сервер в фоне (см.
+описанием (тот же формат, что уже читает scan_apk_dir), и, если выполнен
+вход в аккаунт администратора (см. get_cached_session), публикует ТОЛЬКО этот файл на сервер в фоне (см.
 _publish_apk_async/upload_single_apk) — не всю apk/ целиком: раньше каждое
 добавление одного APK перезаливало всю библиотеку архивом (upload_dir), и
 с ростом библиотеки каждая следующая загрузка становилась тяжелее и
@@ -23,16 +21,20 @@ from pathlib import Path
 
 from ..events import event_bridge
 from ...admin_client import (AdminClientError, clear_cached_session, delete_cars_path, edit_apk_metadata,
-                              get_cached_session, list_cars_path, login, set_cached_session, upload_dir,
-                              upload_single_apk)
+                              get_cached_session, list_cars_path, upload_dir, upload_single_apk)
 from ...admin_client import browse_tree as _remote_browse_tree
 from ...admin_client import copy_path as _remote_copy_path
 from ...admin_client import create_folder as _remote_create_folder
 from ...admin_client import delete_tree_path as _remote_delete_tree_path
 from ...admin_client import move_path as _remote_move_path
-from ...admin_config import clear_saved_login, get_admin_base_url, load_saved_login, save_saved_login
+from ...admin_config import get_admin_base_url
 from ...car_generator import INVALID_NAME_CHARS
 from ...content_sync import list_shared_apk_catalog
+
+# Единый вход (11.10): админ-действия идут по сессии аккаунта администратора (её кладёт в кеш admin_client
+# auth_api). Нет сессии или она истекла — {"need_login": True}: интерфейс открывает то же окно входа
+# (authDialog.requireLogin) и повторяет действие. Входа по логину/паролю веб-кабинета у программы больше нет.
+NEED_LOGIN_TEXT = "Нужен вход в аккаунт администратора."
 
 
 class AdminApi:
@@ -50,76 +52,27 @@ class AdminApi:
     def get_info(self) -> dict:
         return {"available": self.base_url is not None, "base_url": self.base_url}
 
-    def login_only(self, username: str, password: str, remember: bool = False) -> dict:
-        """Логин — используется и опциональной кнопкой "Войти в админку..."
-        (получить кешированную сессию для "Добавить APK.../Файлы на
-        сервере..." без похода в тяжёлую "Выгрузить на сервер..."), и
-        обязательным экраном логина при старте admin-сборки (см. app.js:
-        pywebviewready/dialogs.js:adminLogin.requireLogin). remember — если
-        True, логин/пароль сохраняются локально (см. admin_config.
-        save_saved_login) для автовхода при следующих запусках (см.
-        try_saved_login ниже); явный снятый чекбокс НЕ стирает уже
-        сохранённые данные сам по себе — для этого есть forget_saved_login."""
+    def _need_login(self) -> dict:
+        return {"ok": False, "need_login": True, "error": NEED_LOGIN_TEXT}
+
+    def _error(self, exc: AdminClientError) -> dict:
+        """Отказ сервера: истекла сессия — {"need_login": True} (интерфейс откроет вход и повторит действие)."""
+        if "истекла" in str(exc):
+            if self.base_url:
+                clear_cached_session(self.base_url)
+            return self._need_login()
+        return {"ok": False, "error": str(exc)}
+
+    def start_upload(self) -> dict:
         if self.base_url is None:
             return {"ok": False, "error": "admin.json не настроен."}
-        if not username or not password:
-            return {"ok": False, "error": "Введите логин и пароль."}
-        try:
-            cookie = login(self.base_url, username, password)
-        except AdminClientError as exc:
-            return {"ok": False, "error": str(exc)}
-        set_cached_session(self.base_url, cookie)
-        if remember:
-            save_saved_login(self.base_dir, username, password)
-        return {"ok": True}
-
-    def try_saved_login(self) -> dict:
-        """Тихая попытка входа сохранёнными логином/паролем (см.
-        admin_config.load_saved_login) — вызывается один раз при старте
-        admin-сборки ДО показа обязательного диалога логина (см. app.js).
-        Неудача (файла нет, пароль сменился на сервере, сеть недоступна) —
-        просто {"ok": False}, без текста ошибки: дальше всё равно покажется
-        обычный диалог логина, объяснять тут нечего."""
-        if self.base_url is None:
-            return {"ok": False}
-        saved = load_saved_login(self.base_dir)
-        if saved is None:
-            return {"ok": False}
-        try:
-            cookie = login(self.base_url, saved["username"], saved["password"])
-        except AdminClientError:
-            return {"ok": False}
-        set_cached_session(self.base_url, cookie)
-        return {"ok": True, "username": saved["username"]}
-
-    def forget_saved_login(self) -> dict:
-        clear_saved_login(self.base_dir)
-        return {"ok": True}
-
-    def logout(self) -> dict:
-        """Полный выход из режима администратора — в отличие от
-        forget_saved_login (только чистит сохранённые логин/пароль на
-        диске, не трогая текущую сессию), тут ещё чистится кешированная
-        cookie-сессия (см. get_cached_session/upload_dir и т.п. — без этого
-        уже скрытые кнопки "Выгрузить на сервер"/публикация заявок всё
-        равно продолжили бы работать с той же сессией, если бы админ
-        включил их обратно в этом же запуске программы без повторного
-        входа). admin_mode на самой WebApi сбрасывает вызывающий (см.
-        bridge.py: admin_logout) — отсюда наружу он не виден."""
-        clear_saved_login(self.base_dir)
-        if self.base_url:
-            clear_cached_session(self.base_url)
-        return {"ok": True}
-
-    def start_upload(self, username: str, password: str) -> dict:
-        if self.base_url is None:
-            return {"ok": False, "error": "admin.json не настроен."}
-        if not username or not password:
-            return {"ok": False, "error": "Введите логин и пароль."}
+        cookie = get_cached_session(self.base_url)
+        if not cookie:
+            return self._need_login()
         if self._running:
             return {"ok": False, "error": "Загрузка уже выполняется."}
         self._cancel_flag = threading.Event()
-        self._thread = threading.Thread(target=self._worker, args=(username, password), daemon=True)
+        self._thread = threading.Thread(target=self._worker, args=(cookie,), daemon=True)
         self._thread.start()
         return {"ok": True}
 
@@ -132,28 +85,25 @@ class AdminApi:
         if self._cancel_flag.is_set():
             raise AdminClientError("Загрузка остановлена пользователем.")
 
-    def _worker(self, username: str, password: str) -> None:
+    def _worker(self, cookie: str) -> None:
         try:
-            self._log("Вхожу в админку...")
-            cookie = login(self.base_url, username, password)
-            set_cached_session(self.base_url, cookie)
-            self._log("Вход выполнен.")
-
             cars_count = upload_dir(self.base_url, cookie, "cars", self.base_dir / "cars",
                                      log=self._log, check_cancelled=self._check_cancelled)
             apk_count = upload_dir(self.base_url, cookie, "apk", self.base_dir / "apk",
                                     log=self._log, check_cancelled=self._check_cancelled)
             self._finish(True, f"Готово: cars/ — {cars_count} файлов, apk/ — {apk_count} файлов.")
         except AdminClientError as exc:
-            self._finish(False, str(exc))
+            error = self._error(exc)
+            self._finish(False, error["error"], need_login=bool(error.get("need_login")))
         except Exception as exc:  # noqa: BLE001 - показываем пользователю любую ошибку
             self._finish(False, f"Неожиданная ошибка: {exc}")
 
     def _log(self, message) -> None:
         event_bridge.push({"kind": "admin_log", "text": str(message)})
 
-    def _finish(self, success: bool, message: str) -> None:
-        event_bridge.push({"kind": "admin_finished", "success": success, "message": message})
+    def _finish(self, success: bool, message: str, need_login: bool = False) -> None:
+        event_bridge.push({"kind": "admin_finished", "success": success, "message": message,
+                           "need_login": need_login})
 
     # -- общая библиотека apk/ (см. app/scanner.py:scan_apks) --------------
     def list_apk_categories(self) -> list[str]:
@@ -233,9 +183,8 @@ class AdminApi:
         if not (self.base_url and cookie):
             event_bridge.push({
                 "kind": "apk_upload_log",
-                "text": "Сохранено локально. Не опубликовано на сервере — сначала войдите "
-                        'через "Войти в админку..."/"Выгрузить на сервер..." '
-                        "(сессия входа переиспользуется).",
+                "text": "Сохранено локально. Не опубликовано на сервере — войдите в аккаунт администратора "
+                        "(кнопка аккаунта в шапке) и добавьте файл ещё раз.",
             })
             event_bridge.push({"kind": "apk_upload_finished", "success": True})
             return
@@ -252,10 +201,10 @@ class AdminApi:
             self._apk_log(f"Опубликовано на сервере: {filename}.")
             event_bridge.push({"kind": "apk_upload_finished", "success": True})
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(self.base_url)
-            self._apk_log(f"Не опубликовано на сервере: {exc}")
-            event_bridge.push({"kind": "apk_upload_finished", "success": False})
+            error = self._error(exc)
+            self._apk_log(f"Не опубликовано на сервере: {error['error']}")
+            event_bridge.push({"kind": "apk_upload_finished", "success": False,
+                               "need_login": bool(error.get("need_login"))})
 
     def _apk_log(self, message) -> None:
         event_bridge.push({"kind": "apk_upload_log", "text": str(message)})
@@ -271,7 +220,7 @@ class AdminApi:
             return {"ok": False, "error": "admin.json не настроен."}
         cookie = get_cached_session(self.base_url)
         if not cookie:
-            return {"ok": False, "error": 'Сначала войдите через "Выгрузить на сервер...".'}
+            return self._need_login()
         return self.base_url, cookie
 
     def browse_server_cars(self, rel_path: str) -> dict:
@@ -282,9 +231,7 @@ class AdminApi:
         try:
             items = list_cars_path(base_url, cookie, rel_path)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         return {"ok": True, "items": items}
 
     def delete_server_cars_path(self, rel_path: str) -> dict:
@@ -295,9 +242,7 @@ class AdminApi:
         try:
             delete_cars_path(base_url, cookie, rel_path)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         return {"ok": True}
 
     # -- единый файловый менеджер (см. server/backend.py: GET/DELETE
@@ -329,9 +274,7 @@ class AdminApi:
         try:
             items = _remote_browse_tree(base_url, cookie, root, rel_path)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         return {"ok": True, "items": items}
 
     def delete_tree_path(self, root: str, rel_path: str) -> dict:
@@ -342,9 +285,7 @@ class AdminApi:
         try:
             _remote_delete_tree_path(base_url, cookie, root, rel_path)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         local_target = self._local_root_dir(root) / rel_path
         try:
             if local_target.is_dir():
@@ -366,9 +307,7 @@ class AdminApi:
         try:
             _remote_move_path(base_url, cookie, root, from_rel, to_rel)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         root_dir = self._local_root_dir(root)
         local_from = root_dir / from_rel
         local_to = root_dir / to_rel
@@ -393,9 +332,7 @@ class AdminApi:
         try:
             _remote_copy_path(base_url, cookie, root, from_rel, to_rel)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         root_dir = self._local_root_dir(root)
         local_from = root_dir / from_rel
         local_to = root_dir / to_rel
@@ -423,9 +360,7 @@ class AdminApi:
         try:
             _remote_create_folder(base_url, cookie, root, rel_path)
         except AdminClientError as exc:
-            if "истекла" in str(exc):
-                clear_cached_session(base_url)
-            return {"ok": False, "error": str(exc)}
+            return self._error(exc)
         try:
             (self._local_root_dir(root) / rel_path).mkdir(parents=True, exist_ok=True)
         except OSError:

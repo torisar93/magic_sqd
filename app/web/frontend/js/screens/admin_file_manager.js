@@ -30,6 +30,9 @@
   const closeContextMenu = window.contextMenu.close;
 
   const adminFileManager = (() => {
+    // Единый вход: сервер отказал из-за входа ({need_login}) — тот же вход, после него действие повторяется.
+    const withLogin = (call) => window.authDialog.retryAfterLogin(call, "Файлы на сервере");
+
     let dialog, breadcrumbEl, listEl, upBtn, rootCarsBtn, rootApkBtn, clipboardStatusEl;
     let root = "cars";
     let path = "";
@@ -111,7 +114,7 @@
       const apiFn = clipboard.mode === "copy"
         ? window.pywebview.api.admin_copy_path
         : window.pywebview.api.admin_move_path;
-      const result = await apiFn(clipboard.root, clipboard.relPath, toRel);
+      const result = await withLogin(() => apiFn(clipboard.root, clipboard.relPath, toRel));
       if (!result.ok) {
         await window.notice(result.error, { title: "Вставить", danger: true });
         return;
@@ -123,7 +126,7 @@
     async function onCreateFolder() {
       const name = (await window.promptDialog("Название новой папки:"))?.trim();
       if (!name) return;
-      const result = await window.pywebview.api.admin_create_folder(root, joinPath(path, name));
+      const result = await withLogin(() => window.pywebview.api.admin_create_folder(root, joinPath(path, name)));
       if (!result.ok) {
         await window.notice(result.error, { title: "Создать папку", danger: true });
         return;
@@ -259,7 +262,7 @@
     async function onDelete(item) {
       const what = item.is_dir ? "папку со всем содержимым" : "файл";
       if (!(await window.confirmDialog(`Удалить ${what} «${item.name}»? Это необратимо.`))) return;
-      const result = await window.pywebview.api.admin_delete_tree_path(root, joinPath(path, item.name));
+      const result = await withLogin(() => window.pywebview.api.admin_delete_tree_path(root, joinPath(path, item.name)));
       if (!result.ok) {
         await window.notice(result.error, { title: "Удаление", danger: true });
         return;
@@ -269,7 +272,7 @@
 
     async function moveItem(fromRel, toRel) {
       if (fromRel === toRel) { load(path); return; }
-      const result = await window.pywebview.api.admin_move_path(root, fromRel, toRel);
+      const result = await withLogin(() => window.pywebview.api.admin_move_path(root, fromRel, toRel));
       if (!result.ok) {
         await window.notice(result.error, { title: "Перенос", danger: true });
       }
@@ -277,7 +280,7 @@
     }
 
     async function load(newPath) {
-      const result = await window.pywebview.api.admin_browse_tree(root, newPath);
+      const result = await withLogin(() => window.pywebview.api.admin_browse_tree(root, newPath));
       if (!result.ok) {
         await window.notice(result.error, { title: "Файловый менеджер", danger: true });
         return;

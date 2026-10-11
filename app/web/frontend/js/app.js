@@ -616,7 +616,7 @@ window.addEventListener("pywebviewready", async () => {
   }
 
   applyAdminMode(info.admin_mode);
-  window.authDialog.setLoggedIn(info.auth_email || null, Boolean(info.auth_subscriber));
+  window.authDialog.setAccount(info.auth_account);  // вошёл / вход истёк / нет сети (bridge: auth_startup)
   // Диагностика (см. main_web.py:_enable_debug_log_all, переключается из
   // "Настроек" — settings.js) — показываем client_id в углу, чтобы можно
   // было сверить с папкой debug_logs/<id>/, если включена у нескольких
@@ -666,17 +666,9 @@ window.addEventListener("pywebviewready", async () => {
   document.getElementById("admin-upload-btn").addEventListener("click", () => window.adminDialog.open());
   document.getElementById("admin-add-apk-btn").addEventListener("click", () => window.adminApkDialog.open());
   document.getElementById("admin-browse-btn").addEventListener("click", () => window.adminFileManagerDialog.open());
-  document.getElementById("admin-logout-btn").addEventListener("click", async () => {
-    // Админ теперь просто аккаунт с правами (см. auth_dialog.js) — выход
-    // из режима администратора и выход из аккаунта это одно и то же
-    // действие, отдельного "выключить админку, но остаться в аккаунте"
-    // больше не бывает.
-    if (!(await window.confirmDialog("Выйти из аккаунта?"))) return;
-    await window.pywebview.api.auth_logout();
-    await window.pywebview.api.admin_logout();
-    applyAdminMode(false);
-    window.authDialog.setLoggedIn(null);
-  });
+  // Админ — просто аккаунт с правами (единый вход): выход из режима администратора и выход из аккаунта —
+  // одно действие (auth_dialog.js: logout).
+  document.getElementById("admin-logout-btn").addEventListener("click", () => window.authDialog.logout());
   document.getElementById("log-toggle").addEventListener("click", () => {
     const card = document.getElementById("log-card");
     setLogExpanded(!card.classList.contains("is-expanded"));
