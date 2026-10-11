@@ -3,6 +3,8 @@ from __future__ import annotations
 import concurrent.futures
 import ipaddress
 import os
+import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -261,11 +263,26 @@ class AdbError(RuntimeError):
     pass
 
 
+class AdbTimeoutError(AdbError):
+    """Команда не ответила за отведённое время; output — то, что она успела вывести (по нему видно, что она ждала
+    пароля подтверждения, см. Adb._shell_plain)."""
+
+    def __init__(self, message: str, output: str = ""):
+        super().__init__(message)
+        self.output = output
+
+
 # Changan (прошивка changan_car — UNI-K, CS35 Plus New и родня): команды shell спрашивают пароль подтверждения
 # со своего stdin («please input verify password:»); без него — «verify failed!» и отказ (лог №1073 — ПК, adb install
 # и pm install; №3524–3529 — Android, ни одной установки). Пароль известен (инструкции моделей Changan, владелец
 # 06.10.2026: «adb369875 или adb36987»). Копия — android/.../usb/ShellVerifyPassword.kt.
 VERIFY_PASSWORDS = ("adb369875", "adb36987")
+# Команды установщика пакетов (pm, cmd) — те, что спрашивают пароль. Их запуск без пароля получает stdin из /dev/null:
+# на части магнитол (Changan UNI-V, LAMORE — логи №4782, №4829) ввод adb shell не закрывается, и запрос пароля ждал
+# до таймаута (`pm path` — 30 с, `pm list packages` — 2 мин), а не отвечал сразу «verify failed».
+_PACKAGE_COMMAND = re.compile(r"(?<![\w./-])(?:/system/bin/)?(?:pm|cmd)(?![\w.-])")
+# Файл для установки с паролем (Adb.install): та же папка, что у adb install без потока, имя без пробелов и кириллицы.
+_INSTALL_REMOTE_DIR = "/data/local/tmp"
 
 
 def asks_verify_password(text: str) -> bool:
@@ -285,6 +302,16 @@ def with_verify_password(command: str, password: str) -> str:
 
 def _output(result) -> str:
     return (result.stdout or "") + (result.stderr or "")
+
+
+def _timeout_output(exc: subprocess.TimeoutExpired) -> str:
+    """Что команда успела вывести до таймаута (на POSIX — байты, на Windows — уже текст)."""
+    parts = []
+    for chunk in (exc.output, exc.stderr):
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode("utf-8", "replace")
+        parts.append(chunk or "")
+    return "".join(parts)
 
 
 def strip_verify_prompt(text: str) -> str:
@@ -372,6 +399,9 @@ class Adb:
         self._log = log or (lambda msg: None)
         # Пароль подтверждения команд (Changan, см. VERIFY_PASSWORDS): какой подошёл — тот и подаём дальше сами.
         self.verify_password: str | None = None
+        # Магнитола хоть раз спросила пароль (даже если подходящий ещё не найден) — команды и установка сразу с ним.
+        self.asks_verify_password = False
+        self._no_password_logged = False
 
     def _base_args(self):
         args = [self.adb_path]
@@ -419,7 +449,7 @@ class Adb:
                            "этот инструмент должен быть внутри неё.")
             raise AdbError(message) from exc
         except subprocess.TimeoutExpired as exc:
-            raise AdbError(f"Команда не ответила за {timeout} сек: {' '.join(cmd)}") from exc
+            raise AdbTimeoutError(f"Команда не ответила за {timeout} сек: {' '.join(cmd)}", _timeout_output(exc)) from exc
         if check:
             self._raise_if_failed(cmd, result)
         return result
@@ -448,19 +478,27 @@ class Adb:
         """adb shell; на магнитоле, которая спрашивает пароль подтверждения команд (Changan, см. VERIFY_PASSWORDS),
         подаёт его сам: сначала как есть, при запросе — с известными паролями, подошедший — во все следующие."""
         known = self.verify_password
-        if known is None:
-            result = self.run("shell", command, check=False, timeout=timeout)
-            if asks_verify_password(_output(result)):
-                self._log("Магнитола спрашивает пароль подтверждения команд (Changan) — подаю известный пароль...")
-                result = self._find_verify_password(command, timeout) or result
-                if self.verify_password is None:
-                    self._log(f"Известные пароли подтверждения не подошли ({', '.join(VERIFY_PASSWORDS)}).")
-        else:
+        if known is not None:
             result = self.run("shell", with_verify_password(command, known), check=False, timeout=timeout)
             # Не подошёл и найденный пароль: другой пароль или команда, которой stdin нужен под данные (cat … |
             # pm install -S — пароль туда не подать). Найденный не забываем — следующим командам он нужен.
             if verify_password_failed(_output(result)):
-                result = self._find_verify_password(command, timeout, skip=known) or result
+                retry, fits = self._try_verify_passwords(command, timeout, skip=known)
+                if fits:
+                    result = retry
+        else:
+            # Уже спрашивала (например, при adb install), а подходящий пароль ещё не найден — сразу с паролями.
+            result = None if self.asks_verify_password else self._shell_plain(command, timeout)
+            if result is None or asks_verify_password(_output(result)):
+                if not self.asks_verify_password:
+                    self.asks_verify_password = True
+                    self._log("Магнитола спрашивает пароль подтверждения команд (Changan) — подаю известный пароль...")
+                retry, fits = self._try_verify_passwords(command, timeout)
+                if not fits and not self._no_password_logged:
+                    self._no_password_logged = True
+                    self._log(f"Известные пароли подтверждения не подошли ({', '.join(VERIFY_PASSWORDS)}).")
+                if fits or result is None:
+                    result = retry
         if self.verify_password is not None:
             result = subprocess.CompletedProcess(result.args, result.returncode, strip_verify_prompt(result.stdout),
                                                  strip_verify_prompt(result.stderr))
@@ -468,26 +506,72 @@ class Adb:
             self._raise_if_failed(self._base_args() + ["shell", command], result)
         return result
 
-    def _find_verify_password(self, command: str, timeout, skip: str | None = None) -> subprocess.CompletedProcess | None:
+    def _shell_plain(self, command: str, timeout) -> subprocess.CompletedProcess:
+        """Команда без пароля. pm/cmd получают stdin из /dev/null (см. _PACKAGE_COMMAND): запрос пароля сразу отвечает
+        «verify failed», а не ждёт ввода до таймаута. Если всё же дождался таймаута, но успел спросить пароль, — это
+        тоже запрос: ответ «спросила пароль», дальше shell() подаст его."""
+        plain = f"{{\n{command}\n}} < /dev/null" if command.strip() and _PACKAGE_COMMAND.search(command) else command
+        try:
+            return self.run("shell", plain, check=False, timeout=timeout)
+        except AdbTimeoutError as exc:
+            if not asks_verify_password(exc.output):
+                raise
+            return subprocess.CompletedProcess(self._base_args() + ["shell", plain], 1, exc.output, "")
+
+    def _try_verify_passwords(self, command: str, timeout, skip: str | None = None):
+        """Команда с каждым известным паролем по очереди. (ответ, True) — подошёл (запоминаем его), (последний ответ,
+        False) — нет."""
+        result = None
         for password in VERIFY_PASSWORDS:
             if password == skip:
                 continue
             result = self.run("shell", with_verify_password(command, password), check=False, timeout=timeout)
             if not verify_password_failed(_output(result)):
                 self.verify_password = password
+                self.asks_verify_password = True
                 self._log("Пароль подтверждения подошёл — дальше подаю его в каждую команду сам.")
-                return result
-        return None
+                return result, True
+        return result, False
 
     def install(self, apk_path, reinstall=True, extra_args=None, timeout=180):
+        """adb install. Магнитола спрашивает пароль подтверждения (Changan) — его adb install не передаст: stdin
+        установщика занят самим файлом, и ответ — «please input verify password: verify failed» (логи №4782,
+        №4829). Тогда ставим тем, что делает и сам adb install без потока: файл в /data/local/tmp и pm install с
+        паролем на stdin (владелец, 11.10.2026: «пуш в локал темп и потом pm install … < password»). Если пароль
+        магнитола уже спрашивала — сразу так, не гоняя файл впустую."""
         apk_path = str(apk_path)
+        if self.asks_verify_password:
+            return self._install_with_verify_password(apk_path, reinstall, extra_args, timeout)
         args = ["install"]
         if reinstall:
             args.append("-r")
         if extra_args:
             args += list(extra_args)
         args.append(apk_path)
-        return self.run(*args, timeout=timeout)
+        result = self.run(*args, check=False, timeout=timeout)
+        if asks_verify_password(_output(result)):
+            self.asks_verify_password = True
+            self._log("Магнитола спрашивает пароль подтверждения при установке (Changan) — ставлю с паролем: "
+                      "файл в /data/local/tmp и pm install...")
+            return self._install_with_verify_password(apk_path, reinstall, extra_args, timeout)
+        self._raise_if_failed(self._base_args() + args, result)
+        return result
+
+    def _install_with_verify_password(self, apk_path: str, reinstall, extra_args, timeout) -> subprocess.CompletedProcess:
+        remote = f"{_INSTALL_REMOTE_DIR}/msqd_install_{int(time.time() * 1000)}.apk"
+        self.push(apk_path, remote, timeout=timeout)
+        flags = (["-r"] if reinstall else []) + [shlex.quote(str(arg)) for arg in (extra_args or [])]
+        try:
+            result = self.shell(" ".join(["pm", "install", *flags, remote]), check=False, timeout=timeout)
+        finally:
+            try:
+                self.run("shell", f"rm -f {remote}", check=False, timeout=30)
+            except AdbError:
+                pass  # магнитола пропала — уборка не важна, важна причина выше
+        text = _output(result).strip()
+        if "success" not in text.lower() or "failure" in text.lower():
+            raise AdbError(f"pm install с паролем подтверждения не установил: {text or 'магнитола не ответила'}")
+        return result
 
     def uninstall(self, package, check=False):
         return self.run("uninstall", package, check=check)

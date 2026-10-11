@@ -55,12 +55,23 @@ def test_same_pattern_on_android_and_in_editor():
     assert r"/^py:([A-Za-z]\w*\.[A-Za-z]\w*)$/" in editor
 
 
+# pm/cmd программа шлёт со stdin из /dev/null (adb_utils.Adb._shell_plain: запрос пароля Changan не ждёт ввода) —
+# подставная магнитола выполняет саму команду, как shell.
+_NO_STDIN = re.compile(r"^\{\n(.*)\n\} < /dev/null$", re.S)
+
+
+def _device_args(args: tuple) -> tuple:
+    match = _NO_STDIN.match(args[1]) if args[0] == "shell" else None
+    return (args[0], match.group(1), *args[2:]) if match else args
+
+
 class FakeDevice:
     def __init__(self, pm_answer="Success"):
         self.commands = []
         self.pm_answer = pm_answer
 
     def run(self, *args, check=True, timeout=120):
+        args = _device_args(args)
         self.commands.append(args)
         text = ""
         if args[0] == "shell" and args[1].startswith("pm install"):
@@ -139,7 +150,7 @@ def test_after_first_success_only_that_app_is_skipped(make_ctx, tmp_path):
     original = device.run
 
     def run(*args, **kwargs):
-        if args[0] == "shell" and args[1].startswith("pm install"):
+        if args[0] == "shell" and _device_args(args)[1].startswith("pm install"):
             device.pm_answer = next(answers)
         return original(*args, **kwargs)
 

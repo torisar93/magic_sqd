@@ -4,6 +4,7 @@ ADB на этой магнитоле её не переживает — их в�
 Ответы adb — как у настоящего adbd Android 9 (remount_service.cpp, set_verity_enabled_state_service). Здесь — ПК
 (app/install_context.py); Android — InstallEngine.kt (тот же порядок команд)."""
 from __future__ import annotations
+import re
 import threading
 import zipfile
 from types import SimpleNamespace
@@ -29,6 +30,16 @@ def _apk(tmp_path, name="DuduAutoUi1.001008.apk", libs=(("arm64-v8a", zipfile.ZI
     return path
 
 
+# pm/cmd программа шлёт со stdin из /dev/null (adb_utils.Adb._shell_plain: запрос пароля Changan не ждёт ввода) —
+# подставная магнитола выполняет саму команду, как shell.
+_NO_STDIN = re.compile(r"^\{\n(.*)\n\} < /dev/null$", re.S)
+
+
+def _device_args(args: tuple) -> tuple:
+    match = _NO_STDIN.match(args[1]) if args[0] == "shell" else None
+    return (args[0], match.group(1), *args[2:]) if match else args
+
+
 class FakeDevice:
     """adb на магнитоле: ответы по команде, всё записанное — в commands."""
 
@@ -47,6 +58,7 @@ class FakeDevice:
         self.rebooted = 0
 
     def run(self, *args, check=True, timeout=120):
+        args = _device_args(args)
         self.commands.append(args)
         if args[0] == "shell":
             text = self._shell(args[1])
