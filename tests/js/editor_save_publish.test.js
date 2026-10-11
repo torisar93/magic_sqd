@@ -4,7 +4,7 @@
 // screens/graph_wizard.js (init): окно «Сохранение модели» показывает этапы и процент отправки
 // (car_save_log/car_save_progress), а car_save_finished закрывает его и явно сообщает итог.
 "use strict";
-const { read, slice, assert, run } = require("./_util");
+const { read, slice, assert, run, sleep } = require("./_util");
 
 function mkEvents() {
   const handlers = {};
@@ -16,7 +16,7 @@ function mkEvents() {
 
 module.exports = async function () {
   const file = "app/web/frontend/js/screens/graph_wizard.js";
-  const code = slice(read(file), '    window.events.on("car_save_log", (event) => {', "  // -- вход в админку перед первым", file);
+  const code = slice(read(file), '    window.events.on("car_save_log", (event) => {', "  function setMainProgressVisible(visible) {", file);
   const notices = [], logs = [], sets = [];
   let closed = 0;
   const ctx = {
@@ -59,4 +59,22 @@ module.exports = async function () {
   notices.length = 0;
   events.emit("car_save_finished", { success: true, message: "Сохранено." });
   assert(notices.length === 0, "локальное сохранение заявки — без окна");
+
+  // Единый вход (11.10): вход истёк посреди публикации — то же окно входа, после входа сохранение повторяется теми же
+  // данными; вход отменили — явное «Не опубликовано».
+  const asked = [], restarted = [];
+  let answer = true;
+  ctx.lastSave = { label: "Haval / Jolion — 2026", spec: "{}" };
+  ctx.startSave = (save) => restarted.push(save);
+  ctx.window.authDialog = { requireLogin: (opts) => { asked.push(opts); return Promise.resolve(answer); } };
+  notices.length = 0;
+  events.emit("car_save_finished", { success: true, message: "Готово.", publish: { mode: "admin", ok: false, need_login: true } });
+  await sleep(0);
+  assert(asked.length === 1 && asked[0].needAdmin && /Haval \/ Jolion — 2026/.test(asked[0].reason), "окно входа: " + JSON.stringify(asked));
+  assert(restarted.length === 1 && restarted[0] === ctx.lastSave && notices.length === 0, "после входа — повтор сохранения");
+  answer = false;
+  events.emit("car_save_finished", { success: true, message: "Готово.", publish: { mode: "admin", ok: false, need_login: true } });
+  await sleep(0);
+  assert(restarted.length === 1 && notices.length === 1 && notices[0].title === "Не опубликовано" && notices[0].danger,
+    "вход отменили: " + JSON.stringify(notices));
 };
