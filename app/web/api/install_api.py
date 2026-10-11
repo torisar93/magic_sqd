@@ -1087,7 +1087,8 @@ class InstallApi:
             outcome = rollback(Adb(self.adb_path, device_serial), apps, self._on_log,
                                lambda path, done, total, state: self._push_apk_install(
                                    stage_index, path, done, total, state, "remove"),
-                               helper=self.base_dir / "cars" / "_shared" / HELPER_NAME)
+                               helper=self.base_dir / "cars" / "_shared" / HELPER_NAME,
+                               shared=self.base_dir / "cars" / "_shared")
         except Exception as exc:  # noqa: BLE001 - итог должен дойти до окна в любом случае
             self._on_log(f"Откат в сток прерван: {exc}")
         finally:

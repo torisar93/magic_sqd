@@ -14,7 +14,7 @@ from app.install_context import InstallContext
 from app.uninstall_helper import REMOTE_HELPER, uninstall_via_helper
 
 ROOT = Path(__file__).resolve().parents[1]
-HELPER = ROOT / "cars/_shared/uninstall_helper.dex"
+HELPER = ROOT / "cars/_shared/msqd_pkg_helper.dex"  # с 1.1.2 и у встроенного кода программы (без слова «uninstall»)
 
 
 def _fake_device(answer):
@@ -31,7 +31,8 @@ def test_helper_success_and_cleanup():
     calls, push, shell = _fake_device("Success\n")
     assert uninstall_via_helper(push, shell, HELPER, "ru.kinopoisk") == (True, "")
     assert calls[0] == ("push", str(HELPER), REMOTE_HELPER)
-    assert ("shell", f"CLASSPATH={REMOTE_HELPER} app_process /data/local/tmp MagicSqdUninstaller ru.kinopoisk") in calls
+    assert REMOTE_HELPER == "/data/local/tmp/msqd_pkg_helper.dex"
+    assert ("shell", f"CLASSPATH={REMOTE_HELPER} app_process /data/local/tmp MagicSqdPkgHelper ru.kinopoisk") in calls
     assert calls[-1] == ("shell", f"rm -f {REMOTE_HELPER}")
 
 
@@ -116,9 +117,10 @@ def test_install_context_runs_the_helper_from_shared_dir():
 
 
 def test_helper_dex_is_ours_and_built_from_source():
-    # Прежний uninstall_helper.dex (класс MagicSqdUninstaller) остаётся для встроенного кода версий до 1.1.1; исходник —
-    # тот же код под новым именем (MagicSqdPkgHelper → cars/_shared/msqd_pkg_helper.dex, его зовёт общий код каталога).
-    data = HELPER.read_bytes()
+    # Прежний uninstall_helper.dex (класс MagicSqdUninstaller) остаётся для встроенного кода версий до 1.1.2; исходник —
+    # тот же код под новым именем (MagicSqdPkgHelper → cars/_shared/msqd_pkg_helper.dex: общий код каталога и с 1.1.2
+    # встроенный код программы).
+    data = (ROOT / "cars/_shared/uninstall_helper.dex").read_bytes()
     assert data[:4] == b"dex\n" and b"MagicSqdUninstaller" in data and b"Usage: MagicSqdUninstaller <package>" in data
     new = (ROOT / "cars/_shared/msqd_pkg_helper.dex").read_bytes()
     assert new[:4] == b"dex\n" and b"Usage: MagicSqdPkgHelper <package>" in new and b"MagicSqdUninstaller" not in new
@@ -131,10 +133,16 @@ def test_android_uses_the_same_helper():
     kotlin = ROOT / "android/app/src/main/java/ru/magicsqd/mobile"
     permissions = (kotlin / "usb/AdbPermissions.kt").read_text(encoding="utf-8")
     assert "is AdbShellResult.Rejected -> if (helper != null) removeViaHelper(pkg, helper, log) else Removal.Blocked" in permissions
-    assert 'app_process /data/local/tmp MagicSqdUninstaller $pkg' in permissions
+    assert 'app_process /data/local/tmp MagicSqdPkgHelper $pkg' in permissions and "MagicSqdUninstaller" not in permissions
+    assert 'const val UNINSTALL_HELPER = "msqd_pkg_helper.dex"' in permissions
     assert "removePackage(pkg, log, uninstallHelper(context))" in permissions
     bridge = (kotlin / "WebBridge.kt").read_text(encoding="utf-8")
-    assert re.search(r"AdbPermissions\.removePackage\(pkg, ::pushAdbLog, AdbPermissions\.uninstallHelper\(context\)\)", bridge)
+    # «Откатить в сток»: общим кодом каталога (как ПК), запасной — встроенный способ
+    rollback_fn = bridge[bridge.index("private fun rollbackRemove("):]
+    assert 'pyActionEnabled("uninstall_app")' in rollback_fn
+    assert 'call("adb_permissions", "remove_for_rollback", JSONArray().put(pkg))' in rollback_fn
+    assert re.search(r"AdbPermissions\.removePackage\(pkg, ::pushAdbLog, AdbPermissions\.uninstallHelper\(context\)\)", rollback_fn)
+    assert "when (val r = rollbackRemove(pkg))" in bridge
 
 
 # Свой хелпер каталога (cars/_shared/msqd_pkg_helper.dex): у прежнего в имени файла и класса было слово «uninstall», и

@@ -644,7 +644,7 @@ def uninstall_app(ctx, package: str) -> None:
     elif "error: closed" in text.lower():
         # Geely OneOS/Monji, VOLGA/N155, Jetour T2: pm закрыт прошивкой (логи #797, #962, №1746) — удаляем своим
         # dex-хелпером (_remove_with_helper); нет его — хелпером программы (InstallContext.uninstall_via_helper, с
-        # 1.0.51, имя со словом «uninstall» — на этих прошивках не срабатывает); у старых версий нет и его — как раньше,
+        # 1.0.51; до 1.1.2 — с именем со словом «uninstall», на этих прошивках не срабатывал); у старых версий нет и его — как раньше,
         # владелец (2026-09-25): пусть удаляют штатно на самой магнитоле.
         removed = _remove_with_helper(ctx, package)
         if removed is None:
@@ -657,6 +657,25 @@ def uninstall_app(ctx, package: str) -> None:
                     "удалите штатно на самой магнитоле (Настройки → Приложения).")
     else:
         ctx.log(f"Не удалось удалить: {text or 'устройство не ответило'}")
+
+
+def remove_for_rollback(ctx, package: str) -> str:
+    """«Откатить в сток» (ПК — app/rollback.py, Android — WebBridge.appsRollback, с 1.1.2): удалить то, что поставил
+    этот же запуск этапа «Приложения» — без проверки «штатное ли» (ставили сами). Итог строкой: "removed" — удалено,
+    "blocked" — прошивка не даёт удалять через ADB (техник удаляет штатно на самой магнитоле), "failed: <причина>" — не
+    вышло. Итог в журнал пишет вызывающий; здесь — только ход (dex-хелпер)."""
+    result = ctx.shell(f"pm uninstall {package}", check=False)
+    text = " ".join(((result.stdout or "") + " " + (result.stderr or "")).split())
+    if "success" in text.lower() and "failure" not in text.lower():
+        return "removed"
+    if "error: closed" in text.lower():
+        # pm закрыт прошивкой (Geely OneOS/Monji, VOLGA/N155, Jetour T2) — свой dex-хелпер, как у uninstall_app.
+        removed = _remove_with_helper(ctx, package)
+        if removed is None:
+            via_helper = getattr(ctx, "uninstall_via_helper", None)
+            removed = via_helper is not None and via_helper(package)
+        return "removed" if removed else "blocked"
+    return "failed: " + (text or "устройство не ответило")
 
 
 def _set_enabled_state(ctx, command: str, fail_verb: str) -> None:

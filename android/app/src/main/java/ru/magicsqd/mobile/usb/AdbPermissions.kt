@@ -442,8 +442,10 @@ object AdbPermissions {
             is AdbShellResult.Failed -> Removal.Failed(r.reason)
         }
 
-    const val UNINSTALL_HELPER = "uninstall_helper.dex"
-    private const val UNINSTALL_HELPER_REMOTE = "/data/local/tmp/uninstall_helper.dex"
+    // С 1.1.2 — хелпер без слова «uninstall» в имени файла и класса: прошивки, закрывшие pm uninstall, отклоняют любую
+    // shell-команду с ним (даже chmod и rm файла — лог №4649), и прежний uninstall_helper.dex не сработал ни разу.
+    const val UNINSTALL_HELPER = "msqd_pkg_helper.dex"
+    private const val UNINSTALL_HELPER_REMOTE = "/data/local/tmp/msqd_pkg_helper.dex"
     private val PACKAGE_NAME = Regex("[A-Za-z0-9_.]+")
 
     fun uninstallHelper(context: android.content.Context): File = File(context.filesDir, "cars/_shared/$UNINSTALL_HELPER")
@@ -473,7 +475,7 @@ object AdbPermissions {
         if (pushed is AdbPushResult.Failed) return Removal.Failed(pushed.reason)
         safeShell("chmod 644 $UNINSTALL_HELPER_REMOTE", log)
         val text = when (val r = safeShell(
-            "CLASSPATH=$UNINSTALL_HELPER_REMOTE app_process /data/local/tmp MagicSqdUninstaller $pkg", log, 90_000)) {
+            "CLASSPATH=$UNINSTALL_HELPER_REMOTE app_process /data/local/tmp MagicSqdPkgHelper $pkg", log, 90_000)) {
             is AdbShellResult.Output -> r.text.trim()
             is AdbShellResult.Rejected -> "команда отклонена: ${r.reason}"
             is AdbShellResult.Failed -> return Removal.Failed(r.reason)

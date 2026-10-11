@@ -1,17 +1,20 @@
 """Удаление приложения dex-хелпером — когда магнитола не пускает «pm uninstall» (adb отвечает «error: closed»:
 VOLGA/Geely N155, Geely OneOS/Monji — логи №797, №962, №1664, №1746; «Откатить в сток» упирался в «удалите
-штатно»). Хелпер наш: исходник и сборка — helpers/uninstall_helper/, готовый файл — cars/_shared/uninstall_helper.dex.
+штатно»). Хелпер наш: исходник и сборка — helpers/uninstall_helper/, готовый файл — cars/_shared/msqd_pkg_helper.dex.
 Запуск через app_process от имени shell — тот же путь, что у хелпера установки dex_shell_helper.dex, его прошивка
 пропускает. Проверено на эмуляторе Android 9: установленное — «Success», штатное — «Failure [DELETE_FAILED_…]».
-Android — AdbPermissions.kt: removeViaHelper."""
+С 1.1.2 — новое имя файла и класса: прежние (uninstall_helper.dex / MagicSqdUninstaller) содержали слово
+«uninstall», а эти прошивки отклоняют любую shell-команду с ним (даже chmod и rm файла — лог №4649), и хелпер за 21
+попытку не сработал ни разу. Основной путь отката — общий код каталога (adb_permissions.remove_for_rollback), этот —
+запасной. Android — AdbPermissions.kt: removeViaHelper."""
 from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Callable
 
-HELPER_NAME = "uninstall_helper.dex"
-REMOTE_HELPER = "/data/local/tmp/uninstall_helper.dex"
-ENTRY_CLASS = "MagicSqdUninstaller"
+HELPER_NAME = "msqd_pkg_helper.dex"
+REMOTE_HELPER = "/data/local/tmp/msqd_pkg_helper.dex"
+ENTRY_CLASS = "MagicSqdPkgHelper"
 _PACKAGE_RE = re.compile(r"[A-Za-z0-9_.]+")
 
 

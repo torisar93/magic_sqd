@@ -1476,13 +1476,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 return@runExclusive
             }
             pushAdbLog("Откат в сток: удаляю приложения, поставленные сейчас (${apps.size}).")
+            labCancelInstall = false
             for ((i, app) in apps.withIndex()) {
                 val pkg = app.optString("package")
                 val name = app.optString("name").ifEmpty { pkg }
                 val path = app.optString("path")
                 pushApkProgress(stageIndex, path, i, apps.size, "running", ApkOperationProgress("remove"))
                 pushAdbLog("Удаляю приложение: $pkg")
-                when (val r = AdbPermissions.removePackage(pkg, ::pushAdbLog, AdbPermissions.uninstallHelper(context))) {
+                when (val r = rollbackRemove(pkg)) {
                     AdbPermissions.Removal.Removed -> {
                         pushAdbLog("Удалено: $name")
                         removed.put(pkg)
@@ -1504,6 +1505,25 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 .put("removed", removed).put("manual", manual).put("failed", failed)
                 .put("not_connected", !AdbSession.isConnected))
         }
+    }
+
+    /** Удалить один пакет для «Откатить в сток» (с 1.1.2): общим кодом каталога — adb_permissions.remove_for_rollback,
+     *  тот же, что на ПК (app/rollback.py), — если сервер перевёл удаление на него (android_py_actions: uninstall_app);
+     *  так правки удаления приходят с каталогом. Не включено или кода нет — встроенным способом (AdbPermissions). */
+    private fun rollbackRemove(pkg: String): AdbPermissions.Removal {
+        if (pyActionEnabled("uninstall_app")) {
+            val r = pyBridge().call("adb_permissions", "remove_for_rollback", JSONArray().put(pkg))
+            val answer = r.result as? String
+            when {
+                r.ok && answer == "removed" -> return AdbPermissions.Removal.Removed
+                r.ok && answer == "blocked" -> return AdbPermissions.Removal.Blocked
+                r.ok && answer != null && answer.startsWith("failed") ->
+                    return AdbPermissions.Removal.Failed(answer.substringAfter(":").trim().ifEmpty { "устройство не ответило" })
+                !r.ok && !r.unavailable -> return AdbPermissions.Removal.Failed(r.error.ifBlank { "общий код не ответил" })
+                else -> pushAdbLog("Общий код каталога недоступен (${r.error.ifBlank { "непонятный ответ" }}) — удаляю встроенным способом.")
+            }
+        }
+        return AdbPermissions.removePackage(pkg, ::pushAdbLog, AdbPermissions.uninstallHelper(context))
     }
 
     /** Wi-Fi ADB на этапе приложений: сначала СКАЧАТЬ выбранное (пока у телефона есть интернет), и только
