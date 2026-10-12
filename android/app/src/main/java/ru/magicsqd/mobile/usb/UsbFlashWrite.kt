@@ -245,6 +245,64 @@ fun writeFileToUsb(
     throw UsbWriteFailedException(usbWriteFailureMessage(fileName, errors), errors.last())
 }
 
+/** Файл плана записи: что (local — путь на телефоне) и куда (dest — путь на флешке). */
+data class UsbPlanFile(val local: String, val dest: String, val size: Long)
+
+/** План записи на флешку общим кодом каталога (flash_plan.py → flash_writer.make_plan → mobile_bridge.usb_plan,
+ * владелец 12.10.2026: «делай вынос») — что скачать и куда положить решает он, здесь — только простые операции:
+ * убрать файлы в корне флешки (removeOnFlash), записать файл по пути (writeFileToUsb). localCleanup — папки,
+ * сохранённые на телефоне файлом (до 1.1.6), их убирают до скачивания. source — "server" или "builtin". */
+data class UsbPlan(
+    val files: List<UsbPlanFile>,
+    val localCleanup: List<String>,
+    val removeOnFlash: List<String>,
+    val source: String,
+)
+
+/** Убирает из корня флешки файлы плана (триггеры прошлого шага) — тексты те же, что у removeOtherTriggerFlags. */
+fun removeFlashFiles(fs: FileSystem, names: List<String>, log: (String) -> Unit) {
+    for (name in names) {
+        val existing = fs.rootDirectory.search(name) ?: continue
+        if (existing.isDirectory) continue
+        try {
+            existing.delete()
+        } catch (e: IOException) {
+            throw UsbWriteFailedException("Не удалось убрать с флешки $name от прошлого шага (${e.message}) — иначе магнитола " +
+                "снова сработает на него. Удалите файл вручную или отформатируйте флешку.", e)
+        }
+        log("Убран с флешки $name от прошлого шага — иначе магнитола снова сработает на него.")
+    }
+}
+
+/** Запись по плану (usbRunStage): каждый файл — по своему пути на флешке; чего нет на телефоне — «Файл не скачан»
+ * до записи. Ошибки — как у writeUsbStage. */
+fun writeUsbPlan(
+    plan: UsbPlan,
+    log: (String) -> Unit,
+    onProgress: (path: String, bytesDone: Long, bytesTotal: Long, filesDone: Int, filesTotal: Int, state: String) -> Unit =
+        { _, _, _, _, _, _ -> },
+): StageRunResult {
+    val fs = try {
+        UsbFlashSession.requireFs()
+    } catch (e: Exception) {
+        return StageRunResult.Failed(e.message ?: "Флешка не подключена")
+    }
+    plan.files.firstOrNull { !File(it.local).isFile }?.let { return StageRunResult.Failed("Файл не скачан: ${it.local}") }
+    val filesTotal = plan.files.size
+    return try {
+        removeFlashFiles(fs, plan.removeOnFlash, log)
+        plan.files.forEachIndexed { done, file ->
+            writeFileToUsb(fs, File(file.local), file.dest, log, done, filesTotal, onProgress)
+        }
+        StageRunResult.Success
+    } catch (e: UsbWriteFailedException) {
+        StageRunResult.Failed(e.message.orEmpty())
+    } catch (e: Exception) {
+        UsbFlashSession.noteFailure(e.message)
+        StageRunResult.Failed(if (e is IOException) usbWriteFailureMessage("файлы", listOf(e)) else "${e.javaClass.simpleName}: ${e.message}")
+    }
+}
+
 /**
  * Исполняет "usb"-этап _wizard_spec.json целиком: файлы модели (usb_files —
  * копируются в КОРЕНЬ флешки, аналог desktop ctx.copy_dir(usb_dir, "") для

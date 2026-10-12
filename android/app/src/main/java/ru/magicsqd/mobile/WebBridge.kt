@@ -29,6 +29,9 @@ import ru.magicsqd.mobile.usb.StageRunResult
 import ru.magicsqd.mobile.usb.UsbFlashSession
 import ru.magicsqd.mobile.usb.readQrAdbBugreportZip
 import ru.magicsqd.mobile.usb.scanUsbStageItems
+import ru.magicsqd.mobile.usb.UsbPlan
+import ru.magicsqd.mobile.usb.UsbPlanFile
+import ru.magicsqd.mobile.usb.writeUsbPlan
 import ru.magicsqd.mobile.usb.writeQrAdbFlag
 import ru.magicsqd.mobile.usb.writeQrAdbPrepFlag
 import ru.magicsqd.mobile.usb.writeUsbStage
@@ -1700,10 +1703,55 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val selectedArr = args.optJSONArray("selectedApks") ?: JSONArray()
         val selectedApks = (0 until selectedArr.length()).map { selectedArr.getString(it) }
         val items = JSONArray()
-        scanUsbStageItems(files, sharedFolderDir, selectedApks).forEach { item ->
-            items.put(JSONObject().put("name", item.name).put("path", item.path).put("size", item.size))
+        val plan = usbPlan(files, sharedFolderDir, selectedApks, args.optString("apksDest", ""), withManifest = false)
+        if (plan != null) {
+            plan.files.forEach { file ->
+                val local = File(file.local)
+                items.put(JSONObject().put("name", local.name).put("path", file.local)
+                    .put("size", if (local.isFile) local.length() else file.size))
+            }
+        } else {
+            scanUsbStageItems(files, sharedFolderDir, selectedApks).forEach { item ->
+                items.put(JSONObject().put("name", item.name).put("path", item.path).put("size", item.size))
+            }
         }
         return JSONObject().put("ok", true).put("items", items).toString()
+    }
+
+    /** План записи на флешку общим кодом каталога (mobile_bridge.usb_plan → flash_writer.make_plan: серверный
+     * cars/_shared/flash_plan.py с подписью или встроенный, владелец 12.10.2026: «делай вынос»). null — не сложился:
+     * пишем по-старому (writeUsbStage). withManifest — сверить с сервером (папки комплекта, недокачанное); для
+     * usbListItems — нет: вызов синхронный, сеть не трогаем. */
+    private fun usbPlan(files: List<String>, sharedFolderDir: File?, selectedApks: List<String>, apksDest: String,
+                        withManifest: Boolean): UsbPlan? {
+        return try {
+            val args = JSONObject().put("files", JSONArray(files)).put("selected_apks", JSONArray(selectedApks))
+                .put("apks_dest", apksDest).put("shared", sharedFolderDir?.path ?: JSONObject.NULL)
+            val result = JSONObject(pyModule("mobile_bridge").callAttr(
+                "usb_plan", context.filesDir.absolutePath, BASE_URL, args.toString(), withManifest).toString())
+            val logLines = result.optJSONArray("log") ?: JSONArray()
+            for (i in 0 until logLines.length()) pushAdbLog(logLines.getString(i))
+            if (!result.optBoolean("ok")) {
+                pushAdbLog("Список файлов для флешки не составлен (${result.optString("error")}) — пишу по-старому.")
+                return null
+            }
+            val plan = result.getJSONObject("plan")
+            val filesArr = plan.getJSONArray("files")
+            fun strings(name: String): List<String> =
+                plan.optJSONArray(name)?.let { arr -> (0 until arr.length()).map { arr.getString(it) } } ?: emptyList()
+            UsbPlan(
+                files = (0 until filesArr.length()).map { i ->
+                    val item = filesArr.getJSONObject(i)
+                    UsbPlanFile(item.getString("local"), item.getString("dest"), item.optLong("size", 0L))
+                },
+                localCleanup = strings("local_cleanup"),
+                removeOnFlash = strings("remove_on_flash"),
+                source = plan.optString("source"),
+            )
+        } catch (e: Exception) {
+            pushAdbLog("Список файлов для флешки не составлен (${e.message ?: e.javaClass.simpleName}) — пишу по-старому.")
+            null
+        }
     }
 
     /** Исполняет "usb"-этап: файлы модели (в корень флешки), опционально
@@ -1734,28 +1782,40 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     val sink = DownloadSink(::pushAdbLog) { done, total ->
                         pushApkProgress(stageIndex, "", 0, 0, "running", ApkOperationProgress("download", done, total))
                     }
-                    ensureApksDownloaded(files + selectedApks, sink = sink)
+                    // План записи общим кодом каталога: папки комплекта — по манифесту сервера (раньше уходили на
+                    // флешку файлом со списком папки, логи №529, №5420), файлы — по путям плана. Не сложился —
+                    // по-старому.
                     if (sharedFolder.isNotBlank()) syncSharedFolder(sharedFolder, sink)
+                    val usbPlan = usbPlan(files, sharedFolderDir, selectedApks, apksDest, withManifest = true)
+                    if (usbPlan != null) {
+                        if (usbPlan.source == "server") pushAdbLog("Список файлов для флешки — общим кодом каталога.")
+                        usbPlan.localCleanup.forEach { path -> File(path).takeIf { it.isFile }?.delete() }
+                        ensureApksDownloaded(usbPlan.files.map { it.local }, sink = sink)
+                    } else {
+                        ensureApksDownloaded(files + selectedApks, sink = sink)
+                    }
                     sink.finish()
-                    val plan = scanUsbStageItems(files, sharedFolderDir, selectedApks)
+                    val planned: List<Long> = usbPlan?.files?.map { File(it.local).length() }
+                        ?: scanUsbStageItems(files, sharedFolderDir, selectedApks).map { it.size }
                     val writeStartedAt = System.currentTimeMillis()
                     var filesWritten = 0
                     // "write" — своя фаза записи на флешку в кольце (progress08.js: «Запись на флешку», под кольцом —
                     // файл и «файл N из M»); раньше шла фазой установки "transfer", и над записью стояло «Передача
                     // приложения».
-                    val written = writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog,
-                        onProgress = { path, bytesDone, bytesTotal, filesDone, filesTotal, state ->
-                            filesWritten = filesDone
-                            pushApkProgress(stageIndex, path, filesDone, filesTotal, state,
-                                ApkOperationProgress("write", bytesDone, bytesTotal))
-                        })
+                    val onWritten = { path: String, bytesDone: Long, bytesTotal: Long, filesDone: Int, filesTotal: Int, state: String ->
+                        filesWritten = filesDone
+                        pushApkProgress(stageIndex, path, filesDone, filesTotal, state,
+                            ApkOperationProgress("write", bytesDone, bytesTotal))
+                    }
+                    val written = if (usbPlan != null) writeUsbPlan(usbPlan, ::pushAdbLog, onWritten)
+                        else writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog, onWritten)
                     val took = DownloadSink.durationText(System.currentTimeMillis() - writeStartedAt)
                     pushAdbLog(
                         if (written is StageRunResult.Success) {
-                            "Запись на флешку закончена: ${DownloadSink.files(plan.size)}, " +
-                                "${DownloadSink.megabytes(plan.sumOf { it.size })} за $took."
+                            "Запись на флешку закончена: ${DownloadSink.files(planned.size)}, " +
+                                "${DownloadSink.megabytes(planned.sum())} за $took."
                         } else {
-                            "Запись на флешку прервалась: записано $filesWritten из ${DownloadSink.ofFiles(plan.size)} за $took."
+                            "Запись на флешку прервалась: записано $filesWritten из ${DownloadSink.ofFiles(planned.size)} за $took."
                         }
                     )
                     written

@@ -2333,4 +2333,9 @@ window.I18N_EN = {
   "Компьютер не может прочитать файлы на флешке — её файловая система повреждена. Так бывает, если флешку вынули, пока магнитола или компьютер на неё писали.": "The computer can't read the files on the flash drive — its file system is damaged. This happens if the flash drive was removed while the head unit or the computer was writing to it.",
   "Отметьте «Отформатировать перед записью» и запишите файлы заново — все файлы на флешке удалятся.": "Check “Format before writing” and write the files again — all files on the flash drive will be deleted.",
   "Если ошибка повторяется — возьмите другую флешку.": "If the error repeats, use another flash drive.",
+  "Файл не скачан: «{name}» — проверьте интернет и повторите запись. Флешку программа не трогала.": "File not downloaded: “{name}” — check the internet connection and write again. The program didn't touch the flash drive.",
+  "Список файлов для флешки — общим кодом каталога.": "Flash drive file list — made by the catalog's shared code.",
+  "Общий код каталога для флешки не годится ({why}) — список файлов составлен встроенным.": "The catalog's shared code for the flash drive doesn't fit ({why}) — the file list was made by the built-in one.",
+  "Список файлов для флешки не составлен ({error}) — пишу по-старому.": "The flash drive file list wasn't made ({error}) — writing the old way.",
+  "Файл не скачан: {path}": "File not downloaded: {path}",
 };

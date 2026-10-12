@@ -18,6 +18,7 @@ from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder
                            sync_early_access, sync_tree, model_on_server, prune_closed_stages, open_url)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version, read_early_access
 import offline_pack
+import flash_writer
 from wizard_spec import load_wizard_spec
 import catalog_i18n as _catalog_i18n
 from apk_library import list_apks as _list_apks, ensure_apks_downloaded as _ensure_apks_downloaded
@@ -606,6 +607,29 @@ def list_apks(apk_dir: str, base_url: str) -> str:
     """Общая библиотека приложений (apk/) — см. apk_library.list_apks.
     Дёшево (имена/размеры из manifest.json), сами .apk не качает."""
     return _list_apks(Path(apk_dir), base_url)
+
+
+def usb_plan(files_root: str, base_url: str, args_json: str, with_manifest: bool) -> str:
+    """План записи на флешку для WebBridge.kt (usbRunStage — с манифестом сервера, usbListItems — без, быстро):
+    flash_writer.make_plan — общий код каталога (cars/_shared/flash_plan.py с подписью) или встроенный flash_plan.py.
+    → JSON {"ok": true, "plan": {...}, "log": [...]} или {"ok": false, "error": "...", "log": [...]} — тогда Kotlin
+    пишет по-старому (writeUsbStage)."""
+    logs: list = []
+    try:
+        args = json.loads(args_json)
+        root = Path(files_root)
+        request = {
+            "roots": {"cars": str(root / "cars"), "apk": str(root / "apk")},
+            "manifest": fetch_manifest(base_url) if with_manifest and base_url else None,
+            "files": [str(path) for path in args.get("files") or []],
+            "selected_apks": [str(path) for path in args.get("selected_apks") or []],
+            "apks_dest": args.get("apks_dest") or "",
+            "shared": args.get("shared") or None,
+        }
+        plan = flash_writer.make_plan(request, root / "cars" / "_shared", root, log=logs.append)
+        return json.dumps({"ok": True, "plan": plan, "log": logs}, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001 — Kotlin пишет по-старому
+        return json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}", "log": logs}, ensure_ascii=False)
 
 
 def ensure_apks_downloaded(apk_dir: str, cars_dir: str, base_url: str, paths_json: str,

@@ -9,12 +9,13 @@ import threading
 import time
 from pathlib import Path
 
-from ... import closed_stages
+from ... import closed_stages, flash_writer
 from ..events import event_bridge
-from ...content_sync import ensure_apks_downloaded, sync_model_files, sync_shared_folder
+from ...content_sync import (ensure_apks_downloaded, fetch_manifest, get_base_url, sync_model_files,
+                             sync_shared_folder)
 from ...install_context import InstallCancelled
 from ...stage_runner import load_stages
-from ...usb_context import UsbContext, remove_other_trigger_flags, write_flash_files
+from ...usb_context import UsbContext, remove_flash_files, remove_other_trigger_flags, write_flash_files
 from ...usb_utils import list_drives as _list_drives, format_drive, UsbSafetyError
 
 
@@ -132,6 +133,16 @@ def _file_items(path: Path) -> list[dict]:
     return [{"name": p.name, "path": str(p), "size": p.stat().st_size} for p in paths]
 
 
+def _plan_items(plan: dict) -> list[dict]:
+    """Очередь окна записи из плана (flash_plan.py) — в том порядке, в каком файлы пойдут на флешку."""
+    items = []
+    for item in plan["files"]:
+        path = Path(item["local"])
+        size = path.stat().st_size if path.is_file() else item.get("size", 0)
+        items.append({"name": path.name, "path": item["local"], "size": size})
+    return items
+
+
 def _flash_write_block(stage: dict, block_index) -> dict | None:
     """Блок «Запись на флешку» этапа «Флешка» (см. car_generator.py:
     FlashBlockSpec) по номеру из JS; None — запись всего этапа по-старому
@@ -229,9 +240,34 @@ class UsbApi:
             flash_block = _flash_write_block(stage, block)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
-        items = (_scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths) if flash_block
-                 else _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths))
+        if flash_block:
+            plan = self._block_plan(flash_block, selected_apk_paths, with_manifest=False)
+            items = (_plan_items(plan) if plan is not None
+                     else _scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths))
+        else:
+            items = _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths)
         return {"ok": True, "items": items}
+
+    def _block_plan(self, block: dict, selected_apk_paths: list[str], with_manifest: bool,
+                    log=lambda message: None) -> dict | None:
+        """План записи блока этапа «Флешка» общим кодом каталога (flash_writer.make_plan: серверный
+        cars/_shared/flash_plan.py или встроенный). None — план не сложился: пишем по-старому (write_flash_files).
+        Обычный этап «Флешка» по-прежнему пишет install.py модели — он и так приходит с сервера."""
+        try:
+            url = get_base_url(self.base_dir) if with_manifest else None
+            shared = block.get("shared_folder")
+            request = {
+                "roots": {"cars": str(self.base_dir / "cars"), "apk": str(self.base_dir / "apk")},
+                "manifest": fetch_manifest(url) if url else None,
+                "files": [str(path) for path in block.get("files") or []],
+                "selected_apks": [str(path) for path in selected_apk_paths] if block.get("copy_selected_apks") else [],
+                "apks_dest": block.get("apks_dest") or "",
+                "shared": str(self.base_dir / "cars" / "_shared" / shared) if shared else None,
+            }
+            return flash_writer.make_plan(request, self.base_dir / "cars" / "_shared", self.base_dir, log=log)
+        except Exception as exc:  # noqa: BLE001 — и встроенный не сложился: по-старому
+            log(f"Список файлов для флешки не составлен ({exc}) — пишу по-старому.")
+            return None
 
     def start(self, model_key: str, stage_index: int, variant, selected_apk_paths: list[str],
               drive_letter: str, do_format: bool, filesystem: str, block: int | None = None) -> dict:
@@ -298,10 +334,35 @@ class UsbApi:
             if meter.bytes:
                 self._journal(f"Скачано перед записью: {_mb(meter.bytes)} за {_took(time.monotonic() - prepare_started)}.")
 
+            # Блок этапа «Флешка» — по плану общим кодом каталога (flash_plan.py): папки комплекта по манифесту,
+            # недостающие файлы докачиваются, на флешку — по путям плана. Не сложился — по-старому (write_flash_files).
+            plan = self._block_plan(flash_block, selected_apk_paths, True, self._log) if flash_block else None
+            if plan is not None:
+                if plan.get("source") == "server":
+                    self._journal("Список файлов для флешки — общим кодом каталога.")
+                for local in plan["local_cleanup"]:
+                    try:
+                        Path(local).unlink()
+                    except OSError:
+                        pass
+                ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", [f["local"] for f in plan["files"]],
+                                        log=prepare_log, check_cancelled=self._check_cancelled,
+                                        on_progress=meter.step())
+                missing = [f for f in plan["files"] if not Path(f["local"]).is_file()]
+                if missing and len(missing) < len(plan["files"]):
+                    # «Файл не скачан» — тот же текст, что на Android: по нему окно «Нет интернета» (user_errors.js).
+                    self._finish(False, f"Файл не скачан: «{Path(missing[0]['local']).name}» — проверьте интернет и "
+                                        "повторите запись. Флешку программа не трогала.")
+                    return
+                if missing:
+                    plan["files"] = []
             # Список файлов (тот же, что list_items() уже отдал фронтенду до старта, см. её докстринг) — ДО
             # форматирования: если писать нечего, флешку не трогаем вовсе (см. _nothing_to_write).
-            items = (_scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths) if flash_block
-                     else _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths))
+            if plan is not None:
+                items = _plan_items(plan)
+            else:
+                items = (_scan_flash_block_items(self.base_dir, flash_block, selected_apk_paths) if flash_block
+                         else _scan_usb_items(self.base_dir, model, stage, stage_index, variant, selected_apk_paths))
             if not items:
                 self._finish(False, _nothing_to_write(problems))
                 return
@@ -340,7 +401,10 @@ class UsbApi:
                     return
 
             # Пишем svlog.flag — со флешки уходит svengmode.flag прошлого шага (и наоборот), см. TRIGGER_FLAGS.
-            remove_other_trigger_flags(drive_root, [item["name"] for item in items], self._log)
+            if plan is not None:
+                remove_flash_files(drive_root, plan["remove_on_flash"], self._log)
+            else:
+                remove_other_trigger_flags(drive_root, [item["name"] for item in items], self._log)
             self._journal(f"Пишу на флешку {drive_root}: {_files(len(items))}, {_mb(sum(i['size'] for i in items))}"
                           + (f", после форматирования в {filesystem}" if do_format else "") + ".")
             self._written = (0, len(items))
@@ -361,7 +425,10 @@ class UsbApi:
                 files_total=len(items),
             )
             write_started = time.monotonic()
-            if flash_block:
+            if plan is not None:
+                for item in plan["files"]:
+                    ctx.copy_file(item["local"], item["dest"])
+            elif flash_block:
                 write_flash_files(ctx, flash_block)
             else:
                 stage["run"](ctx)

@@ -87,14 +87,27 @@ def test_write_moves_the_ring_as_a_flash_write(env):
     assert ring[-1]["state"] == "done" and ring[-1]["completed"] == ring[-1]["total"] == 3
 
 
-def test_stop_says_how_far_the_write_got(env, monkeypatch):
-    def write_then_stop(ctx, block):
+def _write_through(monkeypatch, path: str, write):
+    """Запись блока — по плану (ctx.copy_file по файлам, flash_plan.py) или по-старому (write_flash_files), когда
+    план не сложился (12.10: вынос плана записи в общий код каталога). Журнал одинаковый."""
+    if path == "plan":
+        monkeypatch.setattr(usb_api.UsbContext, "copy_file", lambda ctx, local, dest: write(ctx))
+    else:
+        def broken(*a, **k):
+            raise RuntimeError("план не сложился")
+        monkeypatch.setattr(usb_api.flash_writer, "make_plan", broken)
+        monkeypatch.setattr(usb_api, "write_flash_files", lambda ctx, block: write(ctx))
+
+
+@pytest.mark.parametrize("path", ["plan", "legacy"])
+def test_stop_says_how_far_the_write_got(env, monkeypatch, path):
+    def write_then_stop(ctx):
         ctx._on_progress("update.bin", 8, 8, 1, 3, "done")
         env.api._thread = types.SimpleNamespace(is_alive=lambda: True)  # как во время настоящей записи
         env.api.cancel()
         raise InstallCancelled("Копирование остановлено пользователем.")
 
-    monkeypatch.setattr(usb_api, "write_flash_files", write_then_stop)
+    _write_through(monkeypatch, path, write_then_stop)
     run(env)
     lines = journal(env)
     assert "Техник нажал «Остановить»: записано 1 из 3 файлов." in lines
@@ -102,12 +115,13 @@ def test_stop_says_how_far_the_write_got(env, monkeypatch):
     assert env.events[-1]["kind"] == "usb_finished" and env.events[-1]["success"] is False
 
 
-def test_failure_says_where_it_stopped(env, monkeypatch):
-    def write_then_fail(ctx, block):
+@pytest.mark.parametrize("path", ["plan", "legacy"])
+def test_failure_says_where_it_stopped(env, monkeypatch, path):
+    def write_then_fail(ctx):
         ctx._on_progress("update.bin", 8, 8, 2, 3, "done")
         raise OSError("[Errno 28] No space left on device")
 
-    monkeypatch.setattr(usb_api, "write_flash_files", write_then_fail)
+    _write_through(monkeypatch, path, write_then_fail)
     run(env)
     assert journal(env)[-1].startswith(
         "Запись на флешку прервалась ([Errno 28] No space left on device): записано 2 из 3 файлов за ")

@@ -26,6 +26,24 @@ _COPY_CHUNK_SIZE = 4 * 1024 * 1024
 TRIGGER_FLAGS = ("svengmode.flag", "svlog.flag")
 
 
+def remove_flash_files(drive_root: Path, names, log=lambda message: None) -> list[str]:
+    """Убирает из корня флешки файлы из плана записи (flash_plan: remove_on_flash — триггеры прошлого шага). Не
+    удалось — OSError с понятным текстом (тем же, что у remove_other_trigger_flags)."""
+    removed = []
+    for name in names:
+        target = Path(drive_root) / name
+        if not target.is_file():
+            continue
+        try:
+            target.unlink()
+        except OSError as exc:
+            raise OSError(f"не удалось убрать с флешки {name} от прошлого шага ({exc}) — иначе магнитола снова "
+                          "сработает на него. Удалите файл вручную или отформатируйте флешку.") from exc
+        removed.append(name)
+        log(f"Убран с флешки {name} от прошлого шага — иначе магнитола снова сработает на него.")
+    return removed
+
+
 def remove_other_trigger_flags(drive_root: Path, written_names, log=lambda message: None) -> list[str]:
     """Перед записью: если среди written_names (имена записываемых файлов) есть триггер из TRIGGER_FLAGS —
     убирает из корня флешки остальные триггеры. Без триггера в записи ничего не трогает. Возвращает
