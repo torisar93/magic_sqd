@@ -96,3 +96,38 @@ def test_network_error_returns_empty_not_raises():
 def test_token_url_derived_from_content_base():
     t = app_token.AppToken("https://magicsqd.ru/content", b"s", "c")
     assert t._token_url == "https://magicsqd.ru/auth/app-token"
+
+
+# --- признаки системы (с 1.1.4): доказательство v2, сервер вшивает их в токен ---
+
+def test_proof_v2_signs_the_environment():
+    env = {"ui": ["ru-RU"], "kbd": ["ru"], "tz": 180, "os": "windows"}
+    v1 = app_token.build_proof(b"s", "cid", 1000)
+    v2 = app_token.build_proof(b"s", "cid", 1000, env)
+    assert v1 != v2 and len(v2) == 64
+    assert v2 == app_token.build_proof(b"s", "cid", 1000, dict(reversed(list(env.items()))))  # порядок ключей не важен
+    assert v2 != app_token.build_proof(b"s", "cid", 1000, dict(env, tz=60))
+    assert app_token.canonical_env(env) == '{"kbd":["ru"],"os":"windows","tz":180,"ui":["ru-RU"]}'
+
+
+def test_request_body_carries_the_environment():
+    env = {"ui": ["en-US"], "tz": 60}
+    body = json.loads(app_token.request_body(b"s", "cid", now=1234, env=env))
+    assert body["env"] == env and body["proof"] == app_token.build_proof(b"s", "cid", 1234, env)
+
+
+def test_env_provider_is_asked_for_each_new_token_and_failures_fall_back():
+    calls = []
+    envs = iter([{"tz": 180}, RuntimeError("сбой")])
+
+    def provider():
+        value = next(envs)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    t = app_token.AppToken("https://x/content", b"secret", "cid", env_provider=provider)
+    t._opener = _fake_opener([{"token": "A", "exp": time.time() + 1}, {"token": "B", "exp": time.time() + 3600}], calls)
+    assert t.get() == "A"
+    assert t.get() == "B"  # первый истёк — новый запрос
+    assert calls[0]["env"] == {"tz": 180} and "env" not in calls[1]  # сбой признаков — как раньше, v1

@@ -523,6 +523,10 @@ window.addEventListener("pywebviewready", async () => {
   // — раньше тут ещё был отдельный обязательный экран входа для отдельной
   // admin-сборки (admin_main_web.py), сейчас программа одна и его нет.
   const info = await window.pywebview.api.app_get_info();
+  // Доступ по региону (с 1.1.4): нужна подписка — каталог закрывает окно «Нужна подписка» (access_gate.js).
+  // Проверяем при каждом запуске, даже без автосинхронизации; без сети — последнее известное решение.
+  window.accessGate.init(info);
+  window.pywebview.api.access_check().then((state) => window.accessGate.apply(state)).catch(() => {});
   // Диагностическая шапка в логе установки (см. stage_wizard.js: open()) —
   // версия/платформа сборки нужны видны прямо в присланном логе, а не
   // только в самой программе (см. app/web/api/settings_api.py:info — то же
@@ -577,6 +581,7 @@ window.addEventListener("pywebviewready", async () => {
   if (catalogWasEmpty) window.mainPicker.showStartupLoading();
   if (settingsPreferences.auto_sync) {
     window.pywebview.api.sync_startup().then(async (syncResult) => {
+      if (syncResult.access) window.accessGate.apply(syncResult.access);
       // Первый запуск требует построить каталог после скачивания. В остальных
       // случаях не перерисовываем карточки без причины: раньше это давало
       // заметное второе «обновление» каталога при каждом запуске, даже когда

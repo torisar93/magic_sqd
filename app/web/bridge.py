@@ -27,7 +27,8 @@ from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
-from .. import catalog_setup, client_config, ui_bundle
+from .. import access_gate, catalog_setup, client_config, client_env, ui_bundle
+from ..content_config import get_base_url
 from ..admin_config import clear_saved_login
 from ..adb_utils import find_adb_path
 from ..pending_install_logs import (
@@ -141,6 +142,8 @@ class WebApi:
             "auth_account": self.auth_startup,
             "app_version": APP_VERSION,
             "os": os_description(),
+            # Язык интерфейса (с 1.1.4): наш язык в системе — русский, иначе английский (app/client_env.py).
+            "ui_language": client_env.ui_language(),
             # Выпуск интерфейса с сервера (app/ui_bundle.py); 0 — встроенный.
             "ui_rev": (ui_bundle.active_rev(self.base_dir / "ui", "desktop", APP_VERSION)
                        if self.bundle_frontend_dir else 0),
@@ -171,6 +174,12 @@ class WebApi:
     # -- sync_api -----------------------------------------------------------
     def sync_startup(self) -> dict:
         return self._sync.startup_sync()
+
+    def access_check(self) -> dict:
+        """Доступ по региону заново у сервера (окно «Нужна подписка»: «Проверить снова», после входа в аккаунт) —
+        app/access_gate.py."""
+        access_gate.invalidate()
+        return access_gate.check(self.base_dir, get_base_url(self.base_dir))
 
     def client_config(self) -> dict:
         """Настройки и правила с сервера для интерфейса (js/client_config.js → окна «что сделать» и т.п.)."""
@@ -460,6 +469,7 @@ class WebApi:
     def auth_login(self, email: str, password: str) -> dict:
         result = self._auth.login(email, password)
         if result.get("ok"):
+            access_gate.invalidate()  # подписчику из «платного» региона каталог откроется после входа
             self.auth_email = result.get("email")
             self.auth_subscriber = bool(result.get("subscriber"))
             if result.get("is_admin"):
@@ -471,6 +481,7 @@ class WebApi:
     def auth_logout(self) -> dict:
         result = self._auth.logout()
         if result.get("ok"):
+            access_gate.invalidate()
             self.auth_email = None
             self.auth_subscriber = False
             self.admin_mode = False

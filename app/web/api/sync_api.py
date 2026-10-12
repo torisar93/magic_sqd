@@ -15,7 +15,7 @@ import threading
 import time
 
 from ..events import event_bridge
-from ... import client_config, device_models, offline_pack, ui_bundle, update_tracker
+from ... import access_gate, client_config, device_models, offline_pack, ui_bundle, update_tracker
 from ...content_config import get_base_url
 from ...content_sync import (ContentSyncError, fetch_manifest, filter_manifest, list_files_recursive,
                               list_shared_apk_catalog, prune_closed_stages, prune_removed_apks,
@@ -77,6 +77,13 @@ class SyncApi:
         self._remove_stale_merged_models()
         changes: list[dict] = []
         base_url = get_base_url(self.base_dir)
+        # Доступ по региону (app/access_gate.py, с 1.1.4): нужна подписка — каталог не обновляем, окно «Нужна
+        # подписка» закрывает его (js/components/access_gate.js); без сети — последнее известное решение.
+        access = access_gate.check(self.base_dir, base_url)
+        if not access.get("allowed", True):
+            event_bridge.push({"kind": "access_state", "state": access})
+            self._start_heartbeat()
+            return {"changes": [], "access": access}
         if base_url:
             # Таблица «магнитола → модель» для подсказки «Похоже, это другая машина» — в фоне, запуск не ждёт.
             threading.Thread(target=device_models.refresh, args=(self.base_dir,), daemon=True).start()
@@ -151,7 +158,7 @@ class SyncApi:
                     prune_removed_apks(self.base_dir, self.apk_dir, manifest, log=self._log)
 
         self._start_heartbeat()
-        return {"changes": changes}
+        return {"changes": changes, "access": access}
 
     def resync_catalog(self) -> None:
         """Вход/выход из аккаунта — каталог заново, в фоне: скрытые (тестовые) модели

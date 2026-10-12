@@ -1,0 +1,18 @@
+/* Окно «Нужна подписка» (js/components/access_gate.js): доступ по региону, с 1.1.4. Поверх каталога и рабочего экрана,
+   под окнами (<dialog> — верхний слой: вход в аккаунт, обновление программы). */
+.access-gate { position:fixed; inset:0; z-index:90; display:grid; place-items:center; padding:24px;
+  background:rgba(9,13,17,.93); backdrop-filter:blur(6px); }
+.access-gate[hidden] { display:none; }
+.access-gate-card { width:min(580px,100%); background:linear-gradient(140deg,#25323c,#1b252d); border:1px solid #4a5c69;
+  border-radius:20px; padding:30px; box-shadow:0 24px 80px #0008; }
+.access-gate-card h2 { margin:0 0 14px; font-size:28px; letter-spacing:-.4px; }
+.access-gate-card p { color:var(--text, #e8f0f3); line-height:1.6; margin:0 0 12px; font-size:15px; }
+.access-gate-card .access-gate-why { color:var(--text-dim, #9aa2b0); font-size:13px; }
+.access-gate-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; align-items:center; }
+.access-gate-actions > * { min-height:46px; }
+.access-gate-status { min-height:20px; font-size:13px; color:var(--text-dim, #9aa2b0); margin:14px 0 0 !important; }
+@media (max-width:560px) { .access-gate-card { padding:22px; } .access-gate-actions > * { flex:1 1 100%; } }
+.access-gate .access-gate-boosty { display:inline-flex; align-items:center; justify-content:center; padding:0 18px;
+  text-decoration:none; border:1px solid rgba(246,161,122,.55); color:#f6a17a; }
+.access-gate .access-gate-boosty:hover { background:rgba(246,161,122,.12); }
+.access-gate-card .access-gate-status { color:var(--text-dim, #9aa2b0); }

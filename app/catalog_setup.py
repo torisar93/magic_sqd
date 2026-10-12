@@ -13,7 +13,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import app_token, catalog_key, content_sync
+from . import app_token, catalog_key, client_env, content_sync
 from .content_config import get_app_build_secret, get_base_url
 from .ping_client import get_or_create_client_id
 
@@ -58,4 +58,5 @@ def configure(base_dir: Path) -> None:
     base_url = get_base_url(base_dir)
     if build_secret and base_url:
         client_id = get_or_create_client_id(base_dir)
-        content_sync.set_app_token(app_token.AppToken(base_url, build_secret, client_id))
+        content_sync.set_app_token(app_token.AppToken(base_url, build_secret, client_id,
+                                                      env_provider=client_env.collect))
