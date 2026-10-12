@@ -624,7 +624,7 @@
       topBackBtn.style.visibility = "visible";
       topBackBtn.replaceChildren(LabUI.icon("back"));
       topBackBtn.setAttribute("aria-label","Назад");
-      topBackBtn.onclick = () => {if(labInstallBusy){showLabBusyNotice();return;}showScreen("picker");};
+      topBackBtn.onclick = () => {if(operationBusy()){showLabBusyNotice();return;}showScreen("picker");};
     } else if (selectedGroup) {
       topBackBtn.style.visibility = "visible";
       topBackBtn.replaceChildren(LabUI.icon("back"));
@@ -1629,8 +1629,16 @@
 
   function showLabBusyNotice() {
     if (usbOperation) showLabNotice("Флешка занята", "Дождитесь завершения текущей операции и не отключайте накопитель.");
-    else if (stageOperation) showLabNotice("Операция выполняется", "Дождитесь ответа магнитолы. Подробности выполнения доступны в логе.");
+    else if (stageOperation || !labInstallBusy) showLabNotice("Операция выполняется", "Дождитесь ответа магнитолы. Подробности выполнения доступны в логе.");
     else showLabNotice("Идёт установка", "Дождитесь завершения текущего приложения или остановите очередь.");
+  }
+
+  // Занята ли программа: кроме операций, о которых знает JS (labInstallBusy), — операция Kotlin, начатая кнопкой
+  // «Доп. действий» через выбор приложения («Работа в движении», удаление, запуск). Выход из модели посреди неё
+  // отключал ADB: «Работа в движении» сняла приложение, а помеченная версия так и не встала (лог №5242, Haval F7).
+  function operationBusy() {
+    if (labInstallBusy) return true;
+    try { return Boolean(Bridge.call("operation_busy", {}).busy); } catch (_) { return false; }
   }
 
   // Android WebView без кастомного WebChromeClient не поддерживает
@@ -1832,7 +1840,7 @@
     if (logOverlayEl.classList.contains("open")) { setLogOpen(false); return "handled"; }
     if (window.aiPhone && window.aiPhone.back()) return "handled";
     if (screenWizard.classList.contains("active")) {
-      if(labInstallBusy){log("Нажата «Назад» во время операции — программа попросила дождаться её окончания.",false,true);showLabBusyNotice();return "handled";}
+      if(operationBusy()){log("Нажата «Назад» во время операции — программа попросила дождаться её окончания.",false,true);showLabBusyNotice();return "handled";}
       if (historyStack.length) { goBack(); return "handled"; }
       log("Техник вышел из модели (кнопка «Назад»).", false, true);
       flushSessionLog(false);

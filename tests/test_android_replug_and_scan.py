@@ -126,6 +126,7 @@ def test_launch_app_reports_what_really_happened():
     launch = _function(permissions, "fun launchMainActivity(")
     assert launch.index('monkey.contains("No activities found")') < launch.index('!monkey.contains("Events injected: 1")')
     assert "cmd package resolve-activity --brief" in launch and 'shellText("am start -n $component", log)' in launch
+    assert 'component == null && resolved.contains("No activity found")' in launch  # Monji: «bash arg: 1» (лог №5218)
     assert "Thread.sleep(1500)" in launch and "onScreen(pkg, log)" in launch
     screen = _function(permissions, "private fun onScreen(")
     assert "dumpsys activity activities | grep -E 'Display #|ResumedActivity'" in screen

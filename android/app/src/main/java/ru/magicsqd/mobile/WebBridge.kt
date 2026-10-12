@@ -216,6 +216,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     .toString()
                 // Тот же язык — переводчику страницы (js/i18n.js) ещё до первого кадра: лёгкий вызов при загрузке.
                 "ui_language" -> JSONObject().put("language", uiLanguage()).toString()
+                // Идёт ли операция (runExclusive): кнопки «Доп. действий» через выбор приложения — «Работа в движении»,
+                // удаление, запуск — идут мимо JS-флага labInstallBusy, а выход из модели отключает ADB (лог №5242).
+                "operation_busy" -> JSONObject().put("busy", operationBusy.get()).toString()
                 "settings_info" -> settingsInfo().toString()
                 "settings_preferences" -> settingsPreferences().toString()
                 "settings_clear_cache" -> clearCache().toString()

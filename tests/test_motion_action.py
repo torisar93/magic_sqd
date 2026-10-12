@@ -276,6 +276,9 @@ def test_android_removes_the_app_only_after_the_new_version_is_on_the_head_unit(
     assert push < backup < uninstall
     assert "preStaged = mapOf(signed.absolutePath to signedRemote)" in run[uninstall:]
     assert "preStaged = mapOf(original.absolutePath to originalRemote)" in run[uninstall:]
+    # Обрыв/отключение ADB посреди переустановки — обычная неудача: возврат исходной всё равно пробуется (лог №5242).
+    assert run[uninstall:].count("installGuarded {") == 2
+    assert "catch (e: Exception)" in code[code.index("private fun installGuarded("):]
     assert 'val signedRemote = "/data/local/tmp/" + stagedNameFor(signed.name)' in run  # тот же путь, что берёт dex-хелпер
     engine = (ANDROID / "InstallEngine.kt").read_text(encoding="utf-8")
     assert "var stagedValid = preStagedRemote != null" in engine  # заранее залитое не заливается заново

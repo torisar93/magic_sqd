@@ -73,8 +73,17 @@ def test_am_start_error_is_shown():
                        "does not exist.")
 
 
-def test_nothing_to_start_shows_device_answer():
-    log, _ = launch({MONKEY: "/system/bin/sh: monkey: inaccessible or not found", RESOLVE: "No activity found"})
+def test_no_launcher_activity_by_resolve_is_said_plainly():
+    # Monji FX11 (лог №5218, vocalizer_e2.tts): monkey отвечает лишь «bash arg: …», resolve-activity — «No activity
+    # found»; раньше в журнале было «Не удалось запустить: bash arg: 1».
+    for monkey in ("  bash arg: -p\n  bash arg: com.salat.gbinder\n  bash arg: 1",
+                   "/system/bin/sh: monkey: inaccessible or not found"):
+        log, _ = launch({MONKEY: monkey, RESOLVE: "No activity found"})
+        assert log[-1].startswith("Не удалось запустить: у приложения нет значка для запуска"), log
+
+
+def test_silent_head_unit_shows_device_answer():
+    log, _ = launch({MONKEY: "/system/bin/sh: monkey: inaccessible or not found"})
     assert log[-1] == "Не удалось запустить: /system/bin/sh: monkey: inaccessible or not found"
 
 

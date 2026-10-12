@@ -86,12 +86,12 @@ object MotionOptimize {
             return
         }
         AdbSession.shell("pm uninstall $pkg", log, 120000)
-        val result = engine.installApks(listOf(signed.absolutePath), cancelled = cancelled,
-            preStaged = mapOf(signed.absolutePath to signedRemote))
+        val result = installGuarded { engine.installApks(listOf(signed.absolutePath), cancelled = cancelled,
+            preStaged = mapOf(signed.absolutePath to signedRemote)) }
         if (result is StageRunResult.Failed) {
             log("Не удалось поставить помеченную версию: ${result.reason}. Возвращаю исходную...")
-            val restore = engine.installApks(listOf(original.absolutePath), cancelled = cancelled,
-                preStaged = mapOf(original.absolutePath to originalRemote))
+            val restore = installGuarded { engine.installApks(listOf(original.absolutePath), cancelled = cancelled,
+                preStaged = mapOf(original.absolutePath to originalRemote)) }
             if (restore is StageRunResult.Failed) log("Не удалось вернуть исходную версию — установите $pkg заново из каталога.")
             else log("Исходное приложение возвращено — работа в движении не включена.")
             dropStaging(signedRemote, originalRemote, log)
@@ -102,6 +102,15 @@ object MotionOptimize {
         log("Приложение переустановлено — если оно просит вход, войдите в него заново на магнитоле.")
         logVerdict(pkg, log)
         listOf(original, patched, signed).forEach { it.delete() }
+    }
+
+    /** Установка после снятия приложения: исключение (связь пропала, ADB отключили — лог №5242: техник вышел из модели
+     *  посреди переустановки) не должно вылетать мимо возврата исходной версии — это обычная неудача. */
+    private fun installGuarded(install: () -> StageRunResult): StageRunResult = try {
+        install()
+    } catch (e: Exception) {
+        if (e is AdbLinkLostException) AdbSession.markLinkLost()
+        StageRunResult.Failed(e.message ?: e.javaClass.simpleName)
     }
 
     /** Маркер «команда на магнитоле дошла до конца» (cp … && echo …) — код возврата shell отсюда не виден. */

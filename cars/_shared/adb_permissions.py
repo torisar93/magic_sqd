@@ -508,6 +508,11 @@ def launch_main_activity(ctx, package: str) -> None:
                                     f"-c android.intent.category.LAUNCHER {package}")
         component = next((line.strip() for line in reversed(resolved.splitlines())
                           if "/" in line and " " not in line.strip()), None)
+        if not component and "No activity found" in resolved:
+            # Monji (лог №5218): monkey отвечает лишь «bash arg: …», а «No activities found» туда не попадает.
+            ctx.log("Не удалось запустить: у приложения нет значка для запуска — оно работает в фоне "
+                    "или открывается из другого приложения.")
+            return
         if not component:
             answer = (monkey.splitlines() or ["магнитола не ответила"])[-1][:200]
             ctx.log(f"Не удалось запустить: {answer}")

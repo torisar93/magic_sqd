@@ -352,6 +352,12 @@ object AdbPermissions {
             val resolved = shellText("cmd package resolve-activity --brief -a android.intent.action.MAIN " +
                 "-c android.intent.category.LAUNCHER $pkg", log)
             val component = resolved.lines().map { it.trim() }.lastOrNull { it.contains("/") && !it.contains(" ") }
+            if (component == null && resolved.contains("No activity found")) {
+                // Monji (лог №5218): monkey отвечает лишь «bash arg: …», а «No activities found» туда не попадает.
+                log("Не удалось запустить: у приложения нет значка для запуска — оно работает в фоне " +
+                    "или открывается из другого приложения.")
+                return
+            }
             if (component == null) {
                 val answer = monkey.trim().lines().lastOrNull()?.take(200)?.takeIf { it.isNotBlank() } ?: "магнитола не ответила"
                 log("Не удалось запустить: $answer")
