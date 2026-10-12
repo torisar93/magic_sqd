@@ -407,6 +407,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "configure", BuildConfig.MSQD_BUILD_SECRET, getOrCreateDeviceRandom(), BASE_URL, getOrCreateClientId(),
                 ClientEnv.collect(context).toString())  // признаки системы — правило доступа по региону (с 1.1.4)
         } catch (_: Exception) { /* без секрета — каталог открыт, файлы плейнтекстом, как раньше */ }
+        applyUiLanguage()
+    }
+
+    /** Язык интерфейса — в запросы к серверу (python/ui_lang.py): письма, ответы ИИ, ответ на обращение (с 1.1.4). */
+    private fun applyUiLanguage() {
+        try { pyModule("mobile_bridge").callAttr("set_ui_language", uiLanguage()) } catch (_: Exception) { /* русский */ }
     }
 
     /** Доступ по региону (python/access_gate.py, с 1.1.4): {allowed, access, boosty, offline}. Сбой — пускаем. */
@@ -564,6 +570,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val language = args.optString("ui_language")
         if (language in listOf("auto", "ru", "en")) editor.putString("ui_language", language)
         editor.commit()  // язык читается сразу ниже (uiLanguage) — без отложенной записи apply()
+        if (language in listOf("auto", "ru", "en")) applyUiLanguage()
         if (args.has("keep_screen_on")) webView.keepScreenOn = args.getBoolean("keep_screen_on")
         // Язык меняется сразу (js/i18n.js): «авто» здесь же превращается в ru/en по телефону.
         return settingsInfo().getJSONObject("preferences").put("ui_language_effective", uiLanguage())

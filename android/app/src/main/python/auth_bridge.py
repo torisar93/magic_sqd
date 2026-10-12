@@ -13,6 +13,8 @@ import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
+import ui_lang
+
 
 class ZipSlipError(RuntimeError):
     pass
@@ -25,6 +27,7 @@ def _request(base_url: str, method: str, path: str, body: dict | None = None,
              cookie: str = "") -> tuple[dict, list[str]]:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {"Content-Type": "application/json"} if data is not None else {}
+    headers.update(ui_lang.header())  # язык программы — письма подтверждения/сброса на нём (с 1.1.4)
     if cookie:
         headers["Cookie"] = cookie
     request = urllib.request.Request(base_url + path, data=data, method=method, headers=headers)

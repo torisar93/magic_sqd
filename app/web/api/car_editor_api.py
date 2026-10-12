@@ -35,6 +35,7 @@ from ...car_generator import (FLASH_BLOCK_ID_RE, FLASH_STEP_TYPES, INVALID_NAME_
 from ...content_sync import (clear_local_edit_marker, fetch_manifest, get_base_url, mark_local_edit,
                               sync_model_files, sync_model_subfolder)
 from ...instruction_html import default_blocks, render_document, validate_video_file
+from ... import ui_lang
 from ...ping_client import get_or_create_client_id
 from ...submit_client import SubmitCancelled, SubmitError, submit_model
 from ...submit_config import get_submit_config
@@ -44,6 +45,19 @@ EXE_FILE_TYPES = ("Исполняемый файл (*.exe)", "Все файлы 
 IMAGE_FILE_TYPES = ("Изображения (*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp)", "Все файлы (*.*)")
 VIDEO_FILE_TYPES = ("Видео H.264 (*.mp4)", "Все файлы (*.*)")
 ANY_FILE_TYPES = ("Все файлы (*.*)",)
+# Подписи типов файлов в системном окне выбора — у английской версии программы (с 1.1.4) по-английски.
+_FILE_TYPE_LABELS_EN = {"Все файлы": "All files", "Исполняемый файл": "Executable", "Изображения": "Images",
+                        "Видео H.264": "H.264 video"}
+
+
+def _localized_file_types(types: tuple) -> tuple:
+    if ui_lang.language() != "en":
+        return types
+    out = []
+    for item in types:
+        label, _, mask = item.partition(" (")
+        out.append(f"{_FILE_TYPE_LABELS_EN.get(label, label)} ({mask}" if mask else item)
+    return tuple(out)
 
 
 def _file_dict(path: Path) -> dict:
@@ -367,7 +381,7 @@ class CarEditorApi:
             file_types = {"apk": APK_FILE_TYPES, "exe": EXE_FILE_TYPES,
                           "image": IMAGE_FILE_TYPES, "video": VIDEO_FILE_TYPES}.get(kind, ANY_FILE_TYPES)
             result = webview.windows[0].create_file_dialog(
-                webview.OPEN_DIALOG, allow_multiple=multiple, file_types=file_types)
+                webview.OPEN_DIALOG, allow_multiple=multiple, file_types=_localized_file_types(file_types))
         if not result:
             return []
         return [_file_dict(Path(p)) for p in result]
@@ -418,7 +432,7 @@ class CarEditorApi:
 
     # -- блочный редактор "Инструкция" (app/instruction_html.py, чистые данные) --
     def instruction_default_blocks(self, brand: str, model: str) -> list[dict]:
-        return default_blocks(brand, model)
+        return default_blocks(brand, model, ui_lang.language())  # английская версия — заготовка по-английски
 
     def instruction_render_preview(self, blocks: list[dict]) -> str:
         """Как instruction_html.render_preview, но фото — data:-URI, а не

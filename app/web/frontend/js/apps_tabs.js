@@ -33,6 +33,7 @@
       const tab = make('button', 'apps-tab');
       tab.type = 'button';
       tab.setAttribute('role', 'tab');
+      tab.dataset.tabKey = group.key;
       const picked = make('span', 'apps-tab-picked');
       tab.append(make('span', 'apps-tab-label', group.label), make('span', 'apps-tab-total', String(group.rows.length)), picked);
       tab.addEventListener('click', () => select(group.key));

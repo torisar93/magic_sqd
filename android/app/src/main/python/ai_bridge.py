@@ -7,6 +7,7 @@ import json
 import ai_client
 import ai_policy
 import content_sync
+import ui_lang
 
 
 def call(chat_url: str, path: str, submit_key: str, cookie: str, payload_json: str) -> str:
@@ -14,7 +15,8 @@ def call(chat_url: str, path: str, submit_key: str, cookie: str, payload_json: s
     (ai_master.js) копит ввод и повторяет, когда связь вернётся."""
     payload = json.loads(payload_json) if payload_json else None
     try:
-        body = ai_client.call(chat_url, path, submit_key, cookie or "", content_sync.app_token_header(), payload)
+        headers = {**content_sync.app_token_header(), **ui_lang.header()}  # язык программы — ИИ-мастер на нём
+        body = ai_client.call(chat_url, path, submit_key, cookie or "", headers, payload)
     except ai_client.AiNetworkError as exc:
         return json.dumps({"network_error": str(exc)}, ensure_ascii=False)
     return json.dumps(body, ensure_ascii=False)

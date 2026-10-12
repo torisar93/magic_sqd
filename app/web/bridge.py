@@ -27,7 +27,7 @@ from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
-from .. import access_gate, catalog_i18n, catalog_setup, client_config, client_env, ui_bundle
+from .. import access_gate, catalog_i18n, catalog_setup, client_config, client_env, ui_bundle, ui_lang
 from ..content_config import get_base_url
 from ..admin_config import clear_saved_login
 from ..adb_utils import find_adb_path
@@ -63,6 +63,7 @@ class WebApi:
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
         self._install.ui_language = self.ui_language  # инструкции в переводе у английского интерфейса
+        ui_lang.set_language(self.ui_language())  # язык в запросы к серверу: письма, ответы ИИ (app/ui_lang.py)
         self._usb = UsbApi(base_dir, self._scanner)
         self._qr_adb = QrAdbApi(base_dir, self.cars_dir)
         self._report = ReportApi(base_dir)
@@ -211,7 +212,9 @@ class WebApi:
     def settings_set_preferences(self, preferences: dict) -> dict:
         result = self._settings.set_preferences(preferences)
         # Язык интерфейса меняется сразу (js/i18n.js): «авто» здесь же превращается в ru/en по системе.
-        return {**result, "ui_language_effective": self.ui_language()}
+        language = self.ui_language()
+        ui_lang.set_language(language)
+        return {**result, "ui_language_effective": language}
 
     def settings_set_debug_mode(self, enabled: bool) -> dict:
         return self._settings.set_debug_mode(enabled)

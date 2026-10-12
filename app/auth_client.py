@@ -13,6 +13,8 @@ import http.client
 import json
 from urllib.parse import quote, urlsplit
 
+from . import ui_lang
+
 
 class AuthClientError(RuntimeError):
     def __init__(self, message: str = "", status: int | None = None):
@@ -32,7 +34,7 @@ def _request(base_url: str, method: str, path: str, *, body: dict | None = None,
     Set-Cookie заголовков ответа)."""
     conn = _connect(base_url)
     try:
-        headers = {}
+        headers = dict(ui_lang.header())  # язык программы — письма подтверждения/сброса на нём (с 1.1.4)
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")

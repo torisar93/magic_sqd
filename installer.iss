@@ -48,11 +48,28 @@ CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll,*.pyd,*.chm
 RestartApplications=no
 
+; Английская версия (с 1.1.4): язык установщика — по языку Windows (без вопроса), русский — первым.
+ShowLanguageDialog=auto
+LanguageDetectionMethod=uilanguage
+
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+russian.DesktopIcon=Создать значок на рабочем столе
+english.DesktopIcon=Create a desktop shortcut
+russian.AdditionalIcons=Дополнительные значки:
+english.AdditionalIcons=Additional shortcuts:
+russian.UninstallApp=Удалить {#MyAppName}
+english.UninstallApp=Uninstall {#MyAppName}
+russian.InstallingWebView2=Устанавливаю компонент WebView2 Runtime...
+english.InstallingWebView2=Installing the WebView2 Runtime component...
+russian.LaunchApp=Запустить {#MyAppName}
+english.LaunchApp=Launch {#MyAppName}
 
 [Tasks]
-Name: "desktopicon"; Description: "Создать значок на рабочем столе"; GroupDescription: "Дополнительные значки:"
+Name: "desktopicon"; Description: "{cm:DesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [InstallDelete]
 ; PyInstaller 6+ onedir кладёт ВЕСЬ код и app/web/frontend/ в _internal/
@@ -130,7 +147,7 @@ Source: "assets\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{app}\tools"; Flags: 
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\Удалить {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{group}\{cm:UninstallApp}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [UninstallDelete]
@@ -174,10 +191,10 @@ end;
 ; откроется пустым белым окном. /silent /install — официальный ключ
 ; бутстраппера (см. документацию Microsoft), сам решает per-machine или
 ; per-user исходя из прав, с которыми запущен инсталлятор.
-Filename: "{app}\tools\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Устанавливаю компонент WebView2 Runtime..."; Check: not IsWebView2Installed; Flags: waituntilterminated
+Filename: "{app}\tools\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "{cm:InstallingWebView2}"; Check: not IsWebView2Installed; Flags: waituntilterminated
 
 ; БЕЗ skipifsilent (в отличие от admin_installer.iss/installer_debug.iss) —
 ; автообновление (app/web/api/update_api.py) ставит /VERYSILENT именно
 ; затем, чтобы программа сама перезапустилась после тихой установки; это
 ; сейчас единственный сценарий силент-установки в проекте.
-Filename: "{app}\{#MyAppExeName}"; Description: "Запустить {#MyAppName}"; Flags: nowait postinstall
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall

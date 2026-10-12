@@ -658,7 +658,15 @@ def _linkify(text: str) -> str:
     return "".join(parts)
 
 
-def default_blocks(brand: str, model: str) -> list[dict]:
+def default_blocks(brand: str, model: str, lang: str = "ru") -> list[dict]:
+    """Заготовка новой инструкции; lang — язык программы (английская версия, с 1.1.4: app/ui_lang.py)."""
+    if lang == "en":
+        title = f"{brand} {model}".strip() or "New model"
+        return [
+            {"type": "h1", "text": f"{title} — installation instructions"},
+            {"type": "p", "text": "Describe here how to get access to the head unit "
+                                   "(engineering menu, enabling ADB, etc.)."},
+        ]
     title = f"{brand} {model}".strip() or "Новая модель"
     return [
         {"type": "h1", "text": f"{title} — инструкция по установке"},

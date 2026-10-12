@@ -9,6 +9,7 @@ import json
 import urllib.error
 import urllib.request
 
+from . import ui_lang
 from .submit_config import SubmitConfig
 
 # Сервер принимает тело запроса к /chat до 256 КБ (server/backend.py: CHAT_MAX_BODY_BYTES).
@@ -80,6 +81,7 @@ def send_chat_turn(history: list[dict], recent_log: list[str], config: SubmitCon
     headers = {
         "X-Submit-Key": config.submit_key,
         "Content-Type": "application/json",
+        **ui_lang.header(),  # английская версия программы — ассистент отвечает по-английски (с 1.1.4)
     }
     if session_cookie:
         headers["Cookie"] = session_cookie

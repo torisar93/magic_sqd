@@ -57,6 +57,20 @@ module.exports = async function () {
       + "1) Запустить magic_sqd.exe один раз через правый клик → \"Запуск от имени администратора\";",
     "It looks like the program is installed in Program Files, where Windows doesn't allow writing without administrator rights. Solutions:\n"
       + "1) Run magic_sqd.exe once via right-click → \"Run as administrator\";");
+    // Шаблон со {свободной} переменной не оставляет русским проглоченное следующее предложение.
+    eq("QR ADB: файл svengmode.flag записан на E:. Убран файл прошлого шага: svlog.flag.",
+      "QR ADB: svengmode.flag written to E:. Removed the previous step's file: svlog.flag.");
+    // Перечень в переменной — по пунктам; ответ ИИ в логе — приставка «ИИ» заменой куска.
+    eq("Установка завершена с ошибками — не выполнено: Выбор приложений, Доступ к ADB.",
+      "Installation finished with errors — not done: Choose apps, ADB access.");
+    eq("ИИ (DeepSeek): Connect the head unit via Wi-Fi first.", "AI (DeepSeek): Connect the head unit via Wi-Fi first.");
+    eq("[########........] 50% скачано · 3 из 10 файлов", "[########........] 50% downloaded · 3 of 10 files");
+    // Строка лога модели на ПК: «[подпись] текст»; шапка сессии — заменой кусков.
+    eq("[Haval / H3] Этап остановлен пользователем.", "[Haval / H3] Stage stopped by the user.");
+    eq("Magic SQD v1.1.4 (x64) · интерфейс r2 · client=4f2a91c7 · язык EN",
+      "Magic SQD v1.1.4 (x64) · UI r2 · client=4f2a91c7 · language EN");
+    eq("Компьютер: Windows 11 (сборка 26200, AMD64) · 12.10.2026, 15:31:26",
+      "Computer: Windows 11 (build 26200, AMD64) · 12.10.2026, 15:31:26");
     // Чего нет в словаре — null (страница остаётся как есть), без кириллицы — тоже не трогаем.
     assert(t("Совершенно новая фраза интерфейса") === null, `${base}: неизвестная фраза`);
     assert(t("Haval Dargo") === null, `${base}: без кириллицы`);

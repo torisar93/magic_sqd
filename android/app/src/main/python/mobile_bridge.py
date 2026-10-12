@@ -183,6 +183,9 @@ def check_update(current_version: str) -> str:
     best = dict(max(results, key=lambda r: _parse_version(r["version"])))
     # Обязательность — про нашу версию (ниже помеченного релиза): достаточно одного источника.
     best["mandatory"] = any(r.get("mandatory") for r in results)
+    # Описание — на языке программы (английская часть выпуска после «[en]», с 1.1.4; ui_lang.py).
+    import ui_lang
+    best["changelog"] = ui_lang.localized_changelog(best.get("changelog", ""))
     return json.dumps(best)
 
 
@@ -584,6 +587,13 @@ def load_install_stages(model_key: str, files_root: str = "", ui_language: str =
     if spec is None:
         return json.dumps({"unsupported": True})
     return json.dumps(spec)
+
+
+def set_ui_language(language: str) -> str:
+    """Язык интерфейса — в запросы к серверу (ui_lang.py): письма, ответы ИИ, ответ на обращение (с 1.1.4)."""
+    import ui_lang
+    ui_lang.set_language(language)
+    return ui_lang.language()
 
 
 def catalog_i18n_strings(cars_dir: str, apk_dir: str) -> str:

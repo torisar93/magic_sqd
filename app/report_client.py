@@ -8,6 +8,7 @@ import json
 import urllib.error
 import urllib.request
 
+from . import ui_lang
 from .submit_config import SubmitConfig
 
 
@@ -35,6 +36,7 @@ def send_report(brand: str, model: str, reason: str, description: str, config: S
     headers = {
         "X-Submit-Key": config.submit_key,
         "Content-Type": "application/json",
+        **ui_lang.header(),  # язык программы — ответ на обращение придёт в той же обвязке (с 1.1.4)
     }
     if session_cookie:
         headers["Cookie"] = session_cookie

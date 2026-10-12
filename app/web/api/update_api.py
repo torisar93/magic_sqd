@@ -42,6 +42,7 @@ from pathlib import Path
 
 from ..events import event_bridge
 from ...content_config import get_download_base_url
+from ... import ui_lang
 from ...version import APP_VERSION
 
 GITHUB_API_URL = "https://api.github.com/repos/torisar93/magic_sqd/releases"
@@ -256,6 +257,8 @@ class UpdateApi:
         best = dict(max(results, key=lambda r: _parse_version(r["version"])))
         # Обязательность — про НАШУ версию (ниже помеченного релиза), а не про самый новый: достаточно одного источника.
         best["mandatory"] = any(r.get("mandatory") for r in results)
+        # Описание — на языке программы (английская часть выпуска после «[en]», с 1.1.4).
+        best["changelog"] = ui_lang.localized_changelog(best.get("changelog", ""))
         return best
 
     def _own_server_asset_key(self) -> str:

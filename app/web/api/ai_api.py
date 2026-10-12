@@ -10,7 +10,7 @@ server/ai_master.py) через app/ai_client.py с ключом програм�
 pywebview зовёт каждый метод моста в своём потоке, поэтому ход (до ~50 с) окно не держит."""
 from __future__ import annotations
 
-from ... import ai_client, ai_policy, content_sync
+from ... import ai_client, ai_policy, content_sync, ui_lang
 from ...adb_utils import Adb, list_devices
 from ...ping_client import get_or_create_client_id
 from ...submit_config import get_submit_config
@@ -44,7 +44,8 @@ class AiApi:
                             app_version=APP_VERSION)
         cookie = (self._auth.user_cookie if self._auth else None) or ""
         try:
-            return ai_client.call(config.chat_url, path, config.submit_key, cookie, content_sync.app_token_header(), body)
+            headers = {**content_sync.app_token_header(), **ui_lang.header()}  # язык программы — ИИ-мастер на нём
+            return ai_client.call(config.chat_url, path, config.submit_key, cookie, headers, body)
         except ai_client.AiNetworkError as exc:
             return {"network_error": str(exc)}
 

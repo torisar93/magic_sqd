@@ -60,10 +60,14 @@
   // видны буквально. escapeHtml выше применяется ПЕРВЫМ шагом, до всех
   // замен, — без этого произвольный текст из вывода устройства (например
   // имя пакета со спецсимволами) мог бы сломать разметку строки лога.
+  // Английский интерфейс (js/i18n.js): строку целиком переводит словарь — до подсветки, иначе её разрежут
+  // <span> на куски; английские слова вывода adb остаются английскими. Журнал для сервера пишется отдельно и
+  // остаётся русским.
   function highlightKeywords(text) {
-    let html = escapeHtml(text);
+    const english = window.i18n?.language?.() === "en";
+    let html = escapeHtml(english ? (window.i18n.translate(text) ?? text) : text);
     for (const { pattern, text: translated, cls } of KEYWORD_TRANSLATIONS) {
-      html = html.replace(pattern, `<span class="log-keyword log-keyword-${cls}">${translated}</span>`);
+      html = html.replace(pattern, `<span class="log-keyword log-keyword-${cls}">${english ? "$&" : translated}</span>`);
     }
     return html;
   }

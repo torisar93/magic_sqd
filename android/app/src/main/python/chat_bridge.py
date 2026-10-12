@@ -6,6 +6,8 @@ import json
 import urllib.error
 import urllib.request
 
+import ui_lang
+
 # Тело запроса к /chat — не больше 256 КБ на сервере; за долгую сессию набегало больше (лог #675:
 # 401 КБ, Android 1.0.33). Та же логика, что в desktop app/chat_client.py: build_chat_body —
 # UTF-8 вместо \uXXXX, при переполнении выпадают старые реплики, потом старые строки лога.
@@ -66,7 +68,7 @@ def send_chat_turn(history_json: str, recent_log_json: str, chat_url: str, chat_
         return json.dumps({"ok": False, "error": "некорректный запрос"})
 
     body = build_chat_body(history, recent_log, {"client_id": "", "provider": provider or None})
-    headers = {"X-Submit-Key": chat_key, "Content-Type": "application/json"}
+    headers = {"X-Submit-Key": chat_key, "Content-Type": "application/json", **ui_lang.header()}  # язык ответа ИИ
     if session_cookie:
         headers["Cookie"] = session_cookie
     request = urllib.request.Request(chat_url, data=body, method="POST", headers=headers)

@@ -40,11 +40,14 @@ def api(monkeypatch, tmp_path):
     return AiApi(tmp_path, "adb", auth, Install(), "macos"), calls
 
 
-def test_status_start_turn_carry_credentials(api):
+def test_status_start_turn_carry_credentials(api, monkeypatch):
     a, calls = api
+    from app import ui_lang
+    monkeypatch.setattr(ui_lang, "_language", "en")  # английская версия — ИИ-мастер отвечает по-английски
     assert a.call("status") == {"status": "ok"}
     assert calls[0]["path"] == "status" and calls[0]["payload"] is None
-    assert calls[0]["cookie"] == "sess=1" and calls[0]["headers"] == {"X-App-Token": "TOK"} and calls[0]["key"] == "KEY"
+    assert calls[0]["cookie"] == "sess=1" and calls[0]["key"] == "KEY"
+    assert calls[0]["headers"] == {"X-App-Token": "TOK", "X-UI-Language": "en"}
     a.call("start", {"model_key": "Haval/H3", "outline": []})
     assert calls[1]["payload"] == {"model_key": "Haval/H3", "outline": [], "client_id": "CID", "platform": "macos",
                                    "app_version": ai_api.APP_VERSION}

@@ -94,10 +94,13 @@
     { pattern: /\benabled\b/gi, text: "Включено", cls: "success" },
   ];
 
+  // Английский интерфейс (js/i18n.js): строку целиком переводит словарь — до подсветки, иначе её разрежут
+  // <span> на куски; английские слова вывода adb остаются английскими. Журнал (recordLine) остаётся русским.
   function highlightKeywords(text) {
-    let html = escapeHtml(text);
+    const english = window.i18n?.language?.() === "en";
+    let html = escapeHtml(english ? (window.i18n.translate(text) ?? text) : text);
     for (const { pattern, text: translated, cls } of KEYWORD_TRANSLATIONS) {
-      html = html.replace(pattern, `<span class="log-keyword log-keyword-${cls}">${translated}</span>`);
+      html = html.replace(pattern, `<span class="log-keyword log-keyword-${cls}">${english ? "$&" : translated}</span>`);
     }
     return html;
   }
@@ -4162,8 +4165,9 @@
     const action = /^action:(\d+)$/.exec(text);
     if (action) return aiActionButtons()[Number(action[1])] || null;
     const tabs = [...wizardContentEl.querySelectorAll(".apps-tab")];
-    if (text === "tab:advice") return tabs.find((tab) => tab.textContent.includes("Совет ИИ")) || null;
-    if (text === "tab:apps") return tabs.find((tab) => !tab.textContent.includes("Совет ИИ")) || null;
+    // По ключу группы (apps_tabs.js), не по подписи: в английском интерфейсе «✦ Совет ИИ» переведён.
+    if (text === "tab:advice") return tabs.find((tab) => tab.dataset.tabKey === "ai") || null;
+    if (text === "tab:apps") return tabs.find((tab) => tab.dataset.tabKey !== "ai") || null;
     if (text.startsWith("app:")) {
       const rows = [...wizardContentEl.querySelectorAll("li.app-choice")];
       const path = aiLocalPath(text.slice(4), rows.map((row) => row.dataset.apkPath));

@@ -2526,8 +2526,9 @@
     const action = /^action:(\d+)$/.exec(text);
     if (action) return aiCommandButtons()[Number(action[1])] || null;
     const tabs = [...contentEl.querySelectorAll(".apps-tab")];
-    if (text === "tab:advice") return tabs.find((tab) => tab.textContent.includes("Совет ИИ")) || null;
-    if (text === "tab:apps") return tabs.find((tab) => !tab.textContent.includes("Совет ИИ")) || null;
+    // По ключу группы (apps_tabs.js), не по подписи: в английском интерфейсе «✦ Совет ИИ» переведён.
+    if (text === "tab:advice") return tabs.find((tab) => tab.dataset.tabKey === "ai") || null;
+    if (text === "tab:apps") return tabs.find((tab) => tab.dataset.tabKey !== "ai") || null;
     if (text === "tab:instruction") return contentEl.querySelector("details.lab-stage-help > summary, .instruction-block");
     if (text.startsWith("app:")) {
       const rows = [...contentEl.querySelectorAll(".app-row")];

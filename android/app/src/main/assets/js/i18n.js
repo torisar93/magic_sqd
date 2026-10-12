@@ -1,8 +1,10 @@
 // Английская версия интерфейса (с 1.1.4; владелец, 12.10.2026: «сделаем англоязычную версию программы»).
 // Интерфейс по-прежнему пишется по-русски; этот модуль переводит готовую страницу по словарю js/i18n_en.js:
 // видимый текст, подсказки (title), placeholder, aria-label. Новые и изменённые узлы ловит MutationObserver —
-// так переводятся и окна, и сообщения из Python/Kotlin, если они есть в словаре. Не трогает лог (#log-panel,
-// журналы окон) и всё под [data-i18n-skip], поля ввода; инструкции моделей живут в iframe — туда он не заходит.
+// так переводятся и окна, и сообщения из Python/Kotlin, если они есть в словаре. Лог на экране тоже (владелец,
+// 12.10: «поправь всё, что осталось на русском») — журнал установки, который уходит на сервер, пишется отдельно и
+// остаётся русским. Не трогает [data-i18n-skip] и поля ввода; инструкции моделей живут в iframe — их программа
+// отдаёт уже переведёнными (app/catalog_i18n.py).
 //
 // Словарь: ключ — русский текст, как он на экране (пробелы не важны), значение — английский. {имя} в ключе —
 // переменная часть (название файла, другой текст из словаря — он тоже переведётся), {#имя} — только число;
@@ -24,7 +26,7 @@
 window.i18n = (() => {
   const CYRILLIC = /[А-Яа-яЁё]/;
   const ATTRS = ["title", "placeholder", "aria-label", "alt", "label"];
-  const SKIP = "#log-panel, [data-i18n-skip], script, style, textarea, [contenteditable=''], [contenteditable='true'], .dialog-log, [role='log']";
+  const SKIP = "[data-i18n-skip], script, style, textarea, [contenteditable=''], [contenteditable='true']";
   let language = "ru";
   let exact = new Map();
   let patterns = [];
@@ -73,7 +75,9 @@ window.i18n = (() => {
       }
       // Чем больше в ключе постоянного текста, тем раньше он проверяется: «Скачиваю {name}…» раньше «{name}…».
       const weight = key.replace(/\{[^{}|]+\}/g, "").length + (key.match(/\{#/g) || []).length;
-      patterns.push({ re: new RegExp("^" + source + "$", "s"), names, value, weight });
+      // Самый длинный постоянный кусок — быстрая проверка до регулярного выражения (шаблонов сотни).
+      const anchor = key.split(/\{[^{}|]+\}|\[\[[^\]]*\]\]/).reduce((a, b) => (b.length > a.length ? b : a), "").trim();
+      patterns.push({ re: new RegExp("^" + source + "$", "s"), names, value, weight, anchor });
     }
     patterns.sort((a, b) => b.weight - a.weight);
     memo.clear();
@@ -86,9 +90,22 @@ window.i18n = (() => {
       if (!(name in vars)) return whole;
       const raw = vars[name];
       if (one !== undefined) return raw.trim() === "1" ? one : other;
-      const inner = lookup(raw.trim(), depth + 1) ?? lookupFragments(raw.trim());
+      const inner = lookup(raw.trim(), depth + 1) ?? lookupFragments(raw.trim()) ?? lookupList(raw.trim(), depth + 1);
       return inner == null ? raw : raw.replace(raw.trim(), () => inner);
     });
+  }
+
+  // Перечень через запятую («не выполнено: Выбор приложений, Доступ к ADB»): каждый пункт — сам по себе.
+  function lookupList(text, depth) {
+    if (!text.includes(", ") || depth > 2) return null;
+    let changed = false;
+    const parts = text.split(", ").map((part) => {
+      if (!CYRILLIC.test(part)) return part;
+      const out = lookup(part, depth) ?? lookupFragments(part);
+      if (out != null) changed = true;
+      return out;
+    });
+    return changed && !parts.includes(null) ? parts.join(", ") : null;
   }
 
   function lookup(text, depth = 0) {
@@ -101,6 +118,7 @@ window.i18n = (() => {
     if (bare != null) return bare + tail[2];
     if (depth > 2) return null;
     for (const pattern of patterns) {
+      if (pattern.anchor && !norm.includes(pattern.anchor)) continue;
       const match = pattern.re.exec(norm);
       if (match) return fill(pattern.value, pattern.names, match.slice(1), depth);
     }
@@ -161,20 +179,33 @@ window.i18n = (() => {
   }
 
   // Одна строка: целиком из словаря, иначе по предложениям (склейки вроде «Модель. Скачана заранее. Открыть»).
+  // Шаблон со {свободной} переменной может проглотить и следующее предложение («…записан на {диск}.» + «Убран
+  // файл…»), оставив его русским, — тогда берём перевод по предложениям, если в нём русского не осталось.
   function translateLine(line) {
     const whole = lookupLine(line);
-    if (whole != null) return whole;
+    if (whole != null && !CYRILLIC.test(whole)) return whole;
+    // «[Geely / Atlas New — Обычная] текст» — строка лога модели на ПК (stage_wizard.js: log): подпись и текст отдельно.
+    const tagged = line.match(/^\[([^\]\n]+)\](\s+)(.*\S.*)$/s);
+    if (tagged && CYRILLIC.test(tagged[3])) {
+      const rest = translateLine(tagged[3]);
+      if (rest != null) {
+        const label = CYRILLIC.test(tagged[1]) ? lookup(tagged[1]) ?? lookupFragments(tagged[1]) : null;
+        return `[${label ?? tagged[1]}]${tagged[2]}${rest}`;
+      }
+    }
     const parts = sentences(line);
-    if (parts.length < 2) return null;
+    if (parts.length < 2) return whole;
     let changed = false;
     const out = parts.map((part) => {
       if (!CYRILLIC.test(part)) return part;
       const done = lookupLine(part.trim());
-      if (done == null) { noteMissing(normalize(part)); return part.trim(); }
+      if (done == null) { if (whole == null) noteMissing(normalize(part)); return part.trim(); }
       changed = true;
       return done;
     });
-    return changed ? out.join(" ") : null;
+    const split = changed ? out.join(" ") : null;
+    if (whole == null) return split;
+    return split != null && !CYRILLIC.test(split) ? split : whole;
   }
 
   // Перевод строки целиком; null — переводить нечего или нет в словаре.

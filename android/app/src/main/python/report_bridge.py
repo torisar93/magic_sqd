@@ -5,6 +5,8 @@ import json
 import urllib.error
 import urllib.request
 
+import ui_lang
+
 
 def send_report(brand: str, model: str, reason: str, description: str, app_version: str,
                 client_id: str, url: str, key: str, email: str = "", session_cookie: str = "") -> str:
@@ -21,7 +23,7 @@ def send_report(brand: str, model: str, reason: str, description: str, app_versi
         "client_id": client_id,
         "email": email,
     }).encode("utf-8")
-    headers = {"X-Submit-Key": key, "Content-Type": "application/json"}
+    headers = {"X-Submit-Key": key, "Content-Type": "application/json", **ui_lang.header()}  # язык — для ответа
     if session_cookie:
         headers["Cookie"] = session_cookie
     request = urllib.request.Request(url, data=body, method="POST", headers=headers)
