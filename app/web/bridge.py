@@ -63,7 +63,6 @@ class WebApi:
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
         self._install.ui_language = self.ui_language  # инструкции в переводе у английского интерфейса
-        ui_lang.set_language(self.ui_language())  # язык в запросы к серверу: письма, ответы ИИ (app/ui_lang.py)
         self._usb = UsbApi(base_dir, self._scanner)
         self._qr_adb = QrAdbApi(base_dir, self.cars_dir)
         self._report = ReportApi(base_dir)
@@ -91,6 +90,9 @@ class WebApi:
         self._sync = SyncApi(base_dir, self.cars_dir, self.apk_dir, self._scanner,
                              platform_name=self._install_log_platform())
         self._settings = SettingsApi(base_dir, self.cars_dir, self.apk_dir, self.admin_mode)
+        # Язык в запросы к серверу: письма, ответы ИИ (app/ui_lang.py). Только после _settings — ui_language() читает
+        # настройку; в 1.1.4 строка стояла выше, и программа падала при запуске у всех (AttributeError: _settings).
+        ui_lang.set_language(self.ui_language())
         self._update = UpdateApi(base_dir)
         self._chat = ChatApi(base_dir, self.adb_path, self._auth)
         self._ai = AiApi(base_dir, self.adb_path, self._auth, self._install, self._install_log_platform())
