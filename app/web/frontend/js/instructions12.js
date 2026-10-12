@@ -63,12 +63,15 @@
     style.id = 'instruction12-style'; style.textContent = readerStyle;
     if (document.documentElement.classList.contains('reduce-motion')) style.textContent += '\n*,*::before,*::after{animation:none!important;transition:none!important}';
     doc.head.append(style);
+    // Заголовок и описание этапа — тексты каталога: у английского интерфейса — в переводе (js/i18n.js), сам
+    // документ инструкции программа уже отдала переведённым (app/catalog_i18n.py).
+    const tr = (text) => (window.i18n ? window.i18n.t(text) : text);
     if (options.title && !doc.body.querySelector('h1')) {
-      const title = doc.createElement('h1');title.textContent = options.title;title.setAttribute('data-ai-skip', '');doc.body.prepend(title);
+      const title = doc.createElement('h1');title.textContent = tr(options.title);title.setAttribute('data-ai-skip', '');doc.body.prepend(title);
     }
     if (options.description) {
       const description = doc.createElement('p');
-      description.textContent = options.description;description.style.whiteSpace = 'pre-wrap';description.setAttribute('data-ai-skip', '');
+      description.textContent = tr(options.description);description.style.whiteSpace = 'pre-wrap';description.setAttribute('data-ai-skip', '');
       const heading = doc.body.querySelector('h1');
       if (heading) heading.after(description);else doc.body.prepend(description);
     }

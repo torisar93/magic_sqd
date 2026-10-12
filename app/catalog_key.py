@@ -23,7 +23,10 @@ except ImportError:  # pragma: no cover
 # и их картинки. НЕ шифруются hero/logo (общие миниатюры, медленно в сетке), payload-APK/прошивки,
 # видео, cars/_shared/*, apk/*, флаги — см. план.
 _MODEL_FILE_NAMES = frozenset({"_wizard_spec.json", "stages.py", "install.py", "version.json"})
-_INSTRUCTION_RE = re.compile(r"/files/(?:instruction|flash)_[^/]+/(?:instruction\.html|images/[^/]+)$")
+# Инструкция и её перевод (instruction.en.html, server/catalog_i18n.py) — один и тот же закрытый контент.
+_INSTRUCTION_RE = re.compile(r"/files/(?:instruction|flash)_[^/]+/(?:instruction(?:\.[a-z]{2})?\.html|images/[^/]+)$")
+# Тексты модели в переводе (<модель>/_i18n/en.json — этапы, кнопки, описания) — тоже.
+_TRANSLATION_RE = re.compile(r"/_i18n/[a-z]{2}\.json$")
 
 _key: bytes | None = None
 
@@ -48,7 +51,7 @@ def is_encrypted_path(rel: str) -> bool:
     name = rel.rsplit("/", 1)[-1]
     if name in _MODEL_FILE_NAMES:
         return True
-    return bool(_INSTRUCTION_RE.search("/" + rel))
+    return bool(_INSTRUCTION_RE.search("/" + rel) or _TRANSLATION_RE.search("/" + rel))
 
 
 def encrypt_bytes(data: bytes) -> bytes:

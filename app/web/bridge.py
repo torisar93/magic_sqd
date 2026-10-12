@@ -27,7 +27,7 @@ from .api.submissions_api import SubmissionsApi
 from .api.sync_api import SyncApi
 from .api.update_api import UpdateApi
 from .api.usb_api import UsbApi
-from .. import access_gate, catalog_setup, client_config, client_env, ui_bundle
+from .. import access_gate, catalog_i18n, catalog_setup, client_config, client_env, ui_bundle
 from ..content_config import get_base_url
 from ..admin_config import clear_saved_login
 from ..adb_utils import find_adb_path
@@ -62,6 +62,7 @@ class WebApi:
         self.client_id = get_or_create_client_id(base_dir) if self.debug_mode else ""
         self._scanner = ScannerApi(self.cars_dir, self.apk_dir)
         self._install = InstallApi(self.adb_path, base_dir, self._scanner)
+        self._install.ui_language = self.ui_language  # инструкции в переводе у английского интерфейса
         self._usb = UsbApi(base_dir, self._scanner)
         self._qr_adb = QrAdbApi(base_dir, self.cars_dir)
         self._report = ReportApi(base_dir)
@@ -179,6 +180,13 @@ class WebApi:
     def ui_language(self) -> str:
         chosen = self._settings.preferences().get("ui_language", "auto")
         return chosen if chosen in ("ru", "en") else client_env.ui_language()
+
+    def catalog_i18n(self) -> dict:
+        """Переводы текстов каталога (модели, библиотека APK) — переводчику интерфейса js/i18n.js, только для
+        английского интерфейса (app/catalog_i18n.py)."""
+        if self.ui_language() != "en":
+            return {"strings": {}}
+        return {"strings": catalog_i18n.load_strings(self.cars_dir, self.apk_dir, "en")}
 
     def access_check(self) -> dict:
         """Доступ по региону заново у сервера (окно «Нужна подписка»: «Проверить снова», после входа в аккаунт) —

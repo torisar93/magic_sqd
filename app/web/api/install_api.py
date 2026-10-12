@@ -28,7 +28,7 @@ from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_de
 from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, model_on_server,
                              prune_model_stale_files, sync_model_apk_metadata, sync_model_subfolder,
                              sync_shared_folder)
-from ... import closed_stages
+from ... import catalog_i18n, closed_stages
 from ...install_context import InstallCancelled
 from ... import device_models
 from ...rollback import rollback
@@ -103,6 +103,8 @@ class InstallApi:
         self.adb_path = adb_path
         self.base_dir = base_dir
         self._scanner_api = scanner_api
+        # Язык интерфейса (bridge.ui_language, с 1.1.4): «en» — инструкции в переводе, если он есть (catalog_i18n.py).
+        self.ui_language = lambda: "ru"
         self._runner = InstallRunner(
             adb_path, self._on_log, self._on_finished,
             base_dir=base_dir, ask_input_fn=input_broker.request,
@@ -309,7 +311,8 @@ class InstallApi:
             "closed_subscribers": stage.get("closed_subscribers", True) is not False,
             "description": stage.get("description"),
             "instruction_html": (_resolve_video_hrefs(
-                                      _inline_relative_images(catalog_key.read_text(html_path), html_path.parent),
+                                      _inline_relative_images(catalog_i18n.read_instruction(html_path, self.ui_language()),
+                                                              html_path.parent),
                                       html_path.parent)
                                   if html_path else None),
             # Граф исполнения (см. car_generator.py: StepSpec.next/
@@ -368,11 +371,12 @@ class InstallApi:
             "video_exists": video_exists,
             "actions": [{"label": a.get("label", ""), "kind": a.get("kind", "command")}
                         for a in (stage.get("actions") or [])],
-            "flash_blocks": [self._flash_block_to_dict(model, block) for block in stage.get("flash_blocks") or []],
+            "flash_blocks": [self._flash_block_to_dict(model, block, self.ui_language())
+                             for block in stage.get("flash_blocks") or []],
         }
 
     @staticmethod
-    def _flash_block_to_dict(model, block: dict) -> dict:
+    def _flash_block_to_dict(model, block: dict, language: str = "ru") -> dict:
         """Блок этапа «Флешка» (см. car_generator.py: FlashBlockSpec) для
         stage_wizard.js: renderFlashBlocksStage — только описание; запись блока
         идёт по его номеру (usb_start/usb_list_items с block), пути в JS не нужны."""
@@ -380,7 +384,7 @@ class InstallApi:
         if data["kind"] == "instruction":
             html_path = model.dir / block["instruction"] if block.get("instruction") else None
             data["instruction_html"] = (
-                _resolve_video_hrefs(_inline_relative_images(catalog_key.read_text(html_path),
+                _resolve_video_hrefs(_inline_relative_images(catalog_i18n.read_instruction(html_path, language),
                                                              html_path.parent), html_path.parent)
                 if html_path is not None and html_path.is_file() else None)
         elif data["kind"] == "write":

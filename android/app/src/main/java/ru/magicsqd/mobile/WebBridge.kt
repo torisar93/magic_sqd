@@ -245,8 +245,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "scanner_list_apks" -> { listApks(); "{}" }
                 "lab_apk_icon" -> { loadLabApkIcon(args.optString("path")); "{}" }
                 "install_load_stages" -> pyModule("mobile_bridge").callAttr(
-                    "load_install_stages", args.getString("model_key"), context.filesDir.absolutePath
+                    "load_install_stages", args.getString("model_key"), context.filesDir.absolutePath, uiLanguage()
                 ).toString()
+                // Переводы текстов каталога (модели, библиотека APK) — только английскому интерфейсу (js/i18n.js).
+                "catalog_i18n" -> if (uiLanguage() == "en") {
+                    pyModule("mobile_bridge").callAttr("catalog_i18n_strings", carsDir, apkDir).toString()
+                } else "{\"strings\":{}}"
                 "adb_is_connected" -> JSONObject().put("connected", AdbSession.isConnected).toString()
                 "adb_connect" -> { adbConnect(); "{}" }
                 "adb_connect_wifi" -> { adbConnectWifi(args.getString("host"), args.optInt("port", 5555)); "{}" }

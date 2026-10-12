@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 
 import catalog_crypto
+import catalog_i18n
 import catalog_key
 
 SPEC_FILENAME = "_wizard_spec.json"
@@ -279,7 +280,8 @@ def _inline_instruction_image(instr_dir: Path, src: str):
 _FLASH_BLOCK_ID_RE = re.compile(r"[0-9a-f]{8}")
 
 
-def _flash_blocks(raw_blocks, files_dir: Path, usb_step_dir: Path, files_root: Path | None) -> list:
+def _flash_blocks(raw_blocks, files_dir: Path, usb_step_dir: Path, files_root: Path | None,
+                  language: str = "ru") -> list:
     """Блоки этапа «Флешка» для app.js: renderFlashBlocksStage — инструкции уже
     прочитаны (картинки переписаны на appassets, как у этапа «Инструкция»),
     файлы блока записи — абсолютными путями (их пишет тот же usb_run_stage, что и
@@ -294,7 +296,7 @@ def _flash_blocks(raw_blocks, files_dir: Path, usb_step_dir: Path, files_root: P
             if _FLASH_BLOCK_ID_RE.fullmatch(block_id):
                 instr_dir = files_dir / f"flash_{block_id}"
                 try:
-                    html = catalog_key.read_text(instr_dir / "instruction.html", errors="replace")
+                    html = catalog_i18n.read_instruction(instr_dir / "instruction.html", language)
                 except OSError:
                     html = ""
                 if html and files_root is not None:
@@ -311,7 +313,7 @@ def _flash_blocks(raw_blocks, files_dir: Path, usb_step_dir: Path, files_root: P
     return blocks
 
 
-def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
+def load_wizard_spec(model_dir: Path, files_root: Path | None = None, language: str = "ru"):
     """cars/<...>/<модель>/_wizard_spec.json -> нормализованный список этапов
     (список dict'ов, JSON-совместимо) с УЖЕ РАЗРЕШЁННЫМИ путями к файлам
     (files/pack*, usb_files/step_N, files/adb_N, files/exe_N) — но сами файлы
@@ -408,7 +410,8 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             instr_dir = files_dir / f"instruction_{i}"
             instr_path = instr_dir / "instruction.html"
             try:
-                instruction_html = catalog_key.read_text(instr_path, errors="replace")
+                # Английский интерфейс — перевод той же версии инструкции, если есть (catalog_i18n.py).
+                instruction_html = catalog_i18n.read_instruction(instr_path, language)
             except OSError:
                 instruction_html = ""
             if instruction_html and files_root is not None:
@@ -489,7 +492,7 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
             # отдельным файлом-триггером перед обычным svlog.flag (см. app.js:
             # renderQrAdbStage, qr_adb_password.py).
             "qr_adb_engineering_menu": step_data.get("qr_adb_engineering_menu", False),
-            "flash_blocks": _flash_blocks(raw_flash_blocks, files_dir, usb_root / f"step_{i}", files_root),
+            "flash_blocks": _flash_blocks(raw_flash_blocks, files_dir, usb_root / f"step_{i}", files_root, language),
             "exe_file": exe_file,
             "video_file": video_file,
             "video_url": video_url,
@@ -510,7 +513,7 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
         })
 
     if model_dir.name != CLOSED_DIR:
-        steps = _merge_closed(model_dir, steps, files_root)
+        steps = _merge_closed(model_dir, steps, files_root, language)
     return {
         "wifi": data.get("wifi", False),
         "wifi_port": data.get("wifi_port", 5555),
@@ -518,12 +521,12 @@ def load_wizard_spec(model_dir: Path, files_root: Path | None = None):
     }
 
 
-def _merge_closed(model_dir: Path, steps: list, files_root: Path | None) -> list:
+def _merge_closed(model_dir: Path, steps: list, files_root: Path | None, language: str = "ru") -> list:
     """Заглушки закрытых этапов → настоящие этапы из _closed/ (скачана — значит, доступ есть; пути файлов —
     от _closed/, переходы — из открытой части). Нет — заглушка остаётся с closed_locked (под замком)."""
     if not any(step["closed"] for step in steps):
         return steps
-    closed = load_wizard_spec(model_dir / CLOSED_DIR, files_root)
+    closed = load_wizard_spec(model_dir / CLOSED_DIR, files_root, language)
     by_id = {step["id"]: step for step in (closed or {}).get("steps", []) if step["closed"]}
     result = []
     for step in steps:

@@ -585,6 +585,7 @@ window.addEventListener("pywebviewready", async () => {
   if (settingsPreferences.auto_sync) {
     window.pywebview.api.sync_startup().then(async (syncResult) => {
       if (syncResult.access) window.accessGate.apply(syncResult.access);
+      window.i18n.loadCatalog();  // каталог обновился — и переводы его текстов (английский интерфейс)
       // Первый запуск требует построить каталог после скачивания. В остальных
       // случаях не перерисовываем карточки без причины: раньше это давало
       // заметное второе «обновление» каталога при каждом запуске, даже когда

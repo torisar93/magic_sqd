@@ -19,6 +19,7 @@ from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version, read_early_access
 import offline_pack
 from wizard_spec import load_wizard_spec
+import catalog_i18n as _catalog_i18n
 from apk_library import list_apks as _list_apks, ensure_apks_downloaded as _ensure_apks_downloaded
 
 # Прогресс текущей закачки (sync_cars/sync_payload) — пишется из фонового
@@ -570,7 +571,7 @@ def sync_shared_folder_for(cars_dir: str, base_url: str, folder_name: str, sink=
     return json.dumps({"downloaded": downloaded, "log": lines})
 
 
-def load_install_stages(model_key: str, files_root: str = "") -> str:
+def load_install_stages(model_key: str, files_root: str = "", ui_language: str = "ru") -> str:
     """key -> нормализованный список этапов из _wizard_spec.json (см.
     wizard_spec.load_wizard_spec) для мастера установки. Файлы, на которые
     ссылаются этапы, должны быть уже скачаны (см. sync_payload выше) —
@@ -578,10 +579,17 @@ def load_install_stages(model_key: str, files_root: str = "") -> str:
     — context.filesDir с Kotlin-стороны, только для картинок в
     instruction.html (см. wizard_spec._rewrite_instruction_images)."""
     model_dir = Path(model_key)
-    spec = load_wizard_spec(model_dir, Path(files_root) if files_root else None)
+    # ui_language — язык интерфейса (WebBridge.uiLanguage): «en» — инструкции в переводе, если он есть.
+    spec = load_wizard_spec(model_dir, Path(files_root) if files_root else None, ui_language or "ru")
     if spec is None:
         return json.dumps({"unsupported": True})
     return json.dumps(spec)
+
+
+def catalog_i18n_strings(cars_dir: str, apk_dir: str) -> str:
+    """Переводы текстов каталога (модели, библиотека APK) — переводчику интерфейса js/i18n.js
+    (catalog_i18n.load_strings); только для английского интерфейса — решает WebBridge."""
+    return json.dumps({"strings": _catalog_i18n.load_strings(Path(cars_dir), Path(apk_dir), "en")}, ensure_ascii=False)
 
 
 def list_apks(apk_dir: str, base_url: str) -> str:

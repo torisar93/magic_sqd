@@ -32,6 +32,11 @@ def test_desktop_and_android_copies_are_byte_identical():
     "cars/Haval/H3/files/instruction_1/images/IMG_1.jpg",
     "cars/Geely/Cityray/files/flash_main/instruction.html",
     "cars/Geely/Cityray/files/flash_main/images/a.png",
+    # Перевод каталога на английский (server/catalog_i18n.py): инструкция и тексты модели.
+    "cars/Haval/H3/files/instruction_1/instruction.en.html",
+    "cars/Geely/Cityray/files/flash_main/instruction.en.html",
+    "cars/Haval/H3/_i18n/en.json",
+    "cars/Haval/H3/_closed/_i18n/en.json",
 ])
 def test_encrypted_paths(rel):
     assert catalog_key.is_encrypted_path(rel)
@@ -49,6 +54,7 @@ def test_encrypted_paths(rel):
     "cars/_shared/motion_cert/private.pk8",
     "apk/RuStore.apk",                                     # общая библиотека
     "apk/RuStore.apk.json",
+    "apk/_i18n/en.json",                                   # перевод общей библиотеки — как сама библиотека
     "manifest.json",
     "device_models.json",
 ])

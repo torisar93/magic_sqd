@@ -17,7 +17,8 @@ ANDROID_PY = Path(__file__).resolve().parents[1] / "android/app/src/main/python"
 def android(monkeypatch):
     monkeypatch.syspath_prepend(str(ANDROID_PY))
     mods = {}
-    for name in ("catalog_crypto", "catalog_key", "offline_pack", "content_sync", "scanner", "wizard_spec"):
+    # catalog_i18n (перевод инструкций) читает файлы через catalog_key — грузим заново вместе с ним.
+    for name in ("catalog_crypto", "catalog_key", "catalog_i18n", "offline_pack", "content_sync", "scanner", "wizard_spec"):
         spec = importlib.util.spec_from_file_location(name, ANDROID_PY / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         monkeypatch.setitem(sys.modules, name, module)

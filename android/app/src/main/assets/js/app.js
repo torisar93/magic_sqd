@@ -964,6 +964,7 @@
     listEl.style.display = "";
     hideStartupOverlay();
     const result = event.result || {};
+    window.i18n.loadCatalog();  // каталог обновился — и переводы его текстов (английский интерфейс)
     if (settingsSyncTimeout) {
       clearTimeout(settingsSyncTimeout);
       settingsSyncTimeout = null;

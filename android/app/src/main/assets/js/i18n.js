@@ -15,6 +15,11 @@
 // Язык выбирает программа: настройка «Язык», «авто» — по системе (наш язык в системе — русский, иначе
 // английский; app/client_env.py, ClientEnv.kt). Android отвечает сразу (синхронный мост) — страница переводится
 // ещё до первого кадра; ПК — app.js после pywebviewready (setLanguage(info.ui_language)).
+//
+// Тексты каталога (этапы, кнопки, приложения, названия моделей) переводит сервер (server/catalog_i18n.py); у
+// английского интерфейса программа отдаёт их словарь (loadCatalog → мост catalog_i18n, app/catalog_i18n.py) —
+// он дополняет этот; его строки подставляются и частью текста («Geely Atlas New — Обычная»), если после замены
+// русского не осталось. Инструкции моделей программа сама отдаёт в переводе.
 // Общий файл ПК и Android (tests/test_shared_frontend_copies.py).
 window.i18n = (() => {
   const CYRILLIC = /[А-Яа-яЁё]/;
@@ -25,6 +30,8 @@ window.i18n = (() => {
   let patterns = [];
   let contextual = new Map();         // текст → [{selector, value}] («Обновить @ .offline-label»)
   let fragments = [];                 // [{re, value}] — «re:…» ключи
+  let catalogExact = new Map();       // тексты каталога (extend): русский → английский
+  let catalogPieces = [];             // они же для замены части строки, длинные первыми
   let compiled = false;
   let observer = null;
   const memo = new Map();
@@ -87,9 +94,11 @@ window.i18n = (() => {
   function lookup(text, depth = 0) {
     if (!text || !CYRILLIC.test(text)) return null;
     const norm = normalize(text);
-    if (exact.has(norm)) return exact.get(norm);
+    const direct = exact.get(norm) ?? catalogExact.get(norm);
+    if (direct != null) return direct;
     const tail = norm.match(/^(.*?[^.:!?…\s])\s*([.:!?…]+)$/s);
-    if (tail && exact.has(tail[1])) return exact.get(tail[1]) + tail[2];
+    const bare = tail ? exact.get(tail[1]) ?? catalogExact.get(tail[1]) : null;
+    if (bare != null) return bare + tail[2];
     if (depth > 2) return null;
     for (const pattern of patterns) {
       const match = pattern.re.exec(norm);
@@ -107,12 +116,30 @@ window.i18n = (() => {
     return inner == null ? lookupFragments(line) : parts[1] + inner;
   }
 
-  // Замены кусков («5 МБ» → «5 MB»): годятся, только если русского не осталось вовсе.
+  // Замены кусков («5 МБ» → «5 MB», «… — Обычная» → «… — Standard»): годятся, только если русского не осталось.
   function lookupFragments(text) {
-    if (!fragments.length) return null;
     let out = text;
     for (const fragment of fragments) out = out.replace(fragment.re, fragment.value);
+    for (let i = 0; i < catalogPieces.length && CYRILLIC.test(out); i++) {
+      if (out.includes(catalogPieces[i][0])) out = replaceWhole(out, catalogPieces[i][0], catalogPieces[i][1]);
+    }
     return out !== text && !CYRILLIC.test(out) ? out : null;
+  }
+
+  // Замена только целого слова/фразы: «рест» в «Belgee X70 — рест», но не внутри «рестайлинг».
+  const WORD = /[0-9A-Za-zА-Яа-яЁё]/;
+  function replaceWhole(text, piece, value) {
+    let result = "";
+    let from = 0;
+    for (let at = text.indexOf(piece); at >= 0; at = text.indexOf(piece, at + 1)) {
+      if (at < from) continue;
+      const before = at > 0 ? text[at - 1] : "";
+      const after = text.charAt(at + piece.length);
+      if ((before && WORD.test(before)) || (after && WORD.test(after))) continue;
+      result += text.slice(from, at) + value;
+      from = at + piece.length;
+    }
+    return result + text.slice(from);
   }
 
   function noteMissing(text) {
@@ -289,8 +316,37 @@ window.i18n = (() => {
     language = value;
     document.documentElement.lang = value;
     document.documentElement.classList.toggle("lang-en", value === "en");
-    if (value === "en") start(); else stop();
+    if (value === "en") { start(); setTimeout(loadCatalog, 0); } else stop();
     return language;
+  }
+
+  // Словарь текстов каталога (весь заново — после синхронизации что-то могло поменяться).
+  function extend(strings) {
+    if (!compiled) compile();
+    catalogExact = new Map();
+    for (const [ru, en] of Object.entries(strings || {})) {
+      if (typeof en === "string" && en.trim() && CYRILLIC.test(ru)) catalogExact.set(normalize(ru), en);
+    }
+    catalogPieces = [...catalogExact.entries()].filter(([ru]) => ru.length >= 3).sort((a, b) => b[0].length - a[0].length);
+    memo.clear();
+    for (const text of [...missing.keys()]) if (catalogExact.has(text)) missing.delete(text);
+    if (observer) walk(document.documentElement);
+    return catalogExact.size;
+  }
+
+  // Переводы каталога у программы: Android — синхронный мост, ПК — pywebview. Только английскому интерфейсу.
+  async function loadCatalog() {
+    if (language !== "en") return 0;
+    try {
+      let reply = null;
+      if (window.AndroidBridge) reply = JSON.parse(window.AndroidBridge.call("catalog_i18n", "{}") || "{}");
+      else if (window.pywebview && window.pywebview.api && window.pywebview.api.catalog_i18n) {
+        reply = await window.pywebview.api.catalog_i18n();
+      }
+      return reply && reply.strings ? extend(reply.strings) : 0;
+    } catch (_) {
+      return 0;  // старая сборка без перевода каталога или сбой чтения — интерфейс переведён, каталог нет
+    }
   }
 
   // Для кода, которому нужен текст, а не узел страницы (системные окна, document.title…).
@@ -305,7 +361,7 @@ window.i18n = (() => {
   } catch (_) { /* старая сборка без ui_language — по app_version в app.js */ }
 
   return {
-    setLanguage, t, translate,
+    setLanguage, t, translate, extend, loadCatalog,
     language: () => language,
     missing: () => [...missing.entries()].sort((a, b) => b[1] - a[1]).map(([text]) => text),
   };

@@ -62,6 +62,18 @@ module.exports = async function () {
     assert(t("Haval Dargo") === null, `${base}: без кириллицы`);
     assert(i18n.missing().includes("Совершенно новая фраза интерфейса"), `${base}: missing() собирает непереведённое`);
 
+    // Тексты каталога (сервер переводит, программа отдаёт словарь — extend): целиком и частью строки.
+    assert(i18n.extend({ "Обычная": "Standard", "рест": "facelift", "Доступ к ADB": "ADB (catalog)",
+      "Добавлена кнопка.": "Added a button.", "пусто": "" }) === 4, `${base}: extend считает тексты`);
+    eq("Обычная", "Standard");
+    eq("Geely Atlas New — Обычная", "Geely Atlas New — Standard");
+    eq("Belgee X70 — рест", "Belgee X70 — facelift");
+    assert(t("Belgee X70 рестайлинг") === null, `${base}: «рест» внутри другого слова не заменяется`);
+    eq("Доступ к ADB", "ADB access");  // словарь интерфейса главнее текстов каталога
+    eq("Обновлены:\n  • Haval H3: Добавлена кнопка.", "Updated:\n  • Haval H3: Added a button.");
+    i18n.extend({});  // пересобранный словарь без этих строк — их больше нет
+    assert(t("Geely Atlas New — Обычная") === null, `${base}: старые тексты каталога забыты`);
+
     // Здоровье словаря.
     for (const [key, value] of Object.entries(I18N_EN)) {
       assert(typeof value === "string" && value.trim(), `${base}: пустой перевод у «${key}»`);
