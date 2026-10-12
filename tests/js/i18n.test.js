@@ -41,7 +41,7 @@ module.exports = async function () {
     eq("Ошибка установки: магнитола не дала права root (adb root: adbd cannot run as root)",
       "Installation error: the head unit didn't grant root (adb root: adbd cannot run as root)");
     // Число-переменная ловит только числа: «из» в обычной фразе — не «of».
-    assert(t("Выйти из режима администратора") === null, `${base}: {#a} из {#b} поймал обычную фразу`);
+    assert(t("Выйдите из машины и закройте дверь") === null, `${base}: {#a} из {#b} поймал обычную фразу`);
     assert(t("список из 3 пунктов") === null, `${base}: «из» внутри фразы`);
     // Единицы — заменой куска, если русского больше не осталось.
     eq("MYUSB · 7,5 ГБ", "MYUSB · 7,5 GB");
@@ -85,7 +85,8 @@ module.exports = async function () {
       if (free) assert((literal.match(/[А-Яа-яЁё]/g) || []).length >= 4, `${base}: слишком общий шаблон «${key}»`);
       // Переменные значения есть в ключе.
       const names = new Set([...key.matchAll(/\{#?([^{}|]+)\}/g)].map((m) => m[1]));
-      for (const m of value.matchAll(/\{([^{}|]+)(?:\|[^{}|]*\|[^{}|]*)?\}/g)) {
+      // Переменные — имена ({name}, {n|one|other}); прочие фигурные скобки (пример JSON) — просто текст.
+      for (const m of value.matchAll(/\{([A-Za-z_]\w*)(?:\|[^{}|]*\|[^{}|]*)?\}/g)) {
         assert(names.has(m[1]), `${base}: в переводе «${key}» переменная {${m[1]}}, которой нет в ключе`);
       }
     }
