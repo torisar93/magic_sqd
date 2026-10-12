@@ -45,7 +45,8 @@ object ClientEnv {
             .put("tz", tz).put("os", "android")
     }
 
-    /** Язык интерфейса приложения: есть наш язык (телефон, клавиатура, локаль) — русский, иначе английский. */
+    /** Язык интерфейса приложения: есть наш язык (телефон, клавиатура, локаль) — русский, иначе английский.
+     *  Ничего не определилось — русский, как было всегда (английский только по явным признакам). */
     fun uiLanguage(env: JSONObject): String {
         val tags = mutableListOf<String>()
         listOf("langs", "kbd").forEach { key ->
@@ -53,7 +54,8 @@ object ClientEnv {
             for (i in 0 until items.length()) tags.add(items.optString(i))
         }
         tags.add(env.optString("region"))
-        val codes = tags.map { it.split('-', '_').first().lowercase() }.toSet()
+        val codes = tags.map { it.split('-', '_').first().lowercase() }.filter { it.isNotBlank() }.toSet()
+        if (codes.isEmpty()) return "ru"
         return if (codes.any { it in RUSSIAN_UI }) "ru" else "en"
     }
 }

@@ -142,8 +142,9 @@ class WebApi:
             "auth_account": self.auth_startup,
             "app_version": APP_VERSION,
             "os": os_description(),
-            # Язык интерфейса (с 1.1.4): наш язык в системе — русский, иначе английский (app/client_env.py).
-            "ui_language": client_env.ui_language(),
+            # Язык интерфейса (с 1.1.4): выбор в настройках, «авто» — наш язык в системе → русский, иначе английский
+            # (app/client_env.py).
+            "ui_language": self.ui_language(),
             # Выпуск интерфейса с сервера (app/ui_bundle.py); 0 — встроенный.
             "ui_rev": (ui_bundle.active_rev(self.base_dir / "ui", "desktop", APP_VERSION)
                        if self.bundle_frontend_dir else 0),
@@ -175,6 +176,10 @@ class WebApi:
     def sync_startup(self) -> dict:
         return self._sync.startup_sync()
 
+    def ui_language(self) -> str:
+        chosen = self._settings.preferences().get("ui_language", "auto")
+        return chosen if chosen in ("ru", "en") else client_env.ui_language()
+
     def access_check(self) -> dict:
         """Доступ по региону заново у сервера (окно «Нужна подписка»: «Проверить снова», после входа в аккаунт) —
         app/access_gate.py."""
@@ -196,7 +201,9 @@ class WebApi:
         return self._settings.clear_cache()
 
     def settings_set_preferences(self, preferences: dict) -> dict:
-        return self._settings.set_preferences(preferences)
+        result = self._settings.set_preferences(preferences)
+        # Язык интерфейса меняется сразу (js/i18n.js): «авто» здесь же превращается в ru/en по системе.
+        return {**result, "ui_language_effective": self.ui_language()}
 
     def settings_set_debug_mode(self, enabled: bool) -> dict:
         return self._settings.set_debug_mode(enabled)

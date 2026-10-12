@@ -142,7 +142,8 @@
     try {
       const info = Bridge.call("app_version", {});
       const ui = info.ui_rev ? ` · интерфейс r${info.ui_rev}` : "";
-      const lines = [`Magic SQD v${info.version} (Android)${ui} · client=${info.client_id}`];
+      const lang = info.ui_language === "en" ? " · язык EN" : "";  // английский интерфейс (js/i18n.js) — видно в разборе
+      const lines = [`Magic SQD v${info.version} (Android)${ui} · client=${info.client_id}${lang}`];
       if (info.device) lines.push(`Телефон: ${info.device} · Android ${info.android} (API ${info.sdk}) · ${new Date().toLocaleString("ru-RU")}`);
       return lines;
     } catch (e) { return []; /* не критично для установки — просто не будет диагностических строк */ }
@@ -3874,10 +3875,28 @@
     const github = el("a", { class: "menu13-action menu13-link", href: "https://github.com/torisar93/magic_sqd", target: "_blank", rel: "noopener" }, [
       AppIcons.icon("link"), el("span", { class: "menu13-action-label", text: "GitHub проекта" }), AppIcons.icon("chevron"),
     ]);
+    // Язык интерфейса (с 1.1.4): «Авто» — по телефону, меняется сразу (js/i18n.js). Подпись двуязычная — чтобы
+    // англоязычный техник нашёл пункт и в русском интерфейсе.
+    const languageSelect = el("select", { class: "menu13-select", "data-preference": "ui_language", "aria-label": "Язык · Language" });
+    [["auto", "Авто"], ["ru", "Русский"], ["en", "English"]].forEach(([value, label]) => {
+      const option = new Option(label, value);
+      if (value !== "auto") option.dataset.i18nSkip = "";  // названия языков — на своём языке
+      languageSelect.append(option);
+    });
+    const chosenLanguage = (info.preferences || {}).ui_language;
+    languageSelect.value = ["ru", "en"].includes(chosenLanguage) ? chosenLanguage : "auto";
+    languageSelect.addEventListener("change", () => {
+      const preferences = Bridge.call("settings_set_preferences", { ui_language: languageSelect.value });
+      window.i18n.setLanguage(preferences.ui_language_effective || (languageSelect.value === "en" ? "en" : "ru"));
+    });
+    const languageRow = el("label", { class: "settings-toggle menu13-toggle menu13-language" }, [
+      el("span", { text: "Язык · Language" }), languageSelect,
+    ]);
     overlay = showMenuModal("Настройки", "settings", [
       account,
       el("section", { class: "settings-section menu13-card" }, [
         menuHeading("Интерфейс", "settings"),
+        languageRow,
         makeToggle("Уменьшить анимации", "reduced_motion"),
         makeToggle("Не выключать экран", "keep_screen_on"),
         makeToggle("Компактный лог", "compact_log"),
@@ -4406,6 +4425,8 @@
     // (WebBridge.startSync перед синхронизацией каталога, «Проверить снова»).
     let gateInfo = {};
     try { gateInfo = Bridge.call("app_version", {}) || {}; } catch (e) { /* без языка — русский */ }
+    // Язык интерфейса (с 1.1.4): js/i18n.js уже спросил его у моста при загрузке — здесь на случай, если не смог.
+    if (gateInfo.ui_language) window.i18n.setLanguage(gateInfo.ui_language);
     window.accessGate.init({ uiLanguage: gateInfo.ui_language, openAccount: showAccountModal, onOpened: () => startSync(false) });
     initOffline();
     window.events.on("adb_connect_result", onAdbConnectResult);

@@ -210,9 +210,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     .put("device", "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}")
                     .put("android", android.os.Build.VERSION.RELEASE ?: "?")
                     .put("sdk", android.os.Build.VERSION.SDK_INT)
-                    // Язык интерфейса (с 1.1.4): наш язык на телефоне или в клавиатуре — русский, иначе английский.
-                    .put("ui_language", ClientEnv.uiLanguage(ClientEnv.collect(context)))
+                    // Язык интерфейса (с 1.1.4): настройка «Язык», «авто» — наш язык на телефоне или в клавиатуре →
+                    // русский, иначе английский.
+                    .put("ui_language", uiLanguage())
                     .toString()
+                // Тот же язык — переводчику страницы (js/i18n.js) ещё до первого кадра: лёгкий вызов при загрузке.
+                "ui_language" -> JSONObject().put("language", uiLanguage()).toString()
                 "settings_info" -> settingsInfo().toString()
                 "settings_preferences" -> settingsPreferences().toString()
                 "settings_clear_cache" -> clearCache().toString()
@@ -539,6 +542,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             .put("compact_log", prefs.getBoolean("compact_log", true))
             .put("keep_screen_on", prefs.getBoolean("keep_screen_on", true))
             .put("chat_enabled", prefs.getBoolean("chat_enabled", true))
+            .put("ui_language", prefs.getString("ui_language", "auto") ?: "auto")
+    }
+
+    /** Язык интерфейса: выбор в настройках (ru/en), «авто» — по телефону (ClientEnv.uiLanguage). */
+    private fun uiLanguage(): String {
+        val chosen = context.getSharedPreferences("settings", Context.MODE_PRIVATE).getString("ui_language", "auto")
+        return if (chosen == "ru" || chosen == "en") chosen else ClientEnv.uiLanguage(ClientEnv.collect(context))
     }
 
     private fun setSettingsPreferences(args: JSONObject): JSONObject {
@@ -547,9 +557,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         listOf("auto_sync", "reduced_motion", "compact_log", "keep_screen_on", "chat_enabled").forEach { key ->
             if (args.has(key)) editor.putBoolean(key, args.getBoolean(key))
         }
-        editor.apply()
+        val language = args.optString("ui_language")
+        if (language in listOf("auto", "ru", "en")) editor.putString("ui_language", language)
+        editor.commit()  // язык читается сразу ниже (uiLanguage) — без отложенной записи apply()
         if (args.has("keep_screen_on")) webView.keepScreenOn = args.getBoolean("keep_screen_on")
-        return settingsInfo().getJSONObject("preferences")
+        // Язык меняется сразу (js/i18n.js): «авто» здесь же превращается в ru/en по телефону.
+        return settingsInfo().getJSONObject("preferences").put("ui_language_effective", uiLanguage())
     }
 
     private fun clearCache(): JSONObject {

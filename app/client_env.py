@@ -105,20 +105,28 @@ def _other() -> dict:
     return {"ui": [tag] if tag else [], "region": tag, "kbd": []}
 
 
+_static: dict | None = None  # языки и раскладки за время работы программы не меняются — читаем один раз
+
+
 def collect() -> dict:
-    """Признаки этой системы (для app_token). Сбой определения — пустые списки, часовой пояс всё равно."""
-    if sys.platform == "win32":
-        os_name, reader = "windows", _windows
-    elif sys.platform == "darwin":
-        os_name, reader = "macos", _macos
-    else:
-        os_name, reader = "linux", _other
-    try:
-        found = reader()
-    except Exception:  # noqa: BLE001 — признаки не обязательны: сервер тогда судит по адресу
-        found = {"ui": [], "region": "", "kbd": []}
-    return {"ui": list(found.get("ui") or [])[:16], "region": str(found.get("region") or "")[:32],
-            "kbd": list(found.get("kbd") or [])[:16], "tz": _tz_minutes(), "os": os_name}
+    """Признаки этой системы (для app_token и языка интерфейса). Сбой определения — пустые списки, часовой пояс
+    всё равно. Языки читаются один раз за запуск (на macOS это три вызова defaults), часовой пояс — каждый раз."""
+    global _static
+    if _static is None:
+        if sys.platform == "win32":
+            os_name, reader = "windows", _windows
+        elif sys.platform == "darwin":
+            os_name, reader = "macos", _macos
+        else:
+            os_name, reader = "linux", _other
+        try:
+            found = reader()
+        except Exception:  # noqa: BLE001 — признаки не обязательны: сервер тогда судит по адресу
+            found = {"ui": [], "region": "", "kbd": []}
+        _static = {"ui": list(found.get("ui") or [])[:16], "region": str(found.get("region") or "")[:32],
+                   "kbd": list(found.get("kbd") or [])[:16], "os": os_name}
+    return {"ui": list(_static["ui"]), "region": _static["region"], "kbd": list(_static["kbd"]),
+            "tz": _tz_minutes(), "os": _static["os"]}
 
 
 def _code(tag: str) -> str:
@@ -127,7 +135,9 @@ def _code(tag: str) -> str:
 
 def ui_language(env: dict | None = None) -> str:
     """Язык интерфейса программы: есть наш язык в системе (интерфейс, формат или раскладка) — русский, иначе
-    английский."""
+    английский. Ничего не определилось — русский, как было всегда (основные пользователи — наши)."""
     env = env if env is not None else collect()
-    codes = {_code(tag) for tag in (env.get("ui") or []) + (env.get("kbd") or []) + [env.get("region") or ""]}
+    codes = {_code(tag) for tag in (env.get("ui") or []) + (env.get("kbd") or []) + [env.get("region") or ""]} - {""}
+    if not codes:
+        return "ru"
     return "ru" if codes & RUSSIAN_UI_LANGS else "en"

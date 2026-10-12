@@ -31,7 +31,7 @@
     syncEarly();wrap.append(choices);open.disabled=!chosen;open.addEventListener('click',()=>chosen?.early_locked?(onLocked||(()=>{}))(chosen):onOpen(chosen));wrap.append(actions);syncOffline();return wrap;
   }
   // Текст окна «Ранний доступ» — общий для ПК (boosty.js) и Android (app.js), окна у них свои.
-  function earlyDate(seconds){const d=new Date(seconds*1000);const opts={day:'numeric',month:'long'};if(d.getFullYear()!==new Date().getFullYear())opts.year='numeric';return d.toLocaleDateString('ru-RU',opts);}
+  function earlyDate(seconds){const d=new Date(seconds*1000);const opts={day:'numeric',month:'long'};if(d.getFullYear()!==new Date().getFullYear())opts.year='numeric';return d.toLocaleDateString(window.i18n&&window.i18n.language()==='en'?'en-US':'ru-RU',opts);}
   function earlyAccessParagraphs(model){const body=n('p','early-body');body.append('Инструкция для ',n('b','',[model.brand,model.name,model.modification].filter(Boolean).join(' ')),` уже готова — подписчики Boosty получают новые модели первыми. Для всех она откроется ${earlyDate(model.early_open_at)}.`);return [body,n('p','early-hint','Уже подписались? Войдите в аккаунт с той же почтой, что на Boosty, — модель откроется, когда подписка будет отмечена.')];}
   function summary(root){
     let box=root.querySelector('.selection-summary');if(!box){box=n('div','selection-summary');box.setAttribute('aria-live','polite');root.append(box)}

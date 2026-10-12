@@ -125,6 +125,10 @@
 }
 .menu13-toggle:last-child { border-bottom: 0; padding-bottom: 0; }
 .menu13-toggle > span { flex: 1; min-width: 0; }
+.menu13-language select.menu13-select {
+  flex: 0 0 auto; min-width: 128px; min-height: 40px; margin: 0; padding: 6px 10px; border-radius: 10px;
+  color: var(--text); background: #17232b; border: 1px solid #aacbb32f; font: inherit; font-size: 14px;
+}
 .menu13-sheet input.menu13-switch {
   appearance: none;
   -webkit-appearance: none;

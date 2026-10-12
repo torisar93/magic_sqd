@@ -523,6 +523,9 @@ window.addEventListener("pywebviewready", async () => {
   // — раньше тут ещё был отдельный обязательный экран входа для отдельной
   // admin-сборки (admin_main_web.py), сейчас программа одна и его нет.
   const info = await window.pywebview.api.app_get_info();
+  // Язык интерфейса (с 1.1.4): настройка «Язык», «авто» — по системе (bridge.ui_language). До каталога — чтобы он
+  // сразу рисовался на нужном языке (js/i18n.js).
+  window.i18n.setLanguage(info.ui_language);
   // Доступ по региону (с 1.1.4): нужна подписка — каталог закрывает окно «Нужна подписка» (access_gate.js).
   // Проверяем при каждом запуске, даже без автосинхронизации; без сети — последнее известное решение.
   window.accessGate.init(info);

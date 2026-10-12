@@ -40,4 +40,5 @@ def test_ui_language_russian_if_any_of_our_languages():
     assert client_env.ui_language({"ui": ["en-US"], "region": "en-US", "kbd": ["en-US", "ru-RU"]}) == "ru"
     assert client_env.ui_language({"ui": ["kk-KZ"], "region": "", "kbd": []}) == "ru"
     assert client_env.ui_language({"ui": ["fr-FR"], "region": "fr-DZ", "kbd": ["fr-FR", "ar-DZ"]}) == "en"
-    assert client_env.ui_language({"ui": [], "region": "", "kbd": []}) == "en"
+    # Ничего не определилось (сбой чтения) — русский, как было всегда: английский только по явным признакам.
+    assert client_env.ui_language({"ui": [], "region": "", "kbd": []}) == "ru"

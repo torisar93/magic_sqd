@@ -144,7 +144,8 @@
     if (!info) return [];
     const warn = info.under_program_files ? " · ВНИМАНИЕ: установлено в Program Files" : "";
     const ui = info.ui_rev ? ` · интерфейс r${info.ui_rev}` : "";
-    const lines = [`Magic SQD v${info.app_version} (x64)${ui} · client=${info.client_id}${warn}`];
+    const lang = info.ui_language === "en" ? " · язык EN" : "";  // английский интерфейс (js/i18n.js) — видно в разборе
+    const lines = [`Magic SQD v${info.app_version} (x64)${ui} · client=${info.client_id}${lang}${warn}`];
     if (info.os) lines.push(`Компьютер: ${info.os} · ${new Date().toLocaleString("ru-RU")}`);
     return lines;
   }

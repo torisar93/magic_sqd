@@ -25,6 +25,38 @@
     });
     row.append(copy, input); return row;
   }
+  // Язык интерфейса (с 1.1.4): «Авто» — по системе, меняется сразу (js/i18n.js). Подпись двуязычная — чтобы
+  // англоязычный техник нашёл пункт и в русском интерфейсе.
+  function languageRow(current, report) {
+    const row = document.createElement("label");
+    row.className = "settings-toggle settings13-toggle settings13-select";
+    const copy = document.createElement("span");
+    copy.className = "settings13-toggle-copy";
+    const title = document.createElement("strong"); title.textContent = "Язык · Language";
+    const detail = document.createElement("small"); detail.textContent = "Авто — по языку системы";
+    copy.append(title, detail);
+    const select = document.createElement("select");
+    select.dataset.preference = "ui_language";
+    [["auto", "Авто"], ["ru", "Русский"], ["en", "English"]].forEach(([value, label]) => {
+      const option = new Option(label, value);
+      if (value !== "auto") option.dataset.i18nSkip = "";  // названия языков — на своём языке
+      select.append(option);
+    });
+    select.value = ["auto", "ru", "en"].includes(current) ? current : "auto";
+    let saved = select.value;
+    select.addEventListener("change", async () => {
+      select.disabled = true;
+      try {
+        const result = await window.pywebview.api.settings_set_preferences({ ui_language: select.value });
+        saved = select.value;
+        const language = window.i18n.setLanguage(result.ui_language_effective || (saved === "en" ? "en" : "ru"));
+        if (window.appInfo) window.appInfo.ui_language = language;  // шапка журнала установки (stage_wizard.js)
+        report("");
+      } catch (error) { select.value = saved; report(error.message || "Не удалось сохранить настройку.", true); }
+      finally { select.disabled = false; }
+    });
+    row.append(copy, select); return row;
+  }
   async function open() {
     if (opening || document.querySelector(".settings-dialog[open]")) return;
     opening = true;
@@ -74,6 +106,7 @@
     const toggle = (label, hint, key, checked, save = savePreference) => checkbox(label, hint, key, checked, save, report);
     dialog.querySelector("[data-sync-toggle]").append(toggle("Обновлять при запуске", "Свежие модели и инструкции автоматически", "auto_sync", preferences.auto_sync));
     dialog.querySelector("[data-toggles]").append(
+      languageRow(preferences.ui_language, report),
       toggle("Уменьшить анимации", "Спокойные переходы без лишнего движения", "reduced_motion", preferences.reduced_motion),
       toggle("Компактный лог", "Больше событий в одном окне", "compact_log", preferences.compact_log),
       toggle("Чат с ИИ", "Вопросы помощнику прямо в окне лога", "chat_enabled", preferences.chat_enabled));

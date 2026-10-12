@@ -49,6 +49,10 @@ def is_under_program_files(base_dir: Path) -> bool:
     return False
 
 
+# Язык интерфейса (с 1.1.4): auto — по системе (app/client_env.ui_language), ru / en — выбор в настройках.
+UI_LANGUAGES = ("auto", "ru", "en")
+
+
 class SettingsApi:
     def __init__(self, base_dir: Path, cars_dir: Path, apk_dir: Path, admin_mode: bool = False):
         self.base_dir = base_dir
@@ -109,6 +113,8 @@ class SettingsApi:
         for key in ("auto_sync", "reduced_motion", "compact_log", "chat_enabled"):
             if key in preferences:
                 current[key] = bool(preferences[key])
+        if preferences.get("ui_language") in UI_LANGUAGES:
+            current["ui_language"] = preferences["ui_language"]
         self.preferences_path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
         return current
 
@@ -117,10 +123,12 @@ class SettingsApi:
         try:
             loaded = json.loads(self.preferences_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return defaults
+            return {**defaults, "ui_language": "auto"}
         if not isinstance(loaded, dict):
-            return defaults
-        return {key: bool(loaded.get(key, default)) for key, default in defaults.items()}
+            return {**defaults, "ui_language": "auto"}
+        result = {key: bool(loaded.get(key, default)) for key, default in defaults.items()}
+        result["ui_language"] = loaded.get("ui_language") if loaded.get("ui_language") in UI_LANGUAGES else "auto"
+        return result
 
     def _cache_directories(self) -> list[Path]:
         payloads = []
