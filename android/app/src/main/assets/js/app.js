@@ -4402,6 +4402,11 @@
     window.events.on("personal_apks_picked", onPersonalApksPicked);
     window.events.on("sync_finished", onSyncFinished);
     window.events.on("model_sync_finished", onModelSyncFinished);
+    // Доступ по региону (с 1.1.4): окно «Нужна подписка» (js/access_gate.js); итог проверки — событие access_state
+    // (WebBridge.startSync перед синхронизацией каталога, «Проверить снова»).
+    let gateInfo = {};
+    try { gateInfo = Bridge.call("app_version", {}) || {}; } catch (e) { /* без языка — русский */ }
+    window.accessGate.init({ uiLanguage: gateInfo.ui_language, openAccount: showAccountModal, onOpened: () => startSync(false) });
     initOffline();
     window.events.on("adb_connect_result", onAdbConnectResult);
     window.events.on("adb_log", onAdbLog);

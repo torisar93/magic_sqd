@@ -1,0 +1,15 @@
+/* Окно «Нужна подписка» (js/access_gate.js): доступ по региону, с 1.1.4. Поверх каталога; окно аккаунта (оверлей
+   menu13) — выше. ПК — app/web/frontend/css/access_gate.css. */
+.access-gate { position:fixed; inset:0; z-index:95; display:grid; place-items:center; padding:20px;
+  background:rgba(9,13,17,.94); }
+.access-gate[hidden] { display:none; }
+.access-gate-card { width:min(560px,100%); background:linear-gradient(140deg,#25323c,#1b252d); border:1px solid #4a5c69;
+  border-radius:20px; padding:24px; box-shadow:0 24px 80px #0008; }
+.access-gate-card h2 { margin:0 0 12px; font-size:24px; }
+.access-gate-card p { color:var(--text, #e8f0f3); line-height:1.55; margin:0 0 10px; font-size:15px; }
+.access-gate-card .access-gate-why { color:var(--text-dim, #9aa2b0); font-size:13px; }
+.access-gate-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+.access-gate-actions > * { min-height:48px; flex:1 1 160px; }
+.access-gate .access-gate-boosty { display:inline-flex; align-items:center; justify-content:center; padding:0 16px;
+  border-radius:12px; text-decoration:none; border:1px solid rgba(246,161,122,.55); color:#f6a17a; }
+.access-gate-card .access-gate-status { min-height:20px; font-size:13px; color:var(--text-dim, #9aa2b0); margin:12px 0 0; }

@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import access_gate
 import catalog_key
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
@@ -252,6 +253,20 @@ def set_auth_cookie(cookie: str, host: str) -> str:
     """Сессия техника для каталога (скрытые модели его групп) — см. content_sync.set_auth_cookie.
     Пустая строка — не вошёл."""
     _set_auth_cookie(cookie or None, host or None)
+    return "{}"
+
+
+def access_check(base_dir: str, base_url: str, invalidate: bool = False) -> str:
+    """Доступ по региону (access_gate.py, с 1.1.4) — JSON для WebBridge: нужна подписка — каталог закрывает окно
+    «Нужна подписка» (js/access_gate.js); без сети — последнее известное решение."""
+    if invalidate:
+        access_gate.invalidate()
+    return json.dumps(access_gate.check(base_dir, base_url), ensure_ascii=False)
+
+
+def access_invalidate() -> str:
+    """После входа и выхода — следующий access_check заново у сервера."""
+    access_gate.invalidate()
     return "{}"
 
 

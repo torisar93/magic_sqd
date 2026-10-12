@@ -103,3 +103,16 @@ def test_startup_sync_skips_catalog_when_subscription_is_needed(monkeypatch, tmp
     result = api.startup_sync()
     assert result == {"changes": [], "access": closed} and fetched == []
     assert pushed == [{"kind": "access_state", "state": closed}]
+
+
+def test_android_passes_system_signals_and_gates_sync():
+    kotlin = (ROOT / "android/app/src/main/java/ru/magicsqd/mobile/WebBridge.kt").read_text(encoding="utf-8")
+    assert "ClientEnv.collect(context).toString())" in kotlin  # признаки системы — в catalog_setup.configure
+    sync = kotlin[kotlin.index("private fun startSync()"):]
+    sync = sync[:sync.index("private fun startUpdateCheck")]
+    assert sync.index("accessState(false)") < sync.index('"sync_cars"')  # сначала доступ, потом каталог
+    assert '"access_check" -> { accessCheckAsync(); "{}" }' in kotlin
+    setup = (ROOT / "android/app/src/main/python/catalog_setup.py").read_text(encoding="utf-8")
+    assert "env_json: str = \"\"" in setup and "env_provider=" in setup
+    gate_js = (ROOT / "android/app/src/main/assets/js/access_gate.js").read_text(encoding="utf-8")
+    assert 'source !== "sync"' in gate_js  # после входа каталог не синхронизируется дважды

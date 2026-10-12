@@ -210,6 +210,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     .put("device", "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}")
                     .put("android", android.os.Build.VERSION.RELEASE ?: "?")
                     .put("sdk", android.os.Build.VERSION.SDK_INT)
+                    // Язык интерфейса (с 1.1.4): наш язык на телефоне или в клавиатуре — русский, иначе английский.
+                    .put("ui_language", ClientEnv.uiLanguage(ClientEnv.collect(context)))
                     .toString()
                 "settings_info" -> settingsInfo().toString()
                 "settings_preferences" -> settingsPreferences().toString()
@@ -217,6 +219,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "settings_set_preferences" -> setSettingsPreferences(args).toString()
                 "settings_sync_now" -> { startSync(); "{}" }
                 "start_sync" -> { startSync(); "{}" }
+                "access_check" -> { accessCheckAsync(); "{}" }
                 "app_update_check" -> { startUpdateCheck(); "{}" }
                 "supporters_load" -> { startSupportersLoad(); "{}" }
                 "get_sync_progress" -> pyModule("mobile_bridge").callAttr("get_sync_progress").toString()
@@ -394,8 +397,25 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     private fun configureCatalog() {
         try {
             pyModule("catalog_setup").callAttr(
-                "configure", BuildConfig.MSQD_BUILD_SECRET, getOrCreateDeviceRandom(), BASE_URL, getOrCreateClientId())
+                "configure", BuildConfig.MSQD_BUILD_SECRET, getOrCreateDeviceRandom(), BASE_URL, getOrCreateClientId(),
+                ClientEnv.collect(context).toString())  // признаки системы — правило доступа по региону (с 1.1.4)
         } catch (_: Exception) { /* без секрета — каталог открыт, файлы плейнтекстом, как раньше */ }
+    }
+
+    /** Доступ по региону (python/access_gate.py, с 1.1.4): {allowed, access, boosty, offline}. Сбой — пускаем. */
+    private fun accessState(invalidate: Boolean): JSONObject = try {
+        JSONObject(pyModule("mobile_bridge").callAttr("access_check", context.filesDir.absolutePath, BASE_URL, invalidate).toString())
+    } catch (_: Exception) {
+        JSONObject().put("allowed", true).put("access", "unknown").put("offline", true)
+    }
+
+    /** «Проверить снова» в окне «Нужна подписка» — итог событием access_state. */
+    private fun accessCheckAsync() {
+        Thread { pushEvent(JSONObject().put("kind", "access_state").put("state", accessState(true)).put("source", "check")) }.start()
+    }
+
+    private fun invalidateAccess() {
+        try { pyModule("mobile_bridge").callAttr("access_invalidate") } catch (_: Exception) { /* следующий раз проверим */ }
     }
 
     /** Случайный 32-байтовый секрет этой установки (hex) для ключа шифрования — у каждого устройства свой. */
@@ -453,6 +473,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             }
             pushEvent(JSONObject().put("kind", "auth_login_result").put("result", result))
             if (result.optBoolean("ok")) {
+                invalidateAccess()  // подписчику из «платного» региона каталог откроется после входа
                 authSyncMyCars()
                 startSync()  // каталог заново — с тестовыми моделями групп техника
             }
@@ -479,6 +500,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 try { pyModule("auth_bridge").callAttr("logout", AUTH_BASE_URL, cookie) } catch (e: Exception) { /* локально уже вышли — не критично */ }
             }
             pushEvent(JSONObject().put("kind", "auth_logout_result").put("result", JSONObject().put("ok", true)))
+            invalidateAccess()
             startSync()  // тестовые модели групп больше не видны — каталог уберёт их
         }.start()
     }
@@ -556,6 +578,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     private fun startSync() {
         Thread {
             applyCatalogSession()  // первый sync может успеть раньше потока из init
+            // Доступ по региону (с 1.1.4): нужна подписка — каталог не обновляем, его закрывает окно «Нужна подписка».
+            val access = accessState(false)
+            // source=sync: каталог и так сейчас синхронизируется — окну не нужно запускать его заново.
+            pushEvent(JSONObject().put("kind", "access_state").put("state", access).put("source", "sync"))
+            if (!access.optBoolean("allowed", true)) {
+                pushEvent(JSONObject().put("kind", "sync_finished").put("result", JSONObject().put("access", access)))
+                return@Thread
+            }
             val resultJson = try {
                 pyModule("mobile_bridge").callAttr("sync_cars", carsDir, BASE_URL).toString()
             } catch (e: Exception) {
