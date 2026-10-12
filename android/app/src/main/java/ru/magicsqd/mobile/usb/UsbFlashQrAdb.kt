@@ -73,9 +73,21 @@ fun readQrAdbBugreportZip(fs: FileSystem): Result<ByteArray> {
             return Result.failure(IllegalStateException("Подозрительный размер файла ${zipFile.name}: $size байт"))
         }
         val buffer = ByteBuffer.allocate(size.toInt())
-        zipFile.read(0L, buffer)
+        try {
+            zipFile.read(0L, buffer)
+        } catch (e: IndexOutOfBoundsException) {
+            // Размер в каталоге больше, чем цепочка кластеров файла: отчёт недописан — флешку вынули раньше, чем
+            // магнитола закончила запись. Раньше техник видел голое «length=2; index=2» (логи №1619, №5035, №5306; в
+            // №1619 следом — «размер … 0 байт»). Текст ловит окно «Магнитола не успела записать отчёт» (user_errors.js).
+            return Result.failure(IllegalStateException(
+                "Отчёт ${zipFile.name} на флешке повреждён или недописан — флешку вынули раньше, чем магнитола закончила запись.", e))
+        }
         zipFile.close()
         Result.success(buffer.array())
+    } catch (e: IndexOutOfBoundsException) {
+        // То же при чтении каталога (папка logs_* недописана) — неизвестно, где именно библиотека споткнулась.
+        Result.failure(IllegalStateException(
+            "Отчёт магнитолы на флешке повреждён или недописан — флешку вынули раньше, чем магнитола закончила запись.", e))
     } catch (e: Exception) {
         Result.failure(e)
     }

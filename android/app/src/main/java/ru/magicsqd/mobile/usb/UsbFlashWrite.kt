@@ -135,6 +135,7 @@ fun scanUsbStageItems(files: List<String>, sharedFolderDir: File?, selectedApkPa
     for (path in files) {
         val f = File(path)
         if (f.isFile) items.add(UsbFileItem(f.name, f.path, f.length()))
+        else if (f.isDirectory) folderFiles(f).forEach { items.add(UsbFileItem(it.name, it.path, it.length())) }
     }
     if (sharedFolderDir != null && sharedFolderDir.exists()) {
         sharedFolderDir.walkTopDown().filter { it.isFile }.forEach { f ->
@@ -147,6 +148,13 @@ fun scanUsbStageItems(files: List<String>, sharedFolderDir: File?, selectedApkPa
     }
     return items
 }
+
+/** Метка «папка скачана не вся» — то же имя в apk_library.py (ensure_apks_downloaded). */
+private const val FOLDER_INCOMPLETE_MARK = ".msqd_incomplete"
+
+/** Файлы папки комплекта по порядку пути — запись и список очереди (scanUsbStageItems) идут одинаково. */
+private fun folderFiles(dir: File): List<File> =
+    dir.walkTopDown().filter { it.isFile && it.name != FOLDER_INCOMPLETE_MARK }.sortedBy { it.relativeTo(dir).path }.toList()
 
 /**
  * Пишет один локальный файл на смонтированную флешку по относительному
@@ -181,7 +189,14 @@ fun writeFileToUsb(
             var dir: UsbFile = fs.rootDirectory
             for (i in 0 until segments.size - 1) {
                 val name = segments[i]
-                dir = dir.search(name) ?: dir.createDirectory(name)
+                val found = dir.search(name)
+                // Файл на месте папки комплекта (остался от прошлой записи или другой программы) — убираем, как на ПК
+                // (usb_context._make_dirs; логи №5376, №5380): иначе запись в «папку»-файл падала непонятной ошибкой.
+                if (found != null && !found.isDirectory) {
+                    found.delete()
+                    log("На флешке был файл «$name» на месте папки из комплекта — убран, на его месте папка.")
+                }
+                dir = if (found != null && found.isDirectory) found else dir.createDirectory(name)
             }
             // Свежий createFile на каждой попытке — предыдущая могла оставить
             // на флешке частично записанный (битый) файл того же имени.
@@ -259,13 +274,25 @@ fun writeUsbStage(
     var filesDone = 0
     // Всё ли скачано — ДО записи: без интернета часть файлов не скачивается, и раньше запись шла до первого
     // недостающего — «записано 6 из 7», и только потом «Файл не скачан» (лог №1818, Coolray).
-    (files + selectedApkPaths).firstOrNull { !File(it).exists() }?.let { return StageRunResult.Failed("Файл не скачан: $it") }
+    // Папка комплекта скачана не вся — метка FOLDER_INCOMPLETE_MARK (apk_library.ensure_apks_downloaded).
+    (files + selectedApkPaths).firstOrNull { !File(it).exists() || File(it, FOLDER_INCOMPLETE_MARK).exists() }
+        ?.let { return StageRunResult.Failed("Файл не скачан: $it") }
     return try {
         // Пишем svlog.flag — со флешки уходит svengmode.flag прошлого шага (и наоборот), см. TRIGGER_FLAGS.
         removeOtherTriggerFlags(fs, files.map { File(it).name }, log)
         for (path in files) {
             val f = File(path)
             if (!f.exists()) return StageRunResult.Failed("Файл не скачан: $path")
+            if (f.isDirectory) {
+                // Папка комплекта (папка-триггер магнитолы, vr/, TurboDog/…) — на флешку папкой со всем содержимым,
+                // как на ПК (usb_context.copy_dir). Раньше она скачивалась и писалась файлом (логи №529, №5420).
+                for (inner in folderFiles(f)) {
+                    val rel = inner.relativeTo(f).path.replace('\\', '/')
+                    writeFileToUsb(fs, inner, "${f.name}/$rel", log, filesDone, filesTotal, onProgress)
+                    filesDone++
+                }
+                continue
+            }
             writeFileToUsb(fs, f, f.name, log, filesDone, filesTotal, onProgress)
             filesDone++
         }

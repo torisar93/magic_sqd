@@ -178,22 +178,58 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
             except ValueError:
                 continue
         item = manifest.get(remote_path) if manifest else None
-        if local_path.exists():
-            # Размер И время (local_copy_is_current): обрыв на середине оставлял обрубленный файл, а замена файла на
-            # сервере — старую версию, которая потом и ставилась. Файла нет в манифесте или сети нет — берём, что есть.
-            if item is None or local_copy_is_current(local_path, item):
-                continue
-            log(f"{local_path.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
-        log(f"Скачиваю {local_path.name}...")
-        try:
-            # Путь в прогрессе — ровно та строка, что пришла в paths (как на ПК, content_sync.
-            # ensure_apks_downloaded): по ней окно установки находит строку очереди (progress08.js).
-            # resolve() раскрывает /data/user/0 → /data/data, и строки «Скачивание…» не находились.
-            download_file(base_url, remote_path, local_path, check_cancelled=check_cancelled,
-                          mtime=(item or {}).get("mtime"),  # время сервера — для сверки в следующий раз
-                          on_progress=(lambda done, total, raw=str(p): on_file_progress(raw, done, total))
-                          if on_file_progress else None)
-            downloaded += 1
-        except ContentSyncError as exc:
-            log(f"Не удалось скачать {local_path.name}: {exc}")
+        inner = _folder_entries(manifest, remote_path) if item is None else []
+        if inner:
+            # Папка комплекта (папка-триггер магнитолы, vr/, TurboDog/, Data/…): в манифесте её нет — есть её файлы.
+            # Раньше она качалась как файл: на папку сервер отдаёт её список (autoindex json), и на флешку писался
+            # этот список вместо папки (логи №244, №529, №617, №5420: Belgee X70, Geely Coolray Дорест). Прошлый такой
+            # «файл» убираем, файлы папки качаем внутрь неё; запись на флешку раскладывает папку (writeUsbStage).
+            if local_path.is_file():
+                local_path.unlink()
+            targets = [(local_path / key[len(remote_path) + 1:], key, manifest[key],
+                        f"{p}/{key[len(remote_path) + 1:]}") for key in inner]
+        else:
+            targets = [(local_path, remote_path, item, str(p))]
+        failed = False
+        for target, remote, entry, raw in targets:
+            if target.exists():
+                # Размер И время (local_copy_is_current): обрыв на середине оставлял обрубленный файл, а замена файла
+                # на сервере — старую версию, которая потом и ставилась. Файла нет в манифесте или сети нет — берём,
+                # что есть.
+                if entry is None or local_copy_is_current(target, entry):
+                    continue
+                log(f"{target.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
+            log(f"Скачиваю {target.name}...")
+            try:
+                # Путь в прогрессе — ровно та строка, что пришла в paths (как на ПК, content_sync.
+                # ensure_apks_downloaded): по ней окно установки находит строку очереди (progress08.js).
+                # resolve() раскрывает /data/user/0 → /data/data, и строки «Скачивание…» не находились.
+                download_file(base_url, remote, target, check_cancelled=check_cancelled,
+                              mtime=(entry or {}).get("mtime"),  # время сервера — для сверки в следующий раз
+                              on_progress=(lambda done, total, raw=raw: on_file_progress(raw, done, total))
+                              if on_file_progress else None)
+                downloaded += 1
+            except ContentSyncError as exc:
+                log(f"Не удалось скачать {target.name}: {exc}")
+                failed = True
+        if inner:
+            # Папка скачана не вся — метка: запись на флешку остановится «Файл не скачан» (UsbFlashWrite.kt), а не
+            # положит неполную папку.
+            marker = local_path / FOLDER_INCOMPLETE_MARK
+            if failed:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_bytes(b"")
+            elif marker.exists():
+                marker.unlink()
     return downloaded
+
+
+FOLDER_INCOMPLETE_MARK = ".msqd_incomplete"  # то же имя — в UsbFlashWrite.kt
+
+
+def _folder_entries(manifest, remote_path: str) -> list:
+    """Файлы папки remote_path по манифесту — сама папка в нём не значится (только её файлы)."""
+    if not manifest:
+        return []
+    prefix = remote_path.rstrip("/") + "/"
+    return sorted(key for key in manifest if key.startswith(prefix))

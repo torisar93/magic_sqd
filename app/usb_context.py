@@ -94,6 +94,26 @@ class UsbContext:
         if self._cancel_flag.is_set():
             raise InstallCancelled("Копирование остановлено пользователем.")
 
+    def _make_dirs(self, directory: Path) -> None:
+        """mkdir(parents=True), но файл на месте нужной папки (остался от прошлой записи или другой программы) убираем:
+        содержимое комплекта главнее — одноимённые файлы и так заменяются. Раньше запись падала целиком
+        «[WinError 183] Невозможно создать файл, так как он уже существует» (логи №5376, №5380: папка-триггер
+        b832bc… комплекта Belgee X70, а на флешке — файл с тем же именем)."""
+        directory = Path(directory)
+        try:
+            parts = directory.relative_to(self.drive_root).parts
+        except ValueError:
+            directory.mkdir(parents=True, exist_ok=True)
+            return
+        self.drive_root.mkdir(parents=True, exist_ok=True)
+        current = self.drive_root
+        for part in parts:
+            current = current / part
+            if current.is_file():
+                current.unlink()
+                self.log(f"На флешке был файл «{part}» на месте папки из комплекта — убран, на его месте папка.")
+            current.mkdir(exist_ok=True)
+
     # --- файлы модели ------------------------------------------------
     def file(self, relative_path):
         """Путь к файлу внутри files/ данной модели (общие с ADB-режимом файлы)."""
@@ -129,7 +149,7 @@ class UsbContext:
         self.check_cancelled()
         local_path = Path(local_path)
         target = self.drive_root / dest_relative_path
-        target.parent.mkdir(parents=True, exist_ok=True)
+        self._make_dirs(target.parent)
         self.log(f"Копирую: {local_path.name} -> {dest_relative_path}")
         self._copy_stream(local_path, target)
         return target
@@ -142,9 +162,9 @@ class UsbContext:
             rel = path.relative_to(local_dir)
             target = dest_root / rel
             if path.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
+                self._make_dirs(target)
             else:
-                target.parent.mkdir(parents=True, exist_ok=True)
+                self._make_dirs(target.parent)
                 self.log(f"Копирую: {rel}")
                 self._copy_stream(path, target)
 
@@ -165,7 +185,7 @@ class UsbContext:
         self.check_cancelled()
         zip_path = Path(zip_path)
         dest_root = self.drive_root / dest_relative_dir
-        dest_root.mkdir(parents=True, exist_ok=True)
+        self._make_dirs(dest_root)
         self.log(f"Распаковываю: {zip_path.name} -> /{dest_relative_dir}")
         path_str = str(zip_path)
         with zipfile.ZipFile(zip_path) as zf:
@@ -180,7 +200,7 @@ class UsbContext:
     def write_text(self, dest_relative_path, content, encoding="utf-8"):
         self.check_cancelled()
         target = self.drive_root / dest_relative_path
-        target.parent.mkdir(parents=True, exist_ok=True)
+        self._make_dirs(target.parent)
         target.write_text(content, encoding=encoding)
         self.log(f"Записан файл: {dest_relative_path}")
         self._files_done += 1

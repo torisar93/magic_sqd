@@ -53,6 +53,9 @@ const CASES = [
   ["В папке logs_20260924-0812 не найден файл bugreport-*.zip", "qr_no_bugreport"],
   ["Подозрительный размер файла bugreport-geely_g426-RQ3A.210805.001.A1-2026-09-26-16-02-52.zip: 0 байт", "qr_no_bugreport"],
   ["Не удалось открыть bugreport-x9h_a01g-2026-09-26.zip: File is not a zip file", "qr_no_bugreport"],
+  // Android: сбой чтения недописанного отчёта (было голое «length=2; index=2», логи №1619, №5035, №5306).
+  ["Отчёт bugreport-geely_fx11_j1-2026-10-12.zip на флешке повреждён или недописан — флешку вынули раньше, чем магнитола закончила запись.", "qr_no_bugreport"],
+  ["Отчёт магнитолы на флешке повреждён или недописан — флешку вынули раньше, чем магнитола закончила запись.", "qr_no_bugreport"],
   ["Отчёт bugreport-x9h.zip на флешке повреждён или недописан (Error -3 while decompressing data: invalid block type)", "qr_no_bugreport"],
   ["Отчёт bugreport-zip на флешке повреждён или недописан (Bad magic number for central directory)", "qr_no_bugreport"],
   ["Подозрительный размер файла bugreport-x9h.zip: 314572800 байт", null],

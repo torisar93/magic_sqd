@@ -65,8 +65,10 @@ def test_flash_write_checks_downloads_before_writing():
     # №1818 (Coolray, без интернета): запись шла до первого недостающего файла — «записано 6 из 7», потом «Файл не скачан»
     stage = _code(KOTLIN / "usb/UsbFlashWrite.kt")
     stage = stage[stage.index("fun writeUsbStage("):]
-    check = "(files + selectedApkPaths).firstOrNull { !File(it).exists() }?.let { return StageRunResult.Failed(\"Файл не скачан: $it\") }"
+    # С 12.10 — и папка комплекта, скачанная не вся (метка FOLDER_INCOMPLETE_MARK, tests/test_android_kit_folder_download.py).
+    check = "(files + selectedApkPaths).firstOrNull { !File(it).exists() || File(it, FOLDER_INCOMPLETE_MARK).exists() }"
     assert check in stage and stage.index(check) < stage.index("removeOtherTriggerFlags(")
+    assert '?.let { return StageRunResult.Failed("Файл не скачан: $it") }' in stage[stage.index(check):]
     sink = _code(KOTLIN / "DownloadSink.kt")
     assert 'if (text.startsWith("Не удалось скачать")) failed++' in sink
     assert 'if (failed > 0) log("Скачано не всё: не скачались ${files(failed)}' in sink
