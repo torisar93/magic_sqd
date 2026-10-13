@@ -104,7 +104,21 @@ class UsbAdbTransport(
         } catch (_: Exception) {
             -1
         }
-        return sent == bytes.size
+        if (sent != bytes.size) return false
+        // Передача ровно кратной размеру USB-пакета длины (512 байт) не кончается коротким пакетом — магнитола ждёт
+        // продолжения и молчит: заливка висла 20 с и «связь оборвалась», на том же файле при каждом повторе (логи №2391,
+        // №5652 — первый WRTE 3584 байт при имени APK ровно в 46 символов; №4020 — последний WRTE 512 байт). Настоящий
+        // adb (usb_linux.cpp, zero_mask) в этом случае досылает пакет нулевой длины — делаем так же.
+        val packetSize = iface.endpointOut.maxPacketSize
+        if (bytes.isNotEmpty() && packetSize > 0 && bytes.size % packetSize == 0) {
+            val zlp = try {
+                connection.bulkTransfer(iface.endpointOut, ByteArray(0), 0, timeoutMs)
+            } catch (_: Exception) {
+                -1
+            }
+            if (zlp < 0) return false
+        }
+        return true
     }
 
     override fun read(buffer: ByteArray, timeoutMs: Int): Int =
