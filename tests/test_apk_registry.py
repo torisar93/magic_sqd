@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,7 +55,7 @@ def test_only_files_downloaded_here_are_trusted(tmp_path, keyed, monkeypatch):
     shutil.copy2(own, copied)
     assert not apk_registry.is_trusted(apk_dir, "Навигация/Other.apk", copied)
 
-    own.unlink()
+    own.rename(own.with_name("Nav.old"))
     shutil.copy2(copied, own)  # подменили файл тем же содержимым — это уже другой файл на диске
     assert not apk_registry.is_trusted(apk_dir, "Навигация/Nav.apk", own)
 
@@ -66,6 +67,16 @@ def test_only_files_downloaded_here_are_trusted(tmp_path, keyed, monkeypatch):
 
     catalog_key.configure(None, None)  # запуск из исходников — как раньше
     assert apk_registry.is_trusted(apk_dir, "Навигация/Other.apk", copied)
+
+
+def test_reused_file_number_is_another_file():
+    """Linux отдаёт номер удалённого файла следующему новому (так CI поймал подмену на месте) — различает время."""
+    def stat(**fields):
+        return SimpleNamespace(**{"st_ino": 42, "st_ctime_ns": 1_000, "st_mtime_ns": 7, **fields})
+
+    assert apk_registry._identity(stat()) != apk_registry._identity(stat(st_ctime_ns=2_000))
+    assert apk_registry._identity(stat(st_birthtime=1.5)) != apk_registry._identity(stat(st_birthtime=2.5))
+    assert apk_registry._identity(stat(st_ino=0)) != apk_registry._identity(stat(st_ino=0, st_mtime_ns=8))
 
 
 def test_hand_placed_catalog_is_not_listed_as_downloaded(tmp_path, keyed):
