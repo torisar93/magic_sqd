@@ -45,7 +45,7 @@ class El {
   buttons(label) { return this.all().filter((c) => c.tagName === "BUTTON" && c.textContent === label); }
 }
 
-function setup(responses, programOverrides) {
+function setup(responses, programOverrides, options) {
   const calls = { status: 0, start: [], turn: [], shell: [], focus: [], highlight: [], press: [], open: [], apps: [], urls: [] };
   let stage = 1;
   const bridge = {
@@ -70,8 +70,8 @@ function setup(responses, programOverrides) {
   const document = { createElement: (t) => new El(t), createTextNode: (t) => new Text(t) };
   const ctx = run(read("app/web/frontend/js/ai_master.js"), { window: {}, document, setTimeout, clearTimeout, console });
   const container = new El("div");
-  const ai = ctx.window.AiMaster.create({ container, bridge, program, subscribeUrl: "https://boosty.to/x",
-                                          openUrl: (u) => calls.urls.push(u) });
+  const ai = ctx.window.AiMaster.create(Object.assign({ container, bridge, program, subscribeUrl: "https://boosty.to/x",
+                                                        openUrl: (u) => calls.urls.push(u) }, options || {}));
   return { ai, container, calls, setStage: (v) => { stage = v; } };
 }
 
@@ -245,6 +245,34 @@ function testRenderText() {
   assert(box.textContent.includes("Конец <script>") && box.querySelectorAll("script").length === 0, "HTML не исполняется");
 }
 
+// Фото экрана (14.10.2026): прикреплённое фото уходит с сообщением как input photo, ИИ знает, что кнопка «Фото» есть;
+// без поддержки платформы (старый Android) — ни кнопки, ни отметки в состоянии.
+async function testPhotosGoWithTheMessage() {
+  const { ai, container, calls } = setup({ turns: [
+    { status: "ok", messages: [{ text: "Привет" }], actions: [], usage: { used: 1, limit: 10 } },
+    { status: "ok", messages: [{ text: "На фото: инженерное меню." }], actions: [] },
+  ] }, null, { photos: true });
+  await ai.open();
+  container.buttons("Начать установку")[0].click();
+  await tick();
+  assert(container.find("ai-attach").length === 1, "кнопка «Фото» есть");
+  assert(ai.attachPhoto("QUJD") && container.find("ai-shot").length === 1, "фото ждёт отправки");
+  ai.send("вот экран");
+  await tick();
+  const turn = calls.turn[calls.turn.length - 1];
+  assert(turn.input.length === 2 && turn.input[0].text === "вот экран" && turn.input[1].type === "photo"
+         && turn.input[1].data === "QUJD", "фото ушло вместе с текстом");
+  assert(turn.state.photo === true, "ИИ знает про кнопку «Фото»");
+  assert(container.find("ai-shot").length === 0 && container.find("ai-msg-shot").length === 1, "фото — в сообщении, лоток пуст");
+
+  const old = setup({ turns: [{ status: "ok", messages: [], actions: [], usage: { used: 1, limit: 10 } }] });
+  await old.ai.open();
+  old.container.buttons("Начать установку")[0].click();
+  await tick();
+  assert(old.container.find("ai-attach").length === 0 && !old.ai.attachPhoto("QUJD"), "без поддержки — без фото");
+  assert(old.calls.turn[0].state.photo === undefined, "без поддержки — в состоянии нет photo");
+}
+
 module.exports = async function () {
   testRenderText();
   await testSubscribeLock();
@@ -254,4 +282,5 @@ module.exports = async function () {
   await testOwnModelSwitchWaitsForTechnician();
   await testPressThatChangesStageIsYes();
   await testOfflineKeepsInputAndErrorRetry();
+  await testPhotosGoWithTheMessage();
 };

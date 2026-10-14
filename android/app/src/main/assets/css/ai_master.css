@@ -74,6 +74,19 @@
   overflow-y: hidden; }
 .ai-master .ai-btn.ai-send { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 10px; border: 0; background: linear-gradient(135deg, #a8f1d8, #79cfb9);
   color: #0e1d1b; font-weight: 800; }
+/* Фото экрана для ИИ: кнопка у поля ввода, миниатюры перед отправкой и в своём сообщении. */
+.ai-master .ai-btn.ai-attach { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(255, 255, 255, .05) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cfe7df' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8h3l2-3h6l2 3h3v11H4z'/%3E%3Ccircle cx='12' cy='13' r='3.5'/%3E%3C/svg%3E") no-repeat center / 19px; }
+.ai-master .ai-btn.ai-attach:disabled { opacity: .4; }
+.ai-input-box:has(.ai-attach) { padding-left: 7px; }
+.ai-shots { display: flex; gap: 8px; margin: 0 0 8px; }
+.ai-shots[hidden] { display: none; }
+.ai-shot { position: relative; width: 64px; height: 64px; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255, 255, 255, .14); }
+.ai-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ai-master .ai-btn.ai-shot-x { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 0;
+  background: rgba(0, 0, 0, .62); color: #fff; font-size: 13px; line-height: 1; }
+.ai-msg-shot { display: block; max-width: 180px; max-height: 180px; border-radius: 10px; margin-top: 6px; }
+.ai-msg.me .ai-msg-shot:first-child { margin-top: 0; }
 .ai-foot { font-size: 11px; color: #6f8488; margin-top: 6px; display: flex; justify-content: space-between; gap: 8px; }
 .ai-lock { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px 22px 40px; gap: 12px; }
 .ai-lock-icon { width: 58px; height: 58px; border-radius: 17px; display: flex; align-items: center; justify-content: center; font-size: 26px;

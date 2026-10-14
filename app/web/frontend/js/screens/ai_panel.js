@@ -150,6 +150,7 @@
       document.body.append(panel);
       master = window.AiMaster.create({
         container: panel, bridge, program,
+        photos: true,  // фото экрана: выбор файла, Ctrl+V, перетаскивание — окно программы на ПК умеет всё это
         onClose: () => setOpen(false),
         openUrl: openExternal,
         subscribeUrl: SUBSCRIBE_URL,
