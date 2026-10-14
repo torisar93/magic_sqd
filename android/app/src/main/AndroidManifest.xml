@@ -16,6 +16,12 @@
          что вызовы обёрнуты в try/catch без логирования. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Служба «Идёт установка» (OperationService.kt): свёрнутую программу без неё Android замораживает посреди
+         заливки (логи 14.10: по Wi-Fi обрыв в 29 из 43 случаев). Тип connectedDevice — работа с магнитолой по USB/Wi-Fi;
+         его условие на Android 14+ выполняет CHANGE_WIFI_MULTICAST_STATE выше. WAKE_LOCK — для WakeLock/WifiLock. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"
@@ -49,6 +55,14 @@
         <activity
             android:name=".DiagnosticsActivity"
             android:exported="false" />
+
+        <!-- На время операции с магнитолой (WebBridge.runExclusive → OperationKeeper). stopWithTask: смахнули
+             программу из недавних — служба гаснет, как раньше гасла и сама программа. -->
+        <service
+            android:name=".OperationService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="true" />
 
         <!-- Снимок для фото экрана ИИ-помощнику (MainActivity.cameraIntent): камера пишет в cache/photos/ по этому
              адресу, своё разрешение на камеру программе не нужно. -->

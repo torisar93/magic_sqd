@@ -127,6 +127,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             onBusy()
             return
         }
+        // Служба «Идёт установка» на время операции: свёрнутую программу без неё Android замораживал посреди заливки
+        // (логи 14.10: по Wi-Fi обрыв в 29 из 43 случаев) — см. OperationService.kt.
+        OperationKeeper.begin(context, runCatching { uiLanguage() == "en" }.getOrDefault(false))
         Thread {
             try {
                 body()
@@ -141,11 +144,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     (where?.let { " (${it.fileName}:${it.lineNumber})" } ?: ""))
             } finally {
                 operationBusy.set(false)
+                OperationKeeper.end()
             }
         }.start()
     }
 
     init {
+        OperationKeeper.onNote = { pushAdbLog(it) }
         if (!Python.isStarted()) Python.start(AndroidPlatform(context))
         // Закрытый каталог: ключ шифрования и токен официальной сборки — до синхронизации (фоновый
         // поток: импорт python-модулей не на главном). configureCatalog перед applyCatalogSession.
@@ -209,13 +214,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     .put("client_id", getOrCreateClientId())
                     // Выпуск интерфейса с сервера (UiBundleAssets); 0 — встроенный. В шапку журнала установки.
                     .put("ui_rev", uiRev)
-                    // Окно программы умеет <input type="file"> — камеру и галерею (MainActivity.onShowFileChooser): по этому
-                    // флагу интерфейс с сервера показывает кнопку «Фото» у ИИ-помощника.
-                    .put("file_chooser", true)
                     // Для журнала сессии: какой телефон — по client_id не понять (он новый после каждой переустановки).
                     .put("device", "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}")
                     .put("android", android.os.Build.VERSION.RELEASE ?: "?")
                     .put("sdk", android.os.Build.VERSION.SDK_INT)
+                    // Окно программы умеет <input type="file"> — камеру и галерею (MainActivity.onShowFileChooser): по этому
+                    // флагу интерфейс с сервера показывает кнопку «Фото» у ИИ-помощника.
+                    .put("file_chooser", true)
                     // Язык интерфейса (с 1.1.4): настройка «Язык», «авто» — наш язык на телефоне или в клавиатуре →
                     // русский, иначе английский.
                     .put("ui_language", uiLanguage())
