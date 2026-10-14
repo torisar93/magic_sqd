@@ -218,6 +218,8 @@
     topbar.insertBefore(seg, document.getElementById("top-title").nextSibling);
     master = window.AiMaster.create({
       container: sheet, bridge, program, onClose: () => setMode(false),
+      // фото экрана — если окно программы умеет открыть камеру и галерею (выпуск с WebChromeClient.onShowFileChooser)
+      photos: (() => { try { return window.Bridge.call("app_version", {}).file_chooser === true; } catch (e) { return false; } })(),
       openUrl: openExternal, subscribeUrl: SUBSCRIBE_URL,
     });
   }

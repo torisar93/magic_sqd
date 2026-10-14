@@ -129,6 +129,30 @@
     input.maxLength = 2000;
     var send = button("↑", "ai-send", function () { submitText(); });
     send.title = "Отправить";
+    // Фото экрана для ИИ (владелец 14.10.2026): кнопка, вставка из буфера, перетаскивание. Только если платформа умеет
+    // выбрать файл (options.photos): ПК — всегда, Android — с выпуска, где окно программы открывает камеру и галерею.
+    var canPhoto = !!options.photos;
+    var shots = [];  // ждут отправки: {data: base64 JPEG, url: превью}
+    var tray = el("div", "ai-shots");
+    tray.hidden = true;
+    var picker = null, attach = null;
+    if (canPhoto) {
+      picker = el("input");
+      picker.type = "file";
+      picker.accept = "image/*";
+      picker.hidden = true;
+      picker.addEventListener("change", function () {
+        Array.prototype.slice.call(picker.files || []).forEach(addPhotoFile);
+        picker.value = "";
+      });
+      attach = button("", "ai-attach", function () { picker.click(); });
+      attach.title = "Фото экрана магнитолы";
+      attach.setAttribute("aria-label", "Прикрепить фото экрана");
+      input.placeholder = "Спросите ИИ, опишите экран или пришлите фото…";
+      box.appendChild(attach);
+      inputWrap.appendChild(tray);
+      inputWrap.appendChild(picker);
+    }
     box.appendChild(input);
     box.appendChild(send);
     inputWrap.appendChild(box);
@@ -154,6 +178,71 @@
       input.style.overflowY = input.scrollHeight > 120 ? "auto" : "hidden";
     }
     input.addEventListener("input", fitInput);
+
+    var MAX_SHOTS = 2, SHOT_SIDE = 1600;
+    function renderShots() {
+      tray.innerHTML = "";
+      tray.hidden = !shots.length;
+      shots.forEach(function (shot, index) {
+        var item = el("div", "ai-shot");
+        var img = el("img");
+        img.src = shot.url;
+        img.alt = "Фото экрана";
+        var remove = button("×", "ai-shot-x", function () { shots.splice(index, 1); renderShots(); });
+        remove.title = "Убрать фото";
+        item.appendChild(img);
+        item.appendChild(remove);
+        tray.appendChild(item);
+      });
+      if (attach) attach.disabled = shots.length >= MAX_SHOTS;
+    }
+    function attachPhoto(data, url) {
+      if (!canPhoto || !data || shots.length >= MAX_SHOTS) return false;
+      shots.push({ data: data, url: url || "data:image/jpeg;base64," + data });
+      renderShots();
+      return true;
+    }
+    // Снимок телефона бывает 4000 px и 5 МБ — сжимаем: длинная сторона до 1600 px, JPEG 0,82 (обычно 150–400 КБ).
+    function addPhotoFile(file) {
+      if (!file || !/^image\//.test(file.type || "") || shots.length >= MAX_SHOTS) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          var scale = Math.min(1, SHOT_SIDE / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+          var canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          var url = canvas.toDataURL("image/jpeg", 0.82);
+          attachPhoto(url.slice(url.indexOf(",") + 1), url);
+        };
+        img.onerror = function () { setNotice("Не удалось открыть это фото — попробуйте другое.", "warn"); };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    }
+    function hasFiles(e) {
+      return !!(e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") >= 0);
+    }
+    if (canPhoto) {
+      input.addEventListener("paste", function (e) {  // скриншот из буфера (ПК)
+        Array.prototype.slice.call((e.clipboardData && e.clipboardData.items) || []).forEach(function (item) {
+          if (item.kind === "file" && /^image\//.test(item.type)) { e.preventDefault(); addPhotoFile(item.getAsFile()); }
+        });
+      });
+      root.addEventListener("dragover", function (e) { if (hasFiles(e)) e.preventDefault(); });
+      root.addEventListener("drop", function (e) {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        Array.prototype.slice.call(e.dataTransfer.files).forEach(addPhotoFile);
+      });
+    }
+    // Состояние программы для ИИ: photo — у техника есть кнопка «Фото», можно попросить снимок экрана.
+    function turnState() {
+      var state = program.state() || {};
+      return canPhoto ? Object.assign({}, state, { photo: true }) : state;
+    }
 
     function scroll() { body.scrollTop = body.scrollHeight; }
     function add(node) {
@@ -228,9 +317,15 @@
         add(chips);
       }
     }
-    function myMessage(text) {
+    function myMessage(text, photos) {
       var node = el("div", "ai-msg me");
-      renderText(node, text, function () { return document.createTextNode(""); });
+      if (text) renderText(node, text, function () { return document.createTextNode(""); });
+      (photos || []).forEach(function (shot) {
+        var img = el("img", "ai-msg-shot");
+        img.src = shot.url;
+        img.alt = "Фото экрана";
+        node.appendChild(img);
+      });
       add(node);
     }
 
@@ -332,7 +427,7 @@
       var response = null;
       try {
         if (!(await ensureSession())) { s.sending = false; typing.remove(); return; }
-        response = await bridge.turn({ session: s.session, req: newId(), input: inputs, state: program.state() });
+        response = await bridge.turn({ session: s.session, req: newId(), input: inputs, state: turnState() });
       } catch (e) {
         s.outbox = inputs.concat(s.outbox);  // ничего не потеряли: уйдёт, когда связь вернётся
         s.sending = false;
@@ -384,14 +479,18 @@
 
     function userText(text) {
       text = String(text || "").trim();
-      if (!text) return;
-      myMessage(text);
+      var photos = shots.splice(0);  // прикреплённые фото уходят с этим сообщением
+      if (photos.length) renderShots();
+      if (!text && !photos.length) return;
+      myMessage(text, photos);
       var last = s.cards.length ? s.cards[s.cards.length - 1] : null;
-      if (last && !last.done && /^(да|ага|давай|ок|ok|выполняй|нажимай|жми)[.!]*$/i.test(text)) {
+      if (!photos.length && last && !last.done && /^(да|ага|давай|ок|ok|выполняй|нажимай|жми)[.!]*$/i.test(text)) {
         last.yes();  // «да» текстом — ответ на последнюю карточку
         return;
       }
-      sendTurn([{ type: "text", text: text }]);
+      var inputs = text ? [{ type: "text", text: text }] : [];
+      photos.forEach(function (shot) { inputs.push({ type: "photo", data: shot.data }); });
+      sendTurn(inputs);
     }
 
     function submitText() {
@@ -567,6 +666,7 @@
       refresh: refresh,
       event: programEvent,
       send: userText,
+      attachPhoto: attachPhoto,
       element: root,
     };
   }
