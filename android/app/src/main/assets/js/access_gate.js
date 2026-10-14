@@ -2,6 +2,7 @@
 // языки и часовые пояса, остальным — по подписке Boosty. Если сервер говорит «нужна подписка», каталог закрывает это
 // окно: подписаться на Boosty, войти аккаунтом подписчика (окно аккаунта приложения), проверить снова. Итог проверки
 // Kotlin присылает событием access_state (WebBridge.startSync, accessCheckAsync). ПК — js/components/access_gate.js.
+// Обязательная регистрация (владелец 14.10.2026): access=login_required — «Войдите в аккаунт», без Boosty.
 window.accessGate = (() => {
   const TEXT = {
     ru: {
@@ -11,6 +12,10 @@ window.accessGate = (() => {
       why: "Регион приложение определяет по языку телефона, клавиатуры и часовому поясу.",
       boosty: "Подписаться на Boosty", login: "Войти", again: "Проверить снова", checking: "Проверяю…",
       still: "Подписки пока нет — каталог закрыт.", offline: "Нет связи с сервером — действует последнее решение.",
+      loginTitle: "Войдите в аккаунт",
+      loginText: "Каталог Magic SQD открыт для зарегистрированных техников. Войдите или зарегистрируйтесь — " +
+        "это бесплатно, каталог откроется сам.",
+      loginButton: "Войти или зарегистрироваться", loginStill: "Вход не выполнен — каталог закрыт.",
     },
     en: {
       title: "Subscription required",
@@ -19,10 +24,14 @@ window.accessGate = (() => {
       why: "The region is determined by your phone language, keyboard and time zone.",
       boosty: "Subscribe on Boosty", login: "Sign in", again: "Check again", checking: "Checking…",
       still: "No subscription yet — the catalog stays closed.", offline: "No connection to the server — the last decision applies.",
+      loginTitle: "Sign in to your account",
+      loginText: "The Magic SQD catalog is open to registered technicians. Sign in or create an account — " +
+        "it's free, and the catalog will open automatically.",
+      loginButton: "Sign in or register", loginStill: "Not signed in — the catalog stays closed.",
     },
   };
   const DEFAULT_BOOSTY = "https://boosty.to/magic_sqd";
-  let root = null, statusEl = null, boostyEl = null;
+  let root = null, statusEl = null, boostyEl = null, titleEl = null, textEl = null, whyEl = null, loginEl = null;
   let state = null, lang = "ru", openAccount = null, onOpened = null, checking = false;
   const t = (key) => (TEXT[lang] || TEXT.ru)[key];
 
@@ -34,11 +43,11 @@ window.accessGate = (() => {
     root.setAttribute("aria-modal", "true");
     const card = document.createElement("div");
     card.className = "access-gate-card";
-    const title = document.createElement("h2");
+    const title = titleEl = document.createElement("h2");
     title.textContent = t("title");
-    const text = document.createElement("p");
+    const text = textEl = document.createElement("p");
     text.textContent = t("text");
-    const why = document.createElement("p");
+    const why = whyEl = document.createElement("p");
     why.className = "access-gate-why";
     why.textContent = t("why");
     const actions = document.createElement("div");
@@ -48,7 +57,7 @@ window.accessGate = (() => {
     boostyEl.target = "_blank";
     boostyEl.rel = "noopener";
     boostyEl.textContent = t("boosty");
-    const login = document.createElement("button");
+    const login = loginEl = document.createElement("button");
     login.className = "primary";
     login.textContent = t("login");
     login.addEventListener("click", () => { if (openAccount) openAccount(); });
@@ -72,8 +81,14 @@ window.accessGate = (() => {
     root.hidden = !closed;
     document.body.classList.toggle("access-closed", closed);
     if (closed) {
+      const loginOnly = state.access === "login_required";
+      titleEl.textContent = t(loginOnly ? "loginTitle" : "title");
+      textEl.textContent = t(loginOnly ? "loginText" : "text");
+      whyEl.hidden = loginOnly;
+      boostyEl.hidden = loginOnly;
+      loginEl.textContent = t(loginOnly ? "loginButton" : "login");
       boostyEl.href = state.boosty || DEFAULT_BOOSTY;
-      statusEl.textContent = state.offline ? t("offline") : (checking ? t("still") : "");
+      statusEl.textContent = state.offline ? t("offline") : (checking ? t(loginOnly ? "loginStill" : "still") : "");
     }
     checking = false;
     // Доступ появился («Проверить снова», правило поменяли) — каталог заново; после входа он и так уже синхронизируется.

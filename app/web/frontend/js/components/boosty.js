@@ -132,8 +132,8 @@
   }
 
   // «Скачать заранее» без подписки (js/offline.js) — то же окно, свой заголовок и текст.
-  function showOfflineDialog() {
-    showLockedDialog("Скачать заранее", window.OfflineUI.lockedParagraphs());
+  function showOfflineDialog(what) {
+    showLockedDialog(what && what.catalog ? "Каталог APK" : "Скачать заранее", window.OfflineUI.lockedParagraphs(what));
   }
 
   function showLockedDialog(title, paragraphs) {

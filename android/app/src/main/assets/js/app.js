@@ -822,13 +822,13 @@
     });
   }
 
-  function showOfflineLockedModal() {
+  function showOfflineLockedModal(what) {
     let overlay;
-    const [body, hint] = window.OfflineUI.lockedParagraphs();
+    const [body, hint] = window.OfflineUI.lockedParagraphs(what);
     body.className = "stage-text";
     hint.className = "stage-text early-hint";
     overlay = showModal([
-      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: "Скачать заранее" }),
+      el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: what && what.catalog ? "Каталог APK" : "Скачать заранее" }),
       body, hint,
       boostyLinksRow({ subscribeOnly: true }),
       el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),

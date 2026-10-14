@@ -18,6 +18,7 @@ from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder
                            sync_early_access, sync_tree, model_on_server, prune_closed_stages, open_url)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version, read_early_access
 import offline_pack
+import apk_catalog
 import flash_writer
 from wizard_spec import load_wizard_spec
 import catalog_i18n as _catalog_i18n
@@ -551,6 +552,61 @@ def offline_download(cars_dir: str, base_url: str, model_key: str, sink=None) ->
     failed = len(after["missing"])
     return json.dumps({"key": model_key, "ok": not failed, "state": state, "failed": failed,
                        "total_bytes": after["total_bytes"], "missing_bytes": after["missing_bytes"]})
+
+
+# Каталог APK целиком — подписчикам (владелец 14.10.2026): кнопка «Каталог APK» рядом со «Скачать заранее»
+# (js/offline.js), состав и отметка — apk_catalog.py (общий с ПК). Подписку проверяет WebBridge.kt по серверу.
+_catalog_cancel = threading.Event()
+
+
+def apk_catalog_status(apk_dir: str, base_url: str) -> str:
+    return json.dumps(apk_catalog.status(_offline_status_manifest(base_url), Path(apk_dir)))
+
+
+def apk_catalog_cancel() -> str:
+    _catalog_cancel.set()
+    return "{}"
+
+
+def apk_catalog_download(apk_dir: str, base_url: str, sink=None) -> str:
+    """Все APK общей библиотеки на телефон. sink (WebBridge.kt: DownloadSink) — байты по мере прихода."""
+    _catalog_cancel.clear()
+    apk_path = Path(apk_dir)
+    log = sink.line if sink is not None else (lambda m: None)
+    state = "update" if apk_catalog.downloaded_once(apk_path) else "none"
+    manifest = fetch_manifest(base_url)
+    if manifest is None:
+        return json.dumps({"ok": False, "state": state,
+                           "error": "Нет связи с сервером — каталог можно скачать, пока есть интернет."})
+    current = apk_catalog.plan(manifest, apk_path)
+    apk_catalog.prepare(apk_path, current)  # положенное не программой — в apk/_unverified/, качаем заново
+
+    def on_bytes(done, total):
+        if _catalog_cancel.is_set():
+            raise _OfflineCancelled()
+        if sink is not None:
+            sink.progress(done, total)
+
+    on_bytes(0, current["missing_bytes"])
+    if current["missing"]:
+        missing = {item["path"]: {"size": item["size"], "mtime": item["mtime"]} for item in current["missing"]}
+        try:
+            sync_tree(base_url, "", apk_path.parent, missing, log=log, on_bytes=on_bytes)  # корень = filesDir
+        except _OfflineCancelled:
+            return json.dumps({"ok": False, "cancelled": True, "state": state})
+    after = apk_catalog.plan(manifest, apk_path)
+    failed = len(after["missing"])
+    if not failed:
+        apk_catalog.write_marker(apk_path)
+    _offline_manifest["data"] = manifest
+    _offline_manifest["at"] = time.monotonic()
+    return json.dumps({"ok": not failed, "state": "done" if not failed else state, "failed": failed,
+                       "total_bytes": after["total_bytes"], "missing_bytes": after["missing_bytes"]})
+
+
+def apk_catalog_forget(apk_dir: str) -> str:
+    apk_catalog.forget(Path(apk_dir))
+    return "{}"
 
 
 def offline_delete_info(cars_dir: str, model_key: str) -> str:

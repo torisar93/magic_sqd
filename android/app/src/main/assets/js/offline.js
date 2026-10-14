@@ -5,7 +5,12 @@
 
    Состояния кнопки: none — «Скачать заранее · размер», locked — то же с замком (без подписки, нажатие — окно
    Boosty), progress — «Скачивается… 45%» (нажатие останавливает), done — «Доступна офлайн» (нажатие — удалить
-   скачанное), update — «Обновить · размер»; нет пакета на сервере (своя модель, модель без файлов) — кнопки нет. */
+   скачанное), update — «Обновить · размер»; нет пакета на сервере (своя модель, модель без файлов) — кнопки нет.
+
+   Рядом — «Каталог APK» (владелец, 14.10.2026): все приложения общей библиотеки для работы без интернета, только
+   подписчикам. none — «Каталог APK · размер» (без подписки — с замком), progress — «Каталог APK… 45%» (нажатие
+   останавливает), update — «Обновить каталог APK · размер»; скачан целиком (done) или нет связи — кнопки нет.
+   Бэкенд: offline_api.py apk_catalog_* (ПК), WebBridge.kt + mobile_bridge.apk_catalog_* (Android), app/apk_catalog.py. */
 (() => {
   const MB = 1048576;
   const svg = (d, width = 1.9) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -185,6 +190,98 @@
     if (!event.cancelled && !event.locked && !event.error) request(event.key);  // свежий размер «Обновить»
   }
 
+  // -- Каталог APK целиком ------------------------------------------------------------------------------------
+  let catalog = { state: "none", available: false };
+  let catalogButton = null;
+
+  function renderCatalog() {
+    const button = catalogButton;
+    if (!button || !button.isConnected) return;
+    let state = catalog.state || "none";
+    if (state === "done" || (!catalog.available && state !== "progress")) { button.hidden = true; return; }
+    button.hidden = false;
+    if ((state === "none" || state === "update") && !platform?.subscriber?.()) state = "locked";
+    button.className = `model-offline model-apkcat is-${state}`;
+    button.dataset.state = state;
+    const children = [];
+    let label;
+    if (state === "progress") {
+      const total = catalog.total || catalog.missing_bytes || 0;
+      const done = Math.min(catalog.done || 0, total);
+      const pct = total > 0 ? Math.floor((done / total) * 100) : 0;
+      const fill = el("i", "offline-fill");
+      fill.style.width = `${pct}%`;
+      children.push(fill, el("span", "offline-label", total > 0 ? `Каталог APK… ${pct}%` : "Каталог APK…"));
+      if (total > 0) children.push(el("small", "", `${Math.round(done / MB)} из ${size(total)}`));
+      label = "Скачивается каталог APK. Нажмите, чтобы остановить";
+    } else if (state === "update") {
+      children.push(iconEl("update"), el("span", "offline-label", "Обновить каталог APK"));
+      if (catalog.missing_bytes > 0) children.push(el("small", "", size(catalog.missing_bytes)));
+      label = "В каталоге APK на сервере новые приложения — докачать";
+    } else if (state === "locked") {
+      children.push(iconEl("lock"), el("span", "offline-label", "Каталог APK"));
+      label = "Каталог APK для работы без интернета — для подписчиков Boosty";
+    } else {
+      children.push(iconEl("download"), el("span", "offline-label", "Каталог APK"));
+      const bytes = catalog.missing_bytes || catalog.total_bytes;
+      if (bytes > 0) children.push(el("small", "", size(bytes)));
+      label = "Скачать все приложения каталога, чтобы ставить их без интернета";
+    }
+    button.replaceChildren(...children);
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  }
+
+  function applyCatalog(result) {
+    if (!result || !result.state) return;
+    // Пока идёт скачивание, ответ о состоянии с диска (без хода) его не перебивает
+    if (catalog.state === "progress" && result.state !== "progress" && !result.final) return;
+    catalog = { ...catalog, ...result };
+    renderCatalog();
+  }
+
+  function requestCatalog() {
+    Promise.resolve(platform.call("apk_catalog_status", {}))
+      .then((result) => { if (result && result.state) applyCatalog(result); })
+      .catch(() => {});
+  }
+
+  function bindCatalog(button) {
+    if (!button) return;
+    if (!platform) { button.hidden = true; return; }
+    catalogButton = button;
+    button.onclick = onCatalogClick;
+    renderCatalog();
+    requestCatalog();
+  }
+
+  async function onCatalogClick() {
+    if (catalog.state === "progress") {
+      platform.call("apk_catalog_cancel", {});
+      return;
+    }
+    if (!platform.subscriber()) { platform.showLocked({ catalog: true }); return; }
+    catalog = { ...catalog, state: "progress", done: 0, total: catalog.missing_bytes || 0 };
+    renderCatalog();
+    const result = await Promise.resolve(platform.call("apk_catalog_download", {}));
+    if (result && result.ok === false) applyCatalogFinished(result);
+  }
+
+  function applyCatalogFinished(event) {
+    const state = event.state || (catalog.state === "progress" ? "none" : catalog.state) || "none";
+    catalog = { ...catalog, ...event, state, done: 0, total: 0, final: undefined };
+    renderCatalog();
+    if (event.locked) {
+      if (event.error) platform.notify(event.error);
+      else platform.showLocked({ catalog: true });
+    } else if (event.error) {
+      platform.notify(event.error);
+    } else if (event.failed > 0) {
+      platform.notify(`Скачалось не всё: не удалось скачать файлов — ${event.failed}. Проверьте интернет и нажмите «Обновить каталог APK».`);
+    }
+    if (!event.cancelled && !event.locked && !event.error) requestCatalog();
+  }
+
   function applyDeleted(event) {
     if (!event || !event.key) return;
     if (!event.ok) { if (event.error) platform.notify(event.error); return; }
@@ -195,8 +292,17 @@
     request(event.key);
   }
 
-  // Текст окна «Скачать заранее» для неподписчика — общий, окна у платформ свои (как CatalogUI.earlyAccessParagraphs)
-  function lockedParagraphs() {
+  // Текст окна «Скачать заранее» / «Каталог APK» для неподписчика — общий, окна у платформ свои
+  // (как CatalogUI.earlyAccessParagraphs). what.catalog — окно кнопки «Каталог APK».
+  function lockedParagraphs(what) {
+    if (what && what.catalog) {
+      return [
+        el("p", "early-body", "Подписчики Boosty могут скачать весь каталог приложений сразу и ставить их у машины "
+          + "без интернета."),
+        el("p", "early-hint", "Без подписки приложения, как и раньше, скачиваются по ходу установки. Уже подписались? "
+          + "Войдите в аккаунт с той же почтой, что на Boosty."),
+      ];
+    }
     return [
       el("p", "early-body", "Подписчики Boosty могут скачать все файлы модели заранее — приложения, прошивки, "
         + "файлы для флешки — и работать у машины без интернета."),
@@ -216,9 +322,21 @@
       events.on("offline_progress", applyProgress);
       events.on("offline_finished", (event) => applyFinished({ ...event, final: true }));
       events.on("offline_deleted", applyDeleted);
-      events.on("auth_subscriber_result", () => { if (current) render(current.button, current.version); });
+      events.on("apk_catalog_status", (event) => applyCatalog(event));
+      events.on("apk_catalog_progress", (event) => {
+        catalog = { ...catalog, state: "progress", available: true, done: event?.done || 0, total: event?.total || 0 };
+        renderCatalog();
+      });
+      events.on("apk_catalog_finished", (event) => applyCatalogFinished({ ...(event || {}), final: true }));
+      events.on("auth_subscriber_result", () => {
+        if (current) render(current.button, current.version);
+        renderCatalog();
+      });
     }
   }
 
-  window.OfflineUI = { init, bind, track, size, lockedParagraphs, refresh: () => current && render(current.button, current.version) };
+  window.OfflineUI = {
+    init, bind, bindCatalog, track, size, lockedParagraphs,
+    refresh: () => { if (current) render(current.button, current.version); renderCatalog(); },
+  };
 })();

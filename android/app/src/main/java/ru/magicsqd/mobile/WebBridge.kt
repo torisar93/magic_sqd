@@ -256,6 +256,10 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "offline_delete_info" -> pyModule("mobile_bridge").callAttr(
                     "offline_delete_info", carsDir, args.getString("model_key")).toString()
                 "offline_delete" -> { offlineDelete(args.getString("model_key")); "{}" }
+                // Каталог APK целиком — подписчикам (владелец 14.10.2026), см. apkCatalogDownload и mobile_bridge.apk_catalog_*
+                "apk_catalog_status" -> { apkCatalogStatus(); "{}" }
+                "apk_catalog_download" -> { apkCatalogDownload(); "{}" }
+                "apk_catalog_cancel" -> pyModule("mobile_bridge").callAttr("apk_catalog_cancel").toString()
                 "scanner_list_apks" -> { listApks(); "{}" }
                 "lab_apk_icon" -> { loadLabApkIcon(args.optString("path")); "{}" }
                 "install_load_stages" -> pyModule("mobile_bridge").callAttr(
@@ -593,6 +597,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     private fun clearCache(): JSONObject {
         val before = cacheTargets().sumOf(::directorySize) + directorySize(context.cacheDir)
         cacheTargets().forEach(::deleteRecursively)
+        // Каталог APK стёрт — кнопка «Каталог APK» снова «скачать» (apk_catalog.json рядом с apk/)
+        try { pyModule("mobile_bridge").callAttr("apk_catalog_forget", apkDir) } catch (_: Exception) {}
         context.cacheDir.listFiles()?.forEach(::deleteRecursively)
         val remaining = cacheTargets().sumOf(::directorySize) + directorySize(context.cacheDir)
         return JSONObject().put("freed_bytes", before - remaining).put("remaining_bytes", remaining)
@@ -812,6 +818,65 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 offlineRunningKey = null
             }
             pushEvent(result.put("kind", "offline_finished").put("key", modelKey))
+        }.start()
+    }
+
+    @Volatile private var catalogRunning = false
+
+    private fun apkCatalogStatus() {
+        Thread {
+            val result = try {
+                if (catalogRunning) JSONObject().put("state", "progress").put("available", true)
+                else JSONObject(pyModule("mobile_bridge").callAttr("apk_catalog_status", apkDir, BASE_URL).toString())
+            } catch (e: Exception) {
+                JSONObject().put("state", "none").put("available", false)
+            }
+            pushEvent(result.put("kind", "apk_catalog_status"))
+        }.start()
+    }
+
+    /** Подписка по серверу (её ставят и снимают в админке): null — подписчик, иначе ответ «нельзя» для окна. */
+    private fun subscriptionRefusal(offlineError: String): JSONObject? {
+        val cookie = authUserCookie()
+        val me = if (cookie == null) null
+            else JSONObject(pyModule("auth_bridge").callAttr("me", AUTH_BASE_URL, cookie).toString())
+        if (me != null && me.optBoolean("ok")) {
+            authPrefs().edit().putBoolean("subscriber", me.optBoolean("subscriber", false)).apply()
+        }
+        return when {
+            me == null || !me.optBoolean("ok") ->
+                JSONObject().put("ok", false).put("locked", true).put("error", if (cookie == null) "" else offlineError)
+            !me.optBoolean("subscriber", false) -> JSONObject().put("ok", false).put("locked", true)
+            else -> null
+        }
+    }
+
+    private fun apkCatalogDownload() {
+        synchronized(this) {
+            if (catalogRunning) {
+                pushEvent(JSONObject().put("kind", "apk_catalog_finished").put("ok", false)
+                    .put("error", "Каталог уже скачивается."))
+                return
+            }
+            catalogRunning = true
+        }
+        Thread {
+            val result = try {
+                subscriptionRefusal("Нет связи с сервером — каталог можно скачать, пока есть интернет.") ?: run {
+                    val sink = DownloadSink(
+                        log = { line -> android.util.Log.i("MagicSQD", "apk catalog: $line") },
+                        onBytes = { done, total ->
+                            pushEvent(JSONObject().put("kind", "apk_catalog_progress").put("done", done).put("total", total))
+                        },
+                    )
+                    JSONObject(pyModule("mobile_bridge").callAttr("apk_catalog_download", apkDir, BASE_URL, sink).toString())
+                }
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", e.message ?: "неизвестная ошибка")
+            } finally {
+                catalogRunning = false
+            }
+            pushEvent(result.put("kind", "apk_catalog_finished"))
         }.start()
     }
 

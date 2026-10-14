@@ -11,6 +11,7 @@ import os
 import shutil
 from pathlib import Path
 
+from ... import apk_catalog
 from ...content_config import get_base_url
 from ...version import APP_VERSION
 
@@ -102,6 +103,8 @@ class SettingsApi:
                 # APK в админ-сборке могут быть ещё не опубликованными.
                 continue
             shutil.rmtree(directory, ignore_errors=True)
+            if directory == self.apk_dir:
+                apk_catalog.forget(self.apk_dir)  # каталог APK стёрт — кнопка «Каталог APK» снова «скачать»
         for directory in self.cars_dir.rglob("__pycache__") if self.cars_dir.exists() else ():
             shutil.rmtree(directory, ignore_errors=True)
         debug_logs = self.base_dir / "debug_logs"

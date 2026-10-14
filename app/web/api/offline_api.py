@@ -2,7 +2,10 @@
 пакета, отметка на диске и удаление — app/offline_pack.py (общий с Android); здесь — скачивание с ходом дела.
 
 События для интерфейса (js/offline.js, общий с Android): offline_progress {key, done, total} — байты;
-offline_finished {key, ok, state, failed, cancelled, error}."""
+offline_finished {key, ok, state, failed, cancelled, error}.
+
+Каталог APK целиком (владелец 14.10.2026, только подписчикам) — app/apk_catalog.py; события apk_catalog_progress
+{done, total} и apk_catalog_finished {ok, state, failed, cancelled, error, locked}."""
 from __future__ import annotations
 
 import threading
@@ -10,7 +13,7 @@ import time
 from pathlib import Path
 
 from ..events import event_bridge
-from ... import offline_pack
+from ... import apk_catalog, offline_pack
 from ...content_sync import (ContentSyncError, fetch_manifest, get_base_url, model_on_server,
                               prune_model_stale_files, sync_tree)
 
@@ -32,6 +35,9 @@ class OfflineApi:
         self._cancel = threading.Event()
         self._manifest: dict | None = None
         self._manifest_at = 0.0
+        self.apk_dir = self.base_dir / "apk"
+        self._catalog_running = False
+        self._catalog_cancel = threading.Event()
 
     def _get_manifest(self, fresh: bool = False) -> dict | None:
         url = get_base_url(self.base_dir)
@@ -164,6 +170,90 @@ class OfflineApi:
         else:
             self._log(f"{label}: модель доступна без интернета.")
         return {"ok": not failed, "state": state, "failed": failed,
+                "total_bytes": after["total_bytes"], "missing_bytes": after["missing_bytes"]}
+
+    # ------------------------------------------------------------------
+    # Каталог APK целиком — подписчикам (владелец 14.10.2026)
+    def apk_catalog_status(self) -> dict:
+        if self._catalog_running:
+            return {"state": "progress", "available": True}
+        return apk_catalog.status(self._get_manifest(), self.apk_dir)
+
+    def apk_catalog_download(self) -> dict:
+        auth = self._auth.refresh_subscriber()  # по серверу: отметку подписчика ставят и снимают в админке
+        if not auth.get("ok"):
+            return {"ok": False, "error": "Нет связи с сервером или вы не вошли в аккаунт.", "locked": True}
+        if not auth.get("subscriber"):
+            return {"ok": False, "locked": True}
+        with self._lock:
+            if self._catalog_running:
+                return {"ok": False, "error": "Каталог уже скачивается."}
+            self._catalog_running = True
+            self._catalog_cancel.clear()
+        threading.Thread(target=self._catalog_worker, daemon=True).start()
+        return {"ok": True}
+
+    def apk_catalog_cancel(self) -> dict:
+        self._catalog_cancel.set()
+        return {"ok": True}
+
+    def _catalog_state(self) -> str:
+        return "update" if apk_catalog.downloaded_once(self.apk_dir) else "none"
+
+    def _catalog_worker(self) -> None:
+        result = {"kind": "apk_catalog_finished", "ok": False}
+        try:
+            result.update(self.download_apk_catalog())
+        except OfflineCancelled:
+            result.update(cancelled=True, state=self._catalog_state())
+        except Exception as exc:  # noqa: BLE001 - любая ошибка — в окно, не в тишину
+            self._log(f"Не удалось скачать каталог APK: {exc}")
+            result.update(error=str(exc), state=self._catalog_state())
+        finally:
+            with self._lock:
+                self._catalog_running = False
+        event_bridge.push(result)
+
+    def download_apk_catalog(self) -> dict:
+        url = get_base_url(self.base_dir)
+        manifest = self._get_manifest(fresh=True) if url else None
+        if manifest is None:
+            return {"ok": False, "error": "Нет связи с сервером — каталог можно скачать, пока есть интернет.",
+                    "state": self._catalog_state()}
+
+        def check_cancelled() -> None:
+            if self._catalog_cancel.is_set():
+                raise OfflineCancelled()
+
+        current = apk_catalog.plan(manifest, self.apk_dir)
+        apk_catalog.prepare(self.apk_dir, current)  # положенное не программой — в apk/_unverified/, качаем заново
+        total = current["missing_bytes"]
+        event_bridge.push({"kind": "apk_catalog_progress", "done": 0, "total": total})
+        if current["missing"]:
+            self._log(f"Скачиваю каталог APK: {len(current['missing'])} файлов, {total / 1048576:.0f} МБ")
+            missing = {item["path"]: {"size": item["size"], "mtime": item["mtime"]} for item in current["missing"]}
+            last = [0.0]
+
+            def on_progress(done, all_bytes, *_files) -> None:
+                now = time.monotonic()
+                if done >= all_bytes or now - last[0] >= 0.15:
+                    last[0] = now
+                    event_bridge.push({"kind": "apk_catalog_progress", "done": done, "total": all_bytes})
+
+            try:
+                sync_tree(url, "", self.base_dir, log=self._log, check_cancelled=check_cancelled,
+                          manifest=missing, on_progress=on_progress)
+            except ContentSyncError as exc:
+                self._log(f"Скачивание каталога APK прервалось: {exc}")
+        check_cancelled()
+        after = apk_catalog.plan(manifest, self.apk_dir)
+        failed = len(after["missing"])
+        if failed:
+            self._log(f"Каталог APK: не скачалось файлов — {failed}. Нажмите «Обновить каталог APK», чтобы докачать.")
+        else:
+            apk_catalog.write_marker(self.apk_dir)
+            self._log("Каталог APK скачан: все приложения доступны без интернета.")
+        return {"ok": not failed, "state": "done" if not failed else self._catalog_state(), "failed": failed,
                 "total_bytes": after["total_bytes"], "missing_bytes": after["missing_bytes"]}
 
     @staticmethod

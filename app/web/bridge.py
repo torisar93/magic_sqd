@@ -259,6 +259,16 @@ class WebApi:
     def offline_delete(self, model_key: str) -> dict:
         return self._offline.delete(model_key)
 
+    # Каталог APK целиком — подписчикам (js/offline.js: кнопка «Каталог APK» рядом со «Скачать заранее»)
+    def apk_catalog_status(self) -> dict:
+        return self._offline.apk_catalog_status()
+
+    def apk_catalog_download(self) -> dict:
+        return self._offline.apk_catalog_download()
+
+    def apk_catalog_cancel(self) -> dict:
+        return self._offline.apk_catalog_cancel()
+
     def scanner_apk_icon(self, path: str):
         # Локальный импорт (не в шапке файла) — apk_icons.py тянет свои
         # собственные кэши/зависимости (urllib, zipfile) только когда

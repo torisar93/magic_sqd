@@ -2,8 +2,9 @@
    и «таблетки» под названием модели в списке — «✓ офлайн», «↻ обновить», «★ ранний доступ» (js/catalog-ui.js).
    Файл одинаковый для ПК (app/web/frontend/css/) и Android (android/app/src/main/assets/css/). */
 
-/* Ряд кнопок карточки модели */
-.model-actions { display: flex; gap: 12px; align-items: stretch; width: 100%; flex: 0 0 auto; }
+/* Ряд кнопок карточки модели; «Каталог APK» (подписчики, 14.10.2026) — своей строкой под ними, пока не скачан */
+.model-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; width: 100%; flex: 0 0 auto; }
+.model-actions > .model-apkcat { flex: 1 0 100%; }
 .model-actions > .model-open,
 .model-detail.catalog10-scene .model-actions > .model-open { flex: 1 1 0; min-width: 0; width: auto; }
 .model-offline {
@@ -30,7 +31,7 @@
   .model-actions { flex-direction: column; gap: 10px; }
   .model-actions > .model-open,
   .model-detail.catalog10-scene .model-actions > .model-open { flex: 0 0 auto; width: 100%; }
-  .model-offline { flex: 0 0 auto; width: 100%; min-height: 50px; }
+  .model-offline, .model-actions > .model-apkcat { flex: 0 0 auto; width: 100%; min-height: 50px; }
 }
 
 /* «Таблетки» под названием модели */

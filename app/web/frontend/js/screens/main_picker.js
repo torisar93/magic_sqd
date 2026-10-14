@@ -463,10 +463,11 @@
     window.OfflineUI.init({
       call: (method, args) => {
         const api = window.pywebview.api;
-        return method === "offline_cancel" ? api.offline_cancel() : api[method](args.model_key);
+        if (method === "offline_cancel" || method.startsWith("apk_catalog_")) return api[method]();
+        return api[method](args.model_key);
       },
       subscriber: () => !!window.authDialog?.isSubscriber?.(),
-      showLocked: () => window.boostyDialogs?.showOfflineDialog(),
+      showLocked: (what) => window.boostyDialogs?.showOfflineDialog(what),
       confirm: ({ title, text, ok }) => window.confirmDialog(text, { title, okText: ok, danger: true }),
       notify: (text) => window.notice(text),
     });
