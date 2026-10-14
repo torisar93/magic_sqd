@@ -1,6 +1,7 @@
 package ru.magicsqd.mobile
 
 import android.content.Context
+import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,6 +15,10 @@ import java.util.TimeZone
  *
  * {"langs": [языки телефона], "kbd": [языки клавиатур], "region": локаль, "tz": минуты к UTC, "os": "android"}.
  * Языки клавиатуры важны: у многих интерфейс телефона английский, но русская клавиатура стоит почти у всех.
+ *
+ * "dev" — постоянный номер телефона (хеш ANDROID_ID с солью программы, так же считает ПК — app/client_env.py):
+ * владелец 14.10.2026 — устройство, хоть раз пришедшее из Алжира или Саудовской Аравии, сервер запоминает и узнаёт
+ * после переустановки приложения (новый client_id). ANDROID_ID переживает переустановку, меняется со сбросом телефона.
  */
 object ClientEnv {
     /** Наши языки — интерфейс приложения на русском (server/access_policy.DEFAULT_FREE_LANGS — те же коды). */
@@ -41,8 +46,20 @@ object ClientEnv {
             }
         } catch (_: Exception) { /* клавиатуры не узнать — достаточно языков телефона */ }
         val tz = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000
-        return JSONObject().put("langs", langs).put("kbd", kbd).put("region", Locale.getDefault().toLanguageTag())
+        val env = JSONObject().put("langs", langs).put("kbd", kbd).put("region", Locale.getDefault().toLanguageTag())
             .put("tz", tz).put("os", "android")
+        deviceHash(context)?.let { env.put("dev", it) }
+        return env
+    }
+
+    /** Хеш ANDROID_ID: «magicsqd-device|номер» → SHA-256, первые 32 знака (сам номер не уходит). */
+    private fun deviceHash(context: Context): String? = try {
+        val raw = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)?.trim()?.lowercase()
+        if (raw.isNullOrEmpty()) null else java.security.MessageDigest.getInstance("SHA-256")
+            .digest("magicsqd-device|$raw".toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }.take(32)
+    } catch (_: Exception) {
+        null  // без номера сервер узнаёт телефон по client_id
     }
 
     /** Язык интерфейса приложения: есть наш язык (телефон, клавиатура, локаль) — русский, иначе английский.

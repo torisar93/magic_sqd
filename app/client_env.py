@@ -5,9 +5,14 @@
 {"ui": [языки интерфейса системы], "region": региональный формат, "kbd": [языки раскладок клавиатуры],
  "tz": минуты к UTC, "os": "windows" | "macos" | "linux"}. Раскладки важны: у многих техников английская Windows, но
 русская раскладка стоит почти у всех. Ничего не определилось — пустые списки (сервер тогда судит по адресу, как у
-старых версий). Тот же выбор решает и язык интерфейса программы (ui_language)."""
+старых версий). Тот же выбор решает и язык интерфейса программы (ui_language).
+
+"dev" — постоянный номер компьютера (хеш MachineGuid Windows / IOPlatformUUID Mac / machine-id Linux): владелец
+14.10.2026 — устройство, хоть раз пришедшее из Алжира или Саудовской Аравии, сервер запоминает, и после переустановки
+программы (новый client_id) его узнаёт по этому хешу. Сам номер не уходит — только хеш с солью программы."""
 from __future__ import annotations
 
+import hashlib
 import locale
 import re
 import subprocess
@@ -105,6 +110,32 @@ def _other() -> dict:
     return {"ui": [tag] if tag else [], "region": tag, "kbd": []}
 
 
+def device_hash(raw: str) -> str:
+    """Хеш постоянного номера устройства — так же считает Android (ClientEnv.kt): «magicsqd-device|номер»."""
+    return hashlib.sha256(("magicsqd-device|" + raw.strip().lower()).encode("utf-8")).hexdigest()[:32]
+
+
+def _machine_id() -> str:
+    """Постоянный номер компьютера: переживает переустановку программы, меняется с переустановкой системы."""
+    if sys.platform == "win32":
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography", 0,
+                            winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            return str(winreg.QueryValueEx(key, "MachineGuid")[0])
+    if sys.platform == "darwin":
+        out = subprocess.run(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True,
+                             text=True, timeout=3).stdout
+        match = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', out or "")
+        return match.group(1) if match else ""
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            with open(path, encoding="ascii") as fh:
+                return fh.read().strip()
+        except OSError:
+            continue
+    return ""
+
+
 _static: dict | None = None  # языки и раскладки за время работы программы не меняются — читаем один раз
 
 
@@ -123,10 +154,18 @@ def collect() -> dict:
             found = reader()
         except Exception:  # noqa: BLE001 — признаки не обязательны: сервер тогда судит по адресу
             found = {"ui": [], "region": "", "kbd": []}
+        try:
+            raw_id = _machine_id()
+        except Exception:  # noqa: BLE001 — без номера устройства сервер узнаёт программу по client_id
+            raw_id = ""
         _static = {"ui": list(found.get("ui") or [])[:16], "region": str(found.get("region") or "")[:32],
-                   "kbd": list(found.get("kbd") or [])[:16], "os": os_name}
-    return {"ui": list(_static["ui"]), "region": _static["region"], "kbd": list(_static["kbd"]),
-            "tz": _tz_minutes(), "os": _static["os"]}
+                   "kbd": list(found.get("kbd") or [])[:16], "os": os_name,
+                   "dev": device_hash(raw_id) if raw_id.strip() else ""}
+    env = {"ui": list(_static["ui"]), "region": _static["region"], "kbd": list(_static["kbd"]),
+           "tz": _tz_minutes(), "os": _static["os"]}
+    if _static["dev"]:
+        env["dev"] = _static["dev"]
+    return env
 
 
 def _code(tag: str) -> str:
