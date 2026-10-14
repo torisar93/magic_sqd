@@ -49,6 +49,18 @@
         <activity
             android:name=".DiagnosticsActivity"
             android:exported="false" />
+
+        <!-- Снимок для фото экрана ИИ-помощнику (MainActivity.cameraIntent): камера пишет в cache/photos/ по этому
+             адресу, своё разрешение на камеру программе не нужно. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

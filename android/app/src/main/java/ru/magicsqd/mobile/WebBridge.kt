@@ -209,6 +209,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     .put("client_id", getOrCreateClientId())
                     // Выпуск интерфейса с сервера (UiBundleAssets); 0 — встроенный. В шапку журнала установки.
                     .put("ui_rev", uiRev)
+                    // Окно программы умеет <input type="file"> — камеру и галерею (MainActivity.onShowFileChooser): по этому
+                    // флагу интерфейс с сервера показывает кнопку «Фото» у ИИ-помощника.
+                    .put("file_chooser", true)
                     // Для журнала сессии: какой телефон — по client_id не понять (он новый после каждой переустановки).
                     .put("device", "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}")
                     .put("android", android.os.Build.VERSION.RELEASE ?: "?")

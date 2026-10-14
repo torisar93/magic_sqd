@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Снимки камеры для фото экрана ИИ-помощнику (MainActivity.cameraIntent). -->
+<paths>
+    <cache-path name="photos" path="photos/" />
+</paths>
