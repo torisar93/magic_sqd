@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from content_sync import ContentSyncError, _encode_path, download_file, fetch_manifest, local_copy_is_current, open_url
+import apk_registry
 
 _META_FETCH_WORKERS = 8
 
@@ -72,7 +73,10 @@ def _scan_local_apks(apk_dir: Path) -> list:
         for sub in sorted(apk_dir.iterdir(), key=lambda p: p.name.lower()):
             if sub.is_dir() and not sub.name.startswith("_"):
                 items.extend(_scan_local_dir(sub, sub.name))
-    return items
+    # Скачанным считается только то, что скачала сама программа (apk_registry, владелец 14.10.2026); переподписанные
+    # копии (<имя>_resigned.apk, InstallEngine) — служебные, их в списке не было на ПК и не должно быть здесь.
+    return [item for item in items if not Path(item.path).stem.endswith("_resigned")
+            and apk_registry.is_trusted(apk_dir, Path(item.path).relative_to(apk_dir).as_posix(), item.path)]
 
 
 def list_apks(apk_dir: Path, base_url: str) -> str:
@@ -195,10 +199,17 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
             if target.exists():
                 # Размер И время (local_copy_is_current): обрыв на середине оставлял обрубленный файл, а замена файла
                 # на сервере — старую версию, которая потом и ставилась. Файла нет в манифесте или сети нет — берём,
-                # что есть.
-                if entry is None or local_copy_is_current(target, entry):
+                # что есть. Файл общей библиотеки, скачанный не программой (владелец 14.10), — только с сервера.
+                trusted = not remote.startswith("apk/") or apk_registry.is_trusted(apk_dir, remote[len("apk/"):], target)
+                if trusted and (entry is None or local_copy_is_current(target, entry)):
                     continue
-                log(f"{target.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
+                if not trusted:
+                    if entry is None:
+                        _set_aside_unverified(apk_dir, remote, target, log)
+                        continue
+                    log(f"{target.name}: файл положен не программой — скачиваю с сервера")
+                else:
+                    log(f"{target.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
             log(f"Скачиваю {target.name}...")
             try:
                 # Путь в прогрессе — ровно та строка, что пришла в paths (как на ПК, content_sync.
@@ -212,6 +223,9 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
             except ContentSyncError as exc:
                 log(f"Не удалось скачать {target.name}: {exc}")
                 failed = True
+                if remote.startswith("apk/") and target.exists() and not apk_registry.is_trusted(
+                        apk_dir, remote[len("apk/"):], target):
+                    _set_aside_unverified(apk_dir, remote, target, log)
         if inner:
             # Папка скачана не вся — метка: запись на флешку остановится «Файл не скачан» (UsbFlashWrite.kt), а не
             # положит неполную папку.
@@ -225,6 +239,13 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
 
 
 FOLDER_INCOMPLETE_MARK = ".msqd_incomplete"  # то же имя — в UsbFlashWrite.kt
+
+
+def _set_aside_unverified(apk_dir: Path, remote: str, target: Path, log) -> None:
+    """APK общей библиотеки, положенный не программой и не перекачанный с сервера, — в apk/_unverified/ (как на ПК,
+    content_sync._set_aside_unverified): ставить его нельзя, удалять молча не будем."""
+    if apk_registry.quarantine(apk_dir, remote[len("apk/"):], target) is not None:
+        log(f"{target.name}: файл положен не программой, а скачать его сейчас нельзя — не используется")
 
 
 def _folder_entries(manifest, remote_path: str) -> list:

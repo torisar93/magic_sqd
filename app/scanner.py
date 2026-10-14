@@ -6,8 +6,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 try:
-    from . import catalog_key  # ПК: пакет app
+    from . import apk_registry, catalog_key  # ПК: пакет app
 except ImportError:  # pragma: no cover
+    import apk_registry
     import catalog_key
 
 # Статус модели (см. ModelInfo.status ниже, app/car_generator.py:
@@ -395,12 +396,16 @@ def scan_apks(apk_dir: Path, remote_catalog: list[dict] | None = None) -> list[A
     копия может иметь своё <файл>.json с именем/описанием."""
     apks: dict[tuple[str, str], ApkInfo] = {}
     if apk_dir.exists():
+        # Скачанным считается только то, что скачала сама программа (apk_registry, владелец 14.10.2026): файл,
+        # положенный в папку вручную, — как ещё не скачанный (если он есть на сервере) или вовсе не показывается.
         for apk in scan_apk_dir(apk_dir, category=""):
-            apks[("", apk.path.name)] = apk
+            if apk_registry.is_trusted(apk_dir, apk.path.name, apk.path):
+                apks[("", apk.path.name)] = apk
         for sub_dir in sorted(apk_dir.iterdir(), key=lambda p: p.name.lower()):
             if sub_dir.is_dir() and not sub_dir.name.startswith("_"):
                 for apk in scan_apk_dir(sub_dir, category=sub_dir.name):
-                    apks[(sub_dir.name, apk.path.name)] = apk
+                    if apk_registry.is_trusted(apk_dir, f"{sub_dir.name}/{apk.path.name}", apk.path):
+                        apks[(sub_dir.name, apk.path.name)] = apk
 
     for entry in remote_catalog or []:
         rel = entry["rel_path"]

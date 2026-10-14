@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+import apk_registry
 import catalog_crypto
 import catalog_key
 import offline_pack
@@ -212,6 +213,10 @@ def download_file(base_url: str, remote_path: str, dest: Path, chunk_size: int =
             os.utime(dest, (mtime, mtime))
         except OSError:
             pass
+    # APK общей библиотеки скачала сама программа — запомнить (apk_registry: положенные вручную не считаются).
+    where = apk_registry.apk_dir_and_rel(dest, remote_path) if remote_path.endswith(".apk") else None
+    if where is not None:
+        apk_registry.record(where[0], where[1], dest)
 
 
 def _download_one(base_url: str, remote_path: str, local_path: Path, log, mtime: float | None = None,

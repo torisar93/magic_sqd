@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-from . import catalog_crypto, catalog_key, closed_stages, offline_pack
+from . import apk_registry, catalog_crypto, catalog_key, closed_stages, offline_pack
 from .content_config import get_base_url
 
 CHUNK_SIZE = 1024 * 1024
@@ -387,6 +387,10 @@ def download_file(base_url: str, remote_path: str, dest: Path,
             os.utime(dest, (mtime, mtime))
         except OSError:
             pass
+    # APK общей библиотеки скачала сама программа — запомнить (apk_registry: положенные вручную не считаются).
+    where = apk_registry.apk_dir_and_rel(dest, remote_path) if remote_path.endswith(".apk") else None
+    if where is not None:
+        apk_registry.record(where[0], where[1], dest)
 
 
 def _download_one(base_url: str, remote_path: str, local_path: Path,
@@ -1287,6 +1291,13 @@ def list_shared_apk_catalog(base_dir: Path, items: list[dict] | None = None) -> 
     return catalog
 
 
+def _set_aside_unverified(apk_dir: Path, rel: Path, path: Path, log) -> None:
+    """APK общей библиотеки, положенный не программой и не перекачанный с сервера, — в apk/_unverified/: ставить и
+    писать на флешку его нельзя (владелец 14.10.2026), а удалять чужой файл молча не будем."""
+    if apk_registry.quarantine(apk_dir, rel.as_posix(), path) is not None:
+        log(f"{path.name}: файл положен не программой, а скачать его сейчас нельзя — не используется")
+
+
 def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: None,
                             check_cancelled=lambda: None,
                             on_progress=lambda done, total, *args: None,
@@ -1333,10 +1344,18 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
             # старую версию, которая потом и ставилась. Сверяем размер и время (local_copy_is_current); файла нет в
             # манифесте или сети нет — берём, что есть. Файл модели с неопубликованной правкой — тоже свой (см.
             # mark_local_edit): техник мог положить другую версию APK под тем же именем.
-            if item is None or local_copy_is_current(path, item) or (
-                    remote_path.startswith("cars/") and _inside_local_edit(path, cars_dir, manifest)):
+            # Файл общей библиотеки, скачанный не программой (положили вручную, владелец 14.10), — не свой: только с сервера.
+            trusted = not remote_path.startswith("apk/") or apk_registry.is_trusted(apk_dir, rel.as_posix(), path)
+            if trusted and (item is None or local_copy_is_current(path, item) or (
+                    remote_path.startswith("cars/") and _inside_local_edit(path, cars_dir, manifest))):
                 continue
-            log(f"{path.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
+            if not trusted:
+                if item is None:
+                    _set_aside_unverified(apk_dir, rel, path, log)  # с сервера не взять — и такой не ставим
+                    continue
+                log(f"{path.name}: файл положен не программой — скачиваю с сервера")
+            else:
+                log(f"{path.name}: на диске не та версия, что на сервере (или недокачан) — скачиваю заново")
         pending.append((path, remote_path, rel, size, str(raw_path), (item or {}).get("mtime")))
 
     if not pending:
@@ -1367,6 +1386,8 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
             downloaded += 1
         except ContentSyncError as exc:
             log(f"Не удалось скачать {rel.as_posix()}: {exc}")
+            if remote_path.startswith("apk/") and path.exists() and not apk_registry.is_trusted(apk_dir, rel.as_posix(), path):
+                _set_aside_unverified(apk_dir, rel, path, log)
         finally:
             if byte_progress:
                 completed_bytes += size

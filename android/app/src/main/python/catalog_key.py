@@ -43,6 +43,11 @@ def is_configured() -> bool:
     return _key is not None
 
 
+def subkey(label: bytes) -> bytes | None:
+    """Отдельный ключ этой установки для другой цели (HKDF с меткой): реестр скачанных APK — apk_registry."""
+    return catalog_crypto.hkdf_sha256(_key, label) if _key is not None else None
+
+
 def is_encrypted_path(rel: str) -> bool:
     """True, если файл модели по этому пути манифеста нужно хранить зашифрованным."""
     rel = rel.replace("\\", "/").strip("/")

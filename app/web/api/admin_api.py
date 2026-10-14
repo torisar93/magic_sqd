@@ -19,6 +19,7 @@ import shutil
 import threading
 from pathlib import Path
 
+from ... import apk_registry
 from ..events import event_bridge
 from ...admin_client import (AdminClientError, clear_cached_session, delete_cars_path, edit_apk_metadata,
                               get_cached_session, list_cars_path, upload_dir, upload_single_apk)
@@ -173,6 +174,8 @@ class AdminApi:
                 json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         except OSError as exc:
             return {"ok": False, "error": f"Не удалось сохранить файл: {exc}"}
+        # Добавил администратор — программа считает файл своим (apk_registry: положенные вручную не используются).
+        apk_registry.record(self.apk_dir, dest.relative_to(self.apk_dir).as_posix(), dest)
 
         self._publish_apk_async(category, dest.name, dest, name, description, mock_location)
         return {"ok": True}
