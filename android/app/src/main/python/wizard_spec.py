@@ -185,8 +185,12 @@ def _apk_entry(item, base_dir: Path) -> dict:
         group = str(item.get("exclusive_group") or "").strip()
         if group:
             entry["exclusive_group"] = group
-        return entry
-    return {"path": str(base_dir / item), "name": "", "description": ""}
+    else:
+        entry = {"path": str(base_dir / item), "name": "", "description": ""}
+    # Скачан ли уже (APK модели качаются лениво, перед установкой) — как remote_only у общей библиотеки и на ПК:
+    # подсказка Wi-Fi в нижней панели этапа не нужна, если всё выбранное на телефоне (владелец, 15.10.2026).
+    entry["remote_only"] = not Path(entry["path"]).is_file()
+    return entry
 
 
 def _variant_dicts(variant_data, base_dir: Path, step_type: str, apk_base_dir: Path | None = None) -> list:

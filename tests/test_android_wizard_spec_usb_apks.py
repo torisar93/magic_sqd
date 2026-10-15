@@ -58,7 +58,7 @@ def test_usb_step_without_variants_resolves_standard_apks_optional(tmp_path, wiz
     assert step["standard_apks"] == []
     assert step["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "usb_pack_1" / "optional" / "Data_Belgee_2.3.apk"),
-        "name": "Фикс сброса даты/времени", "description": "...",
+        "name": "Фикс сброса даты/времени", "description": "...", "remote_only": True,
     }]
 
 
@@ -75,7 +75,7 @@ def test_usb_step_without_variants_resolves_standard_apks_required_too(tmp_path,
     assert step["standard_apks"] == []
     assert step["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "usb_pack_1" / "required" / "mandatory.apk"),
-        "name": "", "description": "",
+        "name": "", "description": "", "remote_only": True,
     }]
 
 
@@ -97,6 +97,20 @@ def test_apps_required_apks_become_regular_checkboxes(tmp_path, wizard_spec):
     assert step["standard_apks"] == []
     assert [Path(e["path"]).name for e in step["standard_apks_optional"]] == ["ginputbridge.apk", "climator.apk"]
     assert step["standard_apks_optional"][0]["name"] == "GInputBridge"
+
+
+def test_model_apps_say_whether_they_are_downloaded(tmp_path, wizard_spec):
+    """Подсказка Wi-Fi прячется, если всё выбранное уже скачано (владелец, 15.10.2026): у приложений модели на Android
+    тот же признак remote_only, что у общей библиотеки и на ПК (APK модели качаются лениво, перед установкой)."""
+    model_dir = tmp_path / "model"
+    _write_spec(model_dir, [_apps_step(standard_apks_optional=["here.apk", {"filename": "later.apk", "name": "Later"}])])
+    here = model_dir / "files" / "pack" / "optional" / "here.apk"
+    here.parent.mkdir(parents=True)
+    here.write_bytes(b"apk")
+
+    entries = wizard_spec.load_wizard_spec(model_dir)["steps"][0]["standard_apks_optional"]
+
+    assert {Path(e["path"]).name: e["remote_only"] for e in entries} == {"here.apk": False, "later.apk": True}
 
 
 def test_same_file_in_required_and_optional_is_listed_once(tmp_path, wizard_spec):
@@ -149,7 +163,7 @@ def test_usb_step_with_variants_resolves_per_variant_apk_dir(tmp_path, wizard_sp
 
     assert full["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "usb_pack_1" / "Full" / "optional" / "full_extra.apk"),
-        "name": "Full extra", "description": "",
+        "name": "Full extra", "description": "", "remote_only": True,
     }]
     assert full["usb_files"] == [str(model_dir / "usb_files" / "step_1" / "Full" / "full.bin")]
     assert lite["standard_apks_optional"] == []
@@ -170,5 +184,5 @@ def test_apps_step_unaffected_by_the_usb_fix(tmp_path, wizard_spec):
 
     assert step["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "pack" / "optional" / "extra.apk"),
-        "name": "Extra", "description": "d",
+        "name": "Extra", "description": "d", "remote_only": True,
     }]
