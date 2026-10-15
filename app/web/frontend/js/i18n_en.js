@@ -508,6 +508,7 @@ window.I18N_EN = {
   "Приложения скачаны — интернет больше не нужен. Подключите компьютер к Wi-Fi магнитолы и подключитесь по ADB.": "The apps are downloaded — internet is no longer needed. Connect the computer to the head unit's Wi-Fi and connect over ADB.",
   "Приложения скачаны — интернет больше не нужен. Подключите телефон к Wi-Fi магнитолы и подключитесь по ADB.": "The apps are downloaded — internet is no longer needed. Connect the phone to the head unit's Wi-Fi and connect over ADB.",
   "Не удалось подключиться: {problem}. Приложения скачаны — интернет больше не нужен. Подключите телефон к Wi-Fi магнитолы и подключитесь по ADB.": "Couldn't connect: {problem}. The apps are downloaded — internet is no longer needed. Connect the phone to the head unit's Wi-Fi and connect over ADB.",
+  "Сначала нажмите «Начать установку»: приложения скачаются, пока есть интернет. К Wi-Fi магнитолы подключитесь потом — программа сама попросит.": "Press “Start installation” first: the apps will download while you have internet. Connect to the head unit's Wi-Fi afterwards — the app will ask you to.",
   "Не удалось подключиться: {problem}.": "Couldn't connect: {problem}.",
   "Не удалось подключиться: {problem}": "Couldn't connect: {problem}",
   "Установка остановлена пользователем.": "Installation stopped by the user.",

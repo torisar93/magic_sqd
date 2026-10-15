@@ -1197,6 +1197,16 @@
     adbStatusEl.title = text;
     adbStatusEl.classList.toggle("connected", connected);
     adbConnectBtn.textContent = connected ? "Переподключить" : "Подключить ADB";
+    updateWifiHint();
+  }
+
+  // «Сначала „Начать установку“, к Wi-Fi магнитолы — потом» в нижней панели этапа приложений (AppTabs.wifiHint):
+  // этап по Wi-Fi, пока магнитола не подключена.
+  function updateWifiHint() {
+    const hint = document.querySelector(".apps-dock-hint");
+    if (!hint) return;
+    const stage = stages[currentIndex];
+    hint.hidden = !(stage && stage.type === "apps" && connectionModeFor(stage) === "wifi" && !adbConnected);
   }
 
   // Способ подключения для ТЕКУЩЕГО этапа: apps-этап сам решает через
@@ -2660,7 +2670,7 @@
     // установку» — видно всегда, как бы длинно ни прокрутили (владелец, 2026-09-23). Вне
     // wizard-content — render() убирает её сам.
     const summary = el('p', { class: 'apps-dock-summary' });
-    const dock = el('div', { class: 'apps-dock' }, [summary]);
+    const dock = el('div', { class: 'apps-dock' }, [summary, window.AppTabs.wifiHint()]);
     appendInlineAppSelection(card, stage, page, summary);
     const btn = usbStageButton('Начать установку', 'play', () => {}, true);
     btn.classList.add('apps-install-start');
@@ -2716,6 +2726,7 @@
     });
     dock.append(btn);
     wizardContentEl.after(dock);
+    updateWifiHint();
     const result=appInstallResults[stage.index];
     if(result&&!result.success){
       const message=el('div',{class:'apps-install-result',role:'status','data-state':result.cancelled?'cancelled':'error'},[usbStageIcon(result.cancelled?'stop':'report'),el('span',{text:result.cancelled?'Установка остановлена.':result.reason||'Не удалось установить приложения.'})]);
@@ -3265,6 +3276,7 @@
       adbModeWiredBtn.className = current === "wired" ? "accent" : "";
       adbModeWifiBtn.className = current === "wifi" ? "accent" : "";
     }
+    updateWifiHint();
   }
 
   function renderStage(stage) {

@@ -43,4 +43,5 @@ dialog.apps-picker-dialog .apps-picker-close{display:flex;align-items:center;jus
 .apps-tabs-tools>.app-personal-apk-add{flex:0 0 auto;width:auto;height:46px;min-height:46px;margin:0;padding:0 14px;white-space:nowrap}
 #screen-wizard>.apps-dock{flex-wrap:wrap;gap:8px;padding:10px var(--mobile-gutter,16px) 12px}
 #screen-wizard>.apps-dock>.apps-dock-summary{flex:1 0 100%;min-height:28px}
+#screen-wizard>.apps-dock>.apps-dock-hint{flex:1 0 100%}
 #screen-wizard>.apps-dock>.apps-install-start{flex:1 0 100%;width:100%;min-height:48px;margin:0;justify-content:center}
