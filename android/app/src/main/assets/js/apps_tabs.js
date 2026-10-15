@@ -128,9 +128,16 @@
   /* Подсказка нижней панели для этапа по Wi-Fi ADB (владелец, 15.10.2026): техники подключались к Wi-Fi магнитолы
      ДО «Начать установку» — и приложения не скачивались, в её сети интернета нет (логи до 1.1.8: 14 таких запусков
      из 113, четверо техников так и не поставили). Показывает платформа (hidden): этап по Wi-Fi, магнитола ещё не
-     подключена. */
+     подключена и из выбранного есть что скачивать (needsDownload; всё скачано — подсказки нет, владелец 15.10). */
   const WIFI_HINT = 'Сначала нажмите «Начать установку»: приложения скачаются, пока есть интернет. '
     + 'К Wi-Fi магнитолы подключитесь потом — программа сама попросит.';
+
+  /* Нужен ли интернет для выбранного: приложение ещё не скачано (remote_only) или программа об этом не сообщает
+     (поля нет — приложения модели на Android 1.1.8). isLocal(entry) — свои APK техника: они всегда на устройстве.
+     Ничего не выбрано — скачивать нечего. */
+  function needsDownload(entries, isLocal = () => false) {
+    return entries.some((entry) => !isLocal(entry) && (entry.remote_only === true || !('remote_only' in entry)));
+  }
 
   function wifiHint() {
     const hint = make('p', 'apps-dock-hint', WIFI_HINT);
@@ -195,5 +202,5 @@
     applyExclusive(container, null);
   }
 
-  window.AppTabs = { mount, summary, wifiHint, forModel, exclusiveGroups };
+  window.AppTabs = { mount, summary, wifiHint, needsDownload, forModel, exclusiveGroups };
 })();

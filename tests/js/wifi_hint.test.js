@@ -1,6 +1,7 @@
 // Подсказка «Сначала нажмите „Начать установку“, к Wi-Fi магнитолы — потом» в нижней панели этапа приложений
 // (владелец, 15.10.2026): общий AppTabs.wifiHint (ПК и Android), когда её видно — Android app.js (updateWifiHint) и
-// ПК stage_wizard.js (buildTransportBar → buildStartStopButtons). Видна, пока этап по Wi-Fi и магнитола не подключена.
+// ПК stage_wizard.js (buildTransportBar → buildStartStopButtons). Видна, пока этап по Wi-Fi, магнитола не подключена
+// и из выбранного есть что скачивать (владелец, 15.10: «не должен появляться, если все приложения скачаны»).
 "use strict";
 const { read, slice, assert, run } = require("./_util");
 const { makeDom } = require("./_ring_dom");
@@ -44,6 +45,11 @@ module.exports = async function () {
     run(read(base + "i18n_en.js") + "\n" + read(base + "i18n.js"), { window: i18n, JSON, RegExp, Map, WeakMap, Object, String });
     const english = i18n.i18n.translate(hint.textContent);
     assert(/^Press “Start installation” first/.test(english || ""), `${base}: перевод — ${english}`);
+    const need = window.AppTabs.needsDownload;
+    assert(need([{ path: "/a", remote_only: true }, { path: "/b", remote_only: false }]), `${base}: одно не скачано`);
+    assert(!need([{ path: "/a", remote_only: false }]) && !need([]), `${base}: всё скачано / ничего не выбрано`);
+    assert(need([{ path: "/model.apk" }]), `${base}: о скачанности не сообщают — считаем, что качать`);
+    assert(!need([{ path: "/mine.apk" }], (entry) => entry.path === "/mine.apk"), `${base}: свой APK — на устройстве`);
   }
 
   // 2) Android: этап приложений по Wi-Fi — видна, пока ADB не подключён; провод, «спросить» с проводом, другой этап — нет.
@@ -52,14 +58,33 @@ module.exports = async function () {
     const src = read(file);
     const code = slice(src, "  function updateWifiHint() {", "  // Способ подключения для ТЕКУЩЕГО этапа", file);
     const hint = { hidden: true };
+    const shared = { document: makeDom().document, window: {} };
+    run(read("android/app/src/main/assets/js/apps_tabs.js"), shared);
+    const library = { path: "/apk/Навигация/navi.apk", name: "Navi", remote_only: true };
+    const modelApp = { path: "/cars/M/files/pack/optional/panel.apk", name: "Panel" };  // 1.1.8: поля нет
+    let selected = [library];
     const ctx = {
       document: { querySelector: (selector) => (selector === ".apps-dock-hint" ? hint : null) },
-      stages: [{ index: 0, type: "apps", apps_connection: "wifi" }], currentIndex: 0, adbConnected: false,
+      window: shared.window, personalApks: [{ path: "/mine.apk", name: "Мой" }], apkLibrary: [library],
+      stages: [{ index: 0, type: "apps", apps_connection: "wifi", standard_apks: [], standard_apks_optional: [modelApp] }],
+      currentIndex: 0, adbConnected: false, selectedAppsForStage: () => ({ entries: selected }),
       connectionModeFor: (stage) => stage.mode || (stage.apps_connection === "wifi" ? "wifi" : "wired"),
     };
     run(code, ctx);
     ctx.updateWifiHint();
-    assert(hint.hidden === false, "Android: Wi-Fi, не подключено — видна");
+    assert(hint.hidden === false, "Android: Wi-Fi, не подключено, выбранное не скачано — видна");
+    library.remote_only = false; ctx.updateWifiHint();
+    assert(hint.hidden === true, "Android: всё выбранное скачано — скрыта");
+    selected = []; ctx.updateWifiHint();
+    assert(hint.hidden === true, "Android: ничего не выбрано — скрыта");
+    selected = [{ path: "/mine.apk", name: "Мой" }]; ctx.updateWifiHint();
+    assert(hint.hidden === true, "Android: только свой APK — скрыта");
+    selected = [modelApp]; ctx.updateWifiHint();
+    assert(hint.hidden === false, "Android: приложение модели, о скачанности не сообщают — видна");
+    ctx.markDownloaded([modelApp.path]);                     // скачали перед подключением (apk_download_done)
+    assert(modelApp.remote_only === false && hint.hidden === true, "Android: скачанное отмечено — скрыта");
+    library.remote_only = true; selected = [library]; ctx.updateWifiHint();
+    assert(hint.hidden === false, "Android: снова есть что скачивать — видна");
     ctx.adbConnected = true; ctx.updateWifiHint();
     assert(hint.hidden === true, "Android: подключено — скрыта");
     ctx.adbConnected = false; ctx.stages[0] = { index: 0, type: "apps", apps_connection: "wired" }; ctx.updateWifiHint();
@@ -76,6 +101,8 @@ module.exports = async function () {
     const apps = slice(src, "  function renderAppsStage(page, stage) {", "    const result=appInstallResults[stage.index];", file);
     assert(apps.includes("window.AppTabs.wifiHint()") && /wizardContentEl\.after\(dock\);\s*updateWifiHint\(\);/.test(apps),
       "Android: подсказка в нижней панели этапа приложений");
+    const choice = slice(src, "  function appendInlineAppSelection(", "  function appTabGroups(", file);
+    assert(/AppTabs\.summary\(summary[^\n]*\n\s*updateWifiHint\(\);/.test(choice), "Android: выбор поменялся — пересчёт подсказки");
   }
 
   // 3) ПК: настоящие buildTransportBar + buildStartStopButtons — подсказка между «Выбрано» и кнопкой, следит за
@@ -101,17 +128,30 @@ module.exports = async function () {
       const stage = { index: 2, type: "apps", apps_connection: connection };
       const transport = ctx.buildTransportBar(stage);
       const panel = el("div");
+      const state = { rows: [{ path: "/apk/a.apk", remote: true }] };   // строки выбранного (data-remote-only)
+      panel._appChooser = { entries: () => state.rows.map((r) => ({ path: r.path, row: { dataset: r.remote ? { remoteOnly: "1" } : {} } })) };
       const summary = el("p", { class: "apps-dock-summary" });
       ctx.buildStartStopButtons(panel, stage, () => null, { startLabel: "Начать установку", transport, summary });
       const dock = wizard.children.find((node) => node.classList.contains("apps-dock"));
-      return { transport, dock, connectNow: () => connect, bar: transport.element };
+      return { transport, dock, connectNow: () => connect, bar: transport.element, state, panel };
     };
 
     const wifi = make("wifi");
     const order = wifi.dock.children.map((node) => node.className || node.tagName);
     assert(order.join(" | ") === "apps-dock-summary | apps-dock-hint | accent", `ПК: порядок в панели — ${order.join(" | ")}`);
     const hint = wifi.dock.children[1];
-    assert(hint.hidden === false && TEXT.test(hint.textContent), "ПК: Wi-Fi, не подключено — видна");
+    assert(hint.hidden === false && TEXT.test(hint.textContent), "ПК: Wi-Fi, не подключено, есть что скачать — видна");
+    wifi.state.rows = [{ path: "/apk/a.apk", remote: false }, { path: "/mine.apk", remote: false }];
+    wifi.panel._syncWifiHint();                               // выбор поменялся (renderAppsStage: chooser.update)
+    assert(hint.hidden === true, "ПК: всё выбранное скачано — скрыта");
+    wifi.state.rows = []; wifi.panel._syncWifiHint();
+    assert(hint.hidden === true, "ПК: ничего не выбрано — скрыта");
+    wifi.state.rows = [{ path: "/cars/M/files/pack/optional/p.apk", remote: true }]; wifi.panel._syncWifiHint();
+    assert(hint.hidden === false, "ПК: приложение модели не скачано — видна");
+    assert(/if \(apk\.remote_only\) row\.dataset\.remoteOnly = "1";/.test(slice(src, "  function buildAppRow(apk, required) {", "  async function pickPersonalApks()", file)),
+      "ПК: строка приложения помнит, что его ещё качать");
+    assert(/panel\._syncWifiHint\?\.\(\)/.test(slice(src, "  async function renderAppsStage(", "  // Разделы дерева buildAppsTree", file)),
+      "ПК: выбор поменялся — пересчёт подсказки");
     wifi.transport.wifiButton.click();                       // «Подключить Wi-Fi» в панели над этапом
     await wifi.connectNow()("192.168.1.10", 5555);
     assert(wifi.transport.wifiConnected() && hint.hidden === true, "ПК: подключились по Wi-Fi — скрыта");

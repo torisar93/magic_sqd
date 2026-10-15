@@ -1204,7 +1204,9 @@
     const chooser = createAppChooser(panel, stage, choose, copy, preview, panel);
     let tabs = null;
     const baseUpdate = chooser.update.bind(chooser);
-    chooser.update = () => { baseUpdate(); window.AppTabs.summary(copy, chooser.entries(), 'names'); tabs?.refresh(); };
+    chooser.update = () => {
+      baseUpdate(); window.AppTabs.summary(copy, chooser.entries(), 'names'); tabs?.refresh(); panel._syncWifiHint?.();
+    };
     if (!await chooser.load()) {
       if (panel.isConnected) body.replaceChildren(copy); // «Не удалось загрузить…» — кнопка повтора ниже (createAppChooser)
       return;
@@ -1533,6 +1535,7 @@
   // buildAppsTree/initAppSelectionDefaults, не через этот чекбокс).
   function buildAppRow(apk, required) {
     const row = el("div", { class: "app-row", "data-apk-path":apk.path });
+    if (apk.remote_only) row.dataset.remoteOnly = "1";  // ещё не скачано — подсказка Wi-Fi (buildStartStopButtons)
     if (apk.description) {
       row.addEventListener("mouseenter", () => showAppDescription(row, apk.description));
       row.addEventListener("mouseleave", hideAppDescription);
@@ -2252,11 +2255,18 @@
       // как бы длинно ни прокрутили список (владелец, 2026-09-23). Убирается вместе с
       // .stage-primary-actions при перерисовке (render).
       btnRow.classList.add('apps-dock');
-      // «Сначала „Начать установку“, к Wi-Fi магнитолы — потом» (AppTabs.wifiHint): этап по Wi-Fi, пока не подключено.
+      // «Сначала „Начать установку“, к Wi-Fi магнитолы — потом» (AppTabs.wifiHint): этап по Wi-Fi, пока не подключено
+      // и из выбранного есть что скачивать (строка приложения с data-remote-only, см. buildAppRow; свои APK — на диске).
       if (transport && transport.onChange) {
         const hint = window.AppTabs.wifiHint();
-        const sync = () => { hint.hidden = !(transport.mode() === "wifi" && !transport.wifiConnected()); };
+        const selected = () => (panel._appChooser ? panel._appChooser.entries() : [])
+          .map((item) => ({ path: item.path, remote_only: item.row?.dataset?.remoteOnly === "1" }));
+        const sync = () => {
+          hint.hidden = !(transport.mode() === "wifi" && !transport.wifiConnected()
+            && window.AppTabs.needsDownload(selected()));
+        };
         transport.onChange(sync);
+        panel._syncWifiHint = sync;  // выбор поменялся — renderAppsStage (chooser.update)
         sync();
         btnRow.prepend(hint);
       }
