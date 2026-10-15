@@ -1201,12 +1201,29 @@
   }
 
   // «Сначала „Начать установку“, к Wi-Fi магнитолы — потом» в нижней панели этапа приложений (AppTabs.wifiHint):
-  // этап по Wi-Fi, пока магнитола не подключена.
+  // этап по Wi-Fi, магнитола не подключена и из выбранного есть что скачивать (всё скачано — подсказки нет).
   function updateWifiHint() {
     const hint = document.querySelector(".apps-dock-hint");
     if (!hint) return;
     const stage = stages[currentIndex];
-    hint.hidden = !(stage && stage.type === "apps" && connectionModeFor(stage) === "wifi" && !adbConnected);
+    const wifi = stage && stage.type === "apps" && connectionModeFor(stage) === "wifi" && !adbConnected;
+    const isPersonal = (entry) => personalApks.some((apk) => apk.path === entry.path);
+    hint.hidden = !(wifi && window.AppTabs.needsDownload(selectedAppsForStage(stage).entries, isPersonal));
+  }
+
+  // Скачанное перед подключением по Wi-Fi (apk_download_done) — уже на телефоне: отмечаем сразу, не дожидаясь нового
+  // списка приложений (иначе после закрытого окна подключения подсказка вернулась бы, хотя всё скачано).
+  function markDownloaded(paths) {
+    const done = new Set(paths || []);
+    for (const apk of apkLibrary) if (done.has(apk.path)) apk.remote_only = false;
+    for (const stage of stages) {
+      for (const source of [stage, ...(stage.variants || [])]) {
+        for (const entry of [...(source.standard_apks || []), ...(source.standard_apks_optional || [])]) {
+          if (entry && typeof entry === "object" && done.has(entry.path)) entry.remote_only = false;
+        }
+      }
+    }
+    updateWifiHint();
   }
 
   // Способ подключения для ТЕКУЩЕГО этапа: apps-этап сам решает через
@@ -1261,13 +1278,14 @@
   const allPrefetched = (paths) => (paths || []).every((p) => prefetchedFiles.has(p));
 
   function beginWifiInstall(stage, apkPaths, proceed) {
-    wifiInstallFlow = { index: stage.index, proceed, phase: "download", connecting: false };
+    wifiInstallFlow = { index: stage.index, paths: apkPaths, proceed, phase: "download", connecting: false };
     Bridge.call("adb_download_apks", { index: stage.index, apkPaths });
   }
 
   function onApkDownloadDone(event) {
     const flow = wifiInstallFlow;
     if (!flow || flow.index !== event.index) return;
+    markDownloaded(flow.paths);
     flow.phase = "connect";
     askWifiForInstall(flow, "");
   }
@@ -2497,6 +2515,7 @@
         input.checked = required.has(row.dataset.apkPath) || draft.selected.has(row.dataset.apkPath);
       });
       if (summary) window.AppTabs.summary(summary, selectedAppsForStage(stage).entries, 'icons');
+      updateWifiHint();
       draft.tabs?.refresh();
     };
     draft.render = () => {

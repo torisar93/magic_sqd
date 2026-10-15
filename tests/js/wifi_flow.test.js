@@ -8,7 +8,7 @@ module.exports = async function () {
   const src = read(file);
   const code = slice(src, "  let wifiInstallFlow = null;", "  function onAdbConnect() {", file)
     + slice(src, "  function onAdbConnectResult(event) {", "  function onAdbLog(event) {", file);
-  const calls = [], stageResults = [];
+  const calls = [], stageResults = [], marked = [];
   let picker = null;
   const ctx = {
     stages: [{ index: 3, type: "apps", apps_connection: "wifi", apps_wifi_port: 5555 }], currentIndex: 0,
@@ -20,6 +20,7 @@ module.exports = async function () {
     document: { querySelector: () => ({ close: () => calls.push(["dialog.close"]) }) },
     promptHostPicker: (title, port, onSubmit, opts) => { picker = { title, port, onSubmit, opts }; },
     aiNotify() {},  // ИИ-мастер (js/ai_phone.js) здесь не нужен
+    markDownloaded: (paths) => marked.push(paths),  // подсказка Wi-Fi: скачанное — уже на телефоне
   };
   const api = run(code + "\nthis.__api={beginWifiInstall,onApkDownloadDone,cancelWifiInstall,onAdbConnectResult,getFlow:()=>wifiInstallFlow};", ctx).__api;
 
@@ -32,6 +33,7 @@ module.exports = async function () {
   assert(picker === null, "чужой индекс игнорируется");
   api.onApkDownloadDone({ index: 3 });
   assert(picker && /интернет больше не нужен/.test(picker.opts.help) && !/Не удалось/.test(picker.opts.help), "подсказка про Wi-Fi магнитолы");
+  assert(marked.length === 1 && marked[0].join() === "/a.apk", "скачанное отмечено (подсказка нижней панели)");
   picker.onSubmit("192.168.43.1", 5555);
   assert(calls.at(-1)[0] === "adb_connect_wifi" && calls.at(-1)[1].host === "192.168.43.1", "adb_connect_wifi");
   assert(ctx.lastWifiHost === "192.168.43.1", "адрес запомнен");
