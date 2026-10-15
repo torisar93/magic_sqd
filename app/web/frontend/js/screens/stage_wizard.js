@@ -971,6 +971,9 @@
     const bar = el("div", { class: "action-panel transport-bar", style: "margin-bottom: 12px" });
     let deviceByLabel = {};
     let wifiSerial = null;
+    // Сменился способ («Провод»/«Wi-Fi») или подключение по Wi-Fi — подсказке нижней панели (buildStartStopButtons).
+    const changeListeners = [];
+    const changed = () => changeListeners.forEach((listener) => listener());
 
     const select = el("select", { style: "flex: 1" });
     const refreshBtn = el("button", { text: "Обновить" });
@@ -1022,6 +1025,7 @@
             const result=await window.pywebview.api.install_wifi_connect(port,ip);
             if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;noteDeviceFingerprint(wifiSerial);settle(wifiSerial);}
             else {wifiSerial=null;wifiStatus.textContent='Wi-Fi: не подключено';}
+            changed();
             return result;
           },
           onClose:()=>settle(null)});
@@ -1034,6 +1038,7 @@
           const result=await window.pywebview.api.install_wifi_connect(port,ip);
           if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;noteDeviceFingerprint(wifiSerial);}
           else {wifiSerial=null;wifiStatus.textContent='Wi-Fi: не подключено';}
+          changed();
           return result;
         }
       });
@@ -1059,11 +1064,13 @@
         askMode = "wired";
         wiredBtn.className = "accent"; wifiBtn.className = "";
         clear(body); body.appendChild(wiredRow); refreshDevices();
+        changed();
       }
       function showWifi() {
         askMode = "wifi";
         wifiBtn.className = "accent"; wiredBtn.className = "";
         clear(body); body.appendChild(wifiRow);
+        changed();
       }
       wiredBtn.addEventListener("click", showWired);
       wifiBtn.addEventListener("click", showWifi);
@@ -1078,6 +1085,7 @@
       element: bar, getDevice: () => wifiSerial || deviceByLabel[select.value] || null,
       mode: () => (connection === "ask" ? askMode : connection), askWifi, refreshDevices,
       wifiButton: wifiConnectBtn, refreshButton: refreshBtn,
+      wifiConnected: () => Boolean(wifiSerial), onChange: (listener) => changeListeners.push(listener),
     };
   }
 
@@ -2244,6 +2252,14 @@
       // как бы длинно ни прокрутили список (владелец, 2026-09-23). Убирается вместе с
       // .stage-primary-actions при перерисовке (render).
       btnRow.classList.add('apps-dock');
+      // «Сначала „Начать установку“, к Wi-Fi магнитолы — потом» (AppTabs.wifiHint): этап по Wi-Fi, пока не подключено.
+      if (transport && transport.onChange) {
+        const hint = window.AppTabs.wifiHint();
+        const sync = () => { hint.hidden = !(transport.mode() === "wifi" && !transport.wifiConnected()); };
+        transport.onChange(sync);
+        sync();
+        btnRow.prepend(hint);
+      }
       if (summary) btnRow.prepend(summary);
       contentEl.after(btnRow);
     }

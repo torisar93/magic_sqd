@@ -125,6 +125,20 @@
     }
   }
 
+  /* Подсказка нижней панели для этапа по Wi-Fi ADB (владелец, 15.10.2026): техники подключались к Wi-Fi магнитолы
+     ДО «Начать установку» — и приложения не скачивались, в её сети интернета нет (логи до 1.1.8: 14 таких запусков
+     из 113, четверо техников так и не поставили). Показывает платформа (hidden): этап по Wi-Fi, магнитола ещё не
+     подключена. */
+  const WIFI_HINT = 'Сначала нажмите «Начать установку»: приложения скачаются, пока есть интернет. '
+    + 'К Wi-Fi магнитолы подключитесь потом — программа сама попросит.';
+
+  function wifiHint() {
+    const hint = make('p', 'apps-dock-hint', WIFI_HINT);
+    if (window.AppIcons) hint.prepend(window.AppIcons.icon('wifi'));
+    hint.hidden = true;
+    return hint;
+  }
+
   /* Общая библиотека APK без приложений, скрытых админом на этой модели: в <файл>.json рядом с APK —
      "hidden_models", пути «Марка/Модель[/Модификация]» (владелец, 2026-09-25: «выбирать, на каких моделях их
      видно»; пусто — видно везде, так новая модель получает все приложения сама). model — {brand, name,
@@ -181,5 +195,5 @@
     applyExclusive(container, null);
   }
 
-  window.AppTabs = { mount, summary, forModel, exclusiveGroups };
+  window.AppTabs = { mount, summary, wifiHint, forModel, exclusiveGroups };
 })();
