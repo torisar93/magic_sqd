@@ -272,11 +272,24 @@ class AdbTimeoutError(AdbError):
         self.output = output
 
 
-# Changan (прошивка changan_car — UNI-K, CS35 Plus New и родня): команды shell спрашивают пароль подтверждения
-# со своего stdin («please input verify password:»); без него — «verify failed!» и отказ (лог №1073 — ПК, adb install
-# и pm install; №3524–3529 — Android, ни одной установки). Пароль известен (инструкции моделей Changan, владелец
-# 06.10.2026: «adb369875 или adb36987»). Копия — android/.../usb/ShellVerifyPassword.kt.
-VERIFY_PASSWORDS = ("adb369875", "adb36987")
+# Changan (прошивка changan_car — UNI-K, UNI-S, CS35 Plus New, CS75 Plus S311_G1 и родня): пароль подтверждения
+# («please input verify password:») спрашивает САМ СЕАНС adb shell — до любой команды, даже chmod и getprop (логи
+# №3524, №5981; на ПК не читался отпечаток магнитолы), — и читает его из stdin adb. На неверный — «verify failed! verify
+# password:» и снова ждёт, конец ввода не помогает; команда при этом не запускается вовсе. Поэтому «echo пароль |
+# { команда }» (1.0.62–1.1.8) не срабатывал ни разу: echo — часть команды, а она исполняется только ПОСЛЕ проверки.
+# Разбор 15.10.2026 (владелец: «ChanganInstaller, ChanganTweaker ставят отлично»): ChanganInstaller подаёт пароль в
+# stdin adb каждой команды и вырезает из вывода «please input verify password: verify success!» — так и мы. Пароль —
+# adb36987 (им ставит ChanganInstaller), запасной — adb369875 (инструкции моделей, владелец 06.10). Копия —
+# android/.../usb/ShellVerifyPassword.kt.
+VERIFY_PASSWORDS = ("adb36987", "adb369875")
+# Пароль сеанса по магнитоле (серийник adb): str — подаём в stdin каждой shell-команды, None — сеанс пароля не
+# спрашивает, _NO_KNOWN_PASSWORD — спрашивает, а известные не подошли. Проверка — раз на магнитолу за запуск программы
+# (Adb создаётся на каждый этап и вызов); новое подключение по Wi-Fi её сбрасывает (forget_session_password).
+_SESSION_PASSWORDS: dict = {}
+_NO_KNOWN_PASSWORD = ""
+_PROBE_MARK = "msqd_verify_probe"
+# Верный пароль сеанс принимает сразу; на неверный ждёт следующего до бесконечности — столько и ждём.
+_PROBE_TIMEOUT = 8
 # Команды установщика пакетов (pm, cmd) — те, что спрашивают пароль. Их запуск без пароля получает stdin из /dev/null:
 # на части магнитол (Changan UNI-V, LAMORE — логи №4782, №4829) ввод adb shell не закрывается, и запрос пароля ждал
 # до таймаута (`pm path` — 30 с, `pm list packages` — 2 мин), а не отвечал сразу «verify failed».
@@ -293,11 +306,9 @@ def verify_password_failed(text: str) -> bool:
     return "verify failed" in (text or "").lower()
 
 
-def with_verify_password(command: str, password: str) -> str:
-    """Команда, которой пароль приходит первой строкой stdin (группа — чтобы он дошёл и до «a && b», и до «a; b»).
-    Строка одна: в команде с несколькими вызовами pm пароль достанется только первому — программа зовёт pm по
-    одному на команду (pm grant, pm install)."""
-    return f"echo {password} | {{\n{command}\n}}"
+def forget_session_password(serial: str | None) -> None:
+    """Новое подключение (adb connect ip:порт) — по тому же адресу может отвечать уже другая магнитола."""
+    _SESSION_PASSWORDS.pop(serial or "", None)
 
 
 def _output(result) -> str:
@@ -315,10 +326,11 @@ def _timeout_output(exc: subprocess.TimeoutExpired) -> str:
 
 
 def strip_verify_prompt(text: str) -> str:
-    """Приглашение «please input verify password:» печатается и при верном пароле — убираем его из вывода, чтобы
-    разбор вывода (Success, package:…) шёл как без пароля."""
+    """Приглашение «please input verify password:» и ответ «verify success!» печатаются и при верном пароле —
+    убираем их из вывода, чтобы разбор вывода (Success, package:…) шёл как без пароля."""
     import re
-    return re.sub(r"please input verify password:[ \t]*", "", text or "", flags=re.I)
+    return re.sub(r"please input verify password:[ \t]*(?:verify success!?[ \t]*(?:\r?\n)?)?", "", text or "",
+                  flags=re.I)
 
 
 # Команды верхнего уровня adb (управляют самим adb/подключением) в отличие
@@ -409,7 +421,7 @@ class Adb:
             args += ["-s", self.device]
         return args
 
-    def run(self, *args, check=True, timeout=120):
+    def run(self, *args, check=True, timeout=120, input=None):
         # Раньше здесь безусловно логировалось "$ <команда>" + сырой stdout/
         # stderr НА КАЖДЫЙ вызов — на цепочках из десятков adb-команд (см.
         # cars/_shared/adb_permissions.py: grant_all_permissions) это
@@ -430,7 +442,8 @@ class Adb:
                 errors="replace",
                 timeout=timeout,
                 creationflags=CREATE_NO_WINDOW,
-                stdin=subprocess.DEVNULL,
+                # input — строки в stdin adb (пароль подтверждения Changan, см. VERIFY_PASSWORDS), иначе пустой stdin.
+                **({"input": input} if input is not None else {"stdin": subprocess.DEVNULL}),
             )
         except FileNotFoundError as exc:
             # Раньше текст был жёстко под Windows ("adb.exe"/"tools/") независимо
@@ -475,17 +488,27 @@ class Adb:
             raise AdbError(message)
 
     def shell(self, command: str, check=True, timeout=120):
-        """adb shell; на магнитоле, которая спрашивает пароль подтверждения команд (Changan, см. VERIFY_PASSWORDS),
-        подаёт его сам: сначала как есть, при запросе — с известными паролями, подошедший — во все следующие."""
-        known = self.verify_password
+        """adb shell; на магнитоле, которая спрашивает пароль подтверждения (Changan, см. VERIFY_PASSWORDS), подаёт его
+        в stdin adb сам: пароль сеанса — в каждую команду; пароль только у pm/cmd — сначала как есть, при запросе — с
+        известными паролями, подошедший — во все следующие."""
+        session = self._session_password()
+        if session == _NO_KNOWN_PASSWORD:
+            message = (f"Магнитола спрашивает пароль подтверждения на каждую команду, а известные пароли "
+                       f"({', '.join(VERIFY_PASSWORDS)}) не подошли — нужен пароль от этой прошивки.")
+            if check:
+                raise AdbError(message)
+            return subprocess.CompletedProcess(self._base_args() + ["shell", command], 1, "", message)
+        known = session or self.verify_password
         if known is not None:
-            result = self.run("shell", with_verify_password(command, known), check=False, timeout=timeout)
+            result = self._run_with_password(command, known, timeout)
             # Не подошёл и найденный пароль: другой пароль или команда, которой stdin нужен под данные (cat … |
             # pm install -S — пароль туда не подать). Найденный не забываем — следующим командам он нужен.
             if verify_password_failed(_output(result)):
                 retry, fits = self._try_verify_passwords(command, timeout, skip=known)
                 if fits:
                     result = retry
+                    if session and self.device:
+                        _SESSION_PASSWORDS[self.device] = self.verify_password  # прошивку сменили — новый пароль
         else:
             # Уже спрашивала (например, при adb install), а подходящий пароль ещё не найден — сразу с паролями.
             result = None if self.asks_verify_password else self._shell_plain(command, timeout)
@@ -499,7 +522,7 @@ class Adb:
                     self._log(f"Известные пароли подтверждения не подошли ({', '.join(VERIFY_PASSWORDS)}).")
                 if fits or result is None:
                     result = retry
-        if self.verify_password is not None:
+        if session or self.verify_password is not None:
             result = subprocess.CompletedProcess(result.args, result.returncode, strip_verify_prompt(result.stdout),
                                                  strip_verify_prompt(result.stderr))
         if check:
@@ -518,6 +541,52 @@ class Adb:
                 raise
             return subprocess.CompletedProcess(self._base_args() + ["shell", plain], 1, exc.output, "")
 
+    def _run_with_password(self, command: str, password: str, timeout) -> subprocess.CompletedProcess:
+        """Команда с паролем в stdin adb. Неверный пароль магнитола не отвергает, а спрашивает снова и ждёт —
+        таймаут с «verify failed» в выводе и есть отказ."""
+        try:
+            return self.run("shell", command, check=False, timeout=timeout, input=password + "\n")
+        except AdbTimeoutError as exc:
+            if not verify_password_failed(exc.output):
+                raise
+            return subprocess.CompletedProcess(self._base_args() + ["shell", command], 1, exc.output, "")
+
+    def _session_password(self) -> str | None:
+        """Пароль, который сеанс adb shell магнитолы спрашивает до любой команды (Changan; см. VERIFY_PASSWORDS).
+        Проверка — безобидной командой с паролем в stdin: обычная магнитола её просто выполнит (лишняя строка в stdin
+        echo не мешает), Changan — выполнит только с верным паролем. Раз на магнитолу (_SESSION_PASSWORDS)."""
+        key = self.device or ""
+        if key in _SESSION_PASSWORDS:
+            return _SESSION_PASSWORDS[key]
+        asked = False
+        for password in VERIFY_PASSWORDS:
+            try:
+                text = _output(self.run("shell", f"echo {_PROBE_MARK}", check=False, timeout=_PROBE_TIMEOUT,
+                                        input=password + "\n"))
+            except AdbTimeoutError as exc:
+                text = exc.output
+            except AdbError:
+                return None  # adb не запустился — разберётся сама команда
+            if not asks_verify_password(text):
+                if _PROBE_MARK in text and key:
+                    _SESSION_PASSWORDS[key] = None  # обычная магнитола
+                return None  # не ответила вовсе — решим при следующей команде
+            if not asked:
+                asked = True
+                self.asks_verify_password = True
+                self._log("Магнитола спрашивает пароль подтверждения на каждую команду (Changan) — подаю известный...")
+            if _PROBE_MARK in strip_verify_prompt(text):  # команда выполнилась — пароль подошёл
+                self.verify_password = password
+                if key:
+                    _SESSION_PASSWORDS[key] = password
+                self._log("Пароль подтверждения подошёл — дальше подаю его в каждую команду сам.")
+                return password
+        self._log(f"Известные пароли подтверждения не подошли ({', '.join(VERIFY_PASSWORDS)}).")
+        self._no_password_logged = True
+        if key:
+            _SESSION_PASSWORDS[key] = _NO_KNOWN_PASSWORD
+        return _NO_KNOWN_PASSWORD
+
     def _try_verify_passwords(self, command: str, timeout, skip: str | None = None):
         """Команда с каждым известным паролем по очереди. (ответ, True) — подошёл (запоминаем его), (последний ответ,
         False) — нет."""
@@ -525,7 +594,7 @@ class Adb:
         for password in VERIFY_PASSWORDS:
             if password == skip:
                 continue
-            result = self.run("shell", with_verify_password(command, password), check=False, timeout=timeout)
+            result = self._run_with_password(command, password, timeout)
             if not verify_password_failed(_output(result)):
                 self.verify_password = password
                 self.asks_verify_password = True
@@ -540,7 +609,12 @@ class Adb:
         паролем на stdin (владелец, 11.10.2026: «пуш в локал темп и потом pm install … < password»). Если пароль
         магнитола уже спрашивала — сразу так, не гоняя файл впустую."""
         apk_path = str(apk_path)
-        if self.asks_verify_password:
+        session = self._session_password()
+        if session == _NO_KNOWN_PASSWORD:
+            raise AdbError(f"Магнитола спрашивает пароль подтверждения, а известные пароли ({', '.join(VERIFY_PASSWORDS)}) "
+                           "не подошли — нужен пароль от этой прошивки.")
+        # Сеанс с паролем: adb install шлёт файл в stdin установщика, и магнитола приняла бы его байты за пароль.
+        if session or self.asks_verify_password:
             return self._install_with_verify_password(apk_path, reinstall, extra_args, timeout)
         args = ["install"]
         if reinstall:
@@ -565,7 +639,7 @@ class Adb:
             result = self.shell(" ".join(["pm", "install", *flags, remote]), check=False, timeout=timeout)
         finally:
             try:
-                self.run("shell", f"rm -f {remote}", check=False, timeout=30)
+                self.shell(f"rm -f {remote}", check=False, timeout=30)
             except AdbError:
                 pass  # магнитола пропала — уборка не важна, важна причина выше
         text = _output(result).strip()
@@ -574,6 +648,9 @@ class Adb:
         return result
 
     def uninstall(self, package, check=False):
+        # Сеанс с паролем (Changan): adb uninstall его не подаст — тем же pm через shell с паролем в stdin.
+        if self._session_password():
+            return self.shell(f"pm uninstall {shlex.quote(str(package))}", check=check)
         return self.run("uninstall", package, check=check)
 
     def push(self, local, remote, timeout=180):

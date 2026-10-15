@@ -621,6 +621,7 @@ fun runAdbService(
     serviceName: String,
     log: (String) -> Unit,
     timeoutMs: Int = TIMEOUT_MS,
+    stdin: ByteArray? = null,
 ): AdbShellResult {
     // \0-терминатор обязателен (см. AdbInstall.kt) — раньше тут был просто trailing
     // space, который "случайно" не ломал echo, но это не протокольно корректно.
@@ -640,6 +641,11 @@ fun runAdbService(
     }
     val remoteId = openResp.arg0
     log("Поток открыт (remoteId=$remoteId), читаю вывод...")
+    // Ввод команде — в поток сразу после открытия. Пароль подтверждения Changan (ShellVerifyPassword) спрашивает сам
+    // сеанс shell, до запуска команды, и читает его отсюда — как пароль, поданный в stdin adb.
+    if (stdin != null && !sendMessage(transport, AdbProtocol.A_WRTE, localId, remoteId, stdin)) {
+        log("Не удалось передать ввод команде")
+    }
 
     val output = ByteArrayOutputStream()
     var guard = 0
@@ -658,6 +664,7 @@ fun runAdbService(
                 sendMessage(transport, AdbProtocol.A_OKAY, localId, remoteId, ByteArray(0))
             }
             AdbProtocol.A_CLSE -> break
+            AdbProtocol.A_OKAY -> Unit  // устройство приняло наш ввод (stdin)
             else -> log("Пропускаю неожиданное сообщение 0x${msg.command.toUInt().toString(16)} во время чтения потока")
         }
         if (msg.command == AdbProtocol.A_CLSE) break
@@ -673,4 +680,6 @@ fun runAdbShellCommand(
     command: String,
     log: (String) -> Unit,
     timeoutMs: Int = TIMEOUT_MS,
-): AdbShellResult = ShellVerifyPassword.run(command, log) { runAdbService(transport, "shell:$it", log, timeoutMs) }
+): AdbShellResult = ShellVerifyPassword.run(command, log) { cmd, stdin, readTimeoutMs ->
+    runAdbService(transport, "shell:$cmd", log, readTimeoutMs ?: timeoutMs, stdin)
+}

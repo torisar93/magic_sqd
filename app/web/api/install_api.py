@@ -22,9 +22,9 @@ except ImportError:  # pragma: no cover
     import catalog_key
 
 from ..events import event_bridge, input_broker
-from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, get_default_gateway_ip,
-                           list_devices, normalize_console_command, scan_network_for_wifi_adb,
-                           split_top_level_command)
+from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, forget_session_password,
+                           get_default_gateway_ip, list_devices, normalize_console_command,
+                           scan_network_for_wifi_adb, split_top_level_command)
 from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, model_on_server,
                              prune_model_stale_files, sync_model_apk_metadata, sync_model_subfolder,
                              sync_shared_folder)
@@ -884,6 +884,8 @@ class InstallApi:
             return {"ok": False, "auto": auto, "ip": ip, "error": str(exc)}
         output = ((result.stdout or "") + (result.stderr or "")).strip()
         ok = "connected to" in output.lower() or "already connected" in output.lower()
+        if ok:
+            forget_session_password(f"{ip}:{port}")  # по этому адресу может быть уже другая магнитола (Changan — с паролем)
         return {"ok": ok, "auto": auto, "ip": ip, "message": output}
 
     # Скан локальной подсети — для случая, когда шлюз (см. wifi_connect выше)

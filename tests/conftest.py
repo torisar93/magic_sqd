@@ -65,6 +65,25 @@ class ContentServer:
         self._server.server_close()
 
 
+class _OrdinaryHeadUnits(dict):
+    """Все магнитолы — без пароля сеанса adb shell (см. app/adb_utils.py: _session_password)."""
+
+    def __contains__(self, key):
+        return True
+
+    def __getitem__(self, key):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _adb_session_password_known(monkeypatch):
+    """Пароль сеанса adb shell (Changan) программа проверяет раз на магнитолу лишней командой echo. Поддельные adb
+    остальных тестов считают каждую команду — для них магнитола уже проверена и пароля не спрашивает; саму проверку
+    гоняет tests/test_shell_verify_password.py."""
+    from app import adb_utils
+    monkeypatch.setattr(adb_utils, "_SESSION_PASSWORDS", _OrdinaryHeadUnits())
+
+
 @pytest.fixture
 def content_server(tmp_path):
     server = ContentServer(tmp_path / "web")
