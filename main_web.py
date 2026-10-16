@@ -669,6 +669,8 @@ def run(admin_mode: bool, log_prefix: str, title: str) -> None:
     from app.web import events
 
     api = WebApi(base_dir, admin_mode=admin_mode)
+    from app import catalog_crypto
+    _log_step(f"шифр каталога: {catalog_crypto.backend_name()}")  # быстрый путь живой в этой сборке? (1.1.10)
     debug_upload_once = _enable_debug_log_all(base_dir, api)
     builtin_frontend_dir = get_frontend_dir(base_dir)
     frontend_dir = choose_frontend_dir(base_dir, builtin_frontend_dir)

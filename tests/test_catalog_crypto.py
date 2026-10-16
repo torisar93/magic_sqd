@@ -171,3 +171,11 @@ def test_instruction_photos_decrypt_fast():
     started = time.perf_counter()
     assert len(cc.decrypt(key, blob)) == 7_000_000
     assert time.perf_counter() - started < 1.0
+
+
+def test_backend_name_for_startup_log(monkeypatch):
+    pytest.importorskip("cryptography")
+    monkeypatch.setattr(cc, "_native_backend", cc._UNSET)
+    assert cc.backend_name() == "cryptography (OpenSSL)"
+    monkeypatch.setattr(cc, "_native_backend", None)
+    assert cc.backend_name() == "чистый Python"

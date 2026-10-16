@@ -141,11 +141,13 @@ def _agrees_with_reference(backend) -> bool:
 
 _UNSET = object()
 _native_backend = _UNSET
+_native_name = "чистый Python"
+_BACKEND_NAMES = {"_cryptography_backend": "cryptography (OpenSSL)", "_java_backend": "javax.crypto"}
 
 
 def _native():
     """(шифровать, расшифровать) нативного ChaCha20-Poly1305 или None — выбирается один раз за запуск."""
-    global _native_backend
+    global _native_backend, _native_name
     if _native_backend is _UNSET:
         _native_backend = None
         for factory in (_cryptography_backend, _java_backend):
@@ -153,10 +155,16 @@ def _native():
                 backend = factory()
                 if _agrees_with_reference(backend):
                     _native_backend = backend
+                    _native_name = _BACKEND_NAMES.get(factory.__name__, factory.__name__)
                     break
             except Exception:  # noqa: BLE001 — нет пакета или алгоритма: следующий способ, в конце — чистый Python
                 continue
     return _native_backend
+
+
+def backend_name() -> str:
+    """Каким шифром работает программа — для журнала запуска (startup.log): живой ли в сборке быстрый путь."""
+    return _native_name if _native() is not None else "чистый Python"
 
 
 def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> bytes:
