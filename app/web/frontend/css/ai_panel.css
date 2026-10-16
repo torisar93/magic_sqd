@@ -16,6 +16,11 @@
 #ai-panel .ai-chip:hover { background: rgba(159, 233, 207, .15); }
 #ai-panel .ai-small.on { border-color: rgba(255, 196, 120, .5); color: #ffd08a; }
 #ai-panel .ai-send { width: 34px; height: 34px; padding: 0; border-radius: 10px; }
+/* Кнопка фото — размер и значок камеры свои: «#ai-panel button» (высота auto) и «#ai-panel .ai-btn» (фон) сильнее
+   общего .ai-attach, и вместо кнопки оставалась полоска (владелец 17.10.2026). */
+#ai-panel .ai-btn.ai-attach { width: 34px; height: 34px; padding: 0; border-radius: 10px;
+  background: rgba(255, 255, 255, .05) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cfe7df' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8h3l2-3h6l2 3h3v11H4z'/%3E%3Ccircle cx='12' cy='13' r='3.5'/%3E%3C/svg%3E") no-repeat center / 19px; }
+#ai-panel .ai-btn.ai-attach:hover { background: rgba(255, 255, 255, .09) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cfe7df' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8h3l2-3h6l2 3h3v11H4z'/%3E%3Ccircle cx='12' cy='13' r='3.5'/%3E%3C/svg%3E") no-repeat center / 19px; }
 #ai-panel .ai-btn.ai-icon { width: 28px; height: 28px; padding: 0; border-radius: 8px; }
 #ai-panel textarea { min-height: 22px; box-shadow: none; }
 
