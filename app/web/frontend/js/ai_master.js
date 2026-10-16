@@ -148,18 +148,16 @@
       attach = button("", "ai-attach", function () { picker.click(); });
       attach.title = "Фото экрана магнитолы";
       attach.setAttribute("aria-label", "Прикрепить фото экрана");
-      input.placeholder = "Спросите ИИ, опишите экран или пришлите фото…";
+      input.placeholder = "Спросите ИИ или пришлите фото…";  // длинная «…опишите экран или…» обрезалась в панели ПК
       box.appendChild(attach);
       inputWrap.appendChild(tray);
       inputWrap.appendChild(picker);
     }
+    // Узкий экран (телефон) — своя короткая подсказка: длинная обрезалась на полуслове (владелец 17.10.2026).
+    if (options.placeholder) input.placeholder = options.placeholder;
     box.appendChild(input);
     box.appendChild(send);
     inputWrap.appendChild(box);
-    var foot = el("div", "ai-foot");
-    foot.appendChild(el("span", "", "Видит инструкцию модели и лог"));
-    foot.appendChild(el("span", "", "Действия — после «Да»"));
-    inputWrap.appendChild(foot);
     body.appendChild(view);
     root.appendChild(head);
     root.appendChild(notice);

@@ -221,6 +221,7 @@
       // фото экрана — если окно программы умеет открыть камеру и галерею (выпуск с WebChromeClient.onShowFileChooser)
       photos: (() => { try { return window.Bridge.call("app_version", {}).file_chooser === true; } catch (e) { return false; } })(),
       openUrl: openExternal, subscribeUrl: SUBSCRIBE_URL,
+      placeholder: "Спросите ИИ…",  // на телефоне длинная («…опишите экран или пришлите фото») обрезалась
     });
   }
 
