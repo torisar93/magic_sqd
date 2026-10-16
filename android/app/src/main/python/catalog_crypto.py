@@ -10,9 +10,12 @@
 (android/app/src/main/python/catalog_crypto.py) — побайтно, как ed25519.py/code_signing.py
 (tests/test_catalog_crypto.py сверяет копии и гоняет тест-векторы RFC 8439).
 
-Чистый Python без нативных зависимостей: Chaquopy сторонние пакеты не ставит, а в stdlib нет
-AEAD. Файлы модели мелкие (инструкции, спеки) — скорость не важна; крупные payload (APK,
-прошивки) не шифруются.
+Шифр — нативный, где он есть: ПК — пакет cryptography (OpenSSL), Android 9+ — javax.crypto (Conscrypt)
+через Chaquopy; формат тот же (RFC 8439), файлы взаимозаменяемы. Чистый Python ниже — запасной путь
+(Android 8, запуск без пакета) и эталон: нативный берётся, только если совпал с ним на пробном
+сообщении. Раньше был только чистый Python, ~0,8 с на мегабайт даже на Apple M4: картинки
+инструкции расшифровываются при каждом открытии модели — у моделей FreeTUGA это 7 МБ, и модель
+открывалась 5–10 с (владелец, 16.10.2026). Крупные payload (APK, прошивки) не шифруются.
 """
 from __future__ import annotations
 
@@ -104,11 +107,69 @@ def _aead_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, tag: bytes, aad: 
     return _chacha20(key, 1, nonce, ciphertext)
 
 
+def _cryptography_backend():
+    """ПК: пакет cryptography (OpenSSL). Нет пакета — ImportError."""
+    from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+    return (lambda key, nonce, data, aad: ChaCha20Poly1305(key).encrypt(nonce, data, aad),
+            lambda key, nonce, data, aad: ChaCha20Poly1305(key).decrypt(nonce, data, aad))
+
+
+def _java_backend():
+    """Android 9+: javax.crypto (Conscrypt) через Chaquopy. Не Android — ImportError, Android 8 — ошибка getInstance."""
+    from java import jclass
+    cipher_class = jclass("javax.crypto.Cipher")
+    key_spec = jclass("javax.crypto.spec.SecretKeySpec")
+    iv_spec = jclass("javax.crypto.spec.IvParameterSpec")
+
+    def run(mode, key, nonce, data, aad):
+        cipher = cipher_class.getInstance("ChaCha20/Poly1305/NoPadding")  # новый на каждый вызов: Conscrypt
+        cipher.init(mode, key_spec(key, "ChaCha20"), iv_spec(nonce))  # не даёт шифровать повторно с тем же nonce
+        if aad:
+            cipher.updateAAD(aad)
+        return bytes(cipher.doFinal(data))
+    return (lambda key, nonce, data, aad: run(cipher_class.ENCRYPT_MODE, key, nonce, data, aad),
+            lambda key, nonce, data, aad: run(cipher_class.DECRYPT_MODE, key, nonce, data, aad))
+
+
+def _agrees_with_reference(backend) -> bool:
+    """Нативный шифр годится, только если на пробном сообщении совпал с чистым Python (тот сверен с RFC 8439)."""
+    key, nonce, aad, message = bytes(range(32)), bytes(range(12)), b"msqd", bytes(range(100))
+    ciphertext, tag = _aead_encrypt(key, nonce, message, aad)
+    sealed = bytes(backend[0](key, nonce, message, aad))
+    return sealed == ciphertext + tag and bytes(backend[1](key, nonce, sealed, aad)) == message
+
+
+_UNSET = object()
+_native_backend = _UNSET
+
+
+def _native():
+    """(шифровать, расшифровать) нативного ChaCha20-Poly1305 или None — выбирается один раз за запуск."""
+    global _native_backend
+    if _native_backend is _UNSET:
+        _native_backend = None
+        for factory in (_cryptography_backend, _java_backend):
+            try:
+                backend = factory()
+                if _agrees_with_reference(backend):
+                    _native_backend = backend
+                    break
+            except Exception:  # noqa: BLE001 — нет пакета или алгоритма: следующий способ, в конце — чистый Python
+                continue
+    return _native_backend
+
+
 def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> bytes:
     """Зашифровать содержимое файла модели: MAGIC + nonce(12) + ciphertext + tag(16)."""
     if len(key) != 32:
         raise ValueError("ключ должен быть 32 байта")
     nonce = os.urandom(12)
+    native = _native()
+    if native is not None:
+        try:
+            return MAGIC + nonce + bytes(native[0](key, nonce, plaintext, aad))
+        except Exception:  # noqa: BLE001 — сбой библиотеки: тот же формат даёт чистый Python
+            pass
     ciphertext, tag = _aead_encrypt(key, nonce, plaintext, aad)
     return MAGIC + nonce + ciphertext + tag
 
@@ -139,6 +200,12 @@ def decrypt(key: bytes, blob: bytes, aad: bytes = b"") -> bytes:
     if len(blob) < len(MAGIC) + 12 + 16:
         raise ValueError("слишком короткий файл MSQD1")
     nonce = blob[len(MAGIC):len(MAGIC) + 12]
+    native = _native()
+    if native is not None:
+        try:
+            return bytes(native[1](key, nonce, blob[len(MAGIC) + 12:], aad))
+        except Exception:  # noqa: BLE001 — неверный тег или сбой библиотеки: решает эталон ниже (бросит ValueError)
+            pass
     tag = blob[-16:]
     ciphertext = blob[len(MAGIC) + 12:-16]
     return _aead_decrypt(key, nonce, ciphertext, tag, aad)

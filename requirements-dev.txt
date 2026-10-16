@@ -7,3 +7,7 @@
 # до этого импорта. Версия зафиксирована==как в requirements.txt.
 pytest==9.1.1
 certifi==2026.7.22
+# cryptography — нативный ChaCha20-Poly1305 в app/catalog_crypto.py (без него тесты шли бы только по запасному
+# чистому Python, а быстрый путь сборки остался бы непроверенным). Версия == как в requirements.txt:
+# 48.0.1 — последняя с колесом macOS universal2 (с 49 только arm64, а Intel-DMG собирается отдельно).
+cryptography==48.0.1

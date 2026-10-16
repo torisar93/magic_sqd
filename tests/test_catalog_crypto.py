@@ -88,3 +88,86 @@ def test_derive_key_depends_on_both_inputs():
 def test_nonce_is_random_each_time():
     key = cc.derive_key(b"s", b"a" * 32)
     assert cc.encrypt(key, b"x") != cc.encrypt(key, b"x")
+
+
+# --- нативный шифр (владелец 16.10.2026: «на ПК долго открываются модели» — чистый Python ~0,8 с/МБ на M4,
+# картинки инструкции расшифровываются при каждом открытии модели; у FreeTUGA это 7 МБ) ---
+
+RFC_KEY = bytes(range(0x80, 0xa0))
+RFC_NONCE = bytes.fromhex("070000004041424344454647")
+RFC_AAD = bytes.fromhex("50515253c0c1c2c3c4c5c6c7")
+RFC_TEXT = (b"Ladies and Gentlemen of the class of '99: If I could offer you only "
+            b"one tip for the future, sunscreen would be it.")
+
+
+@pytest.fixture
+def reference_only(monkeypatch):
+    """Как без нативного шифра (Android 8, запуск без пакета cryptography)."""
+    monkeypatch.setattr(cc, "_native_backend", None)
+
+
+def test_native_backend_on_desktop_matches_rfc8439():
+    pytest.importorskip("cryptography")
+    native = cc._native()
+    assert native is not None
+    sealed = native[0](RFC_KEY, RFC_NONCE, RFC_TEXT, RFC_AAD)
+    assert sealed[:16].hex() == "d31a8d34648e60db7b86afbc53ef7ec2"
+    assert sealed[-16:].hex() == "1ae10b594f09e26a7e902ecbd0600691"
+    assert native[1](RFC_KEY, RFC_NONCE, sealed, RFC_AAD) == RFC_TEXT
+
+
+def test_files_from_reference_and_native_are_interchangeable(monkeypatch):
+    pytest.importorskip("cryptography")
+    key = cc.derive_key(b"build-secret-xyz", bytes(range(32)))
+    data = bytes((i * 13) % 256 for i in range(70001))
+    native_blob = cc.encrypt(key, data)
+    monkeypatch.setattr(cc, "_native_backend", None)
+    reference_blob = cc.encrypt(key, data)
+    assert cc.decrypt(key, native_blob) == data  # уже скачанное новой версией читает и запасной путь
+    monkeypatch.undo()
+    assert cc.decrypt(key, reference_blob) == data  # скачанное до исправления читается нативным
+
+
+@pytest.mark.parametrize("size", [0, 1, 17, 70000])
+def test_reference_only_round_trip(reference_only, size):
+    key = cc.derive_key(b"s", b"a" * 32)
+    data = bytes(range(256)) * (size // 256) + bytes(range(size % 256))
+    assert cc.decrypt(key, cc.encrypt(key, data)) == data
+    with pytest.raises(ValueError, match="подлинност"):
+        cc.decrypt(cc.derive_key(b"s", b"b" * 32), cc.encrypt(key, data))
+
+
+def test_failing_native_library_falls_back_to_reference(monkeypatch):
+    def broken(*_args):
+        raise RuntimeError("сбой библиотеки")
+    monkeypatch.setattr(cc, "_native_backend", (broken, broken))
+    key = cc.derive_key(b"s", b"a" * 32)
+    blob = cc.encrypt(key, b"instruction html")
+    assert cc.decrypt(key, blob) == b"instruction html"
+    with pytest.raises(ValueError, match="подлинност"):
+        cc.decrypt(cc.derive_key(b"s", b"b" * 32), blob)
+
+
+def test_native_backend_that_disagrees_with_reference_is_not_used(monkeypatch):
+    garbage = (lambda key, nonce, data, aad: bytes(len(data) + 16), lambda key, nonce, data, aad: data[:-16])
+    assert not cc._agrees_with_reference(garbage)
+
+    def missing():
+        raise ImportError("нет пакета")
+    monkeypatch.setattr(cc, "_native_backend", cc._UNSET)
+    monkeypatch.setattr(cc, "_cryptography_backend", lambda: garbage)
+    monkeypatch.setattr(cc, "_java_backend", missing)
+    assert cc._native() is None
+    key = cc.derive_key(b"s", b"a" * 32)
+    assert cc.decrypt(key, cc.encrypt(key, b"x" * 100)) == b"x" * 100
+
+
+def test_instruction_photos_decrypt_fast():
+    """Регресс: 7 МБ фото инструкции FreeTUGA расшифровывались ~5 с на M4 (на ПК техника — дольше)."""
+    pytest.importorskip("cryptography")
+    import time
+    key = cc.derive_key(b"s", b"a" * 32)
+    blob = cc.encrypt(key, bytes(7_000_000))
+    started = time.perf_counter()
+    assert len(cc.decrypt(key, blob)) == 7_000_000
+    assert time.perf_counter() - started < 1.0
