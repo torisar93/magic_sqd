@@ -131,7 +131,9 @@ object AdbSession {
         if (result is AdbHandshakeResult.Connected) {
             deviceModel = parseDeviceModel(result.bannerFromDevice)
             ShellVerifyPassword.onConnected(result.bannerFromDevice)
-            transport = LinkWatch(tcpTransport)
+            // «Беспроводная отладка» (STLS): дальше — через TLS поверх того же сокета. С 0.4.11 сессия оставалась на сыром
+            // сокете, и первая же команда читала шифрованные байты как заголовок ADB — вылет по памяти (лог №6851, 17.10.2026).
+            transport = LinkWatch(result.upgradedTransport ?: tcpTransport)
             mode = Mode.WIFI
             wifiHost = host
             wifiPort = port

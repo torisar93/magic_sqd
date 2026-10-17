@@ -241,6 +241,10 @@ private fun parseHeader(bytes: ByteArray): AdbMessageHeader {
 
 private const val TIMEOUT_MS = 5000
 
+// Наш CNXN объявляет maxdata 0x1000 — магнитола шлёт сообщения не длиннее. «Длина» больше мегабайта — не ADB, а сбитый
+// поток (шифрованные байты TLS, хвост чужого ответа): выделять под неё память нельзя — вылет OutOfMemoryError (лог №6851).
+private const val MAX_INCOMING_PAYLOAD = 1 shl 20
+
 // Ожидание после отправки RSAPUBLICKEY — требует, чтобы человек физически
 // нажал "Разрешить" на экране устройства, поэтому таймаут намного больше.
 private const val AUTH_APPROVAL_TIMEOUT_MS = 30000
@@ -267,6 +271,11 @@ fun readMessage(
         )
     }
     val header = parseHeader(headerBuf)
+    if (header.dataLength < 0 || header.dataLength > MAX_INCOMING_PAYLOAD) {
+        throw AdbLinkLostException(
+            "Связь с магнитолой сбилась: пришло не ADB-сообщение (длина ${header.dataLength}). Переподключитесь к магнитоле."
+        )
+    }
     val payload = if (header.dataLength > 0) {
         val buf = ByteArray(header.dataLength)
         val readData = transport.read(buf, timeoutMs)
@@ -345,7 +354,9 @@ fun sendMessage(
 }
 
 sealed class AdbHandshakeResult {
-    data class Connected(val bannerFromDevice: String) : AdbHandshakeResult()
+    /** upgradedTransport — TLS-транспорт «Беспроводной отладки» (STLS): дальше сессия работает через него, а не через
+     * сырой сокет, на котором шло рукопожатие (см. performTlsUpgrade, AdbSession.connectWifiBlocking). */
+    data class Connected(val bannerFromDevice: String, val upgradedTransport: AdbTransport? = null) : AdbHandshakeResult()
     /** noDevice — по USB вообще нет устройства с ADB-интерфейсом (не «отказали в доступе»,
      * не «сбой рукопожатия»): по нему приложение показывает окно про OTG-переходник. */
     data class Failed(val reason: String, val noDevice: Boolean = false) : AdbHandshakeResult()
@@ -500,7 +511,7 @@ private fun performTlsUpgrade(
         )
     }
     return if (respHeader.command == AdbProtocol.A_CNXN) {
-        AdbHandshakeResult.Connected(String(respPayload, Charsets.US_ASCII).trimEnd(' '))
+        AdbHandshakeResult.Connected(String(respPayload, Charsets.US_ASCII).trimEnd(' '), tlsTransport)
     } else {
         AdbHandshakeResult.Failed(
             "После TLS-подключения устройство ответило неожиданным сообщением: " +
