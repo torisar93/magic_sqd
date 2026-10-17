@@ -1052,6 +1052,9 @@
   let modelWifiPort = 5555;
   let lastWifiHost = "";
   let installCompletedShown = false;
+  // Итоговая строка последнего этапа — в лог один раз (каждое «Далее» на последнем этапе писало её заново, до 49 раз,
+  // №7015; владелец 17.10.2026). Сброс — при открытии модели и переходе на этап (show), как на ПК (stage_wizard.js).
+  let lastFinishLine = "";
   // Этапы, завершившиеся ошибкой и с тех пор не пройденные успешно (index
   // этапа -> заголовок) — чтобы в конце мастера не писать «Все этапы
   // установки выполнены», если обязательное приложение так и не встало, а
@@ -1098,6 +1101,7 @@
     apkLibraryLoaded = false;
     personalApks = [];
     installCompletedShown = false;
+    lastFinishLine = "";
     failedStages = new Map();
     aiAdvice = {};
     wifiInstallFlow = null;
@@ -1968,10 +1972,10 @@
       if (failedStages.size) {
         // Честный итог вместо «выполнены» + окна «Готово!» — часть этапов не
         // прошла (см. failedStages); лог всё равно уходит на сервер.
-        log(`Установка завершена с ошибками — не выполнено: ${[...failedStages.values()].join(", ")}.`);
+        logFinish(`Установка завершена с ошибками — не выполнено: ${[...failedStages.values()].join(", ")}.`);
         flushSessionLog(true);
       } else {
-        log("Все этапы установки выполнены.");
+        logFinish("Все этапы установки выполнены.");
         flushSessionLog(true);
         if (!installCompletedShown && stages.length) {
           installCompletedShown = true;
@@ -1990,8 +1994,15 @@
     show(nextIndex);
   }
 
+  function logFinish(line) {
+    if (line === lastFinishLine) return;
+    lastFinishLine = line;
+    log(line);
+  }
+
   function show(index) {
     if(labInstallBusy)return;
+    lastFinishLine = "";
     currentIndex = index;
     nextAction = () => advanceAfter(currentIndex);
     render();
