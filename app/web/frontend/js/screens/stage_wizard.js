@@ -88,6 +88,10 @@
   // при каждом open() (см. android app.js: installCompletedShown, тот же
   // приём).
   let installCompletedShown = false;
+  // Итоговая строка последнего этапа («Все этапы установки выполнены.» / «Установка завершена с ошибками…») — в лог
+  // один раз: каждое нажатие «Далее» на последнем этапе писало её заново, до 49 раз в логе (№7015; владелец 17.10.2026).
+  // Сброс — при открытии модели и переходе на этап (show): закончили заново — строка снова в логе.
+  let lastFinishLine = "";
   // Этапы, которые в этом сеансе завершились ошибкой и с тех пор не были
   // пройдены успешно (индекс этапа -> заголовок). Нужен, чтобы в конце мастера
   // не писать «Все этапы установки выполнены», если обязательное приложение
@@ -618,6 +622,7 @@
     stages = [];
     modelWifiPort = 5555;
     installCompletedShown = false;
+    lastFinishLine = "";
     failedStages.clear();
 
     // Пока install_load_stages докачивает инструкции новой модели (на macOS
@@ -783,10 +788,10 @@
         if (failedStages.size) {
           // Честный итог вместо «выполнены» + окна «Готово!»: часть этапов
           // не прошла (см. failedStages выше) — лог всё равно уходит на сервер.
-          log(`Установка завершена с ошибками — не выполнено: ${[...failedStages.values()].join(", ")}.`);
+          logFinish(`Установка завершена с ошибками — не выполнено: ${[...failedStages.values()].join(", ")}.`);
           flushSessionLog(true);
         } else {
-          log("Все этапы установки выполнены.");
+          logFinish("Все этапы установки выполнены.");
           flushSessionLog(true);
           if (!installCompletedShown) {
             installCompletedShown = true;
@@ -807,8 +812,15 @@
     show(nextIndex);
   }
 
+  function logFinish(line) {
+    if (line === lastFinishLine) return;
+    lastFinishLine = line;
+    log(line);
+  }
+
   function show(index) {
     if(runnerBusy)return;
+    lastFinishLine = "";
     currentIndex = index;
     nextAction = () => advanceAfter(currentIndex);
     render();
