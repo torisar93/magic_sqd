@@ -46,7 +46,7 @@ def test_flash_write_failures_get_retries_and_a_plain_message():
     write = _code(KOTLIN / "usb/UsbFlashWrite.kt")
     one_file = write[write.index("fun writeFileToUsb("):write.index("fun writeUsbStage(")]
     # папки создаются уже внутри попытки — сбой на них тоже повторяется и получает подсказку
-    assert one_file.index("for (attempt in 1..WRITE_RETRY_ATTEMPTS)") < one_file.index("var dir: UsbFile = fs.rootDirectory")
+    assert one_file.index("while (attempt <= WRITE_RETRY_ATTEMPTS)") < one_file.index("var dir: UsbFile = current.rootDirectory")
     assert "errors.forEach { UsbFlashSession.noteFailure(it.message) }" in one_file
     stage = write[write.index("fun writeUsbStage("):]
     assert 'usbWriteFailureMessage("файлы", listOf(e))' in stage and "UsbFlashSession.noteFailure(e.message)" in stage

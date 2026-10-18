@@ -41,8 +41,9 @@ def test_flash_operations_reconnect_after_replug():
         body = _function(bridge, signature)
         assert "remountIfReplugged()" in body, signature
         # переподключение — до первого обращения к флешке
-        first_use = min(i for i in (body.find("requireFs()"), body.find("capacityBytes()"),
-                                    body.find("writeUsbStage(")) if i != -1)
+        first_use = min(i for i in (body.find("requireFs()"), body.find("capacityBytes()"), body.find("writeUsbStage("),
+                                    body.find("writeQrAdbPrepFlag("), body.find("writeQrAdbFlag("),
+                                    body.find("readQrAdbBugreportZip(")) if i != -1)
         assert body.index("remountIfReplugged()") < first_use, signature
     # «Подключить» и переподключение шлют в интерфейс один и тот же итог
     assert "private fun usbConnect() = runExclusive(::onBusy) { connectFlashAndReport() }" in bridge
@@ -150,6 +151,9 @@ def test_corrupted_flash_does_not_crash_the_app():
     # Логи №3807, №3833: испорченная таблица FAT — libaums копил цепочку кластеров до OutOfMemoryError (не Exception),
     # программа падала. Теперь — понятная ошибка, окно «Флешка повреждена» (user_errors.js, flash_corrupted).
     session = _code(KOTLIN / "usb/UsbFlashSession.kt")
+    # С 18.10 подключение — общим mount() для libusb и прежнего способа; испорченная FAT — без отката на прежний.
+    mount = _function(session, "private fun mount(")
+    assert "catch (e: OutOfMemoryError)" in mount and "closeQuietly(target)" in mount and "FLASH_CORRUPTED" in mount
     connect = _function(session, "fun connectBlocking(")
-    assert "catch (e: OutOfMemoryError)" in connect and "target.close()" in connect and "FLASH_CORRUPTED" in connect
+    assert "if (error.message == FLASH_CORRUPTED) return viaLibusb" in connect
     assert 'const val FLASH_CORRUPTED = "Флешка повреждена: её файловая система испорчена' in session

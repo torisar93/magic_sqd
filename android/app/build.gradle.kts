@@ -25,6 +25,7 @@ android {
         targetSdk = 35
         versionCode = 137
         versionName = "1.1.10"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             // arm64-v8a/armeabi-v7a — реальные телефоны; x86_64 — эмулятор для UI-отладки
@@ -114,4 +115,7 @@ dependencies {
     // — работает прямо в ART, отдельная JVM/JRE не нужна (в отличие от
     // desktop, где для этого вшит минимальный JRE — см. tools/jre_minimal/).
     implementation("com.android.tools.build:apksig:8.7.3")
+
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

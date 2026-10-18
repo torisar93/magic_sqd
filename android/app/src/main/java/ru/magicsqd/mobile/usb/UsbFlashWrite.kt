@@ -115,6 +115,14 @@ internal fun usbWriteFailureMessage(fileName: String, errors: List<Exception>): 
     }
 }
 
+/** Текст сбоя для журнала с причиной: libaums прячет ошибку связи в cause («MAX_RECOVERY_ATTEMPTS… ← libusb, запись
+ * 262144 байт: LIBUSB_ERROR_TIMEOUT» или «… ← Could not read from device, result == -1 errno 12 Out of memory» у
+ * прежнего способа) — по ней разбор логов видит, отчего флешка «перестала отвечать». */
+internal fun describeUsbError(e: Throwable): String =
+    generateSequence(e) { it.cause }.take(4)
+        .map { it.message?.takeIf(String::isNotBlank) ?: it.javaClass.simpleName }
+        .distinct().joinToString(" ← ")
+
 /** Файл в очереди записи — тот же {name, path, size}, что и desktop
  * _scan_usb_items (app/web/api/usb_api.py), path — ЛОКАЛЬНЫЙ (исходный) путь,
  * не путь назначения на флешке: именно им помечены строки очереди в
@@ -182,11 +190,13 @@ fun writeFileToUsb(
     val fileName = segments.last()
 
     val errors = mutableListOf<Exception>()
-    for (attempt in 1..WRITE_RETRY_ATTEMPTS) {
+    var current = fs
+    var attempt = 1
+    while (attempt <= WRITE_RETRY_ATTEMPTS) {
         try {
             // Папки — тоже внутри попытки: раньше их создание стояло до повторов, и сбой флешки на нём уходил наружу
             // сырым «IOException: MAX_RECOVERY_ATTEMPTS…» без повторов и без подсказки (лог №1779, файл в magic_sqd/).
-            var dir: UsbFile = fs.rootDirectory
+            var dir: UsbFile = current.rootDirectory
             for (i in 0 until segments.size - 1) {
                 val name = segments[i]
                 val found = dir.search(name)
@@ -230,15 +240,24 @@ fun writeFileToUsb(
             target.close()
             onProgress(localFile.path, offset, totalSize, filesDone + 1, filesTotal, "done")
             log("Записано: $destRelativePath ($offset байт)")
+            UsbFlashSession.noteSuccess(log)
             return
         } catch (e: Exception) {
             if (e !is IOException && e !is IllegalArgumentException) throw e
             errors.add(e)
+            // Сбой связи через libusb — флешка переподключается прежним способом, и файл пишется им заново; эта попытка
+            // не в счёт (UsbFlashSession.fallBack). Следующие файлы вызывающий берёт уже из UsbFlashSession.requireFs().
+            val fresh = UsbFlashSession.fallBack(e, "записи $destRelativePath", log)
+            if (fresh != null) {
+                current = fresh
+                continue
+            }
             if (attempt < WRITE_RETRY_ATTEMPTS) {
                 log("Сбой записи $destRelativePath (попытка $attempt/$WRITE_RETRY_ATTEMPTS): " +
-                    "${e.message}. Повторяю...")
+                    "${describeUsbError(e)}. Повторяю...")
                 Thread.sleep(WRITE_RETRY_DELAY_MS)
             }
+            attempt++
         }
     }
     errors.forEach { UsbFlashSession.noteFailure(it.message) }  // следующая операция подключится к флешке заново
@@ -282,7 +301,7 @@ fun writeUsbPlan(
     onProgress: (path: String, bytesDone: Long, bytesTotal: Long, filesDone: Int, filesTotal: Int, state: String) -> Unit =
         { _, _, _, _, _, _ -> },
 ): StageRunResult {
-    val fs = try {
+    try {
         UsbFlashSession.requireFs()
     } catch (e: Exception) {
         return StageRunResult.Failed(e.message ?: "Флешка не подключена")
@@ -290,10 +309,12 @@ fun writeUsbPlan(
     plan.files.firstOrNull { !File(it.local).isFile }?.let { return StageRunResult.Failed("Файл не скачан: ${it.local}") }
     val filesTotal = plan.files.size
     return try {
-        removeFlashFiles(fs, plan.removeOnFlash, log)
+        UsbFlashSession.retryOverStandard("подготовке флешки", log) { removeFlashFiles(it, plan.removeOnFlash, log) }
         plan.files.forEachIndexed { done, file ->
-            writeFileToUsb(fs, File(file.local), file.dest, log, done, filesTotal, onProgress)
+            // Флешка — из сессии на каждый файл: после отката с libusb подключение уже другое.
+            writeFileToUsb(UsbFlashSession.requireFs(), File(file.local), file.dest, log, done, filesTotal, onProgress)
         }
+        UsbFlashSession.noteStageWritten()
         StageRunResult.Success
     } catch (e: UsbWriteFailedException) {
         StageRunResult.Failed(e.message.orEmpty())
@@ -320,7 +341,7 @@ fun writeUsbStage(
     onProgress: (path: String, bytesDone: Long, bytesTotal: Long, filesDone: Int, filesTotal: Int, state: String) -> Unit =
         { _, _, _, _, _, _ -> },
 ): StageRunResult {
-    val fs = try {
+    try {
         UsbFlashSession.requireFs()
     } catch (e: Exception) {
         return StageRunResult.Failed(e.message ?: "Флешка не подключена")
@@ -337,7 +358,10 @@ fun writeUsbStage(
         ?.let { return StageRunResult.Failed("Файл не скачан: $it") }
     return try {
         // Пишем svlog.flag — со флешки уходит svengmode.flag прошлого шага (и наоборот), см. TRIGGER_FLAGS.
-        removeOtherTriggerFlags(fs, files.map { File(it).name }, log)
+        UsbFlashSession.retryOverStandard("подготовке флешки", log) {
+            removeOtherTriggerFlags(it, files.map { name -> File(name).name }, log)
+        }
+        // Флешка — из сессии на каждый файл: после отката с libusb (UsbFlashSession.fallBack) подключение уже другое.
         for (path in files) {
             val f = File(path)
             if (!f.exists()) return StageRunResult.Failed("Файл не скачан: $path")
@@ -346,18 +370,18 @@ fun writeUsbStage(
                 // как на ПК (usb_context.copy_dir). Раньше она скачивалась и писалась файлом (логи №529, №5420).
                 for (inner in folderFiles(f)) {
                     val rel = inner.relativeTo(f).path.replace('\\', '/')
-                    writeFileToUsb(fs, inner, "${f.name}/$rel", log, filesDone, filesTotal, onProgress)
+                    writeFileToUsb(UsbFlashSession.requireFs(), inner, "${f.name}/$rel", log, filesDone, filesTotal, onProgress)
                     filesDone++
                 }
                 continue
             }
-            writeFileToUsb(fs, f, f.name, log, filesDone, filesTotal, onProgress)
+            writeFileToUsb(UsbFlashSession.requireFs(), f, f.name, log, filesDone, filesTotal, onProgress)
             filesDone++
         }
         if (sharedFolderDir != null && sharedFolderDir.exists()) {
             sharedFolderDir.walkTopDown().filter { it.isFile }.forEach { f ->
                 val rel = f.relativeTo(sharedFolderDir).path.replace('\\', '/')
-                writeFileToUsb(fs, f, rel, log, filesDone, filesTotal, onProgress)
+                writeFileToUsb(UsbFlashSession.requireFs(), f, rel, log, filesDone, filesTotal, onProgress)
                 filesDone++
             }
         }
@@ -365,9 +389,10 @@ fun writeUsbStage(
             val f = File(path)
             if (!f.exists()) return StageRunResult.Failed("Файл не скачан: $path")
             val dest = if (apksDestSubdir.isNotBlank()) "$apksDestSubdir/${f.name}" else f.name
-            writeFileToUsb(fs, f, dest, log, filesDone, filesTotal, onProgress)
+            writeFileToUsb(UsbFlashSession.requireFs(), f, dest, log, filesDone, filesTotal, onProgress)
             filesDone++
         }
+        UsbFlashSession.noteStageWritten()
         StageRunResult.Success
     } catch (e: UsbWriteFailedException) {
         StageRunResult.Failed(e.message.orEmpty())

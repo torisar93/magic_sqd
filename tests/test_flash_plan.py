@@ -220,5 +220,5 @@ def test_android_kotlin_uses_the_plan():
     assert "withManifest = false" in listing and "scanUsbStageItems(" in listing
     write = (ROOT / "android/app/src/main/java/ru/magicsqd/mobile/usb/UsbFlashWrite.kt").read_text(encoding="utf-8")
     plan_write = write[write.index("fun writeUsbPlan("):write.index("fun writeUsbStage(")]
-    assert "removeFlashFiles(fs, plan.removeOnFlash, log)" in plan_write
-    assert "writeFileToUsb(fs, File(file.local), file.dest, log, done, filesTotal, onProgress)" in plan_write
+    assert "removeFlashFiles(it, plan.removeOnFlash, log)" in plan_write
+    assert "writeFileToUsb(UsbFlashSession.requireFs(), File(file.local), file.dest, log, done, filesTotal, onProgress)" in plan_write

@@ -1883,12 +1883,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     val written = if (usbPlan != null) writeUsbPlan(usbPlan, ::pushAdbLog, onWritten)
                         else writeUsbStage(files, sharedFolderDir, selectedApks, apksDest, ::pushAdbLog, onWritten)
                     val took = DownloadSink.durationText(System.currentTimeMillis() - writeStartedAt)
+                    // Способ связи с флешкой в итоге — разбор логов сравнивает по нему libusb и прежний (UsbFlashTransport.kt).
+                    val via = UsbFlashSession.transportTitle()
                     pushAdbLog(
                         if (written is StageRunResult.Success) {
                             "Запись на флешку закончена: ${DownloadSink.files(planned.size)}, " +
-                                "${DownloadSink.megabytes(planned.sum())} за $took."
+                                "${DownloadSink.megabytes(planned.sum())} за $took ($via)."
                         } else {
-                            "Запись на флешку прервалась: записано $filesWritten из ${DownloadSink.ofFiles(planned.size)} за $took."
+                            "Запись на флешку прервалась: записано $filesWritten из ${DownloadSink.ofFiles(planned.size)} за $took ($via)."
                         }
                     )
                     written
@@ -1919,7 +1921,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                         "error", "svengmode.flag не найден — обновите каталог (Настройки → Проверить обновления) и попробуйте снова."
                     )
                 } else {
-                    writeQrAdbPrepFlag(UsbFlashSession.requireFs(), flagFile, ::pushAdbLog).fold(
+                    writeQrAdbPrepFlag(flagFile, ::pushAdbLog).fold(
                         onSuccess = { JSONObject().put("ok", true) },
                         onFailure = { e -> JSONObject().put("ok", false).put("error", e.message) },
                     )
@@ -1950,7 +1952,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                         "error", "svlog.flag не найден — обновите каталог (Настройки → Проверить обновления) и попробуйте снова."
                     )
                 } else {
-                    writeQrAdbFlag(UsbFlashSession.requireFs(), flagFile, ::pushAdbLog).fold(
+                    writeQrAdbFlag(flagFile, ::pushAdbLog).fold(
                         onSuccess = { JSONObject().put("ok", true) },
                         onFailure = { e -> JSONObject().put("ok", false).put("error", e.message) },
                     )
@@ -1974,7 +1976,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             } else if (!UsbFlashSession.isMounted) {
                 JSONObject().put("ok", false).put("error", "Флешка не подключена — сначала подключите её сверху.")
             } else {
-                readQrAdbBugreportZip(UsbFlashSession.requireFs()).fold(
+                readQrAdbBugreportZip(::pushAdbLog).fold(
                     onSuccess = { bytes ->
                         val zipB64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                         val resultJson = pyModule("qr_adb_password")

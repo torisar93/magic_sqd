@@ -19,12 +19,13 @@ private const val FLAG_FILENAME = "svlog.flag"
  * флоу Geely/VOLGA эту константу не использует вовсе. */
 private const val PREP_FLAG_FILENAME = "svengmode.flag"
 
-/** Общая часть writeQrAdbFlag/writeQrAdbPrepFlag ниже. */
-private fun writeFlag(fs: FileSystem, localFlagFile: File, filename: String, log: (String) -> Unit): Result<Unit> {
+/** Общая часть writeQrAdbFlag/writeQrAdbPrepFlag ниже — на флешку UsbFlashSession. Сбой связи через libusb —
+ * переподключение прежним способом и повтор (retryOverStandard; у самой записи — внутри writeFileToUsb). */
+private fun writeFlag(localFlagFile: File, filename: String, log: (String) -> Unit): Result<Unit> {
     return try {
         // Только триггер текущего шага — см. removeOtherTriggerFlags (UsbFlashWrite.kt).
-        removeOtherTriggerFlags(fs, listOf(filename), log)
-        writeFileToUsb(fs, localFlagFile, filename, log)
+        UsbFlashSession.retryOverStandard("подготовке флешки", log) { removeOtherTriggerFlags(it, listOf(filename), log) }
+        writeFileToUsb(UsbFlashSession.requireFs(), localFlagFile, filename, log)
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
@@ -32,15 +33,15 @@ private fun writeFlag(fs: FileSystem, localFlagFile: File, filename: String, log
 }
 
 /** Пишет svengmode.flag в корень флешки — см. PREP_FLAG_FILENAME выше. */
-fun writeQrAdbPrepFlag(fs: FileSystem, localFlagFile: File, log: (String) -> Unit): Result<Unit> =
-    writeFlag(fs, localFlagFile, PREP_FLAG_FILENAME, log)
+fun writeQrAdbPrepFlag(localFlagFile: File, log: (String) -> Unit): Result<Unit> =
+    writeFlag(localFlagFile, PREP_FLAG_FILENAME, log)
 
 /** Пишет svlog.flag в корень флешки — тонкая обёртка над writeFileToUsb
  * (см. UsbFlashWrite.kt), локальный файл уже должен быть на диске (общий
  * cars/_shared/svlog.flag, синхронизируется тем же путём, что и на
  * desktop). */
-fun writeQrAdbFlag(fs: FileSystem, localFlagFile: File, log: (String) -> Unit): Result<Unit> =
-    writeFlag(fs, localFlagFile, FLAG_FILENAME, log)
+fun writeQrAdbFlag(localFlagFile: File, log: (String) -> Unit): Result<Unit> =
+    writeFlag(localFlagFile, FLAG_FILENAME, log)
 
 /** Находит самую свежую по имени папку logs_* в корне флешки (имя содержит
  * таймстемп — обычная сортировка строк даёт хронологический порядок), внутри
@@ -51,8 +52,15 @@ fun writeQrAdbFlag(fs: FileSystem, localFlagFile: File, log: (String) -> Unit): 
  * qr_adb_password.py) — тот же расчёт (HKDF), что и на desktop
  * (app/qr_adb_password.py), просто по уже прочитанным байтам вместо пути
  * на диске (у Android нет прямого файлового пути к содержимому флешки,
- * смонтированной через libaums, только UsbFile API). */
-fun readQrAdbBugreportZip(fs: FileSystem): Result<ByteArray> {
+ * смонтированной через libaums, только UsbFile API). Флешка — UsbFlashSession; сбой связи через libusb —
+ * переподключение прежним способом и повтор (retryOverStandard). */
+fun readQrAdbBugreportZip(log: (String) -> Unit): Result<ByteArray> = try {
+    Result.success(UsbFlashSession.retryOverStandard("чтении отчёта магнитолы", log) { readBugreportZip(it).getOrThrow() })
+} catch (e: Exception) {
+    Result.failure(e)
+}
+
+private fun readBugreportZip(fs: FileSystem): Result<ByteArray> {
     return try {
         val root = fs.rootDirectory
         val logsFolder = root.listFiles()

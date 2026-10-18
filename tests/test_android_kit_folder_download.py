@@ -111,7 +111,7 @@ def test_partly_downloaded_folder_is_marked_until_complete(tmp_path, apk_library
 def test_android_writer_lays_out_the_folder():
     code = (ROOT / "android/app/src/main/java/ru/magicsqd/mobile/usb/UsbFlashWrite.kt").read_text(encoding="utf-8")
     stage = code[code.index("fun writeUsbStage("):]
-    assert 'writeFileToUsb(fs, inner, "${f.name}/$rel", log, filesDone, filesTotal, onProgress)' in stage
+    assert 'writeFileToUsb(UsbFlashSession.requireFs(), inner, "${f.name}/$rel", log, filesDone, filesTotal, onProgress)' in stage
     assert "File(it, FOLDER_INCOMPLETE_MARK).exists()" in stage
     scan = code[code.index("fun scanUsbStageItems("):code.index("fun writeFileToUsb(")]
     assert "folderFiles(f).forEach" in scan
