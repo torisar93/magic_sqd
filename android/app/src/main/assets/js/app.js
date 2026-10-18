@@ -1864,7 +1864,10 @@
     hiddenAt = Date.now();
     log(`Программа свёрнута: ${why || "погас экран или открыто другое приложение"}.`, false, true);
   };
+  // Кому ещё нужно знать, что программа снова на экране (окно обновления ждёт разрешения из настроек Android).
+  const onAppShownHooks = [];
   window.__onAppShown = function () {
+    onAppShownHooks.forEach((hook) => { try { hook(); } catch (e) { console.error(e); } });
     if (!hiddenAt) return;
     const away = Date.now() - hiddenAt;
     hiddenAt = 0;
@@ -3509,6 +3512,73 @@
     checkForUpdate();
   }
 
+  // Обновление из самой программы (AppSelfUpdate.kt, с 1.1.12; владелец 18.10.2026: «чтобы она спрашивала разрешение
+  // на установку из неизвестных источников и сама ставила апдейты»): «Обновить» — разрешение «Установка неизвестных
+  // приложений» (один раз, окно настроек Android; вернувшись, продолжаем сами — __onAppShown), скачивание со сверкой и
+  // установка. На Android 12+ — без окна подтверждения. Ссылка на APK — запасной путь, если не вышло.
+  let appUpdate = null;  // {update, status, button, manual, waitingPermission}
+
+  function updateMb(bytes) {
+    return `${(bytes / 1048576).toLocaleString("ru-RU", { maximumFractionDigits: bytes < 10 * 1048576 ? 1 : 0 })} МБ`;
+  }
+
+  function startAppUpdate() {
+    if (!appUpdate) return;
+    let state = null;
+    try { state = Bridge.call("app_update_status", {}); } catch (e) { /* ниже — как раньше */ }
+    if (!state || typeof state.can !== "boolean") {
+      // Программа старше 1.1.12 (окно пришло к ней бандлом интерфейса; мост отвечает «Неизвестный метод») ставить сама
+      // не умеет — как раньше «Скачать APK»: браузер скачает файл, установщик Android его поставит.
+      appUpdate.manual.hidden = false;
+      appUpdate.manual.click();
+      return;
+    }
+    if (!state.can) {
+      appUpdate.waitingPermission = true;
+      appUpdate.status.textContent = "Разрешите программе ставить обновления: в открывшихся настройках включите "
+        + "«Разрешить установку из этого источника» и вернитесь в программу.";
+      try { Bridge.call("app_update_allow", {}); } catch (e) { /* не открылись — останется ссылка на APK */ }
+      return;
+    }
+    appUpdate.waitingPermission = false;
+    appUpdate.button.disabled = true;
+    appUpdate.manual.hidden = true;
+    appUpdate.status.textContent = "Скачиваю обновление…";
+    try {
+      Bridge.call("app_update_install", { url: appUpdate.update.download_url, sha256: appUpdate.update.sha256 || "" });
+    } catch (e) {
+      onAppUpdateEvent({ stage: "error", message: e.message || String(e) });
+    }
+  }
+
+  // Вернулись из настроек разрешения — если его дали, сразу ставим (MainActivity: onStart → __onAppShown).
+  function resumeAppUpdate() {
+    if (appUpdate && appUpdate.waitingPermission) startAppUpdate();
+  }
+
+  function onAppUpdateEvent(event) {
+    if (!appUpdate) return;
+    const { status, button, manual } = appUpdate;
+    if (event.stage === "download") {
+      status.textContent = event.total > 0
+        ? `Скачиваю обновление: ${updateMb(event.done)} из ${updateMb(event.total)}`
+        : `Скачиваю обновление: ${updateMb(event.done)}`;
+    } else if (event.stage === "install") {
+      status.textContent = event.silent
+        ? "Устанавливаю обновление. Программа закроется на несколько секунд — потом откройте её снова."
+        : "Устанавливаю обновление — подтвердите его в окне Android.";
+    } else if (event.stage === "confirm") {
+      // Окно сеанса установки: «Отмена»/«Установить», кнопки «Открыть» после установки в нём нет.
+      status.textContent = "Подтвердите обновление в окне Android — «Установить». Программа закроется на несколько секунд "
+        + "— потом откройте её снова, если она не откроется сама.";
+    } else if (event.stage === "error") {
+      status.textContent = `Не удалось обновить: ${event.message || "неизвестная ошибка"}. Повторите или скачайте APK вручную.`;
+      button.disabled = false;
+      button.textContent = "Повторить";
+      manual.hidden = false;
+    }
+  }
+
   function onUpdateCheckResult(event) {
     updateCheckAnswered = true;
     clearTimeout(welcomeWaitTimer);
@@ -3519,6 +3589,15 @@
     // или отложить: без «Позже», тап мимо и «Назад» его не закрывают, после «Скачать APK» оно остаётся.
     const mandatory = !!update.mandatory;
     let overlay;
+    const status = el("p", { class: "stage-text update-status" });
+    const button = el("button", { class: "accent", text: "Обновить", onclick: () => startAppUpdate() });
+    // Запасной путь — прежняя ссылка на APK (браузер скачает, установщик Android поставит): видна после сбоя.
+    const manual = el("a", {
+      class: "update-manual", href: update.download_url, target: "_blank", hidden: "",
+      text: "Скачать APK вручную",
+      onclick: () => { if (!mandatory) overlay.remove(); },
+    });
+    appUpdate = { update, status, button, manual, waitingPermission: false };
     overlay = showModal([
       el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
       el("p", { class: "stage-text update-title",
@@ -3528,12 +3607,10 @@
       el("p", { class: "stage-text update-notes-title", text: "Что нового:" }),
       // Длинный список изменений прокручивается внутри окна, кнопки внизу всегда на экране.
       el("div", { class: "update-notes", tabindex: "0" }, [update.changelog || "—"]),
-      el("a", {
-        class: "accent", href: update.download_url, target: "_blank",
-        text: "Скачать APK",
-        onclick: () => { if (!mandatory) overlay.remove(); },
-      }),
-      mandatory ? null : el("button", { text: "Позже", onclick: () => overlay.remove() }),
+      status,
+      button,
+      manual,
+      mandatory ? null : el("button", { text: "Позже", onclick: () => { appUpdate = null; overlay.remove(); } }),
     ].filter(Boolean), { dismissible: !mandatory });
     overlay.querySelector(".modal-box").classList.add("update-modal");
   }
@@ -4511,6 +4588,8 @@
     window.events.on("files_prefetched", onFilesPrefetched);
     window.events.on("report_result", onReportResult);
     window.events.on("update_check_result", onUpdateCheckResult);
+    window.events.on("app_update", onAppUpdateEvent);
+    onAppShownHooks.push(resumeAppUpdate);
     window.events.on("supporters_result", (event) => { if (event.result && event.result.people) window.Thanks.set(event.result); });
     window.events.on("video_ready", onVideoReady);
 

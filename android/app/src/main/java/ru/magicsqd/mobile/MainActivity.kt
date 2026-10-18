@@ -296,11 +296,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        AppSelfUpdate.appVisible = true
+        AppSelfUpdate.showPendingConfirm(this)  // окно подтверждения обновления, не открывшееся, пока программа была свёрнута
         webView.evaluateJavascript("(window.__onAppShown && window.__onAppShown())", null)
     }
 
     override fun onStop() {
         super.onStop()
+        AppSelfUpdate.appVisible = false
         // Программу свернули (погас экран, открыли другое приложение). Раньше здесь лог сессии отправлялся и
         // запечатывался — всё, что происходило потом (докачка, запись, итог), на сервер уже не попадало (Belgee S50,
         // 28.09: логи обрывались на «Скачиваю …»). Теперь только строка в журнал: сессия живёт дальше в прочном

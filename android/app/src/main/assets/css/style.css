@@ -1354,7 +1354,7 @@ html, body { background: var(--bg); }
 .compact-log .log-bar { padding-top: 3px; padding-bottom: 3px; }
 
 /* Окно «Доступна новая версия» (см. app.js: onUpdateCheckResult): длинный список изменений прокручивается
-   ВНУТРИ окна, заголовок и кнопки «Скачать APK»/«Позже» всегда видны. Селектор с .modal-overlay — чтобы
+   ВНУТРИ окна, заголовок и кнопки «Обновить»/«Позже» всегда видны. Селектор с .modal-overlay — чтобы
    перебить общий overflow:auto для .modal-box из ui-lab.css. */
 .modal-overlay .modal-box.update-modal { overflow: hidden; max-height: calc(100dvh - 32px); }
 .update-modal > * { flex: none; }
@@ -1372,6 +1372,11 @@ html, body { background: var(--bg); }
   border: 1px solid rgba(125, 147, 164, 0.28); background: #141b22; color: var(--text-dim);
   font-size: 14px; line-height: 1.5; scrollbar-width: thin;
 }
+/* Обновление из самой программы (app.js: startAppUpdate): ход — строкой над кнопкой (пустая не занимает места), ссылка
+   на APK — запасной путь после сбоя. */
+.update-modal .update-status { font-size: 14px; line-height: 1.5; color: var(--text); }
+.update-modal .update-status:empty { display: none; }
+.update-modal .update-manual { text-align: center; font-size: 14px; }
 
 /* Окно «Сообщить о проблеме» (см. app.js: showReportModal) */
 .report-modal textarea { min-height: 110px; resize: vertical; color: var(--text); font-size: 15px; }

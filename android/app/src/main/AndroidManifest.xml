@@ -22,6 +22,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Обновление программы из неё самой (AppSelfUpdate.kt): установка APK — разрешение «Установка неизвестных
+         приложений» (техник даёт один раз в настройках); Android 12+ — обновлять себя без окна подтверждения. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <application
         android:allowBackup="true"
@@ -63,6 +67,11 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             android:stopWithTask="true" />
+
+        <!-- Итог установки обновления программы (AppSelfUpdate.install): окно подтверждения Android или ошибка. -->
+        <receiver
+            android:name=".UpdateStatusReceiver"
+            android:exported="false" />
 
         <!-- Снимок для фото экрана ИИ-помощнику (MainActivity.cameraIntent): камера пишет в cache/photos/ по этому
              адресу, своё разрешение на камеру программе не нужно. -->

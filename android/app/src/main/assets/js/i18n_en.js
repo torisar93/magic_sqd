@@ -1078,6 +1078,17 @@ window.I18N_EN = {
   "Без него дальше работать нельзя. Скачайте и установите новую версию, чтобы продолжить.": "You can't continue without it. Download and install the new version to continue.",
   "Что нового:": "What's new:",
   "Скачать APK": "Download APK",
+  // Обновление из самой программы на Android (app.js: startAppUpdate, с 1.1.12)
+  "Обновить @ .update-modal": "Update",
+  "Скачать APK вручную": "Download the APK manually",
+  "Разрешите программе ставить обновления: в открывшихся настройках включите «Разрешить установку из этого источника» и вернитесь в программу.": "Allow the app to install updates: in the settings that open, turn on “Allow from this source” and come back to the app.",
+  "Скачиваю обновление…": "Downloading the update…",
+  "Скачиваю обновление: {p1} из {p2}": "Downloading the update: {p1} of {p2}",
+  "Скачиваю обновление: {p1}": "Downloading the update: {p1}",
+  "Устанавливаю обновление. Программа закроется на несколько секунд — потом откройте её снова.": "Installing the update. The app will close for a few seconds — then open it again.",
+  "Устанавливаю обновление — подтвердите его в окне Android.": "Installing the update — confirm it in the Android window.",
+  "Подтвердите обновление в окне Android — «Установить». Программа закроется на несколько секунд — потом откройте её снова, если она не откроется сама.": "Confirm the update in the Android window — “Install”. The app will close for a few seconds — then open it again if it does not reopen by itself.",
+  "Не удалось обновить: {p1}. Повторите или скачайте APK вручную.": "Couldn't update: {p1}. Try again or download the APK manually.",
 
   // ── Приветствие и завершение ─────────────────────────────────────────────────────────────────────────────────
   "Добро пожаловать!": "Welcome!",

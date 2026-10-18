@@ -93,7 +93,7 @@ def test_android_uses_own_mirror_and_prefers_newer_source(monkeypatch, download_
 
     own = mobile_bridge._check_update_own_server("1.0.16")
     assert own == {"available": True, "version": "1.2.3", "changelog": "что нового",
-                   "download_url": f"{download_server.url}/MagicSQD_Android.apk", "mandatory": False}
+                   "download_url": f"{download_server.url}/MagicSQD_Android.apk", "mandatory": False, "sha256": ""}
     assert mobile_bridge._check_update_own_server("1.2.3") is None, "та же версия — не обновление"
     assert json.loads(mobile_bridge.check_update("1.0.16"))["version"] == "1.2.3"
 
@@ -220,3 +220,20 @@ def test_mirror_script_writes_min_version(tmp_path):
     assert data["min_version"] == "v1.0.41" and data["version"] == "v1.0.42" and data["assets"] == {"windows": "MagicSQD_Setup.exe"}
     releases.write_text(json.dumps(["v1.0.42", "- обычное"], ensure_ascii=False) + "\n", encoding="utf-8")
     assert "min_version" not in mirror("v1.0.42"), "помеченных нет — поля нет"
+
+
+def test_android_update_carries_apk_sha256(monkeypatch, download_server, mobile_bridge):
+    # С 1.1.12 программа ставит обновление сама (AppSelfUpdate.kt) и сверяет скачанный APK: sha256 — из version.json
+    # (mirror_release.sh) или из поля digest файла GitHub-релиза; кривое значение — пусто, а не ошибка.
+    digest = "ab" * 32
+    write_version(download_server, version="v1.2.3", sha256={"MagicSQD_Android.apk": digest.upper(), "x": "1"})
+    monkeypatch.setattr(mobile_bridge, "_OWN_SERVER_VERSION_URL", f"{download_server.url}/version.json")
+    assert mobile_bridge._check_update_own_server("1.0.16")["sha256"] == digest
+    write_version(download_server, version="v1.2.3", sha256={"MagicSQD_Android.apk": "не хэш"})
+    assert mobile_bridge._check_update_own_server("1.0.16")["sha256"] == ""
+    releases = _releases()
+    releases[0]["assets"][1]["digest"] = f"sha256:{digest}"
+    monkeypatch.setattr(mobile_bridge.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(releases))
+    assert mobile_bridge._check_update_github("1.0.40")["sha256"] == digest
+    monkeypatch.setattr(mobile_bridge.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(_releases()))
+    assert mobile_bridge._check_update_github("1.0.40")["sha256"] == ""

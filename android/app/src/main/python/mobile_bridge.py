@@ -191,6 +191,12 @@ def check_update(current_version: str) -> str:
     return json.dumps(best)
 
 
+def _sha256_or_empty(value) -> str:
+    """Шестнадцатеричный sha256 или пусто: кривое значение с сервера не должно ломать обновление."""
+    text = str(value or "").strip().lower()
+    return text if re.fullmatch(r"[0-9a-f]{64}", text) else ""
+
+
 def _check_update_own_server(current_version: str):
     try:
         with urllib.request.urlopen(_OWN_SERVER_VERSION_URL, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
@@ -210,9 +216,12 @@ def _check_update_own_server(current_version: str):
     min_version = str(data.get("min_version") or "").strip().lstrip("vV")
     mandatory = (bool(min_version) and _parse_version(current_version) < _parse_version(min_version)) \
         or _is_mandatory_changelog(data.get("changelog"))
+    # sha256 файла (mirror_release.sh) — обновление из самой программы (AppSelfUpdate.kt) сверяет скачанный APK.
+    hashes = data.get("sha256") if isinstance(data.get("sha256"), dict) else {}
     return {"available": True, "version": version,
             "changelog": str(data.get("changelog") or "").strip(),
-            "download_url": _OWN_SERVER_DOWNLOAD_BASE + name, "mandatory": mandatory}
+            "download_url": _OWN_SERVER_DOWNLOAD_BASE + name, "mandatory": mandatory,
+            "sha256": _sha256_or_empty(hashes.get(name))}
 
 
 def _check_update_github(current_version: str):
@@ -252,6 +261,8 @@ def _check_update_github(current_version: str):
         "changelog": str(latest.get("body") or "").strip(),
         "download_url": apk_asset["browser_download_url"],
         "mandatory": mandatory,
+        # GitHub отдаёт «sha256:…» у файлов релиза (поле digest) — та же сверка, что и с зеркалом.
+        "sha256": _sha256_or_empty(str(apk_asset.get("digest") or "").removeprefix("sha256:")),
     }
 
 

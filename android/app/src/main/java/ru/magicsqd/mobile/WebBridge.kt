@@ -151,6 +151,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     init {
         OperationKeeper.onNote = { pushAdbLog(it) }
+        AppSelfUpdate.onStatus = { stage, message -> pushAppUpdate(stage, message) }
         if (!Python.isStarted()) Python.start(AndroidPlatform(context))
         // Закрытый каталог: ключ шифрования и токен официальной сборки — до синхронизации (фоновый
         // поток: импорт python-модулей не на главном). configureCatalog перед applyCatalogSession.
@@ -238,6 +239,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "start_sync" -> { startSync(); "{}" }
                 "access_check" -> { accessCheckAsync(); "{}" }
                 "app_update_check" -> { startUpdateCheck(); "{}" }
+                // Обновление из самой программы (AppSelfUpdate.kt): разрешение на установку, скачивание и установка.
+                "app_update_status" -> JSONObject().put("can", AppSelfUpdate.canInstall(context))
+                    .put("silent", AppSelfUpdate.silentPossible()).toString()
+                "app_update_allow" -> { openInstallPermission(); "{}" }
+                "app_update_install" -> { startAppUpdate(args.getString("url"), args.optString("sha256", "")); "{}" }
                 "supporters_load" -> { startSupportersLoad(); "{}" }
                 "get_sync_progress" -> pyModule("mobile_bridge").callAttr("get_sync_progress").toString()
                 "scanner_list_cars" -> pyModule("mobile_bridge").callAttr("list_cars", carsDir).toString()
@@ -640,11 +646,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         }.start()
     }
 
-    /** Проверка новой версии приложения на GitHub (см. mobile_bridge.
-     * check_update) — только ссылка на apk, БЕЗ автоустановки: в отличие от
-     * desktop-версии (app/web/api/update_api.py), у обычного приложения нет
-     * прав тихо заменить себя без root. Техник открывает ссылку сам, дальше
-     * системный установщик пакетов. */
+    /** Проверка новой версии (mobile_bridge.check_update: зеркало magicsqd.ru и GitHub). Ставит её с 1.1.12 сама
+     * программа — startAppUpdate (AppSelfUpdate.kt); ссылка на APK осталась запасным путём в окне обновления. */
     private fun startUpdateCheck() {
         val currentVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0"
         Thread {
@@ -655,6 +658,54 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             }
             pushEvent(JSONObject().put("kind", "update_check_result").put("result", JSONObject(resultJson)))
         }.start()
+    }
+
+    private val appUpdateBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Окно настроек «Установка неизвестных приложений» для нашей программы; вернувшись, окно обновления само
+     * проверит разрешение (app.js: __onAppShown). */
+    private fun openInstallPermission() {
+        val intent = AppSelfUpdate.permissionIntent(context)
+        if (context !is android.app.Activity) intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            pushAppUpdate("error", "не открылись настройки разрешения (${e.message ?: e.javaClass.simpleName})")
+        }
+    }
+
+    /** Скачать обновление со сверкой sha256, проверить и поставить (AppSelfUpdate). Ход и итог — событием app_update;
+     * успех обычно не приходит: Android закрывает программу, пока ставит новую версию. */
+    private fun startAppUpdate(url: String, sha256: String) {
+        if (!appUpdateBusy.compareAndSet(false, true)) return
+        Thread {
+            try {
+                var lastPush = 0L
+                val apk = AppSelfUpdate.download(context, url, sha256) { done, total ->
+                    val now = System.currentTimeMillis()
+                    if (now - lastPush >= 300 || done == total) {
+                        lastPush = now
+                        pushEvent(JSONObject().put("kind", "app_update").put("stage", "download")
+                            .put("done", done).put("total", total))
+                    }
+                }
+                AppSelfUpdate.verify(context, apk)?.let { reason ->
+                    apk.delete()
+                    throw java.io.IOException(reason)
+                }
+                pushAppUpdate("install", "")
+                AppSelfUpdate.install(context, apk)
+            } catch (e: Exception) {
+                pushAppUpdate("error", e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName)
+            } finally {
+                appUpdateBusy.set(false)
+            }
+        }.apply { isDaemon = true; name = "magicsqd-app-update" }.start()
+    }
+
+    private fun pushAppUpdate(stage: String, message: String) {
+        pushEvent(JSONObject().put("kind", "app_update").put("stage", stage).put("message", message)
+            .put("silent", AppSelfUpdate.silentPossible()))
     }
 
     /** Таблица «магнитола → модель» (mobile_bridge.device_models_refresh) — в фоне при запуске; для подсказки
