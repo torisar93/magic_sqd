@@ -14,7 +14,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 HOST=root@94.102.89.93
 KEY=~/.ssh/magicsqd_deploy
-SSH="ssh -i $KEY -o BatchMode=yes -o ConnectTimeout=20"
+# IdentitiesOnly: только этот ключ — fail2ban на сервере считает и неудачные попытки входа чужими ключами.
+SSH="ssh -i $KEY -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20"
 DEST=/opt/magicsqd/site/download
 # python3 на macOS; в Git Bash на Windows python3 — заглушка Microsoft Store, настоящий там python.
 # PYTHONUTF8 — чтобы Python на Windows читал и печатал UTF-8 (changelog по-русски), а не cp1251.
@@ -86,7 +87,7 @@ PY
 
 echo "== загружаю на сервер ($(du -ch "${UPLOAD[@]/#/$WORK/}" | tail -1 | cut -f1))"
 REMOTE_TMP=$($SSH $HOST "mktemp -d")
-scp -i "$KEY" -q "${UPLOAD[@]/#/$WORK/}" "$WORK/version.json" "$HOST:$REMOTE_TMP/"
+scp -i "$KEY" -o IdentitiesOnly=yes -q "${UPLOAD[@]/#/$WORK/}" "$WORK/version.json" "$HOST:$REMOTE_TMP/"
 $SSH $HOST "set -e
   B=/opt/magicsqd/backups/download-before-$TAG; mkdir -p \$B; cp -p $DEST/version.json \$B/ 2>/dev/null || true
   for f in ${UPLOAD[*]} version.json; do install -m 644 -o magicsqd -g magicsqd $REMOTE_TMP/\$f $DEST/\$f; done
