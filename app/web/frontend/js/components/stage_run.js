@@ -29,7 +29,19 @@
   const FAILURE_HINT = "Если не понимаете, что произошло, откройте лог, скопируйте его и отправьте разработчику.";
   const USER_ERROR_NOTE = "Это не сбой программы: выполните шаги выше и повторите.";
   // onUserError(правило, текст ошибки) — платформа пишет в лог сессии, какое окно увидел техник.
-  const config = { openLog: null, getLogText: null, onUserError: null };
+  // diagnosticsStage() — название этапа с кнопкой «Собрать подробный лог» или null (см. failureHint).
+  const config = { openLog: null, getLogText: null, onUserError: null, diagnosticsStage: null };
+
+  // Кнопка «Собрать подробный лог» (cars/_shared/diagnostics.py) снимает с магнитолы подробности для разработчика —
+  // владелец 18.10: «надо добавить подсказку для техника, чтобы можно было ее нажать». Есть ли она у открытой модели и
+  // уместна ли при этой ошибке (этапы с ADB, не флешка), решает платформа: diagnosticsStage() → название этапа.
+  function failureHint() {
+    let stage = null;
+    try { stage = typeof config.diagnosticsStage === "function" ? config.diagnosticsStage() : null; } catch { stage = null; }
+    return stage
+      ? `Если не понимаете, что произошло: на этапе «${stage}» нажмите «Собрать подробный лог» — так разработчик увидит, почему не получилось.`
+      : FAILURE_HINT;
+  }
   let active = null;
 
   function openLog() {
@@ -381,7 +393,7 @@
         view.append(n("p", "stage-run-message", "Этап остановлен, не завершив работу. Можно запустить его заново."));
       } else {
         view.append(n("p", "stage-run-message", shortMessage ? message : "Этап не выполнен."));
-        view.append(n("p", "stage-run-hint", FAILURE_HINT));
+        view.append(n("p", "stage-run-hint", failureHint()));
         if (message && !shortMessage) {
           const details = n("details", "stage-run-details");
           details.append(n("summary", "", "Технические подробности"), n("pre", "", message));

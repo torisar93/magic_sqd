@@ -662,6 +662,7 @@ window.I18N_EN = {
 
   // Окно этапа: итог, «Что сделать», откат в сток
   "Если не понимаете, что произошло, откройте лог, скопируйте его и отправьте разработчику.": "If you don't understand what happened, open the log, copy it and send it to the developer.",
+  "Если не понимаете, что произошло: на этапе «{p1}» нажмите «Собрать подробный лог» — так разработчик увидит, почему не получилось.": "If you don't understand what happened: at the “{p1}” stage, press “Collect a detailed log” — this lets the developer see why it failed.",
   "Это не сбой программы: выполните шаги выше и повторите.": "This isn't a program failure: follow the steps above and try again.",
   "Открыть лог": "Open log",
   "Что сделать": "What to do",

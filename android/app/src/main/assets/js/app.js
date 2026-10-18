@@ -221,7 +221,19 @@
   window.StageRun.configure({
     openLog: () => setLogOpen(true),
     onUserError: (rule) => { log(`Показано окно для техника: «${rule.title}»`); aiNotify("user_error", rule.title); },
+    diagnosticsStage: () => diagnosticsStageTitle(),
   });
+
+  // Этап с кнопкой «Собрать подробный лог» (cars/_shared/diagnostics.py) — для подсказки в окне непонятной ошибки
+  // (stage_run.js: failureHint). Только когда ошибка на этапе с ADB: флешке подробный лог магнитолы не поможет.
+  const DIAGNOSTICS_LABELS = ["Собрать подробный лог", "Collect a detailed log"];
+  function diagnosticsStageTitle() {
+    const current = stages[currentIndex];
+    if (!current || !["apps", "adb", "actions"].includes(current.type)) return null;
+    const stage = stages.find((s) => s.type === "actions"
+      && (s.actions || []).some((a) => DIAGNOSTICS_LABELS.includes(String(a.label || "").trim())));
+    return stage ? stage.title || "Дополнительные действия" : null;
+  }
 
   function onRunClosed() {
     activeRun = null;
