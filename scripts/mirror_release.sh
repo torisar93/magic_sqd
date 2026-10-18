@@ -35,7 +35,17 @@ REL_ID=$(gh api "repos/{owner}/{repo}/releases/tags/$TAG" --jq .id)
 gh api "repos/{owner}/{repo}/releases/$REL_ID" \
   --jq '.assets[]|select(.name|startswith("MagicSQD_"))|.name+" "+.digest+" "+.browser_download_url' \
   | sed 's/ sha256:/ /' > "$WORK/digests.txt"
-while read -r name _ url; do curl -fsSL -o "$WORK/$name" "$url"; done < "$WORK/digests.txt"
+# Параллельно; почти вставшее соединение (меньше 50 КБ/с 30 с) обрывается и докачивается заново (-C -). Узлы CDN
+# GitHub отдают по-разному: 18.10 при выкладке 1.1.12 файлы шли от 60 КБ/с до 1,6 МБ/с, а порог 256 КБ/с один файл
+# не прошёл ни с одной из 31 попытки — медленное, но идущее скачивание теперь доводится до конца.
+# Целостность — сверкой sha256 ниже; файл, который так и не скачался, — остановка, а не «пропускаю».
+PIDS=()
+while read -r name _ url; do
+  curl -fsSL --retry 20 --retry-delay 2 --retry-all-errors --speed-limit 51200 --speed-time 30 -C - \
+    -o "$WORK/$name" "$url" &
+  PIDS+=($!)
+done < "$WORK/digests.txt"
+for pid in "${PIDS[@]}"; do wait "$pid" || { echo "   ассет релиза не скачался — зеркало не трогаю"; exit 1; }; done
 
 # ключ в version.json → шаблон имени в релизе → стабильное имя на зеркале
 declare -a MAP=(
