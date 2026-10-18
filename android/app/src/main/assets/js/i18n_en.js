@@ -798,6 +798,9 @@ window.I18N_EN = {
   "Снова вставьте флешку в магнитолу (экран с QR-кодом должен быть открыт).": "Insert the flash drive into the head unit again (the QR code screen must be open).",
   "Дождитесь надписи «QNX OK» — это может занять пару минут.": "Wait for “QNX OK” — this can take a couple of minutes.",
   "Выньте флешку, подключите её снова и нажмите «Получить пароль».": "Remove the flash drive, connect it again and press “Get password”.",
+  // Окно с сервера (content/config/client.json, qr_no_password_fields, 18.10): отчёт без salt/password/sn.
+  "В отчёте магнитолы нет данных для пароля": "The head unit's report has no password data",
+  "Магнитола записала отчёт на флешку, но без данных для пароля — так бывает, если в момент записи на её экране не был открыт QR-код для ADB.": "The head unit wrote a report to the flash drive, but without the password data — this happens if the ADB QR code wasn't open on its screen while it was writing.",
   "Выбраны несовместимые приложения": "Incompatible apps selected",
   "Снимите галочку с одного из них — оставьте одно.": "Untick one of them — keep just one.",
   "Нет интернета — файлы не скачались": "No internet — the files weren't downloaded",
