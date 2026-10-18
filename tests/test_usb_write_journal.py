@@ -194,3 +194,29 @@ def test_partial_download_is_written_with_a_warning(env, monkeypatch):
     lines = journal(env)
     assert "Скачалось не всё (подробности выше) — на флешку пойдут только скачанные файлы." in lines
     assert env.events[-1]["kind"] == "usb_finished" and env.events[-1]["success"] is True
+
+
+def test_computer_out_of_space_before_writing_is_not_blamed_on_the_flash(env, monkeypatch):
+    # Лог №7407 (ПК 1.1.11): место кончилось на диске компьютера ещё при подготовке файлов, а окно говорило «На флешке
+    # не хватает места» — техник трижды повторял запись на ту же флешку. Теперь итог называет диск компьютера.
+    def downloading(*a, on_progress, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(usb_api, "sync_model_files", downloading)
+    run(env)
+    finished = env.events[-1]
+    assert finished["kind"] == "usb_finished" and finished["success"] is False
+    assert finished["message"].startswith("На диске компьютера (свободно ")
+    assert "Запись на флешку не начиналась." in finished["message"] and "No space left on device" in finished["message"]
+    assert not any(line.startswith("Пишу на флешку") for line in journal(env))
+
+
+@pytest.mark.parametrize("path", ["plan", "legacy"])
+def test_flash_out_of_space_while_writing_stays_a_flash_error(env, monkeypatch, path):
+    def write_then_fail(ctx):
+        ctx._on_progress("update.bin", 8, 8, 1, 3, "done")
+        raise OSError(28, "No space left on device")
+
+    _write_through(monkeypatch, path, write_then_fail)
+    run(env)
+    assert env.events[-1]["message"] == "Ошибка: [Errno 28] No space left on device"

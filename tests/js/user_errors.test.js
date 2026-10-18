@@ -47,6 +47,8 @@ const CASES = [
   ["«DuduAutoUi.apk» не установлено: системный раздел не открылся на запись (adb remount: remount of /system failed: Permission denied remount failed)", "system_read_only"],
   ["«DuduAutoUi.apk» не установлено: магнитола не дала права root (adb root: adbd cannot run as root in production builds)", "system_read_only"],
   ["Ошибка: [Errno 28] No space left on device: 'E:\\\\update.zip'", "no_space"],
+  // ПК: место кончилось на диске компьютера ещё до записи (лог №7407) — не «на флешке»
+  ["На диске компьютера (C:, свободно 0,0 МБ) не хватает места для файлов программы — она скачивает их к себе, а потом пишет на флешку. Запись на флешку не начиналась. ([Errno 28] No space left on device)", "pc_no_space"],
   ["Ошибка: [WinError 19] Носитель защищен от записи", "write_protected"],
   // QR ADB (логи #754, #766, #774, #675, #695)
   ["На флешке не найдена папка logs_*. Проверьте: файл svlog.flag был на флешке ДО того, как её вставили в магнитолу, и на экране появилась надпись «QNX OK».", "qr_no_logs"],

@@ -4,6 +4,9 @@ stage wizard (этап type="usb"). Портировано из app/usb_dialog.p
 форматирование, затем run_fn(ctx)), только прогресс идёт через
 app/web/events.py вместо queue.Queue+self.after(100, ...)."""
 from __future__ import annotations
+import errno
+import re
+import shutil
 import sys
 import threading
 import time
@@ -102,6 +105,35 @@ class _DownloadMeter:
                              else {"percent": done * 100 / total})
                 event_bridge.push(event)
         return report
+
+
+_NO_SPACE = re.compile(r"No space left on device|Errno 28\b|WinError 112\b|ENOSPC|Недостаточно места на диске", re.I)
+
+
+def _out_of_space(exc: BaseException) -> bool:
+    """Кончилось место: OSError ENOSPC где-то в цепочке причин или тот же текст (обёртки скачивания пересказывают)."""
+    seen = exc
+    for _ in range(5):
+        if seen is None:
+            break
+        if isinstance(seen, OSError) and seen.errno == errno.ENOSPC or _NO_SPACE.search(str(seen)):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
+
+
+def _computer_out_of_space(base_dir: Path, exc: BaseException) -> str:
+    """Место кончилось ДО записи на флешку — на диске компьютера: программа сначала скачивает файлы к себе. Раньше
+    окно говорило «На флешке не хватает места», и техник трижды повторял запись на ту же флешку (лог №7407, ПК 1.1.11:
+    метка флешки не сменилась — до форматирования не дошло). Текст ловит окно pc_no_space (user_errors.js)."""
+    drive = Path(base_dir).anchor.rstrip("\\/")  # «C:» на Windows, на macOS — пусто
+    try:
+        free = f"свободно {_mb(shutil.disk_usage(base_dir).free)}"
+    except OSError:
+        free = ""
+    where = ", ".join(part for part in (drive, free) if part)
+    return (f"На диске компьютера{f' ({where})' if where else ''} не хватает места для файлов программы — она "
+            f"скачивает их к себе, а потом пишет на флешку. Запись на флешку не начиналась. ({exc})")
 
 
 def _nothing_to_write(problems: list[str]) -> str:
@@ -440,7 +472,10 @@ class UsbApi:
             # Traceback больше не льём в видимый лог — см. app/runner.py за
             # тем же решением и обоснованием.
             self._journal_write_stopped(f"прервалась ({exc})", write_started)
-            self._finish(False, f"Ошибка: {exc}")
+            if write_started is None and _out_of_space(exc):
+                self._finish(False, _computer_out_of_space(self.base_dir, exc))
+            else:
+                self._finish(False, f"Ошибка: {exc}")
             return
         total = sum(item["size"] for item in items)
         self._journal(f"Запись на флешку закончена: {_files(len(items))}, {_mb(total)} за "
