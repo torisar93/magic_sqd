@@ -101,6 +101,17 @@
   // установку. Сбрасывается при каждом open().
   const failedStages = new Map();
 
+  // Этап с кнопкой «Собрать подробный лог» (cars/_shared/diagnostics.py) — для подсказки в окне непонятной ошибки
+  // (stage_run.js: failureHint). Только когда ошибка на этапе с ADB: флешке подробный лог магнитолы не поможет.
+  const DIAGNOSTICS_LABELS = ["Собрать подробный лог", "Collect a detailed log"];
+  function diagnosticsStageTitle() {
+    const current = stages[currentIndex];
+    if (!current || !["apps", "adb", "actions"].includes(current.type)) return null;
+    const stage = stages.find((s) => s.type === "actions"
+      && (s.actions || []).some((a) => DIAGNOSTICS_LABELS.includes(String(a.label || "").trim())));
+    return stage ? stage.title || "Дополнительные действия" : null;
+  }
+
   // Автоматический лог одной попытки установки (см. server/backend.py:
   // POST /install_log) — весь текст, что видел техник в log-панели за этот
   // сеанс работы с моделью, плюс отдельный флаг "было ли что-то, кроме
@@ -282,7 +293,7 @@
     window.StageRun.configure({ onUserError: (rule) => {
       log(`Показано окно для техника: «${rule.title}»`);
       aiNotify("user_error", rule.title);
-    } });
+    }, diagnosticsStage: diagnosticsStageTitle });
     window.events.on("sync_progress", (event) => updateSyncProgress(
       event.done, event.total, event.files_done, event.files_total,
     ));
