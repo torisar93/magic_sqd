@@ -259,15 +259,20 @@ begin
 end;
 
 // Остатки прошлых неудачных попыток (_internal.old-…, _internal.failed-…) — после удачной установки они не нужны.
+// Маска Windows «_internal.*» совпадает и с самой _internal (пустое расширение) — поэтому имя проверяется явно:
+// без этой проверки уборка стирала только что установленную папку (поймано проверкой в ВМ 19.10.2026).
 procedure CleanupLeftovers();
 var
   FindRec: TFindRec;
+  Name: String;
 begin
   if FindFirst(ExpandConstant('{app}\_internal.*'), FindRec) then
   begin
     try
       repeat
-        if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
+        Name := LowerCase(FindRec.Name);
+        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and
+           ((Pos('_internal.old', Name) = 1) or (Pos('_internal.failed', Name) = 1)) then
           DelTree(ExpandConstant('{app}\') + FindRec.Name, True, True, True);
       until not FindNext(FindRec);
     finally

@@ -84,6 +84,10 @@ def test_internal_is_swapped_not_wiped():
     assert "ExecutablePath.StartsWith(" in kill and "Stop-Process" in kill  # только запущенное из папки программы
     for lang in ("russian", "english"):
         assert re.search(rf"^{lang}\.FilesInUse=.+", text, re.M), lang
+    # Маска «_internal.*» совпадает и с самой _internal — уборка остатков обязана проверять имя (иначе стирала
+    # только что установленную папку — поймано в ВМ 19.10.2026).
+    cleanup = body("procedure CleanupLeftovers(")
+    assert "Pos('_internal.old', Name) = 1" in cleanup and "Pos('_internal.failed', Name) = 1" in cleanup
 
 
 def test_server_json_is_installed_before_the_program():
