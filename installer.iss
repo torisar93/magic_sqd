@@ -258,6 +258,24 @@ begin
   Log(Result);
 end;
 
+// Остатки прошлых неудачных попыток (_internal.old-…, _internal.failed-…) — после удачной установки они не нужны.
+procedure CleanupLeftovers();
+var
+  FindRec: TFindRec;
+begin
+  if FindFirst(ExpandConstant('{app}\_internal.*'), FindRec) then
+  begin
+    try
+      repeat
+        if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
+          DelTree(ExpandConstant('{app}\') + FindRec.Name, True, True, True);
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
@@ -266,12 +284,13 @@ begin
     if InternalMoved then
       if not DelTree(OldDir, True, True, True) then
         Log('Прежняя _internal удалилась не целиком: ' + OldDir);
+    CleanupLeftovers();
   end;
 end;
 
 procedure DeinitializeSetup();
 var
-  ResultCode: Integer;
+  ResultCode, I: Integer;
 begin
   if not UpdateAttempted then
     Exit;
@@ -280,7 +299,17 @@ begin
   if InternalMoved then
   begin
     Log('Установка не закончилась — возвращаю прежнюю _internal');
-    DelTree(InternalDir(), True, True, True);
+    // Недописанная новая _internal: удалить (файл может быть ещё занят антивирусом — несколько попыток), не
+    // удаляется — отложить в сторону, чтобы прежняя встала на своё место.
+    for I := 1 to 5 do
+      if DirExists(InternalDir()) then
+      begin
+        DelTree(InternalDir(), True, True, True);
+        if DirExists(InternalDir()) then
+          Sleep(1000);
+      end;
+    if DirExists(InternalDir()) then
+      RenameFile(InternalDir(), InternalDir() + '.failed-' + GetDateTimeString('yyyymmddhhnnss', #0, #0));
     if RenameFile(OldDir, InternalDir()) then
       Log('Прежняя _internal возвращена')
     else
