@@ -50,7 +50,40 @@ def test_installers_force_close_whatever_holds_program_files():
         text = (ROOT / name).read_text(encoding="utf-8")
         assert re.search(r"^CloseApplications=force$", text, re.M), name
         assert re.search(r"^CloseApplicationsFilter=\*\.exe,\*\.dll,\*\.pyd,\*\.chm$", text, re.M), name
-        assert 'Type: filesandordirs; Name: "{app}\\_internal"' in text, name  # чистка _internal остаётся
+        assert re.search(r"^SetupLogging=yes$", text, re.M), name  # журнал и без /LOG
+
+
+def test_internal_is_swapped_not_wiped():
+    """Владелец 19.10.2026: 1.1.11 → 1.1.12 — «No module named 'collections.abc'», программа не запускается.
+    [InstallDelete] стирал _internal до копирования, а оборвавшееся копирование откат не возвращал. Теперь _internal
+    переименовывается до установки (не вышло — закрыть процессы из папки программы и повторить, иначе не начинать),
+    удаляется после удачной установки и возвращается при сбое."""
+    text = (ROOT / "installer.iss").read_text(encoding="utf-8")
+
+    def section(name):  # заголовок раздела — в начале строки ([InstallDelete] встречается и в комментариях)
+        start = re.search(rf"^\[{name}\]$", text, re.M).end()
+        nxt = re.compile(r"^\[[A-Za-z]+\]$", re.M).search(text, start)
+        return text[start:nxt.start() if nxt else len(text)]
+
+    delete = section("InstallDelete")
+    assert not re.search(r'^Type: filesandordirs; Name: "\{app\}\\_internal"', delete, re.M), "стирать заранее нельзя"
+    assert re.search(r'^Type: filesandordirs; Name: "\{app\}\\app"', delete, re.M)  # старая плоская раскладка
+    code = section("Code")
+
+    def body(signature):
+        start = code.index(signature)
+        return code[start:code.index("\nend;", start)]
+
+    prepare = body("function PrepareToInstall(")
+    assert "RenameFile(InternalDir(), OldDir)" in prepare and "KillAppProcesses()" in prepare
+    assert "Result := CustomMessage('FilesInUse')" in prepare  # не вышло — установка не начинается
+    assert "DelTree(OldDir" in body("procedure CurStepChanged(") and "ssPostInstall" in body("procedure CurStepChanged(")
+    restore = body("procedure DeinitializeSetup(")
+    assert "RenameFile(OldDir, InternalDir())" in restore and "if InstallFinished then" in restore
+    kill = body("procedure KillAppProcesses(")
+    assert "ExecutablePath.StartsWith(" in kill and "Stop-Process" in kill  # только запущенное из папки программы
+    for lang in ("russian", "english"):
+        assert re.search(rf"^{lang}\.FilesInUse=.+", text, re.M), lang
 
 
 def test_server_json_is_installed_before_the_program():
