@@ -47,6 +47,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll,*.pyd,*.chm
 RestartApplications=no
+; Журнал установки — всегда (%TEMP%\Setup Log ГГГГ-ММ-ДД #NNN.txt): автообновление запускает установщик без /LOG,
+; и когда 1.1.11 → 1.1.12 у владельца закончилось программой, которая не запускается («No module named
+; 'collections.abc'», 19.10.2026), понять, на каком файле оборвалось, было не из чего.
+SetupLogging=yes
 
 ; Английская версия (с 1.1.4): язык установщика — по языку Windows (без вопроса), русский — первым.
 ShowLanguageDialog=auto
@@ -67,6 +71,8 @@ russian.InstallingWebView2=Устанавливаю компонент WebView2 
 english.InstallingWebView2=Installing the WebView2 Runtime component...
 russian.LaunchApp=Запустить {#MyAppName}
 english.LaunchApp=Launch {#MyAppName}
+russian.FilesInUse=Файлы {#MyAppName} заняты другой программой — обновление не начато, прежняя версия осталась. Закройте {#MyAppName} и запустите установку ещё раз.
+english.FilesInUse={#MyAppName} files are in use by another program — the update has not started and the previous version is kept. Close {#MyAppName} and run the installer again.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:DesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -84,9 +90,13 @@ Name: "desktopicon"; Description: "{cm:DesktopIcon}"; GroupDescription: "{cm:Add
 ; снова сломало интерфейс, чистая установка в порядке" — на чистой
 ; установке этого мусора просто неоткуда взяться). Пользовательские данные
 ; (cars/, apk/, *.json конфиги, логи, admin_saved_login.json) лежат РЯДОМ
-; с {app}\_internal, не внутри него (см. get_base_dir) — полностью удалять
+; с {app}\_internal, не внутри него (см. get_base_dir) — полностью убирать
 ; эту папку перед каждой установкой безопасно и не трогает их.
-Type: filesandordirs; Name: "{app}\_internal"
+; С 1.1.13 _internal убирает не [InstallDelete], а [Code] (PrepareToInstall): папка ПЕРЕИМЕНОВЫВАЕТСЯ в
+; _internal.old и удаляется только после удачной установки, а при сбое возвращается на место. [InstallDelete]
+; стирал её сразу — и если копирование потом обрывалось (занятый файл, антивирус, место), откат Inno Setup
+; стёртое не возвращал: программа не запускалась («Cannot find win-arm64» 30.09, «No module named
+; 'collections.abc'» у владельца 19.10.2026 после 1.1.11 → 1.1.12).
 ; На случай машин, обновляющихся ещё с эпохи ДО PyInstaller 6 (плоская
 ; раскладка, без _internal\) — та же папка могла остаться прямо в {app}\app.
 ; Не мешает: если её нет, Inno Setup просто пропускает пункт без ошибки.
@@ -182,6 +192,106 @@ begin
     if RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
       if (Version <> '') and (Version <> '0.0.0.0') then
         Result := True;
+end;
+
+// Замена _internal без риска оставить программу без неё (см. [InstallDelete]): до установки папка
+// переименовывается (переименовать папку нельзя, пока любой файл в ней открыт, — это и проверка «всё ли
+// закрыто»), после удачной установки удаляется, при сбое — возвращается на место.
+var
+  InternalMoved: Boolean;     // _internal отложена в OldDir
+  UpdateAttempted: Boolean;   // ставим поверх уже установленной программы
+  InstallFinished: Boolean;   // файлы скопированы целиком
+  OldDir: String;
+
+function InternalDir(): String;
+begin
+  Result := ExpandConstant('{app}\_internal');
+end;
+
+// Закрыть всё, что запущено из папки программы (сама программа, её adb из tools\), — с /F, как taskkill.
+// Только по пути: чужой adb (Android Studio и т.п.) не трогаем.
+procedure KillAppProcesses();
+var
+  ResultCode: Integer;
+  AppDir, Params: String;
+begin
+  AppDir := AddBackslash(ExpandConstant('{app}'));
+  StringChangeEx(AppDir, '''', '''''', True);
+  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' +
+    'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and ' +
+    '$_.ExecutablePath.StartsWith(''' + AppDir + ''', [StringComparison]::OrdinalIgnoreCase) } | ' +
+    'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"';
+  Log('Закрываю процессы, запущенные из папки программы');
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE,
+              ewWaitUntilTerminated, ResultCode) then
+    Log('PowerShell не запустился');
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  if not DirExists(InternalDir()) then
+    Exit;  // чистая установка
+  UpdateAttempted := True;
+  OldDir := ExpandConstant('{app}\_internal.old');
+  if DirExists(OldDir) then
+    DelTree(OldDir, True, True, True);  // остаток прошлой неудачной попытки
+  if DirExists(OldDir) then
+    OldDir := OldDir + '-' + GetDateTimeString('yyyymmddhhnnss', #0, #0);
+  for I := 1 to 8 do
+  begin
+    if RenameFile(InternalDir(), OldDir) then
+    begin
+      InternalMoved := True;
+      Log('_internal отложена: ' + OldDir);
+      Exit;
+    end;
+    Log(Format('_internal занята, попытка %d', [I]));
+    if I = 1 then
+      KillAppProcesses();
+    Sleep(1500);
+  end;
+  // Ничего не тронуто — прежняя версия на месте и запускается.
+  Result := CustomMessage('FilesInUse');
+  Log(Result);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    InstallFinished := True;
+    if InternalMoved then
+      if not DelTree(OldDir, True, True, True) then
+        Log('Прежняя _internal удалилась не целиком: ' + OldDir);
+  end;
+end;
+
+procedure DeinitializeSetup();
+var
+  ResultCode: Integer;
+begin
+  if not UpdateAttempted then
+    Exit;
+  if InstallFinished then
+    Exit;
+  if InternalMoved then
+  begin
+    Log('Установка не закончилась — возвращаю прежнюю _internal');
+    DelTree(InternalDir(), True, True, True);
+    if RenameFile(OldDir, InternalDir()) then
+      Log('Прежняя _internal возвращена')
+    else
+      Log('Вернуть прежнюю _internal не удалось: ' + OldDir);
+  end;
+  // Тихое автообновление не получилось: программу закрыли ради него — запустить прежнюю версию, чтобы техник не
+  // остался без программы (откроет окно обновления — можно повторить или скачать установщик вручную).
+  if WizardSilent then
+    if DirExists(InternalDir()) then
+      if FileExists(ExpandConstant('{app}\{#MyAppExeName}')) then
+        Exec(ExpandConstant('{app}\{#MyAppExeName}'), '', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
 end;
 
 [Run]
