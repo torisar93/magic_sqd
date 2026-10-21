@@ -621,6 +621,47 @@ def _answer_text(result) -> str:
     return " ".join(((getattr(result, "stdout", "") or "") + " " + (getattr(result, "stderr", "") or "")).split())
 
 
+# Changan CS75 Plus (S311_MCA_GULF, ПК 1.1.9, логи №7872, №8289, №8290 — две магнитолы): pm uninstall simple_control
+# молчал 120 с без запроса пароля, приложение оставалось. Программа ставит его со включённой службой спецвозможностей —
+# похоже, удаление виснет на работающей службе. Поэтому перед удалением служба выключается и приложение
+# останавливается; ждём меньше, а не дождавшись — проверяем, стоит ли приложение, и говорим, что делать.
+_UNINSTALL_TIMEOUT = 60
+_PRESENCE_TIMEOUT = 30
+_PRESENT_MARK = "msqd_pkg_present"
+_GONE_MARK = "msqd_pkg_gone"
+
+
+def _release_before_uninstall(ctx, package: str) -> None:
+    current = (ctx.shell("settings get secure enabled_accessibility_services", check=False).stdout or "").strip()
+    existing = [c for c in current.split(":") if c] if current and current != "null" else []
+    left = [c for c in existing if c.split("/", 1)[0] != package]
+    if len(left) != len(existing):
+        ctx.log("Выключаю службу спецвозможностей приложения перед удалением...")
+        ctx.shell("settings put secure enabled_accessibility_services " + (":".join(left) or "''"), check=False)
+    ctx.shell(f"am force-stop {package}", check=False)
+
+
+def _shell_or_timeout(ctx, command: str, timeout: int):
+    """Ответ команды или None — не ответила за timeout. На ПК это AdbTimeoutError (класс не импортируем: файл приходит
+    и в старые версии программы), на телефоне — пустой ответ без исключения."""
+    try:
+        return ctx.shell(command, check=False, timeout=timeout)
+    except Exception as exc:  # noqa: BLE001
+        if type(exc).__name__ != "AdbTimeoutError":
+            raise
+        return None
+
+
+def _is_installed(ctx, package: str) -> "bool | None":
+    """Стоит ли приложение: True/False, None — магнитола не ответила. Без grep — его нет на части прошивок."""
+    result = _shell_or_timeout(ctx, f'case "$(pm path {package})" in *package:*) echo {_PRESENT_MARK};; '
+                                    f'*) echo {_GONE_MARK};; esac', _PRESENCE_TIMEOUT)
+    text = _answer_text(result)
+    if _PRESENT_MARK in text:
+        return True
+    return False if _GONE_MARK in text else None
+
+
 def uninstall_app(ctx, package: str) -> None:
     """Удаляет стороннее приложение (pm uninstall) — в отличие от disable_app,
     СТИРАЕТ его с магнитолы полностью. Штатные удалять нельзя (см.
@@ -642,9 +683,17 @@ def uninstall_app(ctx, package: str) -> None:
     if stock:
         ctx.log("Не удалось удалить: это штатное приложение магнитолы — удалять его через программу нельзя.")
         return
-    result = ctx.shell(f"pm uninstall {package}", check=False)
-    text = ((result.stdout or "") + (result.stderr or "")).strip()
-    if "success" in text.lower() and "failure" not in text.lower():
+    _release_before_uninstall(ctx, package)
+    result = _shell_or_timeout(ctx, f"pm uninstall {package}", _UNINSTALL_TIMEOUT)
+    text = ((result.stdout or "") + (result.stderr or "")).strip() if result is not None else ""
+    if not text:
+        # Не ответила (Changan, см. _UNINSTALL_TIMEOUT) или ответ потерялся — по самой магнитоле, удалено ли.
+        if _is_installed(ctx, package) is False:
+            ctx.log("Готово.")
+        else:
+            ctx.log("Не удалось удалить: магнитола не ответила на удаление — удалите приложение штатно на самой "
+                    "магнитоле (Настройки → Приложения).")
+    elif "success" in text.lower() and "failure" not in text.lower():
         ctx.log("Готово.")
     elif "error: closed" in text.lower():
         # Geely OneOS/Monji, VOLGA/N155, Jetour T2: pm закрыт прошивкой (логи #797, #962, №1746) — удаляем своим
@@ -669,8 +718,11 @@ def remove_for_rollback(ctx, package: str) -> str:
     этот же запуск этапа «Приложения» — без проверки «штатное ли» (ставили сами). Итог строкой: "removed" — удалено,
     "blocked" — прошивка не даёт удалять через ADB (техник удаляет штатно на самой магнитоле), "failed: <причина>" — не
     вышло. Итог в журнал пишет вызывающий; здесь — только ход (dex-хелпер)."""
-    result = ctx.shell(f"pm uninstall {package}", check=False)
-    text = " ".join(((result.stdout or "") + " " + (result.stderr or "")).split())
+    _release_before_uninstall(ctx, package)
+    result = _shell_or_timeout(ctx, f"pm uninstall {package}", _UNINSTALL_TIMEOUT)
+    text = _answer_text(result)
+    if not text:  # как в uninstall_app
+        return "removed" if _is_installed(ctx, package) is False else "failed: магнитола не ответила на удаление"
     if "success" in text.lower() and "failure" not in text.lower():
         return "removed"
     if "error: closed" in text.lower():

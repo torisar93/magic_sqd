@@ -68,7 +68,9 @@ def test_uninstall_app_reports_empty_response_as_failure():
     должно молча выглядеть как успех."""
     ctx, log = _make_ctx(stdout="", stderr="")
     adb_permissions.uninstall_app(ctx, "com.example.app")
-    assert log == ["Удаляю приложение: com.example.app", "Не удалось удалить: устройство не ответило"]
+    assert log == ["Удаляю приложение: com.example.app",
+                   "Не удалось удалить: магнитола не ответила на удаление — удалите приложение штатно на самой магнитоле "
+                   "(Настройки → Приложения)."]
 
 
 def test_uninstall_app_checks_stderr_too():
@@ -256,3 +258,98 @@ def test_normal_answer_needs_no_extra_commands():
     ctx, log, commands = _ctx_lists("package:ru.vk.store\n", "", "")
     assert adb_permissions.list_installed_packages(ctx) == ["ru.vk.store"]
     assert commands == ["pm list packages -3", adb_permissions._SYSTEM_APP_MARKERS_COMMAND] and log == []
+
+
+# Changan CS75 Plus (логи №7872, №8289, №8290): pm uninstall simple_control молчал 120 с, приложение оставалось. Оно
+# стоит со включённой службой спецвозможностей — перед удалением служба выключается, приложение останавливается; ждём
+# меньше и, не дождавшись, проверяем по магнитоле, удалено ли.
+
+class AdbTimeoutError(Exception):  # как app/adb_utils.AdbTimeoutError: общий код узнаёт её по имени класса
+    pass
+
+
+def _changan_ctx(uninstall, installed, services="ace.jun.simplecontrol/ace.jun.simplecontrol.service.AccService:"
+                                              "com.other/.Svc"):
+    log, commands = [], []
+
+    def shell(command, check=True, timeout=120):
+        commands.append((command, timeout))
+        if command == "pm list packages -s":
+            return SimpleNamespace(stdout=_SYSTEM, stderr="")
+        if command == "settings get secure enabled_accessibility_services":
+            return SimpleNamespace(stdout=services + "\n", stderr="")
+        if command.startswith("pm uninstall"):
+            if uninstall is AdbTimeoutError:
+                raise AdbTimeoutError(f"Команда не ответила за {timeout} сек")
+            return SimpleNamespace(stdout=uninstall, stderr="")
+        if "pm path" in command:
+            mark = {True: adb_permissions._PRESENT_MARK, False: adb_permissions._GONE_MARK, None: ""}[installed]
+            return SimpleNamespace(stdout=mark + "\n", stderr="")
+        return SimpleNamespace(stdout="", stderr="")
+
+    return SimpleNamespace(log=log.append, shell=shell, sleep=lambda s: None), log, commands
+
+
+def test_accessibility_service_released_before_uninstall():
+    ctx, log, commands = _changan_ctx("Success\n", installed=False)
+    adb_permissions.uninstall_app(ctx, "ace.jun.simplecontrol")
+    names = [c for c, _ in commands]
+    put = "settings put secure enabled_accessibility_services com.other/.Svc"
+    assert names.index(put) < names.index("am force-stop ace.jun.simplecontrol") < names.index(
+        "pm uninstall ace.jun.simplecontrol")  # чужие службы остаются
+    assert ("pm uninstall ace.jun.simplecontrol", adb_permissions._UNINSTALL_TIMEOUT) in commands
+    assert log == ["Удаляю приложение: ace.jun.simplecontrol",
+                   "Выключаю службу спецвозможностей приложения перед удалением...", "Готово."]
+
+
+def test_last_accessibility_service_leaves_empty_list():
+    ctx, log, commands = _changan_ctx("Success\n", installed=False,
+                                      services="ace.jun.simplecontrol/ace.jun.simplecontrol.service.AccService")
+    adb_permissions.uninstall_app(ctx, "ace.jun.simplecontrol")
+    assert ("settings put secure enabled_accessibility_services ''", 120) in commands
+
+
+def test_app_without_service_does_not_touch_settings():
+    ctx, log, commands = _changan_ctx("Success\n", installed=False, services="null")
+    adb_permissions.uninstall_app(ctx, "ru.yandex.music")
+    assert not any(c.startswith("settings put") for c, _ in commands)
+    assert log == ["Удаляю приложение: ru.yandex.music", "Готово."]
+
+
+def test_silent_uninstall_checked_on_the_unit():
+    ctx, log, _ = _changan_ctx(AdbTimeoutError, installed=True)  # ПК: не ответила за таймаут, приложение на месте
+    adb_permissions.uninstall_app(ctx, "ace.jun.simplecontrol")
+    assert log[-1].startswith("Не удалось удалить: магнитола не ответила на удаление — удалите приложение штатно")
+    ctx, log, _ = _changan_ctx(AdbTimeoutError, installed=False)  # не ответила, но удалила
+    adb_permissions.uninstall_app(ctx, "ace.jun.simplecontrol")
+    assert log[-1] == "Готово."
+    ctx, log, _ = _changan_ctx("", installed=None)  # телефон: пустой ответ, и проверка не ответила
+    adb_permissions.uninstall_app(ctx, "ace.jun.simplecontrol")
+    assert log[-1].startswith("Не удалось удалить: магнитола не ответила на удаление")
+
+
+def test_rollback_releases_service_and_survives_silence():
+    ctx, log, commands = _changan_ctx(AdbTimeoutError, installed=False)
+    assert adb_permissions.remove_for_rollback(ctx, "ace.jun.simplecontrol") == "removed"
+    assert "am force-stop ace.jun.simplecontrol" in [c for c, _ in commands]
+    ctx, log, commands = _changan_ctx(AdbTimeoutError, installed=True)
+    assert adb_permissions.remove_for_rollback(ctx, "ace.jun.simplecontrol") == "failed: магнитола не ответила на удаление"
+
+
+def test_other_errors_are_not_swallowed():
+    """Остановку техником (InstallCancelled) и прочие ошибки общий код не глотает — только таймаут."""
+    class InstallCancelled(Exception):
+        pass
+
+    def shell(command, check=True, timeout=120):
+        if command.startswith("pm uninstall"):
+            raise InstallCancelled("Остановлено пользователем.")
+        return SimpleNamespace(stdout=_SYSTEM if command == "pm list packages -s" else "", stderr="")
+
+    ctx = SimpleNamespace(log=lambda m: None, shell=shell, sleep=lambda s: None)
+    try:
+        adb_permissions.uninstall_app(ctx, "com.example.app")
+    except InstallCancelled:
+        pass
+    else:
+        raise AssertionError("остановка должна дойти до этапа")
