@@ -36,6 +36,9 @@ _kernel32.GetDiskFreeSpaceExW.argtypes = [
 ]
 _kernel32.GetDiskFreeSpaceExW.restype = ctypes.c_bool
 
+_kernel32.GetOEMCP.argtypes = []
+_kernel32.GetOEMCP.restype = ctypes.c_uint
+
 
 @dataclass
 class DriveInfo:
@@ -179,7 +182,9 @@ def format_drive(letter: str, filesystem: str, label: str, base_dir: Path, log=l
                                "в FAT32 сторонней программой (например, Rufus) и запишите без форматирования.")
 
     log(f"Форматирование {letter}\\ в {filesystem}...")
+    # Вывод PowerShell — в UTF-8: иначе русская ошибка приходила кракозябрами (логи №3755, №7806).
     ps_command = (
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
         f"Format-Volume -DriveLetter {drive_letter} -FileSystem {filesystem} "
         f"-NewFileSystemLabel '{safe_label}' -Confirm:$false -Force | Out-Null"
     )
@@ -189,6 +194,50 @@ def format_drive(letter: str, filesystem: str, label: str, base_dir: Path, log=l
         timeout=600, creationflags=CREATE_NO_WINDOW, stdin=subprocess.DEVNULL,
     )
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(f"Не удалось отформатировать {letter}\\: {detail}")
+        detail = _first_error_line(result.stderr or result.stdout)
+        # Запасной способ — format.com (тот же FormatEx, что у «Форматировать…» в Проводнике): Format-Volume отвечает
+        # «Invalid Parameter» на части флешек (логи №3915, №5100, №8339 — 29–58 ГБ, после магнитолы, все три ФС) и не
+        # видит тома у части картридеров («нет объекта MSFT_Volume», №3755, №7806).
+        log(f"Format-Volume не справился ({detail}) — форматирую командой format...")
+        fallback = _format_com(drive_letter, filesystem, safe_label)
+        if fallback.returncode != 0:
+            raise RuntimeError(f"Не удалось отформатировать {letter}\\: {detail}; format: "
+                               f"{_first_error_line(fallback.stdout + fallback.stderr) or f'код {fallback.returncode}'}")
     log("Форматирование завершено.")
+
+
+# Хвост ошибки PowerShell после самого сообщения: место в команде, идентификаторы.
+_PS_ERROR_TAIL = ("At line", "строка:", "+ ", "Activity ID", "Идентификатор действия")
+
+
+def _first_error_line(text: str) -> str:
+    """Суть ошибки одной строкой. PowerShell: сообщение до места в команде («At line»/«строка:») — длинное он
+    переносит по ширине консоли посреди слова, поэтому куски склеиваются без пробела. format.com — последняя строка."""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    if not lines[0].startswith("Format-Volume"):
+        return lines[-1]
+    head = [lines[0]]
+    for line in lines[1:]:
+        if line.startswith(_PS_ERROR_TAIL):
+            break
+        head.append(line)
+    return "".join(head)
+
+
+def _format_com(drive_letter: str, filesystem: str, safe_label: str) -> subprocess.CompletedProcess:
+    """format X: /FS: /Q /V: /X /Y — без вопросов (/Y — «продолжить форматирование?», /X — отключить том, если открыт;
+    «вставьте диск и нажмите ВВОД» у съёмных — пустыми строками во вводе). Вывод — в кодировке OEM консоли."""
+    fs = {"FAT32": "FAT32", "EXFAT": "exFAT", "NTFS": "NTFS"}[filesystem.upper()]
+    exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "format.com"
+    try:
+        encoding = f"cp{_kernel32.GetOEMCP()}"
+        "".encode(encoding)
+    except (AttributeError, LookupError, OSError):
+        encoding = "cp866"
+    return subprocess.run(
+        [str(exe), f"{drive_letter}:", f"/FS:{fs}", "/Q", f"/V:{safe_label}", "/X", "/Y"],
+        input="\r\n" * 3, capture_output=True, text=True, encoding=encoding, errors="replace",
+        timeout=600, creationflags=CREATE_NO_WINDOW,
+    )
