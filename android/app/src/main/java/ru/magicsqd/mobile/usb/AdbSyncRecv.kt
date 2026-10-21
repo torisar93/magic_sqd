@@ -10,6 +10,9 @@ sealed class AdbPullResult {
     data class Failed(val reason: String) : AdbPullResult()
 }
 
+/** Причина AdbPullResult.Failed, когда снятие остановил техник (syncPull, cancelled). */
+const val PULL_CANCELLED = "Остановлено пользователем."
+
 /**
  * Разбор ответа sync RECV (см. syncPull в AdbInstall.kt): последовательность пакетов «id[4] + len32 + данные»
  * (DATA — кусок файла, DONE — конец, FAIL — ошибка с сообщением) приходит внутри ADB-сообщений WRTE, и один пакет

@@ -45,8 +45,18 @@ sealed class AdbPushResult {
  * system/core/adb/SYNC.TXT). Данные пишутся в файл кусками по мере прихода — в памяти одновременно не больше одного
  * WRTE (APK бывают по сотне мегабайт). Нужно кнопке «работа в движении»: снять установленный APK, пометить и
  * поставить заново (см. MotionOptimize.kt). На Android до этого pull не было — только push.
+ *
+ * Ход — строкой на каждый мегабайт, как у push (expectedSize — размер с магнитолы, если известен), и остановка
+ * кнопкой: лог №8317 — Spotify снимался по Wi-Fi 4 минуты молча, техник решил, что программа зависла.
  */
-fun syncPull(transport: AdbTransport, remotePath: String, dest: File, log: (String) -> Unit): AdbPullResult {
+fun syncPull(
+    transport: AdbTransport,
+    remotePath: String,
+    dest: File,
+    log: (String) -> Unit,
+    expectedSize: Long = -1,
+    cancelled: () -> Boolean = { false },
+): AdbPullResult {
     val syncService = "sync:".toByteArray(Charsets.UTF_8) + byteArrayOf(0)
     val localId = newLocalStreamId()
     if (!sendMessage(transport, AdbProtocol.A_OPEN, localId, 0, syncService)) {
@@ -58,6 +68,7 @@ fun syncPull(transport: AdbTransport, remotePath: String, dest: File, log: (Stri
     }
     val remoteId = openResp.arg0
     var streamClosed = false
+    log("sync-поток открыт (remoteId=$remoteId), снимаю $remotePath" + (if (expectedSize > 0) " ($expectedSize байт)" else "") + "...")
     return try {
         val pathBytes = remotePath.toByteArray(Charsets.UTF_8)
         val recv = ByteBuffer.allocate(8 + pathBytes.size).order(ByteOrder.LITTLE_ENDIAN)
@@ -70,15 +81,24 @@ fun syncPull(transport: AdbTransport, remotePath: String, dest: File, log: (Stri
         dest.parentFile?.mkdirs()
         dest.outputStream().buffered(1 shl 16).use out@{ out ->
             val parser = SyncRecvParser(out)
+            val totalMb = if (expectedSize > 0) expectedSize / (1024 * 1024) else -1L
+            var lastLoggedMb = -1L
             while (true) {
                 val (msg, payload) = readMessageForStream(transport, localId, log, 20000)
                 if (msg.command == AdbProtocol.A_CLSE) { streamClosed = true; return@out AdbPullResult.Failed("Устройство закрыло поток раньше конца файла") }
                 if (msg.command != AdbProtocol.A_WRTE) return@out AdbPullResult.Failed("Неожиданный ответ sync (0x${msg.command.toUInt().toString(16)})")
+                // Остановка — до OKAY: следующий кусок устройство шлёт только после него, в пути ничего не остаётся.
+                if (cancelled()) return@out AdbPullResult.Failed(PULL_CANCELLED)
                 sendMessage(transport, AdbProtocol.A_OKAY, localId, remoteId, ByteArray(0))
                 when (val status = parser.feed(payload)) {
                     is SyncRecvParser.Status.More -> {}
                     is SyncRecvParser.Status.Done -> return@out AdbPullResult.Success(status.bytes)
                     is SyncRecvParser.Status.Fail -> return@out AdbPullResult.Failed(status.reason)
+                }
+                val mb = parser.total / (1024 * 1024)
+                if (mb != lastLoggedMb) {
+                    log(if (totalMb >= 0) "...снято ${mb}MB/${totalMb}MB" else "...снято ${mb}MB")
+                    lastLoggedMb = mb
                 }
             }
             @Suppress("UNREACHABLE_CODE")

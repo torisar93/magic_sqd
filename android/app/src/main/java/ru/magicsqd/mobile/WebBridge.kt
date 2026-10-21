@@ -230,7 +230,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "ui_language" -> JSONObject().put("language", uiLanguage()).toString()
                 // Идёт ли операция (runExclusive): кнопки «Доп. действий» через выбор приложения — «Работа в движении»,
                 // удаление, запуск — идут мимо JS-флага labInstallBusy, а выход из модели отключает ADB (лог №5242).
-                "operation_busy" -> JSONObject().put("busy", operationBusy.get()).toString()
+                // motion_stop — программа умеет останавливать «Работу в движении» только на снятии APK (с 1.1.13): без
+                // этого кнопка «Остановить» из более нового интерфейса оборвала бы переустановку (app.js: watchMotionOptimize).
+                "operation_busy" -> JSONObject().put("busy", operationBusy.get()).put("motion_stop", true).toString()
                 "settings_info" -> settingsInfo().toString()
                 "settings_preferences" -> settingsPreferences().toString()
                 "settings_clear_cache" -> clearCache().toString()
@@ -283,7 +285,18 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "adb_prefetch_files" -> { adbPrefetchFiles(args); "{}" }
                 "adb_install_apks" -> { adbInstallApks(args); "{}" }
                 "adb_download_apks" -> { adbDownloadApks(args); "{}" }
-                "adb_cancel_install" -> { labCancelInstall = true; pushAdbLog("Остановка очереди после текущего приложения…"); "{}" }
+                "adb_cancel_install" -> {
+                    // what=motion — кнопка «Остановить» у «Работы в движении» (MotionOptimize): останавливается только
+                    // снятие APK, дальше приложение переустанавливается и обрывать это нельзя.
+                    if (args.optString("what") != "motion") {
+                        labCancelInstall = true; pushAdbLog("Остановка очереди после текущего приложения…")
+                    } else if (MotionOptimize.pulling) {
+                        labCancelInstall = true; pushAdbLog("Останавливаю снятие приложения…")
+                    } else {
+                        pushAdbLog("Приложение уже переустанавливается — остановить нельзя, дождитесь конца.")
+                    }
+                    "{}"
+                }
                 "telnet_run_stage" -> { telnetRunStage(args); "{}" }
                 "adb_shell_command" -> { adbShellCommand(args.getString("command")); "{}" }
                 "chat_send" -> {

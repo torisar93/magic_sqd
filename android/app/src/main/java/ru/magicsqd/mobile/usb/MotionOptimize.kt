@@ -25,6 +25,11 @@ object MotionOptimize {
     fun certReady(context: Context): Boolean =
         File(certDirOf(context), "private.pk8").isFile && File(certDirOf(context), "certificate.crt").isFile
 
+    /** Идёт снятие APK — только его и можно остановить (WebBridge «adb_cancel_install» с what=motion). Дальше
+     *  приложение снимается с магнитолы и ставится заново: обрывать это нельзя — отсюда установка без остановки. */
+    @Volatile var pulling = false
+        private set
+
     fun run(context: Context, pkg: String, engine: InstallEngine, cancelled: () -> Boolean, log: (String) -> Unit) {
         if (!AdbSession.isConnected) { log("ADB не подключён — команда не выполнена."); return }
         val certDir = certDirOf(context)
@@ -46,8 +51,19 @@ object MotionOptimize {
         val signed = File(work, "$pkg.signed.apk")
         listOf(original, patched, signed).forEach { it.delete() }
         try {
-            when (val r = AdbSession.pull(paths[0], original, log)) {
-                is AdbPullResult.Failed -> { log("Не удалось снять приложение с магнитолы: ${r.reason}"); return }
+            // Снятие по Wi-Fi большого приложения идёт минутами — говорим заранее, ход идёт строками «...снято N MB»,
+            // остановить можно кнопкой (лог №8317: Spotify снимался молча 4 минуты, техник решил, что зависло).
+            val size = remoteFileSize(paths[0], log)
+            log((if (size > 0) "Размер приложения: ${maxOf(1L, (size + MB / 2) / MB)} МБ" else "Размер приложения не узнать") +
+                " — по Wi-Fi снятие может занять несколько минут, ход — ниже.")
+            pulling = true
+            val pulled = try { AdbSession.pull(paths[0], original, log, size, cancelled) } finally { pulling = false }
+            when (val r = pulled) {
+                is AdbPullResult.Failed -> {
+                    log(if (r.reason == PULL_CANCELLED) "Остановлено — приложение оставлено как было."
+                        else "Не удалось снять приложение с магнитолы: ${r.reason}")
+                    return
+                }
                 is AdbPullResult.Success -> {}
             }
             if (!original.isFile || original.length() == 0L) { log("Не удалось: пустой файл приложения."); return }
@@ -86,11 +102,11 @@ object MotionOptimize {
             return
         }
         AdbSession.shell("pm uninstall $pkg", log, 120000)
-        val result = installGuarded { engine.installApks(listOf(signed.absolutePath), cancelled = cancelled,
+        val result = installGuarded { engine.installApks(listOf(signed.absolutePath), cancelled = { false },
             preStaged = mapOf(signed.absolutePath to signedRemote)) }
         if (result is StageRunResult.Failed) {
             log("Не удалось поставить помеченную версию: ${result.reason}. Возвращаю исходную...")
-            val restore = installGuarded { engine.installApks(listOf(original.absolutePath), cancelled = cancelled,
+            val restore = installGuarded { engine.installApks(listOf(original.absolutePath), cancelled = { false },
                 preStaged = mapOf(original.absolutePath to originalRemote)) }
             if (restore is StageRunResult.Failed) log("Не удалось вернуть исходную версию — установите $pkg заново из каталога.")
             else log("Исходное приложение возвращено — работа в движении не включена.")
@@ -118,6 +134,14 @@ object MotionOptimize {
 
     private fun dropStaging(signedRemote: String, originalRemote: String, log: (String) -> Unit) {
         try { AdbSession.shell("rm -f $signedRemote $originalRemote", log) } catch (_: Exception) { /* связь пропала — безвредно */ }
+    }
+
+    private const val MB = 1024L * 1024
+
+    /** Размер файла на магнитоле (stat) или -1 — не узнать: тогда ход без «из скольких». */
+    private fun remoteFileSize(path: String, log: (String) -> Unit): Long {
+        val text = (AdbSession.shell("stat -c %s '$path'", log, 15000) as? AdbShellResult.Output)?.text ?: return -1
+        return text.trim().toLongOrNull() ?: -1
     }
 
     private fun installedApkPaths(pkg: String, log: (String) -> Unit): List<String> {

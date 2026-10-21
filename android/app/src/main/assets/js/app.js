@@ -2289,6 +2289,7 @@
                 // (реальный случай в логе #408).
                 Bridge.call(pickerAction.bridgeMethod, { pkg });
                 note.textContent='Запрос отправлен. Результат появится в логе.';
+                if (action.kind === "motion_optimize") watchMotionOptimize(card, note);
               } catch(error) {note.textContent=error.message||'Не удалось выполнить действие.';log(note.textContent);}
             });
           };
@@ -2798,6 +2799,28 @@
     const icon = LabUI.icon("apps");
     icon.querySelector("svg").innerHTML = `<path d="${paths[name]}"/>`;
     return icon;
+  }
+
+  // «Работа в движении»: снятие APK по Wi-Fi идёт минутами (лог №8317 — 4 минуты молча, техник решил, что зависло).
+  // Пока операция идёт — кнопка «Остановить» (останавливает только снятие, дальше приложение переустанавливается:
+  // WebBridge «adb_cancel_install» с what=motion), ход — строками «...снято N MB» в логе.
+  // Кнопка — только если программа это умеет (operation_busy.motion_stop, с 1.1.13): старая остановкой обрывала бы и
+  // переустановку, оставляя магнитолу без приложения.
+  function watchMotionOptimize(card, note) {
+    note.textContent = "Работа в движении: снимаю и переустанавливаю приложение — ход в логе.";
+    let canStop = false;
+    try { canStop = Bridge.call("operation_busy", {}).motion_stop === true; } catch (_) { /* старая программа */ }
+    const stop = canStop ? usbStageButton("Остановить", "close", () => {
+      try { Bridge.call("adb_cancel_install", { what: "motion" }); }
+      catch (error) { log(error.message || String(error)); }
+    }) : null;
+    if (stop) card.append(stop);
+    const timer = setInterval(() => {
+      if (card.isConnected && operationBusy()) return;
+      clearInterval(timer);
+      if (stop) stop.remove();
+      if (card.isConnected) note.textContent = "Готово — результат в логе.";
+    }, 1000);
   }
 
   function usbStageButton(text, symbol, handler, accent = false) {
