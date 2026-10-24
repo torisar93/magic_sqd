@@ -1149,6 +1149,20 @@ def sync_model_subfolder(base_dir: Path, local_dir: Path, log=lambda m: None,
                      manifest=manifest, on_progress=on_progress, keep_existing=keep_existing)
 
 
+def sync_model_definition(base_dir: Path, model_dir: Path, manifest: dict[str, dict] | None,
+                          log=lambda m: None) -> int:
+    """Описание опубликованной модели — stages.py, _wizard_spec.json, version.json, _i18n/… (всё, кроме files/ и
+    usb_files/) — по свежему манифесту при ОТКРЫТИИ модели, до чтения этапов. Раньше оно обновлялось только при запуске
+    программы (sync_scripts), а сверка при открытии (prune_model_stale_files) уже убирала старые файлы прошлой версии
+    модели: программа, открытая с прошлой недели, со старым описанием просила удалённые файлы — HTTP 404 и окно «Нет
+    интернета» (Android, логи №8650–8660, Atlas New, 22.10.2026). Модель с неопубликованной правкой не трогаем."""
+    url = get_base_url(base_dir)
+    if not url or not model_on_server(base_dir, model_dir, manifest):
+        return 0
+    remote_subpath = "cars/" + model_dir.relative_to(base_dir / "cars").as_posix()
+    return sync_tree(url, remote_subpath, model_dir, log=log, manifest=manifest, skip_dirs=("files", "usb_files"))
+
+
 def sync_model_apk_metadata(base_dir: Path, folders: list[Path], log=lambda m: None,
                             check_cancelled=lambda: None,
                             manifest: dict[str, dict] | None = None,
@@ -1301,7 +1315,8 @@ def _set_aside_unverified(apk_dir: Path, rel: Path, path: Path, log) -> None:
 def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: None,
                             check_cancelled=lambda: None,
                             on_progress=lambda done, total, *args: None,
-                            on_file_progress=lambda path, done, total: None) -> int:
+                            on_file_progress=lambda path, done, total: None,
+                            not_on_server: list | None = None) -> int:
     """Докачивает из paths (обычно ctx.selected_apks) только те файлы,
     которых ещё нет локально, — по одному, а не всю папку разом (см.
     list_shared_apk_catalog/scanner.scan_apks/scan_apk_dir_with_remote:
@@ -1339,6 +1354,10 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
                 continue
         item = (manifest or {}).get(remote_path)
         size = (item or {}).get("size", 0)
+        # Файла нет ни на диске, ни в каталоге сервера (манифест получен) — не интернет техника, а устаревший список
+        # файлов модели: вызывающий скажет «нет на сервере» (как Android, логи №8650–8660: HTTP 404, «нет интернета»).
+        if not_on_server is not None and manifest and item is None and not path.exists():
+            not_on_server.append(path.name)
         if path.exists():
             # Не просто "уже есть": обрыв на середине скачивания оставлял обрубленный .apk, а замена файла на сервере —
             # старую версию, которая потом и ставилась. Сверяем размер и время (local_copy_is_current); файла нет в
@@ -1395,6 +1414,12 @@ def ensure_apks_downloaded(base_dir: Path, apk_dir: Path, paths, log=lambda m: N
             else:
                 on_progress(done, total_files, done, total_files)
     return downloaded
+
+
+def not_on_server_message(names) -> str:
+    """Текст для окна user_errors.js «file_not_on_server» (как Android: WebBridge.notOnServerMessage)."""
+    return ("Этих файлов нет на сервере: " + ", ".join(names) + ". Модель изменили — выйдите из неё и откройте заново "
+            "(или перезапустите программу), список приложений обновится.")
 
 
 def model_needs_download(model) -> bool:

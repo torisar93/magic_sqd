@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 
 from .adb_utils import Adb
-from .content_sync import ensure_apks_downloaded, sync_model_subfolder
+from .content_sync import ensure_apks_downloaded, not_on_server_message, sync_model_subfolder
 from .install_context import InstallContext, InstallCancelled, check_device, device_unavailable_message
 
 
@@ -109,10 +109,14 @@ class InstallRunner:
                     sync_model_subfolder(self.base_dir, local_dir, log=self.on_log,
                                           check_cancelled=self._check_cancelled,
                                           on_progress=self.on_sync_progress)
+                not_on_server: list[str] = []
                 ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apks,
                                         log=self.on_log, check_cancelled=self._check_cancelled,
                                         on_progress=self.on_sync_progress,
-                                        on_file_progress=self.on_apk_download_progress)
+                                        on_file_progress=self.on_apk_download_progress,
+                                        not_on_server=not_on_server)
+                if not_on_server:
+                    raise InstallCancelled(not_on_server_message(not_on_server))
                 self.sync_resign_cert(model)
             ctx = InstallContext(
                 adb_path=self.adb_path,

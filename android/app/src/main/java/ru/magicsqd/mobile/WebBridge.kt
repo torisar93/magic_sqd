@@ -1034,16 +1034,18 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * использованием отмеченных техником/прикреплённых в этапе путей
      * (модель больше не докачивается целиком при открытии, см.
      * mobile_bridge.sync_payload). */
+    /** Возвращает имена файлов, которых нет в каталоге сервера (см. apk_library.ensure_apks_downloaded) — тогда
+     *  техник видит «нет на сервере», а не «нет интернета» (notOnServerMessage). */
     private fun ensureApksDownloaded(paths: List<String>, progress: ApkDownloadProgress? = null,
-                                     sink: DownloadSink? = null) {
-        if (paths.isEmpty()) return
+                                     sink: DownloadSink? = null): List<String> {
+        if (paths.isEmpty()) return emptyList()
         val pathsArr = JSONArray(paths)
         val resultJson = try {
             pyModule("mobile_bridge").callAttr(
                 "ensure_apks_downloaded", apkDir, carsDir, BASE_URL, pathsArr.toString(), progress, sink
             ).toString()
         } catch (e: Exception) {
-            if (progress == null) return
+            if (progress == null) return emptyList()
             // Отмена приходит из Python (check_cancelled → progress.checkCancelled()) завёрнутой
             // Chaquopy в PyException, и в лог этапа попадало «java.lang.IllegalStateException:
             // Очередь остановлена…» (лог #584) — отдаём тот же текст без имени Java-класса.
@@ -1053,7 +1055,15 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         val result = JSONObject(resultJson)
         val logLines = result.optJSONArray("log") ?: JSONArray()
         for (i in 0 until logLines.length()) pushAdbLog(logLines.getString(i))
+        val gone = result.optJSONArray("not_on_server") ?: JSONArray()
+        return (0 until gone.length()).map { gone.getString(it) }
     }
+
+    /** Файлов из списка модели нет на сервере — список у программы устарел (модель изменили, пока программа была
+     *  открыта; логи №8650–8660: HTTP 404 и окно «Нет интернета»). Текст — для окна user_errors.js «file_not_on_server». */
+    private fun notOnServerMessage(names: List<String>): String =
+        "Этих файлов нет на сервере: ${names.joinToString(", ")}. Модель изменили — выйдите из неё и откройте " +
+            "заново (или перезапустите программу), список приложений обновится."
 
     /** Докачивает один файл видео-кнопки нав-бара (см. wizard_spec.py:
      * video_file/video_url), если его ещё нет на диске, в фоновом потоке —
@@ -1623,10 +1633,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 if (!AdbSession.isConnected) {
                     StageRunResult.Failed("ADB не подключён — сначала подключись к устройству")
                 } else {
-                    if (!skipDownload) ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
+                    val gone = if (skipDownload) emptyList() else ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
                         pushApkProgress(stageIndex, path, 0, paths.size, "running", ApkOperationProgress("download", done, total))
                     }, { labCancelInstall }))
-                    engine.installApksWithProgress(paths, preferredMethod, modelDir, { labCancelInstall },
+                    if (gone.isNotEmpty()) StageRunResult.Failed(notOnServerMessage(gone))
+                    else engine.installApksWithProgress(paths, preferredMethod, modelDir, { labCancelInstall },
                         onProgress = { path, completed, total, state ->
                             pushApkProgress(stageIndex, path, completed, total, state)
                         },
@@ -1734,12 +1745,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         runExclusive({ pushStageResult(stageIndex, StageRunResult.Failed("Другая операция ещё выполняется")) }) {
             try {
                 pushAdbLog("Wi-Fi ADB: сначала скачиваю приложения — пока есть интернет, потом подключимся к магнитоле.")
-                ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
+                val gone = ensureApksDownloaded(paths, ApkDownloadProgress({ path, done, total ->
                     pushApkProgress(stageIndex, path, 0, paths.size, "running", ApkOperationProgress("download", done, total))
                 }, { labCancelInstall }))
                 // ensure_apks_downloaded при сбое скачивания только пишет строку в лог — проверяем сами.
                 val missing = paths.filter { !File(it).exists() }.map { File(it).name }
-                if (missing.isNotEmpty()) {
+                if (gone.isNotEmpty()) {
+                    pushStageResult(stageIndex, StageRunResult.Failed(notOnServerMessage(gone)))
+                } else if (missing.isNotEmpty()) {
                     pushStageResult(stageIndex, StageRunResult.Failed(
                         "Не удалось скачать: ${missing.joinToString(", ")}. Проверьте интернет (телефон не должен " +
                             "быть в Wi-Fi магнитолы без интернета) и повторите."))

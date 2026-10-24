@@ -542,6 +542,18 @@ def prune_removed_models(base_dir: Path, cars_dir: Path, manifest, log=lambda m:
     return removed
 
 
+def sync_model_definition(base_url: str, cars_dir: Path, model_dir: Path, manifest, log=lambda m: None) -> int:
+    """Описание опубликованной модели — _wizard_spec.json, stages.py, version.json, _i18n/… (всё, кроме files/ и
+    usb_files/) — по свежему манифесту при ОТКРЫТИИ модели (mobile_bridge.sync_payload), до чтения спеки. Раньше оно
+    обновлялось только при запуске программы (sync_scripts), а программа живёт в фоне днями: сверка при открытии
+    (prune_model_to_server) уже убирала старые файлы, а старая спека просила их снова — HTTP 404 и окно «Нет интернета»
+    (логи №8650–8660, Atlas New, 22.10.2026). Копия desktop app/content_sync.py:sync_model_definition."""
+    if manifest is None or not model_on_server(cars_dir, model_dir, manifest):
+        return 0
+    remote_subpath = "cars/" + model_dir.resolve().relative_to(cars_dir.resolve()).as_posix()
+    return sync_tree(base_url, remote_subpath, model_dir, manifest, log=log, skip_dirs=("files", "usb_files"))
+
+
 def sync_model_subfolder(base_url: str, cars_dir: Path, local_dir: Path, log=lambda m: None,
                           on_progress=lambda done, total: None, manifest=None) -> int:
     """Синхронизирует ОДНУ конкретную подпапку модели (например

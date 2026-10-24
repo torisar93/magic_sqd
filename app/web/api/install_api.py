@@ -26,8 +26,9 @@ from ...adb_utils import (SERVER_LEVEL_COMMANDS, TOP_LEVEL_COMMANDS, Adb, forget
                            get_default_gateway_ip, list_devices, normalize_console_command,
                            scan_network_for_wifi_adb, split_top_level_command)
 from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_manifest, get_base_url, model_on_server,
-                             prune_model_stale_files, sync_model_apk_metadata, sync_model_subfolder,
-                             sync_shared_folder)
+                             not_on_server_message,
+                             prune_model_stale_files, sync_model_apk_metadata, sync_model_definition,
+                             sync_model_subfolder, sync_shared_folder)
 from ... import catalog_i18n, closed_stages
 from ...install_context import InstallCancelled
 from ... import device_models
@@ -185,6 +186,15 @@ class InstallApi:
         session_log_token = start_pending_log_session(
             self.base_dir, model.brand, model.name, model.modification or "")
         self._session_log_token = session_log_token
+        # Свежий манифест и описание опубликованной модели — ДО чтения этапов (content_sync.sync_model_definition):
+        # иначе этапы прошлой версии модели просили бы файлы, которых на сервере уже нет.
+        manifest = self._get_manifest(fresh=True)
+        try:
+            sync_model_definition(self.base_dir, model.dir, manifest, log=self._on_log_passive)
+        except Exception as exc:  # noqa: BLE001 - без сети открываем то, что уже скачано
+            self._on_log(f"Не удалось обновить описание модели: {exc}")
+        if not model.stages_script and (model.dir / "stages.py").is_file():
+            model.stages_script = model.dir / "stages.py"
         if not model.stages_script:
             return {"stages": []}
         try:
@@ -214,7 +224,6 @@ class InstallApi:
         # standard_apks() (список строится по манифесту, без докачки);
         # "usb"/"adb"/"exe" — свои файлы качаются по клику на соответствующем
         # этапе, не здесь.
-        manifest = self._get_manifest(fresh=True)
         # Опубликованная модель — сначала сверка с сервером: старые и чужие версии файлов прошлой инструкции
         # убираются, нужные скачаются заново (content_sync.prune_model_stale_files). Своя модель и правка — не трогаем.
         try:
@@ -928,10 +937,11 @@ class InstallApi:
 
         self._on_log("Wi-Fi ADB: сначала скачиваю приложения — пока есть интернет, потом подключимся к магнитоле.")
         try:
+            not_on_server: list[str] = []
             ensure_apks_downloaded(self.base_dir, self.base_dir / "apk", selected_apk_paths, log=self._on_log,
                                    check_cancelled=check_cancelled, on_progress=self._on_sync_progress,
                                    on_file_progress=lambda path, done, total: self._push_apk_download(
-                                       stage_index, path, done, total))
+                                       stage_index, path, done, total), not_on_server=not_on_server)
             self._runner.sync_resign_cert(model, check_cancelled=check_cancelled)
         except InstallCancelled as exc:
             return {"ok": False, "cancelled": True, "error": str(exc)}
@@ -940,6 +950,8 @@ class InstallApi:
         finally:
             self._prefetching = False
             self._on_sync_progress(0, 0)
+        if not_on_server:
+            return {"ok": False, "error": not_on_server_message(not_on_server)}
         missing = [Path(p).name for p in selected_apk_paths if not Path(p).exists()]
         if missing:
             return {"ok": False, "error": "Не удалось скачать: " + ", ".join(missing) + ". Проверьте интернет "

@@ -15,7 +15,8 @@ import catalog_key
 
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
                            prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie,
-                           sync_early_access, sync_tree, model_on_server, prune_closed_stages, open_url)
+                           sync_early_access, sync_tree, model_on_server, prune_closed_stages, open_url,
+                           sync_model_definition)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version, read_early_access
 import offline_pack
 import apk_catalog
@@ -436,8 +437,10 @@ def sync_payload(cars_dir: str, base_url: str, model_key: str) -> str:
         return json.dumps({"downloaded": 0, "log": lines})
 
     # Сначала сверка с сервером: старые и чужие версии файлов прошлой инструкции убираются, нужные скачаются заново
-    # перед использованием (content_sync.prune_model_to_server; как ПК: install_api.load_stages).
+    # перед использованием (content_sync.prune_model_to_server; как ПК: install_api.load_stages). И само описание
+    # модели (спека, stages.py) — по тому же манифесту: со старым этап просил бы уже убранные файлы (№8650–8660).
     prune_model_to_server(cars_path, model_dir, manifest, log=log)
+    downloaded += sync_model_definition(base_url, cars_path, model_dir, manifest, log=log)
 
     # Читаем _wizard_spec.json напрямую (не через load_wizard_spec — та сама
     # читает содержимое instruction.html, то есть требует, чтобы файл уже
@@ -717,9 +720,11 @@ def ensure_apks_downloaded(apk_dir: str, cars_dir: str, base_url: str, paths_jso
         on_file_progress = lambda path, done, total: sink.progress(done, total)
     else:
         on_file_progress = None
+    not_on_server = []
     downloaded = _ensure_apks_downloaded(Path(apk_dir), Path(cars_dir), base_url, paths,
                                           log=sink.line if sink is not None else lines.append,
                                           on_file_progress=on_file_progress,
                                           check_cancelled=(lambda: progress.checkCancelled())
-                                          if progress is not None else lambda: None)
-    return json.dumps({"downloaded": downloaded, "log": lines})
+                                          if progress is not None else lambda: None,
+                                          not_on_server=not_on_server)
+    return json.dumps({"downloaded": downloaded, "log": lines, "not_on_server": not_on_server})

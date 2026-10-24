@@ -143,7 +143,7 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
 
 
 def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, log=lambda m: None,
-                          on_file_progress=None, check_cancelled=lambda: None) -> int:
+                          on_file_progress=None, check_cancelled=lambda: None, not_on_server: list | None = None) -> int:
     """Докачивает из paths (абсолютные локальные пути) только то, чего ещё
     нет на диске — вызывается прямо перед исполнением apps/usb/adb/actions-
     этапа, использующего отмеченные техником или прикреплённые файлы (см.
@@ -226,6 +226,10 @@ def ensure_apks_downloaded(apk_dir: Path, cars_dir: Path, base_url: str, paths, 
                 if remote.startswith("apk/") and target.exists() and not apk_registry.is_trusted(
                         apk_dir, remote[len("apk/"):], target):
                     _set_aside_unverified(apk_dir, remote, target, log)
+        # Файла нет ни на диске, ни в каталоге сервера (манифест получен) — это не интернет техника, а устаревший список
+        # файлов модели: вызывающий скажет «нет на сервере», а не «нет интернета» (логи №8650–8660, HTTP 404).
+        if not_on_server is not None and manifest and item is None and not inner and not local_path.exists():
+            not_on_server.append(local_path.name)
         if inner:
             # Папка скачана не вся — метка: запись на флешку остановится «Файл не скачан» (UsbFlashWrite.kt), а не
             # положит неполную папку.
