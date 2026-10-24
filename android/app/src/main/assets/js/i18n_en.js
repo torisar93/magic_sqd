@@ -1979,6 +1979,7 @@ window.I18N_EN = {
   "Работа в движении: службы машины Android Automotive на магнитоле нет — пометка ни на что не влияет.": "Operation while driving: the head unit has no Android Automotive car services — the flag has no effect.",
   "Работа в движении: снимаю и переустанавливаю приложение — ход в логе.": "Operation while driving: pulling and reinstalling the app — progress is in the log.",
   "Готово — результат в логе.": "Done — the result is in the log.",
+  "прошивка магнитолы запрещает удалять это приложение (оно у неё в списке защищённых). Удалить его можно только штатно на самой магнитоле, если она это позволяет.": "the head unit firmware forbids uninstalling this app (it's on its protected list). It can only be uninstalled the stock way on the head unit itself, if it allows that.",
   "Файлов нет на сервере": "Files are missing on the server",
   "Список приложений этой модели у программы устарел: модель изменили, пока программа была открыта.": "The program's app list for this model is outdated: the model was changed while the program was open.",
   "Выйдите из модели и откройте её заново — список обновится.": "Leave the model and open it again — the list will refresh.",

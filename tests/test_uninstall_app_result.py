@@ -376,3 +376,23 @@ def test_silent_pm_falls_back_to_dex_helper(tmp_path):
                    "Магнитола не пускает pm uninstall — удаляю через dex-хелпер...", "Готово."]
     assert pushed and pushed[0][0] == "push"
     assert adb_permissions.remove_for_rollback(ctx, "com.alphainventor.filemanager") == "removed"
+
+
+def test_protected_app_refusal_named_not_silence(tmp_path):
+    """№9335 (Changan UNI-V, 24.10.2026): pm молчит, dex-хелпер отвечает «auth app, not allow delete» — техник видит,
+    что прошивка запрещает удалять это приложение, а не «магнитола не ответила»."""
+    (tmp_path / adb_permissions._PKG_HELPER_DEX).write_bytes(b"dex")
+    ctx, log, commands = _changan_ctx(AdbTimeoutError, installed=True, services="null")
+    ctx.shared_dir = tmp_path
+    ctx.adb = lambda *args, **kw: SimpleNamespace(returncode=0, stdout="", stderr="")
+    shell = ctx.shell
+
+    def shell_with_helper(command, check=True, timeout=120):
+        if command.startswith("CLASSPATH="):
+            return SimpleNamespace(stdout="Failure [-7: ru.yandex.music is auth app, not allow delete!]", stderr="")
+        return shell(command, check=check, timeout=timeout)
+    ctx.shell = shell_with_helper
+    adb_permissions.uninstall_app(ctx, "ru.yandex.music")
+    assert log[-1] == "Не удалось удалить: " + adb_permissions._PROTECTED_TEXT
+    assert "dex-хелпер не удалил: Failure [-7: ru.yandex.music is auth app, not allow delete!]" in log
+    assert adb_permissions.remove_for_rollback(ctx, "ru.yandex.music") == "blocked"

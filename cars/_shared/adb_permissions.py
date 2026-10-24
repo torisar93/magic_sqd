@@ -589,7 +589,7 @@ _PKG_HELPER_CLASS = "MagicSqdPkgHelper"
 _PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9_.]+")
 
 
-def _remove_with_helper(ctx, package: str):
+def _remove_with_helper(ctx, package: str, refusal: list | None = None):
     """Удалить своим dex-хелпером. True — удалено, False — не вышло (причина в журнале), None — хелпера нет (файл ещё не
     скачан или у программы нет ctx.adb) — тогда прежний путь."""
     from pathlib import Path
@@ -614,13 +614,25 @@ def _remove_with_helper(ctx, package: str):
     if "success" in text.lower() and "failure" not in text.lower():
         return True
     ctx.log(f"dex-хелпер не удалил: {text or 'хелпер не ответил'}")
+    if refusal is not None and text:
+        refusal.append(text)
     return False
 
 
-def _remove_by_helper(ctx, package: str) -> bool:
+# Ответ прошивки «это приложение удалять нельзя»: Changan UNI-V (№9335, 24.10.2026) — «Failure [-7: ru.yandex.music is
+# auth app, not allow delete!]» (её «авторизованные» Яндекс Музыка и Навигатор; pm uninstall на них молчит), и штатные
+# запреты Android (администратор устройства, владелец, ограничения пользователя).
+_PROTECTED_RE = re.compile(r"not allow delete|auth app|DELETE_FAILED_(?:DEVICE_POLICY_MANAGER|OWNER_BLOCKED|USER_RESTRICTED)",
+                           re.IGNORECASE)
+_PROTECTED_TEXT = ("прошивка магнитолы запрещает удалять это приложение (оно у неё в списке защищённых). Удалить его "
+                   "можно только штатно на самой магнитоле, если она это позволяет.")
+
+
+def _remove_by_helper(ctx, package: str, refusal: list | None = None) -> bool:
     """Удалить без pm: свой dex-хелпер (_remove_with_helper); нет его — хелпер программы (InstallContext.
-    uninstall_via_helper, с 1.0.51; до 1.1.2 — с именем со словом «uninstall», на закрытых прошивках не срабатывал)."""
-    removed = _remove_with_helper(ctx, package)
+    uninstall_via_helper, с 1.0.51; до 1.1.2 — с именем со словом «uninstall», на закрытых прошивках не срабатывал).
+    refusal — сюда попадает ответ хелпера, если он отказал (по нему — «прошивка запрещает», а не «не ответила»)."""
+    removed = _remove_with_helper(ctx, package, refusal)
     if removed is None:
         via_helper = getattr(ctx, "uninstall_via_helper", None)
         removed = via_helper is not None and via_helper(package)
@@ -699,8 +711,11 @@ def uninstall_app(ctx, package: str) -> None:
     text = ((result.stdout or "") + (result.stderr or "")).strip() if result is not None else ""
     if not text:
         # Не ответила (Changan, см. _UNINSTALL_TIMEOUT) или ответ потерялся — по самой магнитоле, удалено ли; нет — dex-хелпер.
-        if _is_installed(ctx, package) is False or _remove_by_helper(ctx, package):
+        refusal = []
+        if _is_installed(ctx, package) is False or _remove_by_helper(ctx, package, refusal):
             ctx.log("Готово.")
+        elif refusal and _PROTECTED_RE.search(refusal[0]):
+            ctx.log("Не удалось удалить: " + _PROTECTED_TEXT)
         else:
             ctx.log("Не удалось удалить: магнитола не ответила на удаление — удалите приложение штатно на самой "
                     "магнитоле (Настройки → Приложения).")
@@ -728,8 +743,11 @@ def remove_for_rollback(ctx, package: str) -> str:
     result = _shell_or_timeout(ctx, f"pm uninstall {package}", _UNINSTALL_TIMEOUT)
     text = _answer_text(result)
     if not text:  # как в uninstall_app
-        if _is_installed(ctx, package) is False or _remove_by_helper(ctx, package):
+        refusal = []
+        if _is_installed(ctx, package) is False or _remove_by_helper(ctx, package, refusal):
             return "removed"
+        if refusal and _PROTECTED_RE.search(refusal[0]):
+            return "blocked"
         return "failed: магнитола не ответила на удаление"
     if "success" in text.lower() and "failure" not in text.lower():
         return "removed"
