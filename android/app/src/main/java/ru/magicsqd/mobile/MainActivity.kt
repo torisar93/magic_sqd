@@ -170,6 +170,18 @@ class MainActivity : AppCompatActivity() {
             bridge.onApksPicked(uris)
         }
         bridge.pickApksLauncher = { mimeTypes -> pickApksLauncher.launch(mimeTypes) }
+        // Разрешение на уведомления перед самообновлением (Android 13+): после установки программа сама не откроется —
+        // откроют по уведомлению (AppSelfUpdate.notifyUpdated). Ответ любой — обновление идёт дальше.
+        val notificationsLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            notificationsDone?.invoke()
+            notificationsDone = null
+        }
+        bridge.requestNotifications = { done ->
+            runOnUiThread {
+                notificationsDone = done
+                notificationsLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
 
         // targetSdk 35 включает edge-to-edge по умолчанию — без этого контент
         // рисуется ПОД статус-баром (часы/иконки поверх "Magic SQD"/кнопки
@@ -289,6 +301,8 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(INDEX_URL)
     }
 
+    private var notificationsDone: (() -> Unit)? = null
+
     override fun onDestroy() {
         uiWatchdog.removeCallbacksAndMessages(null)
         super.onDestroy()
@@ -297,6 +311,7 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         AppSelfUpdate.appVisible = true
+        AppSelfUpdate.clearUpdated(this)  // открыли по уведомлению «обновлена» или сами — оно больше не нужно
         AppSelfUpdate.showPendingConfirm(this)  // окно подтверждения обновления, не открывшееся, пока программа была свёрнута
         webView.evaluateJavascript("(window.__onAppShown && window.__onAppShown())", null)
     }

@@ -26,6 +26,9 @@
          приложений» (техник даёт один раз в настройках); Android 12+ — обновлять себя без окна подтверждения. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Уведомление «Magic SQD обновлена — нажмите, чтобы открыть» (AppSelfUpdate.notifyUpdated): после самообновления
+         Android 10+ не даёт программе открыться самой из фона. Спрашивается при нажатии «Обновить» (Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"

@@ -1,6 +1,9 @@
 package ru.magicsqd.mobile
 
+import android.Manifest
 import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -11,6 +14,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -57,8 +62,57 @@ object AppSelfUpdate {
 
     fun confirmFailed(e: Exception) = "не открылось окно подтверждения Android (${e.message ?: e.javaClass.simpleName})"
 
+    private const val UPDATED_CHANNEL = "app_updated"
+    const val UPDATED_NOTIFICATION = 7301
+
+    /** Нужно ли спросить разрешение на уведомления перед установкой (Android 13+, ещё не дано). */
+    fun needsNotificationPermission(context: Context): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+
+    /** Новая версия встала (UpdateStatusReceiver — уже в ней): уведомление «нажмите, чтобы открыть». Открыться сама
+     * программа на Android 10+ не может — запрет запуска окна из фона (эмулятор Android 15, 24.10.2026: «Background
+     * activity launch blocked», техник видел рабочий стол). Открыли программу — MainActivity.onStart уберёт его. */
+    fun notifyUpdated(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val english = isEnglish(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(NotificationChannel(UPDATED_CHANNEL,
+                if (english) "App updates" else "Обновления программы", NotificationManager.IMPORTANCE_HIGH))
+        }
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED) ?: return
+        val open = PendingIntent.getActivity(context, 0, launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val version = try { context.packageManager.getPackageInfo(context.packageName, 0).versionName } catch (_: Exception) { null }
+        val title = if (english) "Magic SQD updated" + (version?.let { " to $it" } ?: "")
+                    else "Magic SQD обновлена" + (version?.let { " до $it" } ?: "")
+        val notification = NotificationCompat.Builder(context, UPDATED_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_operation)
+            .setContentTitle(title)
+            .setContentText(if (english) "Tap to open the app." else "Нажмите, чтобы открыть программу.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        try {
+            manager.notify(UPDATED_NOTIFICATION, notification)
+        } catch (_: SecurityException) { }  // уведомления запрещены — откроют сами
+    }
+
+    /** MainActivity.onStart: программу открыли — уведомление об обновлении больше не нужно. */
+    fun clearUpdated(context: Context) {
+        context.getSystemService(NotificationManager::class.java)?.cancel(UPDATED_NOTIFICATION)
+    }
+
+    /** Язык интерфейса — как WebBridge.uiLanguage (настройка «Язык», «авто» — по системе). */
+    private fun isEnglish(context: Context): Boolean = try {
+        val chosen = context.getSharedPreferences("settings", Context.MODE_PRIVATE).getString("ui_language", "auto")
+        (if (chosen == "ru" || chosen == "en") chosen else ClientEnv.uiLanguage(ClientEnv.collect(context))) == "en"
+    } catch (_: Exception) { false }
+
     /** Новая версия встала — открыть программу снова (её закрыли на время установки). Android 10+ из фона не даст —
-     * тогда техник откроет её сам, как и просит окно обновления. */
+     * тогда откроют по уведомлению (notifyUpdated). */
     fun reopen(context: Context) {
         if (appVisible) return
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
@@ -225,6 +279,7 @@ class UpdateStatusReceiver : BroadcastReceiver() {
             }
             PackageInstaller.STATUS_SUCCESS -> {
                 AppSelfUpdate.onStatus?.invoke("done", "")
+                if (!AppSelfUpdate.appVisible) AppSelfUpdate.notifyUpdated(context)
                 AppSelfUpdate.reopen(context)
             }
             else -> AppSelfUpdate.onStatus?.invoke("error",

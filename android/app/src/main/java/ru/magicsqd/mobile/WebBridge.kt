@@ -122,6 +122,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * но там native-диалог pywebview, здесь — Storage Access Framework). */
     var pickApksLauncher: ((Array<String>) -> Unit)? = null
 
+    /** MainActivity: спросить разрешение на уведомления и потом вызвать done (ответ любой). */
+    var requestNotifications: ((done: () -> Unit) -> Unit)? = null
+
     private fun runExclusive(onBusy: () -> Unit, body: () -> Unit) {
         if (!operationBusy.compareAndSet(false, true)) {
             onBusy()
@@ -245,7 +248,16 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 "app_update_status" -> JSONObject().put("can", AppSelfUpdate.canInstall(context))
                     .put("silent", AppSelfUpdate.silentPossible()).toString()
                 "app_update_allow" -> { openInstallPermission(); "{}" }
-                "app_update_install" -> { startAppUpdate(args.getString("url"), args.optString("sha256", "")); "{}" }
+                "app_update_install" -> {
+                    val url = args.getString("url")
+                    val sha256 = args.optString("sha256", "")
+                    // Android 13+: сначала разрешение на уведомления — по нему откроют обновлённую программу (сама она
+                    // из фона не откроется, AppSelfUpdate.notifyUpdated); ответ любой — обновление идёт дальше.
+                    val ask = requestNotifications
+                    if (ask != null && AppSelfUpdate.needsNotificationPermission(context)) ask { startAppUpdate(url, sha256) }
+                    else startAppUpdate(url, sha256)
+                    "{}"
+                }
                 "supporters_load" -> { startSupportersLoad(); "{}" }
                 "get_sync_progress" -> pyModule("mobile_bridge").callAttr("get_sync_progress").toString()
                 "scanner_list_cars" -> pyModule("mobile_bridge").callAttr("list_cars", carsDir).toString()
@@ -2152,7 +2164,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         if (!AdbSession.isConnected) { pushAdbLog("ADB не подключён — команда не выполнена."); return@runExclusive }
         labCancelInstall = false
         if (!MotionOptimize.certReady(context)) syncSharedFolder(MotionOptimize.CERT_FOLDER)
-        MotionOptimize.run(context, pkg, installEngine(), { labCancelInstall }, ::pushAdbLog)
+        try {
+            MotionOptimize.run(context, pkg, installEngine(), { labCancelInstall }, ::pushAdbLog)
+        } finally {
+            // «Остановить» относится только к этому снятию: иначе следующий список приложений общим кодом тоже
+            // получал «Остановлено пользователем» (лог №9308, 24.10.2026).
+            labCancelInstall = false
+        }
     }
 
     /** "Добавить свой APK..." на apps/usb-этапах (см. app.js: renderApkTree) —

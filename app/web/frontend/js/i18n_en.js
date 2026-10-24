@@ -1086,6 +1086,7 @@ window.I18N_EN = {
   "Скачиваю обновление: {p1} из {p2}": "Downloading the update: {p1} of {p2}",
   "Скачиваю обновление: {p1}": "Downloading the update: {p1}",
   "Устанавливаю обновление. Программа закроется на несколько секунд — потом откройте её снова.": "Installing the update. The app will close for a few seconds — then open it again.",
+  "Устанавливаю обновление. Программа закроется на несколько секунд — потом откройте её снова: нажмите на уведомление «Magic SQD обновлена» или на значок программы.": "Installing the update. The app will close for a few seconds — then open it again: tap the “Magic SQD updated” notification or the app icon.",
   "Устанавливаю обновление — подтвердите его в окне Android.": "Installing the update — confirm it in the Android window.",
   "Подтвердите обновление в окне Android — «Установить». Программа закроется на несколько секунд — потом откройте её снова, если она не откроется сама.": "Confirm the update in the Android window — “Install”. The app will close for a few seconds — then open it again if it does not reopen by itself.",
   "Не удалось обновить: {p1}. Повторите или скачайте APK вручную.": "Couldn't update: {p1}. Try again or download the APK manually.",
