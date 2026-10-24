@@ -617,14 +617,25 @@ def _remove_with_helper(ctx, package: str):
     return False
 
 
+def _remove_by_helper(ctx, package: str) -> bool:
+    """Удалить без pm: свой dex-хелпер (_remove_with_helper); нет его — хелпер программы (InstallContext.
+    uninstall_via_helper, с 1.0.51; до 1.1.2 — с именем со словом «uninstall», на закрытых прошивках не срабатывал)."""
+    removed = _remove_with_helper(ctx, package)
+    if removed is None:
+        via_helper = getattr(ctx, "uninstall_via_helper", None)
+        removed = via_helper is not None and via_helper(package)
+    return bool(removed)
+
+
 def _answer_text(result) -> str:
     return " ".join(((getattr(result, "stdout", "") or "") + " " + (getattr(result, "stderr", "") or "")).split())
 
 
 # Changan CS75 Plus (S311_MCA_GULF, ПК 1.1.9, логи №7872, №8289, №8290 — две магнитолы): pm uninstall simple_control
-# молчал 120 с без запроса пароля, приложение оставалось. Программа ставит его со включённой службой спецвозможностей —
-# похоже, удаление виснет на работающей службе. Поэтому перед удалением служба выключается и приложение
-# останавливается; ждём меньше, а не дождавшись — проверяем, стоит ли приложение, и говорим, что делать.
+# молчал 120 с без запроса пароля, приложение оставалось. Перед удалением служба спецвозможностей выключается и
+# приложение останавливается (безвредно), но №8722 (24.10) показал: pm uninstall там молчит и у обычных приложений —
+# дело не в службе. Поэтому ждём меньше, не дождавшись — проверяем по магнитоле, удалено ли, и пробуем свой dex-хелпер
+# (PackageInstaller от имени shell, без pm); не вышло — говорим, что удалить штатно.
 _UNINSTALL_TIMEOUT = 60
 _PRESENCE_TIMEOUT = 30
 _PRESENT_MARK = "msqd_pkg_present"
@@ -687,8 +698,8 @@ def uninstall_app(ctx, package: str) -> None:
     result = _shell_or_timeout(ctx, f"pm uninstall {package}", _UNINSTALL_TIMEOUT)
     text = ((result.stdout or "") + (result.stderr or "")).strip() if result is not None else ""
     if not text:
-        # Не ответила (Changan, см. _UNINSTALL_TIMEOUT) или ответ потерялся — по самой магнитоле, удалено ли.
-        if _is_installed(ctx, package) is False:
+        # Не ответила (Changan, см. _UNINSTALL_TIMEOUT) или ответ потерялся — по самой магнитоле, удалено ли; нет — dex-хелпер.
+        if _is_installed(ctx, package) is False or _remove_by_helper(ctx, package):
             ctx.log("Готово.")
         else:
             ctx.log("Не удалось удалить: магнитола не ответила на удаление — удалите приложение штатно на самой "
@@ -697,14 +708,9 @@ def uninstall_app(ctx, package: str) -> None:
         ctx.log("Готово.")
     elif "error: closed" in text.lower():
         # Geely OneOS/Monji, VOLGA/N155, Jetour T2: pm закрыт прошивкой (логи #797, #962, №1746) — удаляем своим
-        # dex-хелпером (_remove_with_helper); нет его — хелпером программы (InstallContext.uninstall_via_helper, с
-        # 1.0.51; до 1.1.2 — с именем со словом «uninstall», на этих прошивках не срабатывал); у старых версий нет и его — как раньше,
-        # владелец (2026-09-25): пусть удаляют штатно на самой магнитоле.
-        removed = _remove_with_helper(ctx, package)
-        if removed is None:
-            via_helper = getattr(ctx, "uninstall_via_helper", None)
-            removed = via_helper is not None and via_helper(package)
-        if removed:
+        # dex-хелпером (_remove_by_helper); у старых версий нет и его — как раньше, владелец (2026-09-25): пусть
+        # удаляют штатно на самой магнитоле.
+        if _remove_by_helper(ctx, package):
             ctx.log("Готово.")
         else:
             ctx.log("Не удалось удалить: эта магнитола не даёт удалять приложения через программу — "
@@ -722,16 +728,14 @@ def remove_for_rollback(ctx, package: str) -> str:
     result = _shell_or_timeout(ctx, f"pm uninstall {package}", _UNINSTALL_TIMEOUT)
     text = _answer_text(result)
     if not text:  # как в uninstall_app
-        return "removed" if _is_installed(ctx, package) is False else "failed: магнитола не ответила на удаление"
+        if _is_installed(ctx, package) is False or _remove_by_helper(ctx, package):
+            return "removed"
+        return "failed: магнитола не ответила на удаление"
     if "success" in text.lower() and "failure" not in text.lower():
         return "removed"
     if "error: closed" in text.lower():
         # pm закрыт прошивкой (Geely OneOS/Monji, VOLGA/N155, Jetour T2) — свой dex-хелпер, как у uninstall_app.
-        removed = _remove_with_helper(ctx, package)
-        if removed is None:
-            via_helper = getattr(ctx, "uninstall_via_helper", None)
-            removed = via_helper is not None and via_helper(package)
-        return "removed" if removed else "blocked"
+        return "removed" if _remove_by_helper(ctx, package) else "blocked"
     return "failed: " + (text or "устройство не ответило")
 
 

@@ -353,3 +353,26 @@ def test_other_errors_are_not_swallowed():
         pass
     else:
         raise AssertionError("остановка должна дойти до этапа")
+
+
+def test_silent_pm_falls_back_to_dex_helper(tmp_path):
+    """№8722 (24.10.2026, Changan S311_MCA_GULF): pm uninstall молчит и у обычных приложений — не дождавшись и видя, что
+    приложение на месте, удаляем своим dex-хелпером (PackageInstaller без pm)."""
+    (tmp_path / adb_permissions._PKG_HELPER_DEX).write_bytes(b"dex")
+    ctx, log, commands = _changan_ctx(AdbTimeoutError, installed=True, services="null")
+    pushed = []
+    ctx.shared_dir = tmp_path
+    ctx.adb = lambda *args, **kw: pushed.append(args) or SimpleNamespace(returncode=0, stdout="", stderr="")
+    shell = ctx.shell
+
+    def shell_with_helper(command, check=True, timeout=120):
+        if command.startswith("CLASSPATH="):
+            commands.append((command, timeout))
+            return SimpleNamespace(stdout="Success", stderr="")
+        return shell(command, check=check, timeout=timeout)
+    ctx.shell = shell_with_helper
+    adb_permissions.uninstall_app(ctx, "com.alphainventor.filemanager")
+    assert log == ["Удаляю приложение: com.alphainventor.filemanager",
+                   "Магнитола не пускает pm uninstall — удаляю через dex-хелпер...", "Готово."]
+    assert pushed and pushed[0][0] == "push"
+    assert adb_permissions.remove_for_rollback(ctx, "com.alphainventor.filemanager") == "removed"
