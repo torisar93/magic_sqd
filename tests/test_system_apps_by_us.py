@@ -150,7 +150,8 @@ def test_generated_permissions_button_imports_only_where_used():
     assert "grant_system_apps_permissions" not in other
 
 
-ROOT_ON = "Включил права root: без них прошивка этой магнитолы не даёт выдавать разрешения, запускать и включать приложения."
+ROOT_ON = ("Включил права root: без них прошивка этой магнитолы не даёт открывать настройки, выдавать разрешения, "
+           "запускать и включать приложения.")
 
 
 def test_actions_on_device_with_our_system_apps_get_root_first():
@@ -191,3 +192,14 @@ def test_permissions_button_gets_root_before_granting():
     finally:
         seen.restore()
     assert seen.adbs == [("root",)] and seen.granted == [OURS, "gb.xxy.hr"]
+
+
+def test_settings_button_root_first_then_am_start():
+    """Кнопка BAIC «Открыть настройки Android»: «#py adb_permissions.ensure_root» перед am start — без root прошивка
+    отвечала SecurityException INTERACT_ACROSS_USERS_FULL (№9882). Root уже есть — без adb root."""
+    ctx, seen = _ctx({"id -u": "2000"}, {"root": "restarting adbd as root"})
+    adb_permissions.ensure_root(ctx)
+    assert seen.adbs == [("root",)] and seen.waits == [60] and seen.log == [ROOT_ON]
+    ctx, seen = _ctx({"id -u": "0"})
+    adb_permissions.ensure_root(ctx)
+    assert seen.adbs == [] and seen.log == []

@@ -191,12 +191,13 @@ def _system_apps_by_us(ctx) -> set[str]:
     return set(_system_app_markers(ctx))
 
 
-def _root_for_system_apps(ctx) -> None:
+def ensure_root(ctx) -> None:
     """BAIC U5 Plus (логи №9875/9882, 27.10.2026): после перезагрузки adbd снова работает без root, а прошивка не даёт
     shell почти ничего — dumpsys package пуст (выдавался запасной список: «0 из 29»), am start и monkey —
     SecurityException INTERACT_ACROSS_USERS_FULL, pm enable — «Attempt to change component state». Под root то же самое
-    работает (№2083; №9875 сразу после adb root). Зовётся только на магнитоле, куда программа сама писала в /system/app
-    (способ system_app): там root уже давали при установке."""
+    работает (№2083; №9875 сразу после adb root). Зовётся на магнитоле, куда программа сама писала в /system/app
+    (способ system_app: там root уже давали при установке), и кнопкой модели «#py adb_permissions.ensure_root» перед
+    командой, которой без root нельзя (BAIC: «Открыть настройки Android»). Root уже есть — ничего не делает."""
     if _shell_text(ctx, "id -u") == "0":
         return
     answer = _adb_output(ctx, "root")
@@ -206,8 +207,8 @@ def _root_for_system_apps(ctx) -> None:
     if "already running as root" not in answer.lower():
         _pause(ctx, 1)  # adbd перезапускается — ждём, пока магнитола снова на связи
         ctx.wait_for_device(timeout=60)
-    ctx.log("Включил права root: без них прошивка этой магнитолы не даёт выдавать разрешения, запускать и включать "
-            "приложения.")
+    ctx.log("Включил права root: без них прошивка этой магнитолы не даёт открывать настройки, выдавать разрешения, "
+            "запускать и включать приложения.")
 
 
 def grant_system_apps_permissions(ctx) -> None:
@@ -218,7 +219,7 @@ def grant_system_apps_permissions(ctx) -> None:
     markers = _system_app_markers(ctx)
     if not markers:
         raise _stop("На магнитоле нет приложений, записанных программой в системную папку — сначала этап установки.")
-    _root_for_system_apps(ctx)
+    ensure_root(ctx)
     known = set(_pm_packages(ctx, "-s"))
     waiting = sorted(package for package in markers if package not in known)
     for package in sorted(markers):
@@ -247,11 +248,11 @@ def list_installed_packages(ctx, third_party_only=True):
     без системных пакетов производителя/Android, иначе список из сотен
     записей неудобно листать ради обычно нужных технику сторонних APK.
     Поставленные программой в /system/app — в списке (см. _system_apps_by_us),
-    если Android их уже видит (после перезагрузки). На такой магнитоле — сначала root (_root_for_system_apps): список
+    если Android их уже видит (после перезагрузки). На такой магнитоле — сначала root (ensure_root): список
     открывает «Запустить», «Выдать разрешения», «Включить» и другие действия, без root прошивка BAIC их не даёт."""
     ours = _system_apps_by_us(ctx)
     if ours:
-        _root_for_system_apps(ctx)
+        ensure_root(ctx)
     if not third_party_only:
         return sorted(_pm_packages(ctx, ""))
     packages = _pm_packages(ctx, "-3")
