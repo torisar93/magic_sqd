@@ -699,6 +699,14 @@ def _shell_or_timeout(ctx, command: str, timeout: int):
         return None
 
 
+# Haval Dargo (GWM V3, Android 9; лог №9503, 25.10.2026): pm uninstall ответил «Success» на ru.krutskikh.wifi и
+# ru.krutskikh.settings_access, а через несколько минут оба стояли на магнитоле (pm list packages -3 в разговоре
+# ИИ-мастера; три Яндекс-приложения в том же запуске удалились по-настоящему). Поэтому «Готово.» после «Success» — только
+# если приложения на магнитоле и правда нет (магнитола не ответила на проверку — как раньше, «Готово.»).
+_SUCCESS_BUT_PRESENT_TEXT = ("магнитола ответила «Success», но приложение осталось на ней — прошивка не даёт удалить его "
+                             "через ADB. Удалите штатно на самой магнитоле (Настройки → Приложения).")
+
+
 def _is_installed(ctx, package: str) -> "bool | None":
     """Стоит ли приложение: True/False, None — магнитола не ответила. Без grep — его нет на части прошивок."""
     result = _shell_or_timeout(ctx, f'case "$(pm path {package})" in *package:*) echo {_PRESENT_MARK};; '
@@ -744,7 +752,10 @@ def uninstall_app(ctx, package: str) -> None:
             ctx.log("Не удалось удалить: магнитола не ответила на удаление — удалите приложение штатно на самой "
                     "магнитоле (Настройки → Приложения).")
     elif "success" in text.lower() and "failure" not in text.lower():
-        ctx.log("Готово.")
+        if _is_installed(ctx, package):
+            ctx.log("Не удалось удалить: " + _SUCCESS_BUT_PRESENT_TEXT)
+        else:
+            ctx.log("Готово.")
     elif "error: closed" in text.lower():
         # Geely OneOS/Monji, VOLGA/N155, Jetour T2: pm закрыт прошивкой (логи #797, #962, №1746) — удаляем своим
         # dex-хелпером (_remove_by_helper); у старых версий нет и его — как раньше, владелец (2026-09-25): пусть
@@ -774,7 +785,7 @@ def remove_for_rollback(ctx, package: str) -> str:
             return "blocked"
         return "failed: магнитола не ответила на удаление"
     if "success" in text.lower() and "failure" not in text.lower():
-        return "removed"
+        return "blocked" if _is_installed(ctx, package) else "removed"  # см. _SUCCESS_BUT_PRESENT_TEXT
     if "error: closed" in text.lower():
         # pm закрыт прошивкой (Geely OneOS/Monji, VOLGA/N155, Jetour T2) — свой dex-хелпер, как у uninstall_app.
         return "removed" if _remove_by_helper(ctx, package) else "blocked"

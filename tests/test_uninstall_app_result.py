@@ -396,3 +396,27 @@ def test_protected_app_refusal_named_not_silence(tmp_path):
     assert log[-1] == "Не удалось удалить: " + adb_permissions._PROTECTED_TEXT
     assert "dex-хелпер не удалил: Failure [-7: ru.yandex.music is auth app, not allow delete!]" in log
     assert adb_permissions.remove_for_rollback(ctx, "ru.yandex.music") == "blocked"
+
+
+def test_success_but_still_installed_is_not_gotovo():
+    """№9503 (Haval Dargo, GWM V3): pm uninstall ответил «Success», а приложение осталось на магнитоле."""
+    def ctx_with(present):
+        log = []
+
+        def shell(command, **kwargs):
+            if command == "pm list packages -s":
+                return SimpleNamespace(stdout=_SYSTEM, stderr="")
+            if command.startswith('case "$(pm path'):
+                mark = adb_permissions._PRESENT_MARK if present else adb_permissions._GONE_MARK
+                return SimpleNamespace(stdout=mark + "\n", stderr="")
+            return SimpleNamespace(stdout="Success\n", stderr="")
+        return SimpleNamespace(log=log.append, shell=shell, sleep=lambda seconds: None), log
+
+    ctx, log = ctx_with(present=True)
+    adb_permissions.uninstall_app(ctx, "ru.krutskikh.wifi")
+    assert log[-1] == "Не удалось удалить: " + adb_permissions._SUCCESS_BUT_PRESENT_TEXT
+    assert adb_permissions.remove_for_rollback(ctx, "ru.krutskikh.wifi") == "blocked"
+    ctx, log = ctx_with(present=False)
+    adb_permissions.uninstall_app(ctx, "ru.yandex.music")
+    assert log[-1] == "Готово."
+    assert adb_permissions.remove_for_rollback(ctx, "ru.yandex.music") == "removed"
