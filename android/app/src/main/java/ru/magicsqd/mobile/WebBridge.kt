@@ -2098,7 +2098,11 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * renderActionsStage). Отдельным событием, а не синхронным возвратом из
      * call() — pm list packages идёт через тот же единственный ADB-транспорт,
      * что и всё остальное (runExclusive), не должен блокировать JS-поток. */
-    private fun actionsListPackages(thirdPartyOnly: Boolean) = runExclusive(::onBusy) {
+    private fun actionsListPackages(thirdPartyOnly: Boolean) = runExclusive({
+        onBusy()
+        // Ответить и экрану: иначе карточка действия так и висела «Получаем список приложений…» (логи №9428–9955).
+        pushEvent(JSONObject().put("kind", "actions_packages_result").put("packages", JSONArray()).put("busy", true))
+    }) {
         val packages = if (!AdbSession.isConnected) {
             pushAdbLog("ADB не подключён — команда не выполнена.")
             emptyList()
