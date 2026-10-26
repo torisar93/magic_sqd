@@ -2334,6 +2334,7 @@ window.I18N_EN = {
   "Установка завершена с ошибками — не выполнено: {stages}.": "Installation finished with errors — not done: {stages}.",
   "Все этапы установки выполнены.": "All installation stages are done.",
   "Получаю список приложений...": "Getting the list of apps...",
+  "Сейчас выполняется другое действие — дождитесь «Готово.» в журнале и нажмите «Выполнить» ещё раз.": "Another action is running — wait for “Done.” in the log and press “Run” again.",
   "Действие \"{label}\" ({kind}) пока не поддерживается в мобильной версии.": "Action \"{label}\" ({kind}) isn't supported in the mobile version yet.",
   "Выполняю действие: {label}": "Running the action: {label}",
   "Выберите файл...": "Choose a file...",

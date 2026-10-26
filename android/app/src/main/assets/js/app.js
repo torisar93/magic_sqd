@@ -1734,7 +1734,7 @@
     if (!pendingPackagesCallback) return;
     const cb = pendingPackagesCallback;
     pendingPackagesCallback = null;
-    cb(event.packages || []);
+    cb(event.packages || [], event.busy === true);
   }
 
   // Результат "Добавить свой APK..." (см. renderApkTree, WebBridge.kt:
@@ -2272,13 +2272,18 @@
         const pickerAction = PACKAGE_PICKER_ACTIONS[action.kind];
         if (pickerAction) {
           if (!adbConnected) { showNoAdbNotice(); return; }
-          log("Получаю список приложений...");
           card.querySelector('.flow-action-note')?.remove();
+          // Идёт другое действие (запуск, разрешения, снятие APK…) — программа откажет, а карточка висела «Получаем
+          // список приложений…» с неактивной кнопкой (18 раз в логах №9428–9955, 27.10.2026). Говорим сразу.
+          const busyText='Сейчас выполняется другое действие — дождитесь «Готово.» в журнале и нажмите «Выполнить» ещё раз.';
+          if (operationBusy()) { card.append(el('p',{class:'flow-action-note',role:'status',text:busyText}));log(busyText);return; }
+          log("Получаю список приложений...");
           const note=el('p',{class:'flow-action-note',role:'status',text:'Получаем список приложений…'});
           card.append(note);btn.disabled=true;
-          pendingPackagesCallback = (packages) => {
+          pendingPackagesCallback = (packages, busy) => {
             btn.disabled=false;
             if (!page.isConnected || labInstallBusy) return;
+            if (busy) { note.textContent=busyText;log(busyText);return; }
             if (!packages.length) { note.textContent='Не удалось получить список приложений: магнитола не ответила или оборвалась связь. Подождите несколько секунд и нажмите «Выполнить» ещё раз; не поможет — переподключитесь к магнитоле.';log(note.textContent);return; }
             note.textContent='Выберите приложение.';
             promptPackagePicker("Выберите приложение", packages, (pkg) => {
