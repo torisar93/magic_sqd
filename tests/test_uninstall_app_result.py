@@ -257,7 +257,7 @@ def test_truly_empty_third_party_list_stays_empty():
 def test_normal_answer_needs_no_extra_commands():
     ctx, log, commands = _ctx_lists("package:ru.vk.store\n", "", "")
     assert adb_permissions.list_installed_packages(ctx) == ["ru.vk.store"]
-    assert commands == ["pm list packages -3", adb_permissions._SYSTEM_APP_MARKERS_COMMAND] and log == []
+    assert commands == [adb_permissions._SYSTEM_APP_MARKERS_COMMAND, "pm list packages -3"] and log == []
 
 
 # Changan CS75 Plus (логи №7872, №8289, №8290): pm uninstall simple_control молчал 120 с, приложение оставалось. Оно

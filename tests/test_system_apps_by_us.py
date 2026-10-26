@@ -33,8 +33,10 @@ def _ctx(answers, adb_answers=None):
         adbs.append(args)
         return SimpleNamespace(stdout=(adb_answers or {}).get(args[0], ""), stderr="", returncode=0)
 
-    ctx = SimpleNamespace(log=log.append, shell=shell, adb=adb, wait_for_device=lambda timeout=90: None)
-    return ctx, SimpleNamespace(log=log, shells=shells, adbs=adbs)
+    waits = []
+    ctx = SimpleNamespace(log=log.append, shell=shell, adb=adb, wait_for_device=lambda timeout=90: waits.append(timeout),
+                          sleep=lambda seconds: None)
+    return ctx, SimpleNamespace(log=log, shells=shells, adbs=adbs, waits=waits)
 
 
 LOOP = adb_permissions._SYSTEM_APP_MARKERS_COMMAND
@@ -146,3 +148,46 @@ def test_generated_permissions_button_imports_only_where_used():
     other = cg._render_install_py(cg.NewCarSpec(brand="X", model="Y", steps=[
         cg.StepSpec(type="actions", title="Доп.", actions=[cg.ActionSpec(label="Запустить", kind="launch_activity")])]))
     assert "grant_system_apps_permissions" not in other
+
+
+ROOT_ON = "Включил права root: без них прошивка этой магнитолы не даёт выдавать разрешения, запускать и включать приложения."
+
+
+def test_actions_on_device_with_our_system_apps_get_root_first():
+    """BAIC U5 Plus (№9875/9882): после перезагрузки adbd без root — прошивка не даёт выдавать разрешения, запускать и
+    включать приложения. Список для «Запустить»/«Выдать разрешения»/«Включить» сначала включает root."""
+    ctx, seen = _ctx({**BASE, "id -u": "2000"}, {"root": "restarting adbd as root"})
+    assert adb_permissions.list_installed_packages(ctx) == [OURS, "ru.yandex.yandexnavi"]
+    assert seen.adbs == [("root",)] and seen.waits == [60]
+    assert seen.log == [ROOT_ON]
+    assert seen.shells.index("id -u") < seen.shells.index("pm list packages -3")
+    ctx, seen = _ctx({**BASE, "id -u": "2000"}, {"root": "restarting adbd as root"})
+    adb_permissions.list_installed_packages(ctx, third_party_only=False)  # «Включить приложение» — все пакеты
+    assert seen.adbs == [("root",)]
+
+
+def test_root_already_on_or_refused_or_not_our_device():
+    ctx, seen = _ctx({**BASE, "id -u": "0"})
+    adb_permissions.list_installed_packages(ctx)
+    assert seen.adbs == [] and seen.log == []
+    ctx, seen = _ctx({**BASE, "id -u": "2000"}, {"root": "adbd is already running as root"})
+    adb_permissions.list_installed_packages(ctx)
+    assert seen.waits == [] and seen.log == [ROOT_ON]
+    ctx, seen = _ctx({**BASE, "id -u": "2000"}, {"root": "adbd cannot run as root in production builds"})
+    assert adb_permissions.list_installed_packages(ctx) == [OURS, "ru.yandex.yandexnavi"]  # без root — как раньше
+    assert seen.log == ["Магнитола не дала права root (adbd cannot run as root in production builds) — пробую без них."]
+    ctx, seen = _ctx({**BASE, LOOP: ""})  # обычная магнитола — ни id, ни root
+    adb_permissions.list_installed_packages(ctx)
+    assert seen.adbs == [] and "id -u" not in seen.shells
+
+
+def test_permissions_button_gets_root_before_granting():
+    after_reboot = {**BASE, "pm list packages -s": SYSTEM + "package:gb.xxy.hr\n", "id -u": "2000"}
+    ctx, seen = _grant_ctx(after_reboot)
+    ctx.adb = lambda *args, **kwargs: (seen.adbs.append(args), SimpleNamespace(stdout="restarting adbd as root",
+                                                                              stderr="", returncode=0))[1]
+    try:
+        adb_permissions.grant_system_apps_permissions(ctx)
+    finally:
+        seen.restore()
+    assert seen.adbs == [("root",)] and seen.granted == [OURS, "gb.xxy.hr"]
