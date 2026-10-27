@@ -20,6 +20,7 @@ function check(file, busyName) {
     log: (line) => lines.push(line), flushSessionLog: () => flushes++,
     renderNav() {}, render() {}, aiNotify() {}, aiStageLine: () => "", indexById: () => -1,
     showCompletionModal() {}, window: { boostyDialogs: { showCompletionDialog() {} } },
+    operationBusy: () => false, showLabBusyNotice() {},  // Android: «Готово» во время операции — finish_during_operation
   };
   ctx[busyName] = false;
   const api = run(code + "\nthis.__api={advanceAfter,show};", ctx).__api;

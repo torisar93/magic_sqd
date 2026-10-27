@@ -1984,6 +1984,13 @@
     const stage = stages[index];
     const nextId = stage.type === "check" ? (stage.next_options || [])[optionIndex] : stage.next;
     if (nextId == null) {
+      // «Готово», пока идёт операция (Haval H9, 27.10.2026: «Работа в движении» снимала APK, техник жал «Готово» — каждое
+      // нажатие отправляло лог заново, 13 кусков по 4–29 строк). Как «Назад»: просим дождаться конца операции.
+      if (operationBusy()) {
+        log("Нажато «Готово» во время операции — программа попросила дождаться её окончания.", false, true);
+        showLabBusyNotice();
+        return;
+      }
       if (failedStages.size) {
         // Честный итог вместо «выполнены» + окна «Готово!» — часть этапов не
         // прошла (см. failedStages); лог всё равно уходит на сервер.
