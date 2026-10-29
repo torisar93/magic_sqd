@@ -1,9 +1,10 @@
 """Динамическая загрузка stages.py модели (режим "Мастер установки по этапам")."""
 from __future__ import annotations
+import importlib
 import importlib.util
 from pathlib import Path
 
-from . import catalog_key, closed_stages
+from . import catalog_key, catalog_setup, closed_stages
 
 STAGE_TYPES = ("usb", "adb", "manual", "apps", "exe", "check", "instruction", "uart", "telnet", "actions", "qr_adb")
 
@@ -101,6 +102,10 @@ def _load_module(script_path: Path):
     # Файл модели на устройстве зашифрован (catalog_key) — читаем исходник с расшифровкой и исполняем
     # из строки; __file__ ставим реальным, чтобы сгенерированный stages.py нашёл _shared через
     # Path(__file__).parents и построил пути к files/. Из исходников (плейнтекст) — то же самое.
+    # Первый запуск на macOS: cars/_shared скачан уже после старта — Python должен увидеть load_sibling, а catalog_io
+    # получить хук расшифровки (см. catalog_setup._register_decrypt_hook).
+    importlib.invalidate_caches()
+    catalog_setup.ensure_decrypt_hook()
     source = catalog_key.read_text(script_path)
     name = f"car_stages_script_{abs(hash(str(script_path)))}"
     spec = importlib.util.spec_from_loader(name, loader=None)

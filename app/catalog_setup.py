@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -40,15 +41,42 @@ def _device_random(base_dir: Path) -> bytes:
     return data
 
 
+_shared_dir: Path | None = None  # cars/_shared этой установки — для ensure_decrypt_hook
+_hook_set = False
+
+
 def _register_decrypt_hook(base_dir: Path) -> None:
+    global _shared_dir
     shared = base_dir / "cars" / "_shared"
+    _shared_dir = shared
+    # macOS, первый запуск (жалоба 29.10.2026: «Не удалось загрузить stages.py: No module named 'load_sibling'» у двух
+    # техников): данные программы — в ~/Library/Application Support/MagicSQD, при первом запуске там пусто. Импорт из
+    # несуществующей папки Python запоминает как «здесь искать нечего» (sys.path_importer_cache → None) и, когда
+    # синхронизация её скачает, туда уже не заглядывает — до перезапуска не открывалась ни одна модель. Пустая папка
+    # заранее — и Python пересмотрит её, когда в ней появятся файлы. На Windows установщик кладёт _shared/*.py сам.
+    try:
+        shared.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     if str(shared) not in sys.path:
         sys.path.insert(0, str(shared))
+    ensure_decrypt_hook()
+
+
+def ensure_decrypt_hook() -> None:
+    """Хук расшифровки в cars/_shared/catalog_io — при старте и ещё раз перед чтением этапов модели
+    (stage_runner._load_module): на первом запуске catalog_io.py скачивается уже после старта, а без хука
+    load_sibling прочитал бы зашифрованный install.py как есть."""
+    global _hook_set
+    if _hook_set or _shared_dir is None:
+        return
+    importlib.invalidate_caches()  # папка/файлы могли появиться после прошлой попытки импорта
     try:
         import catalog_io  # из cars/_shared
     except ImportError:
         return
     catalog_io.set_decrypt(catalog_key.decrypt_if_needed)
+    _hook_set = True
 
 
 def configure(base_dir: Path) -> None:
