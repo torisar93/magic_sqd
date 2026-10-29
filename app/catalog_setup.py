@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import app_token, catalog_key, client_env, content_sync
+from . import app_token, catalog_crypto, catalog_key, client_env, content_sync
 from .content_config import get_app_build_secret, get_base_url
 from .ping_client import get_or_create_client_id
 
@@ -79,9 +79,59 @@ def ensure_decrypt_hook() -> None:
     _hook_set = True
 
 
+def _foreign_key(path: Path) -> bool:
+    """Файл зашифрован, но не этим ключом установки."""
+    try:
+        data = path.read_bytes()
+        if catalog_crypto.is_encrypted(data):
+            catalog_key.decrypt_if_needed(data)
+    except ValueError:
+        return True
+    except OSError:
+        pass
+    return False
+
+
+def _drop_undecryptable(cars_dir: Path) -> int:
+    """Файлы модели, зашифрованные ДРУГИМ ключом установки, — с диска долой: синхронизация скачает их заново.
+    Раньше на macOS при первом запуске .catalog_key не сохранялся (папки данных ещё не было, см. configure) — каталог
+    первого запуска шифровался ключом, который жил только в памяти, и после перезапуска не читался: «не прошла проверка
+    подлинности», пустой каталог, а докачка по размеру/времени считала файлы свежими. Сначала — до 20 version.json (часть
+    могла уже перекачаться под новым ключом): все читаются — ключ тот же, дальше не смотрим."""
+    if not cars_dir.is_dir():
+        return 0
+    samples = [path for pattern in ("*/*/version.json", "*/*/*/version.json") for path in cars_dir.glob(pattern)
+               if "_shared" not in path.parts][:20]
+    if not any(_foreign_key(path) for path in samples):
+        return 0
+    removed = 0
+    for path in cars_dir.rglob("*"):
+        if "_shared" in path.relative_to(cars_dir).parts or not path.is_file():
+            continue
+        rel = "cars/" + path.relative_to(cars_dir).as_posix()
+        if not catalog_key.is_encrypted_path(rel):
+            continue
+        try:
+            catalog_key.decrypt_if_needed(path.read_bytes())
+        except ValueError:
+            path.unlink(missing_ok=True)
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def configure(base_dir: Path) -> None:
+    # macOS: данные программы — в ~/Library/Application Support/MagicSQD; при самом первом запуске этой папки нет, и
+    # .catalog_key молча не записывался (_device_random) — ключ первого запуска жил только в памяти (29.10.2026).
+    try:
+        base_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     build_secret = get_app_build_secret(base_dir)
     catalog_key.configure(build_secret, _device_random(base_dir) if build_secret else None)
+    if build_secret:
+        _drop_undecryptable(base_dir / "cars")
     _register_decrypt_hook(base_dir)
     base_url = get_base_url(base_dir)
     if build_secret and base_url:
