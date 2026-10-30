@@ -4,6 +4,7 @@
 // язык интерфейса программы (info.ui_language).
 // Обязательная регистрация (владелец 14.10.2026, переключатель во вкладке «Доступ» админки): сервер отвечает
 // access=login_required — то же окно, но «Войдите в аккаунт», без Boosty: вход и регистрация бесплатны.
+// Бан аккаунта (владелец 30.10.2026, сервер: ban_user): access=banned — «Доступ закрыт», без Boosty и входа.
 window.accessGate = (() => {
   const TEXT = {
     ru: {
@@ -18,6 +19,10 @@ window.accessGate = (() => {
       loginText: "Каталог Magic SQD открыт для зарегистрированных техников. Войдите или зарегистрируйтесь — " +
         "это бесплатно, каталог откроется сам.",
       loginButton: "Войти или зарегистрироваться", loginStill: "Вход не выполнен — каталог закрыт.",
+      bannedTitle: "Доступ закрыт",
+      bannedText: "Доступ к каталогу Magic SQD для этого аккаунта или компьютера закрыт администратором. " +
+        "Если это ошибка — свяжитесь с нами.",
+      bannedStill: "Доступ по-прежнему закрыт.",
     },
     en: {
       title: "Subscription required",
@@ -31,6 +36,10 @@ window.accessGate = (() => {
       loginText: "The Magic SQD catalog is open to registered technicians. Sign in or create an account — " +
         "it's free, and the catalog will open automatically.",
       loginButton: "Sign in or register", loginStill: "Not signed in — the catalog stays closed.",
+      bannedTitle: "Access closed",
+      bannedText: "The administrator has closed access to the Magic SQD catalog for this account or computer. " +
+        "If this is a mistake, please contact us.",
+      bannedStill: "Access is still closed.",
     },
   };
   const DEFAULT_BOOSTY = "https://boosty.to/magic_sqd";
@@ -87,17 +96,18 @@ window.accessGate = (() => {
     root.hidden = !closed;
     document.body.classList.toggle("access-closed", closed);
     if (!closed) return;
-    const loginOnly = loginRequired();
-    titleEl.textContent = t(loginOnly ? "loginTitle" : "title");
-    textEl.textContent = t(loginOnly ? "loginText" : "text");
-    whyEl.hidden = loginOnly;
-    boostyEl.hidden = loginOnly;
-    loginEl.textContent = t(loginOnly ? "loginButton" : "login");
+    const mode = isBanned() ? "banned" : loginRequired() ? "login" : "";
+    titleEl.textContent = t(mode ? mode + "Title" : "title");
+    textEl.textContent = t(mode ? mode + "Text" : "text");
+    whyEl.hidden = boostyEl.hidden = Boolean(mode);
+    loginEl.hidden = mode === "banned";  // подписка и вход заблокированному не помогут
+    loginEl.textContent = t(mode === "login" ? "loginButton" : "login");
     boostyEl.href = (state && state.boosty) || DEFAULT_BOOSTY;
     statusEl.textContent = state && state.offline ? t("offline") : "";
   }
 
   const loginRequired = () => Boolean(state && state.access === "login_required");
+  const isBanned = () => Boolean(state && state.access === "banned");
 
   function apply(next) {
     const wasClosed = Boolean(state && state.allowed === false);
@@ -119,7 +129,7 @@ window.accessGate = (() => {
       let next;
       try { next = await window.pywebview.api.access_check(); } catch (_) { next = state; }
       apply(next);
-      if (next && next.allowed === false && statusEl && !next.offline) statusEl.textContent = t(loginRequired() ? "loginStill" : "still");
+      if (next && next.allowed === false && statusEl && !next.offline) statusEl.textContent = t(isBanned() ? "bannedStill" : loginRequired() ? "loginStill" : "still");
       return next;
     })().finally(() => { pending = null; });
     return pending;

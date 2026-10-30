@@ -3,6 +3,7 @@
 // окно: подписаться на Boosty, войти аккаунтом подписчика (окно аккаунта приложения), проверить снова. Итог проверки
 // Kotlin присылает событием access_state (WebBridge.startSync, accessCheckAsync). ПК — js/components/access_gate.js.
 // Обязательная регистрация (владелец 14.10.2026): access=login_required — «Войдите в аккаунт», без Boosty.
+// Бан аккаунта (владелец 30.10.2026, сервер: ban_user): access=banned — «Доступ закрыт», без Boosty и входа.
 window.accessGate = (() => {
   const TEXT = {
     ru: {
@@ -16,6 +17,10 @@ window.accessGate = (() => {
       loginText: "Каталог Magic SQD открыт для зарегистрированных техников. Войдите или зарегистрируйтесь — " +
         "это бесплатно, каталог откроется сам.",
       loginButton: "Войти или зарегистрироваться", loginStill: "Вход не выполнен — каталог закрыт.",
+      bannedTitle: "Доступ закрыт",
+      bannedText: "Доступ к каталогу Magic SQD для этого аккаунта или телефона закрыт администратором. " +
+        "Если это ошибка — свяжитесь с нами.",
+      bannedStill: "Доступ по-прежнему закрыт.",
     },
     en: {
       title: "Subscription required",
@@ -28,6 +33,10 @@ window.accessGate = (() => {
       loginText: "The Magic SQD catalog is open to registered technicians. Sign in or create an account — " +
         "it's free, and the catalog will open automatically.",
       loginButton: "Sign in or register", loginStill: "Not signed in — the catalog stays closed.",
+      bannedTitle: "Access closed",
+      bannedText: "The administrator has closed access to the Magic SQD catalog for this account or phone. " +
+        "If this is a mistake, please contact us.",
+      bannedStill: "Access is still closed.",
     },
   };
   const DEFAULT_BOOSTY = "https://boosty.to/magic_sqd";
@@ -81,14 +90,14 @@ window.accessGate = (() => {
     root.hidden = !closed;
     document.body.classList.toggle("access-closed", closed);
     if (closed) {
-      const loginOnly = state.access === "login_required";
-      titleEl.textContent = t(loginOnly ? "loginTitle" : "title");
-      textEl.textContent = t(loginOnly ? "loginText" : "text");
-      whyEl.hidden = loginOnly;
-      boostyEl.hidden = loginOnly;
-      loginEl.textContent = t(loginOnly ? "loginButton" : "login");
+      const mode = state.access === "banned" ? "banned" : state.access === "login_required" ? "login" : "";
+      titleEl.textContent = t(mode ? mode + "Title" : "title");
+      textEl.textContent = t(mode ? mode + "Text" : "text");
+      whyEl.hidden = boostyEl.hidden = Boolean(mode);
+      loginEl.hidden = mode === "banned";  // подписка и вход заблокированному не помогут
+      loginEl.textContent = t(mode === "login" ? "loginButton" : "login");
       boostyEl.href = state.boosty || DEFAULT_BOOSTY;
-      statusEl.textContent = state.offline ? t("offline") : (checking ? t(loginOnly ? "loginStill" : "still") : "");
+      statusEl.textContent = state.offline ? t("offline") : (checking ? t(mode ? mode + "Still" : "still") : "");
     }
     checking = false;
     // Доступ появился («Проверить снова», правило поменяли) — каталог заново; после входа он и так уже синхронизируется.
