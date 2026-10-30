@@ -323,6 +323,8 @@ window.I18N_EN = {
   "Интерфейс": "Interface",
   "Диагностика": "Diagnostics",
   "GitHub проекта": "Project on GitHub",
+  "Группа в Telegram": "Telegram group",
+  "Группа Magic SQD в Telegram": "Magic SQD group on Telegram",
   "Режим администратора": "Administrator mode",
   "Приложения для вашей магнитолы": "Apps for your head unit",
   "Сервер подключён": "Server connected",

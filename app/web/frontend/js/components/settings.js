@@ -75,7 +75,7 @@
         <section class="settings-section"><div class="settings13-section-title"><span data-icon="apps"></span><h3>Интерфейс и лог</h3></div><div data-toggles></div></section>
         <section class="settings-section"><div class="settings13-section-title"><span data-icon="terminal"></span><h3>Диагностика</h3></div><div data-debug-toggle></div><button class="settings13-wide-action" type="button" data-copy-log><span data-icon="copy"></span><span data-label>Скопировать лог</span><span class="settings13-action-tail" data-icon="chevron"></span></button></section>
         <p class="settings13-status" data-settings-status role="status" aria-live="polite" hidden></p>
-      </div><footer class="settings13-footer"><div><strong data-version></strong><span data-admin-status></span></div><a href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener"><span data-icon="link"></span>GitHub проекта</a></footer>`;
+      </div><footer class="settings13-footer"><div><strong data-version></strong><span data-admin-status></span></div><nav class="settings13-links"><a href="https://t.me/magicsqd" target="_blank" rel="noopener"><span data-icon="link"></span>Группа в Telegram</a><a href="https://github.com/torisar93/magic_sqd" target="_blank" rel="noopener"><span data-icon="link"></span>GitHub проекта</a></nav></footer>`;
     dialog.querySelectorAll("[data-icon]").forEach(node => node.append(window.AppIcons.icon(node.dataset.icon)));
     dialog.querySelector("[data-app-size]").textContent = formatBytes(info.app_bytes);
     dialog.querySelector("[data-cache-size]").textContent = formatBytes(info.cache_bytes);

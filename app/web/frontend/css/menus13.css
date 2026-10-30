@@ -79,6 +79,7 @@ dialog.settings13-dialog[open] { display:flex; flex-direction:column; }
 .settings13-footer>div {display:flex;flex-direction:column;gap:4px;}
 .settings13-footer strong {font-size:13px;font-weight:600;}
 .settings13-footer span {color:var(--menus13-muted);font-size:12px;}
+.settings13-links {display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 18px;}
 .settings13-footer a {display:flex;align-items:center;gap:7px;font-size:13px;color:#c9d9dc;text-decoration:none;min-height:36px;}
 .settings13-footer a:hover {color:#b5f2df;}
 .settings13-footer a .ui-icon {width:16px;height:16px;min-width:16px;flex-basis:16px;}

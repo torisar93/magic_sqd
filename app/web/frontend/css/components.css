@@ -450,6 +450,10 @@ body.resizing-log * {
 }
 
 .catalog-topbar-boosty { color: #f6a17a; }
+/* Группа в Telegram (владелец 30.10.2026) — единственная видимая ссылка панели: Boosty и GitHub прячет ui-lab.css. */
+.cat-top-actions > a.catalog-topbar-telegram { display: inline-flex; color: #7cc8f0; }
+.cat-top-actions > a.catalog-topbar-telegram svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+.telegram-link .icon { color: #7cc8f0; }
 
 .catalog-settings {
   width: 34px;

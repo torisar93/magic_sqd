@@ -1176,6 +1176,9 @@ html, body { background: var(--bg); }
 
 .catalog-link:active { background: rgba(32, 51, 54, 0.95); transform: scale(0.96); }
 .catalog-boosty { color: #ffad72; }
+/* Группа в Telegram (владелец 30.10.2026); на телефоне — вместо скрытой GitHub. */
+.catalog-telegram { color: #7cc8f0; }
+.telegram-link .icon { color: #7cc8f0; }
 
 .breadcrumb { position: relative; z-index: 2; flex-shrink: 0; padding: 8px 4px 13px; min-height: 34px; }
 .breadcrumb .crumb.current { color: #a8c8d0; font-size: 12px; }

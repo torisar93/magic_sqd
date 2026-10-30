@@ -3497,6 +3497,7 @@
   }
 
   const STAR_ICON_PATH = "M12 2l2.9 6.26L22 9.27l-5 4.87L18.2 21 12 17.77 5.8 21 7 14.14l-5-4.87 7.1-1.01L12 2z";
+  const TELEGRAM_ICON_PATH = "M9.8 15.3 9.4 20c.6 0 .9-.3 1.2-.6l2.9-2.8 6 4.4c1.1.6 1.9.3 2.2-1L23.6 4.4c.4-1.6-.6-2.3-1.6-1.9L1.4 10.4c-1.5.6-1.4 1.4-.3 1.8l5.3 1.6L18.6 6.1c.6-.4 1.1-.2.7.2z";
   const HEART_ICON_PATH = "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
 
   // Boosty — не собственная реализация оплаты (см. память проекта: "чистый
@@ -3506,7 +3507,8 @@
   // ?locale=ru_RU — иначе Boosty открывается по умолчанию на английском (см. память проекта).
   // subscribeOnly — окно платной функции (замок: ранний доступ, «Скачать заранее», закрытые этапы): только
   // подписка. Разовый донат ничего не открывает — он добровольный (владелец, 2026-10-05), в окне замка он лишний.
-  function boostyLinksRow({ subscribeOnly = false } = {}) {
+  // telegram — группа @magicsqd (владелец 30.10.2026), только в приветственном окне.
+  function boostyLinksRow({ subscribeOnly = false, telegram = false } = {}) {
     return el("div", { class: "boosty-links" }, [
       el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd?locale=ru_RU", target: "_blank" }, [
         svgIcon(STAR_ICON_PATH), el("span", { text: "Подписаться на Boosty" }),
@@ -3514,6 +3516,9 @@
       subscribeOnly ? null : el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd/donate?locale=ru_RU", target: "_blank" }, [
         svgIcon(HEART_ICON_PATH), el("span", { text: "Разовый донат" }),
       ]),
+      telegram ? el("a", { class: "boosty-link telegram-link", href: "https://t.me/magicsqd", target: "_blank" }, [
+        svgIcon(TELEGRAM_ICON_PATH), el("span", { text: "Группа в Telegram" }),
+      ]) : null,
     ]);
   }
 
@@ -3728,7 +3733,7 @@
       el("img", { class: "modal-logo", src: "img/logo-full-dark.svg", alt: "Magic SQD" }),
       el("p", { class: "stage-text", style: "font-weight: 600; font-size: 17px", text: "Добро пожаловать!" }),
       el("p", { class: "stage-text welcome-disclaimer", text: "Программа предназначена для людей с техническими знаниями о работе Android-магнитол. Все действия вы выполняете на свой страх и риск." }),
-      boostyLinksRow(),
+      boostyLinksRow({ telegram: true }),
       okButton,
     ], { dismissible: false });
     overlay.classList.add("welcome-overlay");
@@ -4054,6 +4059,9 @@
     const github = el("a", { class: "menu13-action menu13-link", href: "https://github.com/torisar93/magic_sqd", target: "_blank", rel: "noopener" }, [
       AppIcons.icon("link"), el("span", { class: "menu13-action-label", text: "GitHub проекта" }), AppIcons.icon("chevron"),
     ]);
+    const telegram = el("a", { class: "menu13-action menu13-link", href: "https://t.me/magicsqd", target: "_blank", rel: "noopener" }, [
+      AppIcons.icon("link"), el("span", { class: "menu13-action-label", text: "Группа в Telegram" }), AppIcons.icon("chevron"),
+    ]);
     // Язык интерфейса (с 1.1.4): «Авто» — по телефону, меняется сразу (js/i18n.js). Подпись двуязычная — чтобы
     // англоязычный техник нашёл пункт и в русском интерфейсе.
     const languageSelect = el("select", { class: "menu13-select", "data-preference": "ui_language", "aria-label": "Язык · Language" });
@@ -4093,7 +4101,7 @@
         ]), clear,
         el("small", { class: "menu13-hint", text: "Сценарии и настройки сохранятся." }),
       ]),
-      el("section", { class: "settings-section menu13-card" }, [menuHeading("Диагностика", "log"), reportIssue, copyLog, github]),
+      el("section", { class: "settings-section menu13-card" }, [menuHeading("Диагностика", "log"), reportIssue, copyLog, telegram, github]),
       el("p", { class: "menu13-version", text: `Magic SQD${version ? " · " + version : ""}` }),
     ], { className: "menu13-settings-overlay" });
     document.documentElement.classList.toggle("reduce-motion", info.preferences.reduced_motion);
