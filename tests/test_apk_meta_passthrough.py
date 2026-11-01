@@ -8,14 +8,22 @@ import importlib.util
 import json
 import shutil
 import sys
+import types
 from pathlib import Path
 
 import pytest
 
 from app import car_generator as cg
 from app.scanner import scan_apk_dir_with_remote, scan_apks
-from app.web.api import car_editor_api
 from app.web.api.scanner_api import apk_to_dict
+
+# car_editor_api импортирует pywebview (диалоги выбора файлов), которого нет в CI — как в test_editor_model_access.py.
+_WEBVIEW_STUBBED = "webview" not in sys.modules
+if _WEBVIEW_STUBBED:
+    sys.modules["webview"] = types.ModuleType("webview")
+from app.web.api import car_editor_api  # noqa: E402
+if _WEBVIEW_STUBBED:
+    del sys.modules["webview"]
 
 REPO = Path(__file__).resolve().parents[1]
 ANDROID_PY = REPO / "android/app/src/main/python"
