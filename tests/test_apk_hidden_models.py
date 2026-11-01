@@ -62,17 +62,21 @@ def test_android_reads_hidden_models_for_local_apks(tmp_path, apk_library, monke
     assert items["gsplit.apk"]["exclusive_group"] == "Лаунчер" and items["plain.apk"]["exclusive_group"] == ""
 
 
-def test_android_reads_hidden_models_for_apks_not_downloaded_yet(tmp_path, apk_library):
-    """На телефоне почти вся библиотека ещё не скачана: имя, описание и hidden_models приходят из <файл>.json с сервера."""
+SIDECAR = json.dumps({"name": "GSplit", "hidden_models": [MONJI], "exclusive_group": "Лаунчер"},
+                     ensure_ascii=False).encode("utf-8")
+
+
+@pytest.fixture
+def library_server():
     import http.server
     import threading
     import urllib.parse
 
     files = {
         "manifest.json": json.dumps({"files": {"apk/Утилиты/gsplit.apk": {"size": 5, "mtime": 0},
-                                               "apk/Утилиты/gsplit.json": {"size": 1, "mtime": 0}}}).encode("utf-8"),
-        "apk/Утилиты/gsplit.json": json.dumps({"name": "GSplit", "hidden_models": [MONJI], "exclusive_group": "Лаунчер"},
-                                              ensure_ascii=False).encode("utf-8"),
+                                               "apk/Утилиты/gsplit.json": {"size": len(SIDECAR), "mtime": 0}}}
+                                    ).encode("utf-8"),
+        "apk/Утилиты/gsplit.json": SIDECAR,
     }
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -91,10 +95,30 @@ def test_android_reads_hidden_models_for_apks_not_downloaded_yet(tmp_path, apk_l
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        items = json.loads(apk_library.list_apks(tmp_path / "apk", f"http://127.0.0.1:{server.server_address[1]}"))
-    finally:
-        server.shutdown()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+def test_android_reads_hidden_models_for_apks_not_downloaded_yet(tmp_path, apk_library, library_server):
+    """На телефоне почти вся библиотека ещё не скачана: имя, описание и hidden_models приходят из <файл>.json с сервера."""
+    items = json.loads(apk_library.list_apks(tmp_path / "apk", library_server))
     assert len(items) == 1 and items[0]["remote_only"] is True
     assert items[0]["name"] == "GSplit" and items[0]["hidden_models"] == [MONJI]
     assert items[0]["exclusive_group"] == "Лаунчер"
+
+
+def test_android_keeps_sidecar_of_downloaded_apk(tmp_path, apk_library, library_server, monkeypatch):
+    """Скачанный APK библиотеки: сайдкар на телефоне раньше не сохранялся, и после перезапуска пропадали имя,
+    «скрыть на модели» и группа «только одно» (владелец 01.11.2026: «запрещать выбор дублей»)."""
+    apk = tmp_path / "apk" / "Утилиты" / "gsplit.apk"
+    apk.parent.mkdir(parents=True)
+    apk.write_bytes(b"PK123")
+    items = json.loads(apk_library.list_apks(tmp_path / "apk", library_server))
+    assert len(items) == 1 and items[0]["remote_only"] is False
+    assert items[0]["name"] == "GSplit" and items[0]["exclusive_group"] == "Лаунчер"
+    assert apk.with_suffix(".json").read_bytes() == SIDECAR
+
+    monkeypatch.setattr(apk_library, "fetch_manifest", lambda base_url: None)  # без сети — из сохранённого
+    items = json.loads(apk_library.list_apks(tmp_path / "apk", library_server))
+    assert items[0]["hidden_models"] == [MONJI] and items[0]["exclusive_group"] == "Лаунчер"

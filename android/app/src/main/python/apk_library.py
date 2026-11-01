@@ -7,13 +7,11 @@ model-specific standard_apks/standard_apks_optional (см. wizard_spec.py).
 сами .apk скачиваются только для того, что техник реально отметит
 (см. ensure_apks_downloaded) — тот же принцип, что и на desktop."""
 import json
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from content_sync import ContentSyncError, _encode_path, download_file, fetch_manifest, local_copy_is_current, open_url
+from content_sync import ContentSyncError, download_file, fetch_manifest, local_copy_is_current
 import apk_registry
 
 _META_FETCH_WORKERS = 8
@@ -79,28 +77,49 @@ def _scan_local_apks(apk_dir: Path) -> list:
             and apk_registry.is_trusted(apk_dir, Path(item.path).relative_to(apk_dir).as_posix(), item.path)]
 
 
+def _sync_sidecars(apk_dir: Path, base_url: str, manifest: dict) -> None:
+    """Сайдкары <файл>.json общей библиотеки — рядом с APK на телефоне, как на ПК (content_sync.
+    sync_shared_apk_metadata): лёгкие, качаются только изменившиеся (размер и время из манифеста). Раньше их брали
+    с сервера только для ещё не скачанных APK, а у скачанного читался локальный .json, которого на телефоне не было:
+    после перезапуска пропадали имя, описание, «скрыть на модели» и «только одно из группы» (владелец 01.11.2026:
+    «запрещать выбор дублей»). Нет сети — остаётся то, что скачано раньше."""
+    jobs = []
+    for path, entry in manifest.items():
+        if not (path.startswith("apk/") and path.endswith(".json")) or (path[:-5] + ".apk") not in manifest:
+            continue
+        target = apk_dir / path[len("apk/"):]
+        if not local_copy_is_current(target, entry):
+            jobs.append((path, target, entry))
+
+    def fetch(job):
+        path, target, entry = job
+        try:
+            download_file(base_url, path, target, mtime=entry.get("mtime"))
+        except ContentSyncError:
+            pass
+
+    if jobs:
+        with ThreadPoolExecutor(max_workers=_META_FETCH_WORKERS) as executor:
+            list(executor.map(fetch, jobs))
+
+
 def list_apks(apk_dir: Path, base_url: str) -> str:
     """Локальные + известные с сервера, но ещё не скачанные (remote_only)
     .apk из общей библиотеки — нормализованный JSON-список ApkInfo."""
+    manifest = fetch_manifest(base_url)
+    if manifest:
+        _sync_sidecars(apk_dir, base_url, manifest)
     local = _scan_local_apks(apk_dir)
     local_paths = {a.path for a in local}
     result = [vars(a) for a in local]
 
-    manifest = fetch_manifest(base_url)
     if manifest:
         remote_apks = {}
-        remote_jsons = set()
         for path, entry_info in manifest.items():
-            if not path.startswith("apk/"):
-                continue
-            rel = path[len("apk/"):]
-            if rel.endswith(".apk"):
-                remote_apks[rel] = entry_info["size"]
-            elif rel.endswith(".json"):
-                remote_jsons.add(rel)
+            if path.startswith("apk/") and path.endswith(".apk"):
+                remote_apks[path[len("apk/"):]] = entry_info["size"]
 
         remote_entries = []
-        meta_fetch_jobs = []
         for rel, size in remote_apks.items():
             local_path = apk_dir / rel
             if str(local_path) in local_paths:
@@ -108,33 +127,13 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
             category = rel.split("/")[0] if "/" in rel else ""
             if category.startswith("_"):
                 continue
-            entry = {
-                "path": str(local_path), "name": Path(rel).stem, "description": "",
-                "category": category, "remote_only": True, "size": size, "mock_location": False,
-                "hidden_models": [], "exclusive_group": "",
-            }
-            remote_entries.append(entry)
-            json_rel = rel[:-4] + ".json"
-            if json_rel in remote_jsons:
-                meta_fetch_jobs.append((json_rel, entry))
-
-        if meta_fetch_jobs:
-            def fetch_meta(job):
-                json_rel, entry = job
-                try:
-                    url = f"{base_url}/{_encode_path('apk/' + json_rel)}"
-                    with open_url(url, timeout=15) as resp:
-                        data = json.loads(resp.read().decode("utf-8"))
-                    entry["name"] = str(data.get("name") or entry["name"])
-                    entry["description"] = str(data.get("description") or "")
-                    entry["mock_location"] = data.get("mock_location") is True
-                    entry["hidden_models"] = _hidden_models(data.get("hidden_models"))
-                    entry["exclusive_group"] = _exclusive_group(data.get("exclusive_group"))
-                except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-                    pass
-
-            with ThreadPoolExecutor(max_workers=_META_FETCH_WORKERS) as executor:
-                list(executor.map(fetch_meta, meta_fetch_jobs))
+            # Сайдкар уже рядом (_sync_sidecars), хотя самого APK ещё нет.
+            name, description, mock_location, hidden_models, exclusive_group = _read_local_apk_meta(local_path)
+            remote_entries.append({
+                "path": str(local_path), "name": name, "description": description,
+                "category": category, "remote_only": True, "size": size, "mock_location": mock_location,
+                "hidden_models": hidden_models, "exclusive_group": exclusive_group,
+            })
 
         result.extend(remote_entries)
 
