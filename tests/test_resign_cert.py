@@ -71,7 +71,7 @@ def test_maybe_resign_logs_absence_once_per_run(app_base):
     assert ctx._maybe_resign(apk) == apk
     assert ctx._maybe_resign(apk) == apk
 
-    absent = [line for line in logs if "не используется" in line]
+    absent = [line for line in logs if "Сертификата переподписи" in line]
     assert len(absent) == 1, logs
 
 

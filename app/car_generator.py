@@ -78,6 +78,9 @@ class StandardApkSpec:
     # «Только одно из группы» (как у общей библиотеки apk/): приложения модели с одной группой техник не отметит
     # вместе — MonGuard и Monji, один пакет (владелец, 2026-09-29). В спеке и сайдкаре; пусто — без группы.
     exclusive_group: str = ""
+    # Прочие поля записи (владелец 01.11.2026): редактор их не знает, но переносит как есть в спеку и сайдкар — новые
+    # настройки приложения добавляются интерфейсом (бандлом), без выпуска программы. Интерфейс читает их как apk.meta.
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -624,7 +627,12 @@ def _parse_apk_entry(item, base_dir: Path) -> StandardApkSpec:
         return StandardApkSpec(path=base_dir / item)
     return StandardApkSpec(path=base_dir / item["filename"],
                             name=item.get("name", ""), description=item.get("description", ""),
-                            exclusive_group=str(item.get("exclusive_group") or "").strip())
+                            exclusive_group=str(item.get("exclusive_group") or "").strip(),
+                            extra={k: v for k, v in item.items() if k not in _APK_ENTRY_KEYS})
+
+
+# Поля записи APK, которые редактор знает сам; остальные — StandardApkSpec.extra.
+_APK_ENTRY_KEYS = frozenset({"filename", "name", "description", "exclusive_group"})
 
 
 def _merge_required_into_optional(required: list[StandardApkSpec],
@@ -1001,10 +1009,11 @@ def _copy_apk(apk: StandardApkSpec, dst: Path, keep_paths: set[Path]) -> None:
         shutil.copy2(apk.path, dst)
     keep_paths.add(dst)
     meta_path = dst.with_suffix(".json")
-    if apk.name or apk.description or apk.exclusive_group:
+    if apk.name or apk.description or apk.exclusive_group or apk.extra:
         meta = {"name": apk.name, "description": apk.description}
         if apk.exclusive_group:
             meta["exclusive_group"] = apk.exclusive_group  # его читает список выбора на ПК (scanner.py)
+        meta.update(_apk_extra(apk))
         meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         keep_paths.add(meta_path)
     elif meta_path.exists():
@@ -1288,10 +1297,16 @@ def _write_version_file(model_dir: Path, changelog: str, status: str = "ok") -> 
 # ----------------------------------------------------------------------
 # _wizard_spec.json — снимок NewCarSpec для повторного открытия в редакторе
 # ----------------------------------------------------------------------
+def _apk_extra(apk: StandardApkSpec) -> dict:
+    """StandardApkSpec.extra без полей, которые редактор пишет сам (их не перезаписать)."""
+    return {k: v for k, v in (apk.extra or {}).items() if k not in _APK_ENTRY_KEYS}
+
+
 def _apk_entry_to_json(apk: StandardApkSpec) -> dict:
     data = {"filename": apk.path.name, "name": apk.name, "description": apk.description}
     if apk.exclusive_group:
         data["exclusive_group"] = apk.exclusive_group  # Android берёт группу отсюда (wizard_spec._apk_entry)
+    data.update(_apk_extra(apk))  # Android читает запись целиком как apk.meta
     return data
 
 

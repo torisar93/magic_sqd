@@ -59,6 +59,7 @@ def test_usb_step_without_variants_resolves_standard_apks_optional(tmp_path, wiz
     assert step["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "usb_pack_1" / "optional" / "Data_Belgee_2.3.apk"),
         "name": "Фикс сброса даты/времени", "description": "...", "remote_only": True,
+        "meta": {"filename": "Data_Belgee_2.3.apk", "name": "Фикс сброса даты/времени", "description": "..."},
     }]
 
 
@@ -75,7 +76,7 @@ def test_usb_step_without_variants_resolves_standard_apks_required_too(tmp_path,
     assert step["standard_apks"] == []
     assert step["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "usb_pack_1" / "required" / "mandatory.apk"),
-        "name": "", "description": "", "remote_only": True,
+        "name": "", "description": "", "remote_only": True, "meta": {},
     }]
 
 
@@ -164,6 +165,7 @@ def test_usb_step_with_variants_resolves_per_variant_apk_dir(tmp_path, wizard_sp
     assert full["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "usb_pack_1" / "Full" / "optional" / "full_extra.apk"),
         "name": "Full extra", "description": "", "remote_only": True,
+        "meta": {"filename": "full_extra.apk", "name": "Full extra", "description": ""},
     }]
     assert full["usb_files"] == [str(model_dir / "usb_files" / "step_1" / "Full" / "full.bin")]
     assert lite["standard_apks_optional"] == []
@@ -185,4 +187,5 @@ def test_apps_step_unaffected_by_the_usb_fix(tmp_path, wizard_spec):
     assert step["standard_apks_optional"] == [{
         "path": str(model_dir / "files" / "pack" / "optional" / "extra.apk"),
         "name": "Extra", "description": "d", "remote_only": True,
+        "meta": {"filename": "extra.apk", "name": "Extra", "description": "d"},
     }]

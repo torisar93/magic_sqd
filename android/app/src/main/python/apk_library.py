@@ -32,6 +32,8 @@ class ApkInfo:
     hidden_models: list = field(default_factory=list)
     # «Только одно из группы» (<файл>.json "exclusive_group") — см. app/scanner.py:ApkInfo.exclusive_group.
     exclusive_group: str = ""
+    # Весь <файл>.json как есть — новые настройки приложения интерфейс читает отсюда (см. app/scanner.py:ApkInfo.meta).
+    meta: dict = field(default_factory=dict)
 
 
 def _exclusive_group(value) -> str:
@@ -48,9 +50,9 @@ def _read_local_apk_meta(apk_path: Path):
         data = json.loads(meta_path.read_text(encoding="utf-8"))
         return (str(data.get("name") or apk_path.stem), str(data.get("description") or ""),
                 data.get("mock_location") is True, _hidden_models(data.get("hidden_models")),
-                _exclusive_group(data.get("exclusive_group")))
-    except (OSError, json.JSONDecodeError, AttributeError):
-        return apk_path.stem, "", False, [], ""
+                _exclusive_group(data.get("exclusive_group")), data)
+    except (OSError, ValueError, AttributeError):
+        return apk_path.stem, "", False, [], "", {}
 
 
 def _scan_local_dir(dir_path: Path, category: str) -> list:
@@ -58,10 +60,10 @@ def _scan_local_dir(dir_path: Path, category: str) -> list:
         return []
     items = []
     for f in sorted(dir_path.glob("*.apk")):
-        name, description, mock_location, hidden_models, exclusive_group = _read_local_apk_meta(f)
+        name, description, mock_location, hidden_models, exclusive_group, meta = _read_local_apk_meta(f)
         items.append(ApkInfo(path=str(f), name=name, description=description, category=category,
                              mock_location=mock_location, hidden_models=hidden_models,
-                             exclusive_group=exclusive_group))
+                             exclusive_group=exclusive_group, meta=meta))
     return items
 
 
@@ -128,11 +130,11 @@ def list_apks(apk_dir: Path, base_url: str) -> str:
             if category.startswith("_"):
                 continue
             # Сайдкар уже рядом (_sync_sidecars), хотя самого APK ещё нет.
-            name, description, mock_location, hidden_models, exclusive_group = _read_local_apk_meta(local_path)
+            name, description, mock_location, hidden_models, exclusive_group, meta = _read_local_apk_meta(local_path)
             remote_entries.append({
                 "path": str(local_path), "name": name, "description": description,
                 "category": category, "remote_only": True, "size": size, "mock_location": mock_location,
-                "hidden_models": hidden_models, "exclusive_group": exclusive_group,
+                "hidden_models": hidden_models, "exclusive_group": exclusive_group, "meta": meta,
             })
 
         result.extend(remote_entries)

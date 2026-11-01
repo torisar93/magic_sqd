@@ -185,8 +185,11 @@ def _apk_entry(item, base_dir: Path) -> dict:
         group = str(item.get("exclusive_group") or "").strip()
         if group:
             entry["exclusive_group"] = group
+        # Вся запись спеки как есть — как meta (весь <файл>.json) у общей библиотеки и на ПК: новые настройки
+        # приложения интерфейс читает отсюда, без выпуска программы (владелец 01.11.2026).
+        entry["meta"] = dict(item)
     else:
-        entry = {"path": str(base_dir / item), "name": "", "description": ""}
+        entry = {"path": str(base_dir / item), "name": "", "description": "", "meta": {}}
     # Скачан ли уже (APK модели качаются лениво, перед установкой) — как remote_only у общей библиотеки и на ПК:
     # подсказка Wi-Fi в нижней панели этапа не нужна, если всё выбранное на телефоне (владелец, 15.10.2026).
     entry["remote_only"] = not Path(entry["path"]).is_file()

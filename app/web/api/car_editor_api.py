@@ -77,7 +77,8 @@ def _apk_entry_to_dict(apk: StandardApkSpec) -> dict:
     (см. app/car_generator.py: StandardApkSpec, _write_model_files)."""
     return {"name": apk.path.name, "path": str(apk.path),
             "display_name": apk.name, "description": apk.description,
-            "exclusive_group": apk.exclusive_group}  # в редакторе не показывается — переживает сохранение
+            "exclusive_group": apk.exclusive_group,  # в редакторе не показывается — переживает сохранение
+            "extra": dict(apk.extra)}  # прочие поля записи — так же (см. car_generator.StandardApkSpec.extra)
 
 
 def _apk_entries_to_dicts(items: list[StandardApkSpec]) -> list[dict]:
@@ -153,9 +154,11 @@ def _files_from_dicts(items: list[dict]) -> list[Path]:
 
 
 def _apk_entry_from_dict(item: dict) -> StandardApkSpec:
+    extra = item.get("extra")
     return StandardApkSpec(path=Path(item["path"]), name=item.get("display_name", ""),
                             description=item.get("description", ""),
-                            exclusive_group=item.get("exclusive_group", "") or "")
+                            exclusive_group=item.get("exclusive_group", "") or "",
+                            extra=dict(extra) if isinstance(extra, dict) else {})
 
 
 def _apk_entries_from_dicts(items: list[dict]) -> list[StandardApkSpec]:

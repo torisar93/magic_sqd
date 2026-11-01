@@ -854,8 +854,10 @@ class InstallContext:
             # «переподпись просто не нужна». Строка один раз за запуск.
             if not self._resign_skip_logged:
                 self._resign_skip_logged = True
-                self.log("Переподпись APK для этой модели не используется "
-                         "(сертификата files/resign_cert нет).")
+                # «Не используется» читалось как «переподпись не нужна», хотя сертификат мог просто не скачаться
+                # (Changan без интернета → «not auth», владелец 01.11.2026) — пишем только то, что известно.
+                self.log("Сертификата переподписи (files/resign_cert) на этом компьютере нет — "
+                         "APK ставятся без переподписи.")
             return path
         cached = self._resigned.get(path)
         if cached is not None:

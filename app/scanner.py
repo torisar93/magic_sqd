@@ -153,6 +153,9 @@ class ApkInfo:
     # «Только одно из группы» (<файл>.json "exclusive_group", владелец 2026-09-25): приложения с одной группой
     # нельзя выбрать вместе — например, лаунчеры (см. apps_tabs.js: AppTabs.exclusiveGroups). "" — без ограничения.
     exclusive_group: str = ""
+    # Весь <файл>.json как есть (владелец 01.11.2026): новые настройки приложения, заведённые в админке или редакторе,
+    # интерфейс читает отсюда — их можно добавлять бандлом интерфейса, без выпуска программы. Нет сайдкара — {}.
+    meta: dict = field(default_factory=dict)
 
 
 def scan_cars(cars_dir: Path) -> dict[str, list[ModelGroup]]:
@@ -431,6 +434,7 @@ def scan_apks(apk_dir: Path, remote_catalog: list[dict] | None = None) -> list[A
             mock_location=read_apk_mock_location(apk_path),
             hidden_models=read_apk_hidden_models(apk_path),
             exclusive_group=read_apk_exclusive_group(apk_path),
+            meta=read_apk_sidecar(apk_path),
         )
 
     return sorted(apks.values(), key=lambda a: (a.category != "", a.category.lower(), a.name.lower()))
@@ -443,56 +447,38 @@ def _read_apk_meta(apk_path: Path) -> tuple[str, str]:
     remote_only записей вместо "красивого" имени показывалось бы голое имя
     файла. Возвращает (name, description); name — apk_path.stem, если
     сайдкара нет или он битый."""
-    name = apk_path.stem
-    description = ""
-    meta_path = apk_path.with_suffix(".json")
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            name = meta.get("name", name)
-            description = meta.get("description", "")
-        except (json.JSONDecodeError, OSError):
-            pass
-    return name, description
+    meta = read_apk_sidecar(apk_path)
+    return meta.get("name", apk_path.stem), meta.get("description", "")
+
+
+def read_apk_sidecar(apk_path: Path) -> dict:
+    """<файл>.json рядом с APK целиком (см. ApkInfo.meta); нет/битый сайдкар — {}."""
+    meta_path = Path(apk_path).with_suffix(".json")
+    if not meta_path.exists():
+        return {}
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
 
 
 def read_apk_mock_location(apk_path: Path) -> bool:
     """Стоит ли в <файл>.json пометка "mock_location": true (см. ApkInfo.
     mock_location). Битый/отсутствующий сайдкар — False."""
-    meta_path = Path(apk_path).with_suffix(".json")
-    if not meta_path.exists():
-        return False
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return False
-    return isinstance(meta, dict) and meta.get("mock_location") is True
+    return read_apk_sidecar(apk_path).get("mock_location") is True
 
 
 def read_apk_exclusive_group(apk_path: Path) -> str:
     """<файл>.json "exclusive_group" (см. ApkInfo.exclusive_group); нет/битый сайдкар — ""."""
-    meta_path = Path(apk_path).with_suffix(".json")
-    if not meta_path.exists():
-        return ""
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return ""
-    value = meta.get("exclusive_group") if isinstance(meta, dict) else None
+    value = read_apk_sidecar(apk_path).get("exclusive_group")
     return value.strip() if isinstance(value, str) else ""
 
 
 def read_apk_hidden_models(apk_path: Path) -> list[str]:
     """<файл>.json "hidden_models" (см. ApkInfo.hidden_models) — только строки; битый/отсутствующий сайдкар —
     пусто, то есть приложение видно везде."""
-    meta_path = Path(apk_path).with_suffix(".json")
-    if not meta_path.exists():
-        return []
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-    value = meta.get("hidden_models") if isinstance(meta, dict) else None
+    value = read_apk_sidecar(apk_path).get("hidden_models")
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
@@ -516,7 +502,8 @@ def scan_apk_dir(folder: Path, category: str = "") -> list[ApkInfo]:
         apks.append(ApkInfo(path=apk_path, name=name, description=description, category=category,
                             mock_location=read_apk_mock_location(apk_path),
                             hidden_models=read_apk_hidden_models(apk_path),
-                            exclusive_group=read_apk_exclusive_group(apk_path)))
+                            exclusive_group=read_apk_exclusive_group(apk_path),
+                            meta=read_apk_sidecar(apk_path)))
     return apks
 
 
@@ -543,5 +530,6 @@ def scan_apk_dir_with_remote(folder: Path, remote_catalog: list[dict] | None = N
                                   remote_only=True, size=entry.get("size", -1),
                                   mock_location=read_apk_mock_location(apk_path),
                                   hidden_models=read_apk_hidden_models(apk_path),
-                                  exclusive_group=read_apk_exclusive_group(apk_path))
+                                  exclusive_group=read_apk_exclusive_group(apk_path),
+                                  meta=read_apk_sidecar(apk_path))
     return sorted(apks.values(), key=lambda a: a.name.lower())

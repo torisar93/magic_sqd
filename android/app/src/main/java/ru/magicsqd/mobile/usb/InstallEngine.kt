@@ -709,8 +709,9 @@ class InstallEngine(
         if (rememberedIndex >= 0) log("Для этой магнитолы ($deviceModel) в прошлый раз сработал способ «$remembered» — начинаю с него.")
         val certDir = modelDir?.let { resignCertDirForModel(it) }
         // Раньше отсутствие сертификата было немым: потерянный resign_cert Changan
-        // выглядел в логе как «переподпись не нужна» (логи #361/#362/#365).
-        if (certDir == null) log("Переподпись APK для этой модели не используется (сертификата files/resign_cert нет).")
+        // выглядел в логе как «переподпись не нужна» (логи #361/#362/#365). Пишем только то, что известно: сертификат
+        // мог и не скачаться (Changan без интернета → «not auth», владелец 01.11.2026).
+        if (certDir == null) log("Сертификата переподписи (files/resign_cert) на этом устройстве нет — APK ставятся без переподписи.")
 
         for ((index, path) in apkPaths.withIndex()) {
             if (cancelled()) return StageRunResult.Failed("Очередь остановлена пользователем")

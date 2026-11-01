@@ -34,6 +34,7 @@ def apk_to_dict(apk) -> dict:
         "mock_location": bool(getattr(apk, "mock_location", False)),
         "hidden_models": list(getattr(apk, "hidden_models", None) or []),
         "exclusive_group": getattr(apk, "exclusive_group", "") or "",
+        "meta": dict(getattr(apk, "meta", None) or {}),  # весь <файл>.json — см. scanner.ApkInfo.meta
     }
 
 
