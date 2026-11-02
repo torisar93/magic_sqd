@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
+from . import plain_zip
 from .content_sync import is_local_only_file
 from .submit_config import SubmitConfig
 
@@ -59,7 +60,9 @@ def submit_model(model_dir: Path, brand: str, model: str, config: SubmitConfig,
             with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for file in model_dir.rglob("*"):
                     if file.is_file() and not is_local_only_file(file):
-                        zf.write(file, file.relative_to(model_dir))
+                        plain_zip.write(zf, file, file.relative_to(model_dir).as_posix())
+        except plain_zip.ForeignEncryptedFile as exc:
+            raise SubmitError(str(exc)) from exc
         except OSError as exc:
             raise SubmitError(f"Не удалось собрать архив: {exc}") from exc
 

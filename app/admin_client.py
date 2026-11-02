@@ -12,12 +12,12 @@ admin_main.py, app/admin_gui.py) — использует ровно тот же
 from __future__ import annotations
 import http.client
 import json
-import shutil
 import tempfile
 import zipfile
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
+from . import plain_zip
 from .content_sync import is_local_only_file
 
 CHUNK_SIZE = 1024 * 1024
@@ -102,11 +102,19 @@ def upload_dir(base_url: str, session_cookie: str, target: str, source_dir: Path
 
     def build_archive(tmp: Path) -> Path:
         log(f"Архивирую {target}/...")
-        archive_base = tmp / target
+        archive_path = tmp / f"{target}.zip"
         try:
-            return Path(shutil.make_archive(str(archive_base), "zip", root_dir=source_dir))
+            # Не shutil.make_archive: файлы закрытого каталога на этом устройстве зашифрованы — в архив расшифрованными
+            # (см. plain_zip).
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for file in sorted(source_dir.rglob("*")):
+                    if file.is_file():
+                        plain_zip.write(zf, file, file.relative_to(source_dir).as_posix())
+        except plain_zip.ForeignEncryptedFile as exc:
+            raise AdminClientError(str(exc)) from exc
         except OSError as exc:
             raise AdminClientError(f"Не удалось собрать архив {target}/: {exc}") from exc
+        return archive_path
 
     return _build_and_send(base_url, session_cookie, target, build_archive, log, check_cancelled)
 
@@ -137,13 +145,15 @@ def upload_model(base_url: str, session_cookie: str, cars_dir: Path, model_dir: 
                     # разошлась с сервером" (см. content_sync.py:
                     # mark_local_edit), server её вообще не должен видеть.
                     if file.is_file() and not is_local_only_file(file):
-                        zf.write(file, file.relative_to(cars_dir))
+                        plain_zip.write(zf, file, file.relative_to(cars_dir).as_posix())
                 for extra_dir in extra_dirs:
                     if not extra_dir.is_dir():
                         continue
                     for file in extra_dir.rglob("*"):
                         if file.is_file():
-                            zf.write(file, file.relative_to(cars_dir))
+                            plain_zip.write(zf, file, file.relative_to(cars_dir).as_posix())
+        except plain_zip.ForeignEncryptedFile as exc:
+            raise AdminClientError(str(exc)) from exc
         except OSError as exc:
             raise AdminClientError(f"Не удалось собрать архив: {exc}") from exc
         return archive_path
@@ -170,13 +180,15 @@ def upload_model_as(base_url: str, session_cookie: str, cars_dir: Path, model_di
             with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for file in model_dir.rglob("*"):
                     if file.is_file() and not is_local_only_file(file):
-                        zf.write(file, f"{dest_root}/{file.relative_to(model_dir)}")
+                        plain_zip.write(zf, file, f"{dest_root}/{file.relative_to(model_dir).as_posix()}")
                 for extra_dir in extra_dirs:
                     if not extra_dir.is_dir():
                         continue
                     for file in extra_dir.rglob("*"):
                         if file.is_file():
-                            zf.write(file, file.relative_to(cars_dir))
+                            plain_zip.write(zf, file, file.relative_to(cars_dir).as_posix())
+        except plain_zip.ForeignEncryptedFile as exc:
+            raise AdminClientError(str(exc)) from exc
         except OSError as exc:
             raise AdminClientError(f"Не удалось собрать архив: {exc}") from exc
         return archive_path
