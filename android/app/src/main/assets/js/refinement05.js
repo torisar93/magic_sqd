@@ -32,6 +32,26 @@
     const decorate=()=>panel.querySelectorAll('.log-line:not([data-decorated])').forEach(LabUI.decorateLog);
     decorate();new MutationObserver(decorate).observe(panel,{childList:true});
   };
+  // Самый вероятный адрес магнитолы — первым, с подписью и сразу в поле адреса (владелец 02.11.2026: «просто показывает
+  // все что в сети и не подписывает что вот этот самый наиболее вероятный»). Признаки присылает программа: reason/reasons —
+  // 'adb' (служба «Беспроводная отладка», со своим портом), 'open' (открыт порт ADB), 'mdns' (откликается как android.local),
+  // 'gateway' (раздаёт эту сеть Wi-Fi: телефон или компьютер подключён к точке доступа магнитолы). Версии до 1.1.19
+  // присылают только recommended без причины. Один адрес из нескольких источников — одна строка.
+  const HOST_REASONS={adb:[4,'служба «Беспроводная отладка»'],open:[3,'открыт порт ADB'],mdns:[2,'откликается как android.local'],gateway:[1,'раздаёт эту сеть Wi-Fi']};
+  LabUI.rankHosts=list=>{
+    const byHost=new Map();
+    for(const raw of list||[]){
+      const item=typeof raw==='string'?{host:raw}:{...raw};if(!item.host)continue;
+      const reasons=[].concat(item.reasons||[],item.reason||[]).filter(r=>HOST_REASONS[r]);
+      if(item.recommended&&!reasons.length)reasons.push(item.port?'adb':'mdns');
+      const prev=byHost.get(item.host);
+      if(prev){prev.reasons=[...new Set([...prev.reasons,...reasons])];if(item.port&&!prev.port)prev.port=item.port;}
+      else byHost.set(item.host,{...item,reasons:[...new Set(reasons)]});
+    }
+    const weight=x=>x.reasons.reduce((best,r)=>Math.max(best,HOST_REASONS[r][0]),0)*10+x.reasons.length;
+    return [...byHost.values()].map((x,order)=>({...x,order,rank:weight(x)})).sort((a,b)=>b.rank-a.rank||a.order-b.order)
+      .map(x=>({host:x.host,port:x.port,recommended:x.rank>0,why:x.reasons.sort((a,b)=>HOST_REASONS[b][0]-HOST_REASONS[a][0]).map(r=>HOST_REASONS[r][1]).join(', ')}));
+  };
   LabUI.connection=({port=5555,host='',title='Подключение по Wi-Fi',help='',scan,connect,onClose})=>{
     const modal=n('dialog','connection-dialog');modal.setAttribute('aria-label',title);
     const head=n('header','connection-heading'),badge=n('span','connection-symbol');badge.append(LabUI.symbol('wifi'));
@@ -51,7 +71,12 @@
     modal.addEventListener('cancel',e=>{if(busy)e.preventDefault();});
     modal.addEventListener('click',e=>{if(e.target===modal){const r=modal.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dismiss();}});
     async function searchNow(){const p=validPort();if(!p||busy)return;const g=++generation;search.disabled=true;status.textContent='Ищем устройства в сети…';status.dataset.state='searching';results.replaceChildren();
-      try{const hosts=await scan(p);if(g!==generation||!modal.open)return;status.textContent=hosts.length?'Выберите устройство для подключения':'Устройства не найдены. Можно ввести адрес вручную.';hosts.forEach(item=>{const h=typeof item==='string'?item:item.host;const b=n('button','connection-device');b.append(LabUI.symbol('wifi'),n('span','',h),n('small','',item.port?String(item.port):'В сети'));b.onclick=()=>{hostInput.value=h;if(item.port)portInput.value=item.port;results.querySelectorAll('button').forEach(x=>x.classList.toggle('selected',x===b));hostInput.focus();};results.append(b);});}
+      try{const items=LabUI.rankHosts(await scan(p));if(g!==generation||!modal.open)return;const best=items.find(x=>x.recommended);
+        status.textContent=best?'Скорее всего магнитола — '+best.host+'. Нажмите «Подключиться» или выберите другое устройство.':items.length?'Выберите устройство для подключения':'Устройства не найдены. Можно ввести адрес вручную.';
+        items.forEach(item=>{const h=item.host;const b=n('button','connection-device'+(item.recommended?' recommended':''));const label=n('span','connection-host',h);if(item===best)label.append(n('small','connection-badge','Скорее всего магнитола'));if(item.why)label.append(n('small','connection-why',item.why));
+          b.append(LabUI.symbol(item===best?'check':'wifi'),label);if(item.port)b.append(n('small','',String(item.port)));else if(!item.recommended)b.append(n('small','','В сети'));
+          b.onclick=()=>{hostInput.value=h;if(item.port)portInput.value=item.port;results.querySelectorAll('button').forEach(x=>x.classList.toggle('selected',x===b));hostInput.focus();};results.append(b);
+          if(item===best&&!hostInput.value.trim()){hostInput.value=h;if(item.port)portInput.value=item.port;b.classList.add('selected');}});}
       catch{if(g===generation)status.textContent='Не удалось просканировать сеть. Введите адрес вручную.';}
       finally{if(g===generation){search.disabled=false;status.dataset.state='idle';}}
     }
