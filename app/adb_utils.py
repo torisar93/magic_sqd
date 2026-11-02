@@ -232,15 +232,30 @@ def scan_network_for_wifi_adb(port: int) -> list:
     подтверждённые через mDNS (это ТОЧНО Android, не просто "что-то ответило
     на пинг") идут первыми и с "recommended": True — фронтенд (см.
     app/web/frontend/js/refinement05.js: LabUI.connection) подсвечивает их
-    отдельно, как раньше подсвечивался хост с открытым портом 5555."""
+    отдельно, как раньше подсвечивался хост с открытым портом 5555.
+
+    Признаки «это магнитола» для окна (LabUI.rankHosts; владелец 02.11.2026: «не подписывает что вот этот самый
+    наиболее вероятный»): у кого открыт порт ("open") и шлюз сети ("gateway" — компьютер у точки доступа магнитолы).
+    Такие адреса — {"host", "reasons": [...]}, остальные — голые IP."""
     ip_candidates: set[str] = set()
+    reasons: dict[str, list[str]] = {}
 
     info = _local_ipv4_and_subnet()
     if info is not None:
         own_ip, network = info
         hosts = [str(h) for h in network.hosts() if str(h) != own_ip]
         ip_candidates.update(_ping_sweep(hosts))
-        ip_candidates.update(scan_for_adb_hosts(port))
+        for host in scan_for_adb_hosts(port):
+            ip_candidates.add(host)
+            reasons.setdefault(host, []).append("open")
+        gateway = get_default_gateway_ip()
+        try:
+            in_subnet = bool(gateway) and gateway != own_ip and ipaddress.ip_address(gateway) in network
+        except ValueError:
+            in_subnet = False
+        if in_subnet:
+            ip_candidates.add(gateway)
+            reasons.setdefault(gateway, []).append("gateway")
 
     endpoints = mdns_scan.resolve_adb_tls_connect_endpoints()
     endpoint_hosts = {host for host, _ in endpoints}
@@ -251,11 +266,12 @@ def scan_network_for_wifi_adb(port: int) -> list:
     if android_local_ip:
         ip_candidates.discard(android_local_ip)
 
-    results: list = [{"host": host, "port": found_port, "recommended": True}
+    results: list = [{"host": host, "port": found_port, "recommended": True, "reason": "adb"}
                       for host, found_port in sorted(endpoints)]
     if android_local_ip:
-        results.append({"host": android_local_ip, "recommended": True})
-    results += sorted(ip_candidates, key=lambda ip: tuple(int(part) for part in ip.split(".")))
+        results.append({"host": android_local_ip, "recommended": True, "reasons": ["mdns", *reasons.get(android_local_ip, [])]})
+    results += [{"host": ip, "reasons": reasons[ip]} if ip in reasons else ip
+                for ip in sorted(ip_candidates, key=lambda ip: tuple(int(part) for part in ip.split(".")))]
     return results
 
 

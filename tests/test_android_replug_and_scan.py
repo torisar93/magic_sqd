@@ -60,8 +60,9 @@ def test_scan_never_offers_the_phone_itself():
     bridge = _code(KOTLIN / "WebBridge.kt")
     scan_hosts = _function(bridge, "private fun scanHosts(")
     assert scan_hosts.count("val own = NetworkScan.ownAddresses()") == 2  # telnet (IPv6) и Wi-Fi ADB (IPv4)
-    assert scan_hosts.count(".filter { NetworkScan.withoutZone(it) !in own }") == 2
-    assert scan_hosts.count("takeIf { NetworkScan.withoutZone(it) !in own }") == 2  # и «рекомендованный» тоже
+    # списки обоих сканов и «открыт порт» (с 02.11.2026) — без самого телефона
+    assert scan_hosts.count(".filter { NetworkScan.withoutZone(it) !in own }") == 3
+    assert scan_hosts.count("takeIf { NetworkScan.withoutZone(it) !in own }") == 3  # «рекомендованный» ×2 и шлюз
     scan = _code(KOTLIN / "usb/NetworkScan.kt")
     assert "host.trim('[', ']').substringBefore('%').lowercase()" in scan
 

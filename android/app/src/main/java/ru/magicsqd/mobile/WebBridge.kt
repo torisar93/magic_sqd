@@ -1473,10 +1473,18 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 }
                 val own = NetworkScan.ownAddresses()
                 val recommended = mdns.ipv4?.takeIf { NetworkScan.withoutZone(it) !in own }
-                val hosts = (listOfNotNull(recommended) + ping + portOpen).distinct()
+                // Признаки «это магнитола» для окна (LabUI.rankHosts, владелец 02.11.2026: «не подписывает что вот этот
+                // самый наиболее вероятный»): у кого открыт порт ADB и кто раздаёт сеть — телефон у точки доступа магнитолы.
+                val open = portOpen.filter { NetworkScan.withoutZone(it) !in own }
+                val gateway = NetworkScan.wifiGateway(context)?.takeIf { NetworkScan.withoutZone(it) !in own }
+                val hosts = (listOfNotNull(recommended) + open + listOfNotNull(gateway) + ping).distinct()
                     .filter { NetworkScan.withoutZone(it) !in own }
-                pushAdbLog("Скан сети (Wi-Fi ADB, IPv4): найдено ${hosts.size}.")
+                pushAdbLog("Скан сети (Wi-Fi ADB, IPv4): найдено ${hosts.size}" +
+                    (if (open.isNotEmpty()) ", порт $port открыт: ${open.joinToString()}" else "") +
+                    (if (gateway != null) ", шлюз Wi-Fi: $gateway" else "") + ".")
                 event.put("hosts", JSONArray(hosts))
+                event.put("open", JSONArray(open))
+                if (gateway != null) event.put("gateway", gateway)
                 if (recommended != null) event.put("recommended", recommended)
             }
             pushEvent(event)

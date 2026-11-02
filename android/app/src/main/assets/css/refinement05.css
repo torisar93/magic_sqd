@@ -46,3 +46,8 @@ dialog[open],.modal-overlay .modal-box{animation:lab-dialog .24s var(--ease) bot
 
 .app-row label:before,.app-row label:after{content:none!important;display:none!important}
 html.reduce-motion *,html.reduce-motion *:before,html.reduce-motion *:after{animation:none!important;transition:none!important}
+/* Подсветка самого вероятного адреса магнитолы — как на ПК (там с переноса на macOS); на Android её не было. */
+.connection-device small{flex:0 0 auto;white-space:nowrap}.connection-device.recommended{background:linear-gradient(120deg,#0f8a6b3d,#0f8a6b12 72%)!important;animation:lab-pulse-green 1.8s ease-in-out infinite}.connection-device.recommended:not(.selected):hover{border-color:#5cf0bcb0!important}.connection-device.recommended.selected{animation:none;border-color:#7fe9c15c!important}.connection-device.recommended .ui-icon{color:#4de8ac}.connection-device.recommended small{color:#c7fce9}.connection-badge{background:#0d9169;color:#eafff5!important;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.2px}
+@keyframes lab-pulse-green{0%,100%{border-color:#3ddba385;box-shadow:inset 0 1px 0 #d8fff11f,0 0 0 1px #3ddba32e}50%{border-color:#6bffce;box-shadow:inset 0 1px 0 #d8fff130,0 0 14px 2px #4df0b070}}
+/* Причина, почему адрес похож на магнитолу (LabUI.rankHosts, 02.11.2026) — под адресом, переносится. */
+.connection-device .connection-host{display:flex;flex-direction:column;gap:2px}.connection-device .connection-why{display:block;white-space:normal;font-size:12px;color:#91b9a9;font-weight:400}.connection-device.recommended .connection-why{color:#c7fce9}.connection-device .connection-host .connection-badge{align-self:flex-start;margin:3px 0 1px;white-space:nowrap}

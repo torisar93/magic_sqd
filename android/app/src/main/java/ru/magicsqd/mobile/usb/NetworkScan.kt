@@ -84,6 +84,18 @@ object NetworkScan {
     /** «fe80::1%wlan0» → «fe80::1»; квадратные скобки и регистр — тоже прочь, для сравнения адресов. */
     fun withoutZone(host: String): String = host.trim('[', ']').substringBefore('%').lowercase()
 
+    /** IPv4-шлюз Wi-Fi-сети телефона: когда телефон подключён к точке доступа магнитолы, это и есть магнитола (окно
+     * подключения ставит его в число вероятных, см. WebBridge.scanHosts и LabUI.rankHosts; владелец 02.11.2026). null —
+     * Wi-Fi нет или шлюза нет. */
+    fun wifiGateway(context: Context): String? {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+        val network = wifiNetwork(context) ?: return null
+        val linkProperties = cm.getLinkProperties(network) ?: return null
+        return linkProperties.routes.firstNotNullOfOrNull { route ->
+            (route.gateway as? Inet4Address)?.takeIf { route.isDefaultRoute && !it.isAnyLocalAddress }?.hostAddress
+        }
+    }
+
     /** Собственный IPv4 + длина префикса Wi-Fi подключения (к точке доступа
      * магнитолы или её собственной сети) — см. wifiNetwork. */
     private fun getLocalIPv4Subnet(context: Context): Pair<String, Int>? {

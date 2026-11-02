@@ -1717,7 +1717,8 @@
     if (!pendingScanCallback) return;
     const cb = pendingScanCallback;
     pendingScanCallback = null;
-    cb(event.hosts || [], event.recommended || null);
+    // open/gateway — с 1.1.19 (WebBridge.kt: scanHosts): у кого открыт порт, кто раздаёт сеть Wi-Fi; раньше их не было.
+    cb(event.hosts || [], event.recommended || null, { open: event.open || [], gateway: event.gateway || null });
   }
 
   // Ответ на scan_adb_service (см. WebBridge.kt/MdnsResolve.kt) — готовые
@@ -1840,10 +1841,13 @@
     LabUI.connection({title:port===23?'Подключение к магнитоле':'Подключение по Wi-Fi',port:port||5555,host:lastHostForThisNetwork(),help:opts.help||'',
       scan:p=>new Promise(resolve=>{
         let hosts=[],services=[],waiting=opts.discoverAdbService?2:1;
-        const finish=()=>{if(--waiting===0){cancelScan=null;resolve([...services,...hosts.filter(h=>!services.some(s=>s.host===h))]);}};
+        // Признаки «это магнитола» — окну (LabUI.rankHosts): одинаковые адреса оно сводит в одну строку.
+        const finish=()=>{if(--waiting===0){cancelScan=null;resolve([...services,...hosts]);}};
         cancelScan=()=>resolve([]);
-        pendingScanCallback=(found,recommended)=>{pendingScanCallback=null;hosts=[...new Set([recommended,...found].filter(Boolean))];finish();};
-        if(opts.discoverAdbService){pendingAdbServiceScanCallback=endpoints=>{pendingAdbServiceScanCallback=null;services=endpoints;finish();};Bridge.call('scan_adb_service',{});}
+        pendingScanCallback=(found,recommended,extra)=>{pendingScanCallback=null;
+          hosts=[...(recommended?[{host:recommended,reason:'mdns'}]:[]),...(extra?.gateway?[{host:extra.gateway,reason:'gateway'}]:[]),
+            ...(extra?.open||[]).map(h=>({host:h,reason:'open'})),...found];finish();};
+        if(opts.discoverAdbService){pendingAdbServiceScanCallback=endpoints=>{pendingAdbServiceScanCallback=null;services=endpoints.map(e=>({...e,reason:'adb'}));finish();};Bridge.call('scan_adb_service',{});}
         Bridge.call('scan_hosts',{port:p});
       }),
       connect:(host,p)=>{submitted=true;onSubmit(host,p);return {ok:true};},
