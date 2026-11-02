@@ -23,8 +23,8 @@ android {
         applicationId = "ru.magicsqd.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 146
-        versionName = "1.1.19"
+        versionCode = 147
+        versionName = "1.1.20"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
