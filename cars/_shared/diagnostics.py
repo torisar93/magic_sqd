@@ -69,6 +69,10 @@ SECTIONS = (
      "echo \"enabled_accessibility_services=$(settings get secure enabled_accessibility_services 2>/dev/null)\"; "
      "dumpsys accessibility 2>/dev/null | grep -iE 'bound services|enabled services|binding services|crashed services' "
      "| head -n 8; "
+     # Окно выбора приложения (Back Button «Launch other application», ярлыки) — ActivityPicker «Настроек»; в прошивке
+     # Cityray его нет, пока не поставлен Settings.apk из комплекта: без него «Can't open application chooser».
+     "echo \"PICK_ACTIVITY: $(cmd package resolve-activity --brief -a android.intent.action.PICK_ACTIVITY 2>/dev/null "
+     "| tail -n 1)\"; "
      "for p in $(pm list packages -3 2>/dev/null | cut -d: -f2 | sort | head -n 80); do "
      "echo \"$p: $(appops get $p SYSTEM_ALERT_WINDOW 2>/dev/null | head -n 1 | cut -d';' -f1);"
      " $(appops get $p WRITE_SETTINGS 2>/dev/null | head -n 1 | cut -d';' -f1)\"; done", 200),
