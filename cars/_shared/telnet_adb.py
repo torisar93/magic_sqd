@@ -105,6 +105,13 @@ def _scan_ipv6_neighbors_mac() -> list[tuple[str, str]]:
     iface = _active_interface_name_mac()
     if not iface:
         return []
+    # В таблицу попадают только те, с кем компьютер уже общался: магнитолы, к которой ещё не обращались, в ней нет.
+    # Пинг всех узлов сети (ff02::1) заполняет её (владелец 02.11.2026: «телнет ipv6 тоже ищется сам»; на домашней
+    # сети — 1 сосед до пинга, 6 после).
+    try:
+        subprocess.run(["ping6", "-c", "2", "-i", "1", f"ff02::1%{iface}"], capture_output=True, timeout=6)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
     try:
         result = subprocess.run(["ndp", "-an"], capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
@@ -118,6 +125,8 @@ def _scan_ipv6_neighbors_mac() -> list[tuple[str, str]]:
         addr, mac, netif = parts[0], parts[1], parts[2]
         if netif != iface or not addr.startswith("fe80:") or mac == "(incomplete)":
             continue
+        if len(parts) > 3 and parts[3] == "permanent":
+            continue  # свой адрес компьютера — раньше он один и показывался «соседом» (02.11.2026)
         if addr in seen:
             continue
         seen.add(addr)
@@ -140,6 +149,12 @@ def scan_ipv6_neighbors() -> list[tuple[str, str]] | None:
     try:
         result = subprocess.run(
             [_powershell_path(), "-NoProfile", "-NonInteractive", "-Command",
+             # Сначала пинг всех узлов сети (ff02::1) с активного адаптера — иначе в таблице только те, с кем
+             # компьютер уже общался (см. _scan_ipv6_neighbors_mac). Ответов ping.exe не ждём: соседи попадают в
+             # таблицу, пока выясняют наш адрес, чтобы ответить.
+             "$i = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } "
+             "| Select-Object -First 1 -ExpandProperty InterfaceIndex); "
+             "if ($i) { ping.exe -6 -n 2 -w 700 \"ff02::1%$i\" | Out-Null }; "
              "Get-NetNeighbor -AddressFamily IPv6 -ErrorAction SilentlyContinue "
              "| Where-Object { $_.State -in 'Reachable','Stale','Permanent' -and $_.IPAddress -like 'fe80:*' } "
              "| ForEach-Object { \"$($_.IPAddress)|$($_.LinkLayerAddress)\" } "
