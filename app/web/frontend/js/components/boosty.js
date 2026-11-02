@@ -25,8 +25,9 @@
   // только ПОСЛЕ первого захода, а параметр в URL форсирует русский с первого клика).
   // subscribeOnly — окно платной функции (замок: ранний доступ, «Скачать заранее», закрытые этапы): только
   // подписка. Разовый донат ничего не открывает — он добровольный (владелец, 2026-10-05), в окне замка он лишний.
-  // telegram — группа @magicsqd (владелец 30.10.2026), только в приветственном окне.
-  function boostyLinksRow({ subscribeOnly = false, telegram = false } = {}) {
+  // telegram — группа @magicsqd (владелец 30.10.2026): приветственное окно и окно «Ранний доступ» (стать тестировщиком,
+  // 02.11.2026 — там подпись telegramLabel «Написать в Telegram»).
+  function boostyLinksRow({ subscribeOnly = false, telegram = false, telegramLabel = "Группа в Telegram" } = {}) {
     return el("div", { class: "boosty-links" }, [
       el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd?locale=ru_RU", target: "_blank" }, [
         svgIcon(STAR_ICON_PATH), el("span", { text: "Подписаться на Boosty" }),
@@ -35,7 +36,7 @@
         svgIcon(HEART_ICON_PATH), el("span", { text: "Разовый донат" }),
       ]),
       telegram ? el("a", { class: "boosty-link telegram-link", href: "https://t.me/magicsqd", target: "_blank" }, [
-        svgIcon(TELEGRAM_ICON_PATH), el("span", { text: "Группа в Telegram" }),
+        svgIcon(TELEGRAM_ICON_PATH), el("span", { text: telegramLabel }),
       ]) : null,
     ]);
   }
@@ -133,7 +134,8 @@
   // Модель раннего доступа без подписки (вариант 1, владелец 2026-10-05): что это, когда откроется всем, кнопки Boosty.
   function showEarlyAccessDialog(model) {
     if (!model) return;
-    showLockedDialog("Ранний доступ", window.CatalogUI.earlyAccessParagraphs(model));
+    showLockedDialog("Ранний доступ", window.CatalogUI.earlyAccessParagraphs(model),
+      { telegram: true, telegramLabel: "Написать в Telegram" });
   }
 
   // «Скачать заранее» без подписки (js/offline.js) — то же окно, свой заголовок и текст.
@@ -141,13 +143,13 @@
     showLockedDialog(what && what.catalog ? "Каталог APK" : "Скачать заранее", window.OfflineUI.lockedParagraphs(what));
   }
 
-  function showLockedDialog(title, paragraphs) {
+  function showLockedDialog(title, paragraphs, links = {}) {
     const dialog = document.getElementById("early-access-dialog");
     if (!dialog) return;
     const heading = document.getElementById("early-access-title");
     if (heading) heading.textContent = title;
     document.getElementById("early-access-text").replaceChildren(...paragraphs);
-    document.getElementById("early-access-boosty-links").replaceChildren(boostyLinksRow({ subscribeOnly: true }));
+    document.getElementById("early-access-boosty-links").replaceChildren(boostyLinksRow({ subscribeOnly: true, ...links }));
     const close = document.getElementById("early-access-dialog-close");
     close.onclick = () => dialog.close();
     dialog.showModal();

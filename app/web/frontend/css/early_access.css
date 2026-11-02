@@ -13,6 +13,8 @@
 .model-open.model-open-early { background: rgba(246, 161, 122, .12); border: 1px solid rgba(246, 161, 122, .5); color: #f6a17a; font-weight: 600; box-shadow: none; }
 .model-open.model-open-early .early-lock { width: 18px; height: 18px; margin: 0; }
 .model-open.model-open-early:hover:not(:disabled) { background: rgba(246, 161, 122, .18); }
+.model-open-early .early-open-text { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; line-height: 1.25; min-width: 0; }
+.model-open-early .early-open-who { font-size: 12.5px; font-weight: 500; opacity: .85; }
 
 .model-early-tag { display: inline-block; margin-left: 12px; padding: 1px 8px; vertical-align: middle; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.6; letter-spacing: 0; color: #f6a17a; background: rgba(246, 161, 122, .13); border: 1px solid rgba(246, 161, 122, .35); }
 .model-early-tag[hidden] { display: none !important; }

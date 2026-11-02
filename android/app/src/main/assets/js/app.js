@@ -849,13 +849,12 @@
 
   function showEarlyAccessModal(modelSummary) {
     let overlay;
-    const [body, hint] = window.CatalogUI.earlyAccessParagraphs(modelSummary);
-    body.className = "stage-text";
-    hint.className = "stage-text early-hint";
+    const paragraphs = window.CatalogUI.earlyAccessParagraphs(modelSummary);
+    paragraphs.forEach((p) => { p.className = `stage-text ${p.className}`; });
     overlay = showModal([
       el("p", { class: "stage-text", style: "font-weight: 600; font-size: 19px", text: "Ранний доступ" }),
-      body, hint,
-      boostyLinksRow({ subscribeOnly: true }),
+      ...paragraphs,
+      boostyLinksRow({ subscribeOnly: true, telegram: true, telegramLabel: "Написать в Telegram" }),
       el("button", { class: "accent", text: "Понятно", onclick: () => overlay.remove() }),
     ]);
   }
@@ -3511,8 +3510,9 @@
   // ?locale=ru_RU — иначе Boosty открывается по умолчанию на английском (см. память проекта).
   // subscribeOnly — окно платной функции (замок: ранний доступ, «Скачать заранее», закрытые этапы): только
   // подписка. Разовый донат ничего не открывает — он добровольный (владелец, 2026-10-05), в окне замка он лишний.
-  // telegram — группа @magicsqd (владелец 30.10.2026), только в приветственном окне.
-  function boostyLinksRow({ subscribeOnly = false, telegram = false } = {}) {
+  // telegram — группа @magicsqd (владелец 30.10.2026): приветственное окно и окно «Ранний доступ» (стать тестировщиком,
+  // 02.11.2026 — там подпись telegramLabel «Написать в Telegram»).
+  function boostyLinksRow({ subscribeOnly = false, telegram = false, telegramLabel = "Группа в Telegram" } = {}) {
     return el("div", { class: "boosty-links" }, [
       el("a", { class: "boosty-link", href: "https://boosty.to/magic_sqd?locale=ru_RU", target: "_blank" }, [
         svgIcon(STAR_ICON_PATH), el("span", { text: "Подписаться на Boosty" }),
@@ -3521,7 +3521,7 @@
         svgIcon(HEART_ICON_PATH), el("span", { text: "Разовый донат" }),
       ]),
       telegram ? el("a", { class: "boosty-link telegram-link", href: "https://t.me/magicsqd", target: "_blank" }, [
-        svgIcon(TELEGRAM_ICON_PATH), el("span", { text: "Группа в Telegram" }),
+        svgIcon(TELEGRAM_ICON_PATH), el("span", { text: telegramLabel }),
       ]) : null,
     ]);
   }
