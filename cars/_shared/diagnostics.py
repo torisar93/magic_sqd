@@ -4,8 +4,8 @@
 lajolla: все способы установки отказали с INSTALL_FAILED_INTERNAL_ERROR (логи №7400, №7405), а почему — видно только в
 системном журнале магнитолы.
 
-Только чтение: прошивка, место, права adb, ограничения установки, установщики и магазины производителя, системный
-журнал про установку. Всё пишется в журнал установки, а он и так уходит на сервер — отдельно отправлять ничего не
+Только чтение: прошивка, место, права adb, ограничения установки, установщики и магазины производителя, службы
+спецвозможностей и спецдоступы сторонних приложений, системный журнал про установку. Всё пишется в журнал установки, а он и так уходит на сервер — отдельно отправлять ничего не
 нужно. Серийные номера, MAC-адреса, VIN и имена пользователей не собираются. Нажимать лучше сразу после неудачной
 установки: тогда её причина ещё лежит в системном журнале магнитолы. Общий для ПК и Android (android/.../py_runner.py).
 """
@@ -36,6 +36,10 @@ _USER_NAME = re.compile(r"(UserInfo\{\d+):[^:}]*:")
 _INSTALL_LOG = (r" [VDIWEF]/[A-Za-z0-9_.$-]*(PackageManager|Package[A-Za-z]*Install|[Ii]nstall)[A-Za-z0-9_.$-]*\("
                 r"|INSTALL_FAILED|[Ww]hite_?[Ll]ist|[Ff]orbid")
 
+A11Y_TITLE = "Спецвозможности и спецдоступы"
+# Длинные списки служб — по одной на строку: «a/b:c/d» (settings) и «{…}, {…}» (dumpsys accessibility).
+_SERVICE_SPLIT = re.compile(r"(?<=\}), (?=\{)|(?<=[\w.$]):(?=[A-Za-z][\w.]*/)")
+
 # (заголовок, команда на магнитоле, сколько строк оставить). Команды — только чтение; каждая со своим ограничением,
 # чтобы весь лог был в пределах пары сотен килобайт.
 SECTIONS = (
@@ -57,6 +61,17 @@ SECTIONS = (
      "pm list packages -s 2>/dev/null | grep -iE 'store|market|install|appmanager|appmgr|upgrade|update|white|mega' "
      "| sort | head -n 40", 40),
     ("Сторонние приложения", "pm list packages -3 2>/dev/null | sort | head -n 80", 80),
+    # Выдача разрешений после установки ответы магнитолы не проверяет: включилась ли служба на самом деле (Bound —
+    # запущена) и что стоит у спецдоступов, видно только здесь (Cityray, Back Button; владелец, 02.11.2026: «у
+    # человека не выдаются разрешения на nu.back.button как мне кажется»).
+    (A11Y_TITLE,
+     "echo \"accessibility_enabled=$(settings get secure accessibility_enabled 2>/dev/null)\"; "
+     "echo \"enabled_accessibility_services=$(settings get secure enabled_accessibility_services 2>/dev/null)\"; "
+     "dumpsys accessibility 2>/dev/null | grep -iE 'bound services|enabled services|binding services|crashed services' "
+     "| head -n 8; "
+     "for p in $(pm list packages -3 2>/dev/null | cut -d: -f2 | sort | head -n 80); do "
+     "echo \"$p: $(appops get $p SYSTEM_ALERT_WINDOW 2>/dev/null | head -n 1 | cut -d';' -f1);"
+     " $(appops get $p WRITE_SETTINGS 2>/dev/null | head -n 1 | cut -d';' -f1)\"; done", 200),
     ("Системный журнал про установку",
      f"logcat -d -v time -t 4000 2>/dev/null | grep -E '{_INSTALL_LOG}' | tail -n 200", 200),
     # Отказ установщика производителя может прийти под любым тегом — последние ошибки журнала целиком.
@@ -80,7 +95,10 @@ def _clean(title: str, text: str) -> list:
             if key not in _PROP_KEYS and not _PROP_INSTALL.search(key) or _PROP_DROP.search(key):
                 continue
         line = _USER_NAME.sub(r"\1:…:", line)
-        lines.append(line[:LINE_CHARS] + ("…" if len(line) > LINE_CHARS else ""))
+        pieces = _SERVICE_SPLIT.split(line) if title == A11Y_TITLE else [line]
+        for n, piece in enumerate(pieces):
+            piece = ("    " if n else "") + piece
+            lines.append(piece[:LINE_CHARS] + ("…" if len(piece) > LINE_CHARS else ""))
     return lines
 
 

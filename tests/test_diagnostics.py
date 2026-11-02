@@ -127,3 +127,21 @@ def test_same_code_on_android(android, tmp_path):
     assert result["ok"] is True and result["result"] > 0
     assert bridge.logs[0].startswith(diagnostics.HEADER) and bridge.logs[-1].startswith("=== Подробный лог собран")
     assert "8b46ff40" not in "\n".join(bridge.logs)
+
+
+def test_accessibility_services_one_per_line():
+    """Службы спецвозможностей — по одной на строку: на Cityray их 12, одной строкой список обрезался на 300 символах
+    и Back Button в него не попадал (владелец, 02.11.2026)."""
+    services = ":".join(f"com.vendor{i}.app/com.vendor{i}.app.SomeAccessibilityService" for i in range(12))
+    bound = ", ".join("{Service[label=App %d, feedbackType[FEEDBACK_GENERIC], capabilities=1]}" % i for i in range(3))
+    reply = (f"accessibility_enabled=1\nenabled_accessibility_services={services}:nu.back.button/"
+             f"nu.back.button.service.BackButtonService\n     Bound services:{bound}\n"
+             "nu.back.button: SYSTEM_ALERT_WINDOW: allow; WRITE_SETTINGS: allow")
+    ctx = Ctx({"echo \"accessibility_enabled": reply})
+    diagnostics.collect(ctx)
+    lines = section(ctx, diagnostics.A11Y_TITLE).splitlines()[1:]
+    assert lines[1] == "  enabled_accessibility_services=com.vendor0.app/com.vendor0.app.SomeAccessibilityService"
+    assert "      nu.back.button/nu.back.button.service.BackButtonService" in lines
+    assert all(len(line) <= 2 + diagnostics.LINE_CHARS for line in lines)
+    assert sum("{Service[label=App" in line for line in lines) == 3
+    assert lines[-1] == "  nu.back.button: SYSTEM_ALERT_WINDOW: allow; WRITE_SETTINGS: allow"
