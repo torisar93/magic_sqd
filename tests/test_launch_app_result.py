@@ -58,15 +58,25 @@ def test_no_launcher_icon_is_said_plainly():
 def test_monkey_missing_falls_back_to_am_start():
     log, commands = launch({MONKEY: "/system/bin/sh: monkey: inaccessible or not found",
                             RESOLVE: "priority=0 preferredOrder=0 match=0x108000\ncom.salat.gbinder/.MainActivity",
-                            "am start -n com.salat.gbinder/.MainActivity": "Starting: Intent { cmp=com.salat.gbinder/.MainActivity }",
+                            "am start -n 'com.salat.gbinder/.MainActivity'": "Starting: Intent { cmp=com.salat.gbinder/.MainActivity }",
                             SCREEN: ON_MAIN})
-    assert "am start -n com.salat.gbinder/.MainActivity" in commands
+    assert "am start -n 'com.salat.gbinder/.MainActivity'" in commands
+    assert log[-1] == "Готово."
+
+
+def test_nested_activity_class_is_quoted_for_shell():
+    # YouTube/ReVanced: launcher-activity — вложенный класс «Shell$HomeActivity»; без кавычек shell магнитолы
+    # подставлял пустую переменную $HomeActivity и отвечал «Activity class {…Shell} does not exist» (лог №12569).
+    component = "app.revanced.android.youtube/com.google.android.youtube.app.honeycomb.Shell$HomeActivity"
+    log, commands = launch({MONKEY: "/system/bin/sh: monkey: inaccessible or not found", RESOLVE: component,
+                            f"am start -n '{component}'": f"Starting: Intent {{ cmp={component} }}", SCREEN: ON_MAIN})
+    assert f"am start -n '{component}'" in commands
     assert log[-1] == "Готово."
 
 
 def test_am_start_error_is_shown():
     log, _ = launch({MONKEY: "Error: something", RESOLVE: "com.salat.gbinder/.MainActivity",
-                     "am start -n com.salat.gbinder/.MainActivity":
+                     "am start -n 'com.salat.gbinder/.MainActivity'":
                          "Starting: Intent { cmp=com.salat.gbinder/.MainActivity }\nError type 3\n"
                          "Error: Activity class {com.salat.gbinder/com.salat.gbinder.MainActivity} does not exist."})
     assert log[-1] == ("Не удалось запустить: Error: Activity class {com.salat.gbinder/com.salat.gbinder.MainActivity} "

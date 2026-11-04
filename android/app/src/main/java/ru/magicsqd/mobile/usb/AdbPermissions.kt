@@ -363,7 +363,9 @@ object AdbPermissions {
                 log("Не удалось запустить: $answer")
                 return
             }
-            val started = shellText("am start -n $component", log)
+            // В кавычках: «$» во вложенном классе activity (YouTube/ReVanced: …honeycomb.Shell$HomeActivity) shell магнитолы
+            // съедал как переменную — «Activity class {…Shell} does not exist» (лог №12569).
+            val started = shellText("am start -n '$component'", log)
             if (started.contains("Error")) {
                 log("Не удалось запустить: ${started.trim().lines().last().take(200)}")
                 return

@@ -541,7 +541,9 @@ def launch_main_activity(ctx, package: str) -> None:
             answer = (monkey.splitlines() or ["магнитола не ответила"])[-1][:200]
             ctx.log(f"Не удалось запустить: {answer}")
             return
-        started = _shell_text(ctx, f"am start -n {component}")
+        # В кавычках: «$» во вложенном классе activity (YouTube/ReVanced: …honeycomb.Shell$HomeActivity) shell
+        # магнитолы съедал как переменную — «Activity class {…Shell} does not exist» (лог №12569).
+        started = _shell_text(ctx, f"am start -n '{component}'")
         if "Error" in started:
             ctx.log(f"Не удалось запустить: {started.splitlines()[-1][:200]}")
             return

@@ -12,7 +12,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.interfaces.RSAPrivateKey
 import java.security.interfaces.RSAPublicKey
-import java.util.zip.CRC32
 
 /**
  * САМОДЕЛЬНАЯ реализация ADB-протокола (CNXN + AUTH + OPEN/WRTE/OKAY/CLSE)
@@ -207,14 +206,23 @@ fun findAdbInterface(device: UsbDevice): AdbUsbInterface? {
     return null
 }
 
+/** data_check заголовка ADB — сумма байтов данных, а не CRC32. Магнитолы на Android 9+ поле не проверяют, а adbd
+ * Android 8.x и старше сверяет его у первого CNXN (версия протокола ещё 0x01000000) и молча выбрасывает пакет с
+ * неверной суммой: Haval Jolion до 2026 (Harman, SDK 27) после разрешения на USB не отвечал ни разу — «CNXN
+ * отправлен» и тишина (лог №12975 и ещё 14 логов этой магнитолы), с ПК та же магнитола подключалась. */
+internal fun adbDataCheck(payload: ByteArray): Int {
+    var sum = 0
+    for (b in payload) sum += b.toInt() and 0xff
+    return sum
+}
+
 private fun buildMessage(command: Int, arg0: Int, arg1: Int, payload: ByteArray): ByteArray {
-    val crc = CRC32().apply { update(payload) }.value.toInt()
     val header = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
     header.putInt(command)
     header.putInt(arg0)
     header.putInt(arg1)
     header.putInt(payload.size)
-    header.putInt(crc)
+    header.putInt(adbDataCheck(payload))
     header.putInt(command.inv())
     return header.array()
 }
