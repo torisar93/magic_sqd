@@ -18,6 +18,12 @@ from ...content_sync import (ContentSyncError, fetch_manifest, get_base_url, mod
                               prune_model_stale_files, sync_tree)
 
 _MANIFEST_TTL_SECONDS = 20.0
+# Платные «Скачать заранее» и «Каталог APK»: нет связи или не вошли — одно; вход истёк (сервер ответил 401, сессии
+# больше нет) — другое, и тут надо прямо сказать «войдите заново» (04.11.2026: техник с подпиской не мог обновить
+# каталог, пока не перезашёл сам). Те же тексты на Android — WebBridge.kt: SESSION_EXPIRED_*.
+NOT_SIGNED_IN = "Нет связи с сервером или вы не вошли в аккаунт."
+SESSION_EXPIRED_CATALOG = "Вход в аккаунт истёк — войдите в аккаунт заново (тот же email и пароль), и каталог APK скачается."
+SESSION_EXPIRED_OFFLINE = "Вход в аккаунт истёк — войдите в аккаунт заново (тот же email и пароль), и модель скачается заранее."
 
 
 class OfflineCancelled(Exception):
@@ -80,7 +86,7 @@ class OfflineApi:
         # отметку подписчика ставят и снимают в админке, пока программа открыта.
         auth = self._auth.refresh_subscriber()
         if not auth.get("ok"):
-            return {"ok": False, "error": "Нет связи с сервером или вы не вошли в аккаунт.", "locked": True}
+            return {"ok": False, "error": SESSION_EXPIRED_OFFLINE if auth.get("expired") else NOT_SIGNED_IN, "locked": True}
         if not auth.get("subscriber"):
             return {"ok": False, "locked": True}
         with self._lock:
@@ -182,7 +188,7 @@ class OfflineApi:
     def apk_catalog_download(self) -> dict:
         auth = self._auth.refresh_subscriber()  # по серверу: отметку подписчика ставят и снимают в админке
         if not auth.get("ok"):
-            return {"ok": False, "error": "Нет связи с сервером или вы не вошли в аккаунт.", "locked": True}
+            return {"ok": False, "error": SESSION_EXPIRED_CATALOG if auth.get("expired") else NOT_SIGNED_IN, "locked": True}
         if not auth.get("subscriber"):
             return {"ok": False, "locked": True}
         with self._lock:

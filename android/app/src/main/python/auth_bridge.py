@@ -40,7 +40,8 @@ def _request(base_url: str, method: str, path: str, body: dict | None = None,
             payload = json.loads(exc.read().decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             payload = {"error": str(exc)}
-        return {"ok": False, "error": payload.get("error", str(exc))}, []
+        # status — HTTP-код: 401 — вход истёк (сессии на сервере нет), это не «нет связи» (WebBridge.kt: sessionExpired)
+        return {"ok": False, "error": payload.get("error", str(exc)), "status": exc.code}, []
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return {"ok": False, "error": f"Не удалось связаться с сервером: {exc}"}, []
     return payload, cookies

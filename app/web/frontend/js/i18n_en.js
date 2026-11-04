@@ -2428,4 +2428,6 @@ window.I18N_EN = {
   "Комплект «{name}» не скачан — нет связи с сервером. Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз.": "The “{name}” kit isn't downloaded — no connection to the server. Connect the phone to the internet (not to the head unit's Wi-Fi) and run the stage again.",
   "Нечего записывать на флешку — файлы этапа не скачаны. Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз.": "Nothing to write to the flash drive — the stage files aren't downloaded. Connect the phone to the internet (not to the head unit's Wi-Fi) and run the stage again.",
   "Комплект «{name}» не скачался: {error}": "The “{name}” kit didn't download: {error}",
+  "Вход в аккаунт истёк — войдите в аккаунт заново (тот же email и пароль), и каталог APK скачается.": "Your sign-in has expired — sign in to your account again (same email and password), and the APK catalog will download.",
+  "Вход в аккаунт истёк — войдите в аккаунт заново (тот же email и пароль), и модель скачается заранее.": "Your sign-in has expired — sign in to your account again (same email and password), and the model will be downloaded in advance.",
 };

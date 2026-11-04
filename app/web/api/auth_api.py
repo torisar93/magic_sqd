@@ -197,7 +197,9 @@ class AuthApi:
         """Свежий статус «подписчик Boosty» (владелец выставляет его вручную и он может измениться,
         пока программа открыта) — для цвета кнопки аккаунта."""
         result = self.refresh()
-        return {"ok": True, "subscriber": result.get("subscriber", False)} if result.get("ok") else {"ok": False}
+        if result.get("ok"):
+            return {"ok": True, "subscriber": result.get("subscriber", False)}
+        return {"ok": False, "expired": bool(result.get("expired"))}  # expired — вход истёк, а не «нет связи»
 
     # ------------------------------------------------------------------
     def sync_my_cars(self) -> dict:

@@ -68,6 +68,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         private const val BASE_URL = "https://magicsqd.ru/content"
         /** «Подключить» по проводу: сколько ждать появления магнитолы по USB (см. AdbSession.connectBlocking). */
         private const val ADB_USB_WAIT_MS = 20_000L
+        /** Вход истёк (/auth/me — 401): что сказать вместо «Нет связи с сервером» (см. sessionExpired). Те же тексты на ПК
+         * (app/web/api/offline_api.py). */
+        private const val SESSION_EXPIRED_CATALOG =
+            "Вход в аккаунт истёк — войдите в аккаунт заново (тот же email и пароль), и каталог APK скачается."
+        private const val SESSION_EXPIRED_OFFLINE =
+            "Вход в аккаунт истёк — войдите в аккаунт заново (тот же email и пароль), и модель скачается заранее."
         /** «Доп. действие» → функция cars/_shared/adb_permissions.py (её же вызывает ПК), см. runPyAction. */
         private val PY_ACTIONS = mapOf(
             "grant_permissions" to "grant_all_permissions",
@@ -442,6 +448,18 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     }
     private fun clearAuthSession() { authPrefs().edit().clear().apply() }
 
+    /** /auth/me ответил 401 — вход истёк: сессии на сервере больше нет (сменили пароль, вышли на другом устройстве,
+     * истёк срок). Раньше это выглядело как «Нет связи с сервером», и техник с подпиской не мог обновить каталог APK,
+     * пока не перезашёл сам (планшет, Jolion до 2026, 04.11.2026). Теперь выходим из аккаунта и здесь — как ПК
+     * (auth_api.refresh) — и говорим, что делать. */
+    private fun sessionExpired(me: JSONObject?): Boolean {
+        if (me == null || me.optInt("status") != 401) return false
+        clearAuthSession()
+        applyCatalogSession()
+        pushEvent(JSONObject().put("kind", "auth_logout_result").put("result", JSONObject().put("ok", true)))
+        return true
+    }
+
     /** Сессия техника — и для каталога: вошедшему сервер отдаёт скрытые (тестовые) модели его групп
      * (server/user_groups.py, content_sync.set_auth_cookie). Зовётся при запуске, входе и выходе. */
     private fun applyCatalogSession() {
@@ -502,6 +520,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         Thread {
             try {
                 val obj = JSONObject(pyModule("auth_bridge").callAttr("me", AUTH_BASE_URL, cookie).toString())
+                if (sessionExpired(obj)) return@Thread
                 if (obj.optBoolean("ok")) {
                     val subscriber = obj.optBoolean("subscriber", false)
                     authPrefs().edit().putBoolean("subscriber", subscriber).apply()
@@ -875,7 +894,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                 if (me != null && me.optBoolean("ok")) {
                     authPrefs().edit().putBoolean("subscriber", me.optBoolean("subscriber", false)).apply()
                 }
-                if (me == null || !me.optBoolean("ok")) {
+                if (sessionExpired(me)) {
+                    JSONObject().put("ok", false).put("locked", true).put("error", SESSION_EXPIRED_OFFLINE)
+                } else if (me == null || !me.optBoolean("ok")) {
                     JSONObject().put("ok", false).put("locked", true)
                         .put("error", if (cookie == null) "" else "Нет связи с сервером — скачать заранее можно, пока есть интернет.")
                 } else if (!me.optBoolean("subscriber", false)) {
@@ -914,7 +935,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     }
 
     /** Подписка по серверу (её ставят и снимают в админке): null — подписчик, иначе ответ «нельзя» для окна. */
-    private fun subscriptionRefusal(offlineError: String): JSONObject? {
+    private fun subscriptionRefusal(offlineError: String, expiredError: String): JSONObject? {
         val cookie = authUserCookie()
         val me = if (cookie == null) null
             else JSONObject(pyModule("auth_bridge").callAttr("me", AUTH_BASE_URL, cookie).toString())
@@ -922,6 +943,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             authPrefs().edit().putBoolean("subscriber", me.optBoolean("subscriber", false)).apply()
         }
         return when {
+            sessionExpired(me) -> JSONObject().put("ok", false).put("locked", true).put("error", expiredError)
             me == null || !me.optBoolean("ok") ->
                 JSONObject().put("ok", false).put("locked", true).put("error", if (cookie == null) "" else offlineError)
             !me.optBoolean("subscriber", false) -> JSONObject().put("ok", false).put("locked", true)
@@ -940,7 +962,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         }
         Thread {
             val result = try {
-                subscriptionRefusal("Нет связи с сервером — каталог можно скачать, пока есть интернет.") ?: run {
+                subscriptionRefusal("Нет связи с сервером — каталог можно скачать, пока есть интернет.",
+                    SESSION_EXPIRED_CATALOG) ?: run {
                     val sink = DownloadSink(
                         log = { line -> android.util.Log.i("MagicSQD", "apk catalog: $line") },
                         onBytes = { done, total ->
