@@ -60,6 +60,18 @@
       },
     },
     {
+      id: "usb_no_adb", icon: "usb",
+      // Только по id (Android, «Подключить»): по USB есть устройство, но без ADB-интерфейса — UsbPicture.CAUSE_NO_ADB.
+      title: "Магнитола видна, но ADB закрыт",
+      match: [],
+      text: "Телефон видит устройство по USB, но ADB на нём не открыт, поэтому программа не может подключиться.",
+      steps: [
+        "Если в телефоне флешка — выньте её и подключите кабель от магнитолы.",
+        "Включите на магнитоле отладку по USB (ADB) — как это сделать, написано в инструкции этапа.",
+        "Нажмите «Подключить» ещё раз.",
+      ],
+    },
+    {
       id: "no_device", icon: "usb",
       title: "Магнитола не подключена",
       match: [/Магнитола не подключена/i, /no devices\/emulators found/i, /device '[^']*' not found/i,
@@ -327,7 +339,9 @@
       // техник видел сырое «TimeoutError» и «отправьте лог разработчику», а через 2 минуты повтор прошёл.
       match: [/Не скачаны приложения/i, /Не удалось скачать/i, /Файл не скачан/i, /getaddrinfo failed/i,
         /Temporary failure in name resolution/i, /Unable to resolve host/i, /The read operation timed out/i,
-        /urlopen error timed out/i, /TimeoutError: timed out/i],
+        /urlopen error timed out/i, /TimeoutError: timed out/i,
+        // Android: комплект для флешки не скачан / скачан не весь — запись не начиналась (логи №12893, №12896).
+        /Комплект «[^»]+» (?:не скачан|скачался не весь)/i, /Нечего записывать на флешку/i],
       // Ответ сервера с кодом ошибки — не интернет техника, а наша проблема (файла нет на сервере и т.п.).
       unless: [/HTTP Error [45]\d\d/i, /\bHTTP [45]\d\d\b/],
       text: {

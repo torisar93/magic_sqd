@@ -16,7 +16,7 @@ import catalog_key
 from content_sync import (sync_scripts, sync_model_subfolder, sync_shared_folder, fetch_manifest,
                            prune_removed_models, prune_model_to_server, set_auth_cookie as _set_auth_cookie,
                            sync_early_access, sync_tree, model_on_server, prune_closed_stages, open_url,
-                           sync_model_definition)
+                           sync_model_definition, shared_folder_missing)
 from scanner import scan_cars, model_status_color, rollup_status_color, _read_version, read_early_access
 import offline_pack
 import apk_catalog
@@ -640,9 +640,16 @@ def sync_shared_folder_for(cars_dir: str, base_url: str, folder_name: str, sink=
     lines = []
     log = sink.line if sink is not None else lines.append
     on_bytes = (lambda done, total: sink.progress(done, total)) if sink is not None else None
+    # Скачан ли комплект весь — WebBridge.kt не пишет флешку без него (логи №12893, №12896: 0 файлов и «успешно»).
+    # manifest=false — сервер не ответил, что в комплекте должно быть, неизвестно; missing — сколько файлов не скачалось.
+    manifest = fetch_manifest(base_url)
+    if manifest is None:
+        log("Не удалось получить manifest.json с сервера — работаем с тем, что уже скачано локально.")
+        return json.dumps({"downloaded": 0, "log": lines, "manifest": False, "missing": None})
     downloaded = sync_shared_folder(base_url, Path(cars_dir), folder_name, log=log,
-                                     on_progress=_progress_cb("model"), on_bytes=on_bytes)
-    return json.dumps({"downloaded": downloaded, "log": lines})
+                                     on_progress=_progress_cb("model"), on_bytes=on_bytes, manifest=manifest)
+    missing = shared_folder_missing(manifest, Path(cars_dir), folder_name)
+    return json.dumps({"downloaded": downloaded, "log": lines, "manifest": True, "missing": missing})
 
 
 def load_install_stages(model_key: str, files_root: str = "", ui_language: str = "ru") -> str:

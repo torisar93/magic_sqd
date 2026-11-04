@@ -366,8 +366,9 @@ sealed class AdbHandshakeResult {
      * сырой сокет, на котором шло рукопожатие (см. performTlsUpgrade, AdbSession.connectWifiBlocking). */
     data class Connected(val bannerFromDevice: String, val upgradedTransport: AdbTransport? = null) : AdbHandshakeResult()
     /** noDevice — по USB вообще нет устройства с ADB-интерфейсом (не «отказали в доступе»,
-     * не «сбой рукопожатия»): по нему приложение показывает окно про OTG-переходник. */
-    data class Failed(val reason: String, val noDevice: Boolean = false) : AdbHandshakeResult()
+     * не «сбой рукопожатия»): по нему приложение показывает окно про подключение. usbCause — что телефон при этом
+     * видит по USB (UsbPicture.CAUSE_*), от него зависит совет в окне. */
+    data class Failed(val reason: String, val noDevice: Boolean = false, val usbCause: String? = null) : AdbHandshakeResult()
 }
 
 // Сколько устаревших CLSE прошлого подключения пропускаем в ожидании ответа на CNXN (см. performCnxnHandshake).

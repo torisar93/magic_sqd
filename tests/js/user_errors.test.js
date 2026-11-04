@@ -20,6 +20,10 @@ const CASES = [
   ["'logcat -c': Не удалось отправить OPEN", "link_lost"],
   ["Магнитола перестала отвечать или связь с ней оборвалась (ADB: получено -1 из 24 байт заголовка).", "link_lost"],
   ["Пользователь отклонил разрешение на доступ к USB-устройству", "usb_permission"],
+  // Android 1.1.21: комплект для флешки не скачан (логи №12893, №12896 — раньше 0 файлов и «успешно»)
+  ["Комплект «stagelight_install» не скачан — нет связи с сервером. Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз.", "no_internet"],
+  ["Комплект «stagelight_install» скачался не весь — не хватает файлов: 3. Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз.", "no_internet"],
+  ["Нечего записывать на флешку — файлы этапа не скачаны. Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз.", "no_internet"],
   ["Не удалось подключиться по TCP к 192.168.43.1:5555: ConnectException: failed to connect to /192.168.43.1 (port 5555) from /192.168.43.20 (port 41234) after 5000ms: isConnected failed: EHOSTUNREACH (No route to host)", "wifi_unreachable"],
   ["Ошибка установки: Не удалось подключиться по telnet к [fe80::1:2:3%en0]:23: [Errno 61] Connection refused", "wifi_unreachable"],
   ["Ошибка установки: Не удалось подключиться к 192.168.1.1:5555", "wifi_unreachable"],
@@ -164,6 +168,11 @@ module.exports = async function () {
   const phone = load(true).window.UserErrors.byId("no_device");
   assert(pc.steps.some((s) => /Обновить/.test(s)) && !pc.steps.some((s) => /OTG/.test(s)), "ПК: шаги про «Обновить», без OTG");
   assert(phone.steps.some((s) => /OTG-переходник/.test(s)), "Android: шаги про OTG-переходник");
+  // «Подключить» на Android, по USB есть устройство без ADB (UsbPicture.kt, разбор логов 04.11.2026): окно только по id,
+  // сам текст «не найдено» по-прежнему ведёт к no_device.
+  const noAdb = load(true).window.UserErrors.byId("usb_no_adb");
+  assert(noAdb && noAdb.title === "Магнитола видна, но ADB закрыт" && noAdb.steps.length === 3, "Android: окно usb_no_adb");
+  assert(CASES.every(([message]) => load(true).window.UserErrors.classify(message)?.id !== "usb_no_adb"), "usb_no_adb не ловит тексты сам");
 
   // 2) Итог этапа с ошибкой техника: окно «что сделать», без «отправьте разработчику» и кнопок лога.
   {

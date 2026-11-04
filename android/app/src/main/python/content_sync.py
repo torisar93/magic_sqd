@@ -288,12 +288,13 @@ def sync_tree(base_url: str, remote_subpath: str, local_dir: Path, manifest, log
 
 
 def sync_shared_folder(base_url: str, cars_dir: Path, folder_name: str, log=lambda m: None,
-                        on_progress=lambda done, total: None, on_bytes=None) -> int:
+                        on_progress=lambda done, total: None, on_bytes=None, manifest=None) -> int:
     """Скачивает cars/_shared/<folder_name>/ целиком — общие наборы файлов
     для "usb"-этапов многих моделей (StepSpec.usb_shared_folder), которые
     sync_scripts НЕ качает (no_recurse_dirs пропускает подпапки _shared/,
-    см. sync_tree — это данные, не Python-скрипты)."""
-    manifest = fetch_manifest(base_url)
+    см. sync_tree — это данные, не Python-скрипты). manifest — если вызывающий уже скачал его сам."""
+    if manifest is None:
+        manifest = fetch_manifest(base_url)
     if manifest is None:
         log("Не удалось получить manifest.json с сервера — работаем с тем, что уже скачано локально.")
         return 0
@@ -301,6 +302,20 @@ def sync_shared_folder(base_url: str, cars_dir: Path, folder_name: str, log=lamb
     # модельному смыслу, качаем ВСЁ дерево общей папки как есть.
     return sync_tree(base_url, f"cars/_shared/{folder_name}", cars_dir / "_shared" / folder_name, manifest,
                       log=log, on_progress=on_progress, on_bytes=on_bytes)
+
+
+def shared_folder_missing(manifest, cars_dir: Path, folder_name: str) -> int:
+    """Сколько файлов cars/_shared/<folder_name>/ по манифесту так и нет на телефоне (или они не той версии) — после
+    sync_shared_folder: без интернета комплект скачивается не весь, а запись на флешку раньше всё равно шла и
+    заканчивалась «успешно» (Android 1.1.20, Coolray L/G/G2, логи №12893, №12896: 0 файлов комплекта)."""
+    remote = f"cars/_shared/{folder_name}"
+    local_dir = cars_dir / "_shared" / folder_name
+    missing = 0
+    for item in filter_manifest(manifest, remote):
+        rel = item["path"][len(remote):].lstrip("/")
+        if rel and _is_stale(local_dir / rel, item):
+            missing += 1
+    return missing
 
 
 def sync_scripts(base_url: str, cars_dir: Path, log=lambda m: None,

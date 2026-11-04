@@ -66,6 +66,8 @@ class WebBridge(private val context: Context, private val webView: WebView) {
         // Тот же адрес, что и в server.json на десктопе — публичный
         // content-сервер, не секрет.
         private const val BASE_URL = "https://magicsqd.ru/content"
+        /** «Подключить» по проводу: сколько ждать появления магнитолы по USB (см. AdbSession.connectBlocking). */
+        private const val ADB_USB_WAIT_MS = 20_000L
         /** «Доп. действие» → функция cars/_shared/adb_permissions.py (её же вызывает ПК), см. runPyAction. */
         private val PY_ACTIONS = mapOf(
             "grant_permissions" to "grant_all_permissions",
@@ -1092,16 +1094,38 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     /** cars/_shared/<folderName>/ целиком (см. mobile_bridge.sync_shared_folder_for)
      * — вызывается прямо перед записью usb-этапа с usb_shared_folder, а не
      * при открытии модели (см. usbRunStage). */
-    private fun syncSharedFolder(folderName: String, sink: DownloadSink? = null) {
-        if (folderName.isBlank()) return
+    /** Скачивает cars/_shared/<folderName>/ (mobile_bridge.sync_shared_folder_for). Возвращает, скачался ли комплект
+     * весь: true — весь; false — нет (сервер не ответил или часть файлов не пришла); null — не знаем (ошибка самого
+     * скачивания). По нему usbRunStage не пишет флешку без комплекта (логи №12893, №12896). */
+    private fun syncSharedFolder(folderName: String, sink: DownloadSink? = null): KitSync? {
+        if (folderName.isBlank()) return null
         val resultJson = try {
             pyModule("mobile_bridge").callAttr("sync_shared_folder_for", carsDir, BASE_URL, folderName, sink).toString()
         } catch (e: Exception) {
-            return
+            pushAdbLog("Комплект «$folderName» не скачался: ${e.message ?: e.javaClass.simpleName}")
+            return KitSync(serverAnswered = false, missing = null)
         }
         val result = JSONObject(resultJson)
         val logLines = result.optJSONArray("log") ?: JSONArray()
         for (i in 0 until logLines.length()) pushAdbLog(logLines.getString(i))
+        return KitSync(serverAnswered = result.optBoolean("manifest", true),
+            missing = if (result.isNull("missing")) null else result.optInt("missing"))
+    }
+
+    /** Итог скачивания комплекта для флешки: ответил ли сервер (что в комплекте должно быть) и сколько файлов не пришло. */
+    private data class KitSync(val serverAnswered: Boolean, val missing: Int?)
+
+    /** Почему флешку с комплектом писать нельзя, или null. Без интернета запись «по-старому» шла без комплекта и
+     * кончалась «Этап выполнен успешно» с 0 файлов (Android 1.1.20, Coolray L/G/G2, логи №12893, №12896). Сервер не
+     * ответил, но комплект уже лежит на телефоне с прошлого раза — пишем его, как и раньше. */
+    private fun kitNotReady(folderName: String, folder: File?, kit: KitSync?): String? {
+        if (folder == null || kit == null) return null
+        val internet = "Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз."
+        val missing = kit.missing ?: 0
+        if (missing > 0) return "Комплект «$folderName» скачался не весь — не хватает файлов: $missing. $internet"
+        val hasFiles = folder.isDirectory && folder.walkTopDown().any { it.isFile }
+        if (!hasFiles) return "Комплект «$folderName» не скачан — нет связи с сервером. $internet"
+        return null
     }
 
     private fun onBusy() = pushAdbLog("Уже выполняется другая операция — дождись её завершения.")
@@ -1109,13 +1133,13 @@ class WebBridge(private val context: Context, private val webView: WebView) {
     /** Ищет ADB-устройство среди подключённых по USB и устанавливает
      * соединение (CNXN+AUTH) — держится в AdbSession между этапами мастера. */
     private fun adbConnect() = runExclusive(::onBusy) {
-        val result = AdbSession.connectBlocking(context, ::pushAdbLog)
+        val result = AdbSession.connectBlocking(context, ::pushAdbLog, waitForDeviceMs = ADB_USB_WAIT_MS)
         val event = when (result) {
             is AdbHandshakeResult.Connected ->
                 JSONObject().put("connected", true).put("banner", result.bannerFromDevice)
             is AdbHandshakeResult.Failed ->
                 JSONObject().put("connected", false).put("reason", result.reason)
-                    .put("no_device", result.noDevice)
+                    .put("no_device", result.noDevice).put("usb_cause", result.usbCause ?: JSONObject.NULL)
         }
         pushEvent(JSONObject().put("kind", "adb_connect_result").put("result", event))
     }
@@ -1955,8 +1979,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     // План записи общим кодом каталога: папки комплекта — по манифесту сервера (раньше уходили на
                     // флешку файлом со списком папки, логи №529, №5420), файлы — по путям плана. Не сложился —
                     // по-старому.
-                    if (sharedFolder.isNotBlank()) syncSharedFolder(sharedFolder, sink)
+                    val kit = if (sharedFolder.isNotBlank()) syncSharedFolder(sharedFolder, sink) else null
                     val usbPlan = usbPlan(files, sharedFolderDir, selectedApks, apksDest, withManifest = true)
+                    val kitProblem = kitNotReady(sharedFolder, sharedFolderDir, kit)
+                    if (kitProblem != null) {
+                        sink.finish()
+                        pushStageResult(stageIndex, StageRunResult.Failed(kitProblem))
+                        return@runExclusive
+                    }
                     if (usbPlan != null) {
                         if (usbPlan.source == "server") pushAdbLog("Список файлов для флешки — общим кодом каталога.")
                         usbPlan.localCleanup.forEach { path -> File(path).takeIf { it.isFile }?.delete() }
@@ -1967,6 +1997,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     sink.finish()
                     val planned: List<Long> = usbPlan?.files?.map { File(it.local).length() }
                         ?: scanUsbStageItems(files, sharedFolderDir, selectedApks).map { it.size }
+                    // Этапу есть что писать, а записывать нечего — значит, ничего не скачалось: не «успешно» с 0 файлов.
+                    if (planned.isEmpty() && (files.isNotEmpty() || sharedFolder.isNotBlank() || selectedApks.isNotEmpty())) {
+                        pushStageResult(stageIndex, StageRunResult.Failed("Нечего записывать на флешку — файлы этапа не " +
+                            "скачаны. Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз."))
+                        return@runExclusive
+                    }
                     val writeStartedAt = System.currentTimeMillis()
                     var filesWritten = 0
                     // "write" — своя фаза записи на флешку в кольце (progress08.js: «Запись на флешку», под кольцом —

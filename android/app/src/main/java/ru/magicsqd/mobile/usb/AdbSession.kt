@@ -62,21 +62,42 @@ object AdbSession {
      * запрашивает разрешение и делает CNXN(+AUTH). БЛОКИРУЮЩИЙ вызов (AUTH
      * может ждать до 30с подтверждения на экране магнитолы) — только с
      * фонового потока.
+     *
+     * waitForDeviceMs — сколько ждать появления магнитолы по USB, если её ещё нет. ПК видит магнитолу сам, как только
+     * она появилась (adb-сервер), а телефон проверял один раз в момент нажатия «Подключить» — нажал на секунду раньше,
+     * чем магнитола поднялась, и снова «не найдено» (Jolion 2026: десятки нажатий подряд, разбор логов 04.11.2026).
      */
-    fun connectBlocking(context: Context, log: (String) -> Unit): AdbHandshakeResult {
+    fun connectBlocking(context: Context, log: (String) -> Unit, waitForDeviceMs: Long = 0): AdbHandshakeResult {
         disconnect()
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         // Ищем устройство и его ADB-интерфейс ОДНИМ проходом (не два отдельных
         // — раньше второй повторный findAdbInterface(target) был обёрнут в "!!"
         // и мог упасть NPE, если устройство отвалилось по USB между первым и
         // вторым поиском, например от дёрнувшегося кабеля/OTG-переходника).
-        val (target, targetIface) = usbManager.deviceList.values
+        fun find() = usbManager.deviceList.values
             .firstNotNullOfOrNull { device -> findAdbInterface(device)?.let { device to it } }
-            ?: return AdbHandshakeResult.Failed(
+        val started = System.currentTimeMillis()
+        var found = find()
+        if (found == null && waitForDeviceMs > 0) {
+            log("Магнитолы с ADB по USB пока нет — жду до ${waitForDeviceMs / 1000} с.")
+            while (found == null && System.currentTimeMillis() - started < waitForDeviceMs) {
+                Thread.sleep(1000)
+                found = find()
+            }
+            if (found != null) log("Магнитола появилась по USB через ${(System.currentTimeMillis() - started) / 1000} с.")
+        }
+        if (found == null) {
+            // Что телефон всё-таки видит: от этого зависит совет (кабель/переходник, ADB закрыт, роль host у магнитолы).
+            val picture = UsbPicture.describe(context, usbManager)
+            log(picture.line)
+            return AdbHandshakeResult.Failed(
                 "Устройство с ADB-интерфейсом не найдено среди подключённых по USB — " +
                     "проверь, что на магнитоле включена отладка по USB и это OTG-подключение.",
-                noDevice = true
+                noDevice = true,
+                usbCause = picture.cause,
             )
+        }
+        val (target, targetIface) = found
 
         if (!requestUsbPermissionBlocking(context, target)) {
             return AdbHandshakeResult.Failed("Пользователь отклонил разрешение на доступ к USB-устройству")

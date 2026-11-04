@@ -1380,12 +1380,16 @@
       aiNotify("connect_failed", r.reason || "не удалось подключиться");
       if (flow) askWifiForInstall(flow, r.reason || "не удалось подключиться");
       const stage = stages[currentIndex];
-      if (r.no_device && stage && connectionModeFor(stage) !== "wifi") showOtgHintModal();
+      // Что телефон видел по USB (WebBridge.kt: usb_cause, UsbPicture.kt): устройство без ADB — окно «ADB закрыт»,
+      // иначе — окно про OTG-переходник (своё, если главной в паре стала магнитола).
+      const wired = r.no_device && stage && connectionModeFor(stage) !== "wifi";
+      if (wired && r.usb_cause === "no_adb") window.StageRun.showUserError({ id: "usb_no_adb" });
+      else if (wired) showOtgHintModal(r.usb_cause);
       // Не «нет устройства» (для него — окно про OTG-переходник), а отказ в доступе к USB, Wi-Fi не
       // отвечает и т.п.: окно «что сделать», если причина на стороне техника (user_errors.js). В Wi-Fi-потоке
       // установки причину и так показывает окно подключения.
       else if (!flow) window.StageRun.showUserError({ message: r.reason || "" });
-      if (stage && connectionModeFor(stage) !== "wifi") {
+      if (stage && connectionModeFor(stage) !== "wifi" && r.usb_cause !== "no_adb") {
         // USB-C↔USB-C кабель напрямую часто не работает: обе стороны
         // Type-C сами договариваются о роли host/device через CC-пин, и
         // магнитола (тоже умеющая быть host — для флешек) может выиграть
@@ -3680,9 +3684,12 @@
   // в телефон, потом штекер кабеля — в переходник), а не <video>: автозапуск видео в
   // WebView зависит от настроек воспроизведения, картинка играет всегда. При включённом
   // системном «уменьшении движения» — статичный кадр img/otg_hint_still.webp.
-  function showOtgHintModal() {
+  // cause «phone_is_device» (UsbPicture.kt): по USB ничего нет, а телефон сам подключён как устройство и заряжается —
+  // главной в паре стала магнитола (кабель USB-C↔USB-C); переходник нужен и тут, но сказать надо именно это.
+  function showOtgHintModal(cause) {
     if (document.querySelector(".otg-hint-overlay")) return; // не плодить копии при повторных нажатиях
     const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const role = cause === "phone_is_device";
     let overlay;
     // Анимация занимает ВСЁ окно (фон), текст и кнопки лежат поверх неё в свободных полосах
     // сверху и снизу кадра — сама сцена вставки (низ телефона, переходник, штекер) остаётся чистой.
@@ -3691,12 +3698,17 @@
         el("img", { class: "otg-hint-anim", alt: "", "aria-hidden": "true",
           src: reduceMotion ? "img/otg_hint_still.webp" : "img/otg_hint.webp" }),
         el("div", { class: "otg-top" }, [
-          el("p", { class: "otg-hint-title", text: "Нужен OTG-переходник" }),
-          el("ol", { class: "otg-hint-steps" }, [
+          el("p", { class: "otg-hint-title", text: role ? "Телефон стал устройством" : "Нужен OTG-переходник" }),
+          el("ol", { class: "otg-hint-steps" }, role ? [
+            el("li", { text: "Телефон подключился к магнитоле как устройство и заряжается от неё — так бывает с кабелем USB-C↔USB-C." }),
+            el("li", { text: "Вставьте в телефон OTG-переходник, а в него — кабель от магнитолы." }),
+          ] : [
             el("li", { text: "Сначала вставьте OTG-переходник в телефон." }),
             el("li", { text: "И только потом подключите к нему кабель от магнитолы." }),
           ]),
-          el("p", { class: "otg-hint-note", text: "Всё подключено, а окно появилось? Включите отладку по USB на магнитоле." }),
+          el("p", { class: "otg-hint-note", text: role
+            ? "Нет переходника? Переподключите кабель или переверните штекер и нажмите «Подключить снова»."
+            : "Всё подключено, а окно появилось? Включите отладку по USB на магнитоле." }),
         ]),
         el("div", { class: "otg-bottom" }, [
           el("button", { class: "accent", text: "Подключить снова", onclick: () => { overlay.remove(); onAdbConnect(); } }),
