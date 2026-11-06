@@ -2411,6 +2411,7 @@ window.I18N_EN = {
   "Файл не скачан: {path}": "File not downloaded: {path}",
   // Подключение по USB с Android: ожидание магнитолы и что телефон видит по USB (UsbPicture.kt, разбор логов 04.11.2026).
   "Магнитолы с ADB по USB пока нет — жду до {#s} с.": "No head unit with ADB on USB yet — waiting up to {s} s.",
+  "ADB: жду магнитолу по USB — до 20 с…": "ADB: waiting for the head unit on USB — up to 20 s…",
   "Магнитола появилась по USB через {#s} с.": "The head unit appeared on USB after {s} s.",
   "USB: телефон видит устройств: {#n} — {list}. ADB-интерфейса среди них нет.": "USB: the phone sees {n} device(s) — {list}. None of them has an ADB interface.",
   "USB: телефон не видит ни одного устройства, а сам {how} — главной в паре стала магнитола, а не телефон.": "USB: the phone sees no devices and is itself {how} — the head unit took the host role, not the phone.",
@@ -2428,4 +2429,6 @@ window.I18N_EN = {
   "Комплект «{name}» не скачан — нет связи с сервером. Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз.": "The “{name}” kit isn't downloaded — no connection to the server. Connect the phone to the internet (not to the head unit's Wi-Fi) and run the stage again.",
   "Нечего записывать на флешку — файлы этапа не скачаны. Подключите телефон к интернету (не к Wi-Fi магнитолы) и запустите этап ещё раз.": "Nothing to write to the flash drive — the stage files aren't downloaded. Connect the phone to the internet (not to the head unit's Wi-Fi) and run the stage again.",
   "Комплект «{name}» не скачался: {error}": "The “{name}” kit didn't download: {error}",
+  "Вход в аккаунт истёк — войдите в аккаунт заново (тот же email и пароль), и каталог APK скачается.": "Your sign-in has expired — sign in to your account again (same email and password), and the APK catalog will download.",
+  "Вход в аккаунт истёк — войдите в аккаунт заново (тот же email и пароль), и модель скачается заранее.": "Your sign-in has expired — sign in to your account again (same email and password), and the model will be downloaded in advance.",
 };
