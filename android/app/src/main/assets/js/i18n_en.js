@@ -2411,6 +2411,7 @@ window.I18N_EN = {
   "Файл не скачан: {path}": "File not downloaded: {path}",
   // Подключение по USB с Android: ожидание магнитолы и что телефон видит по USB (UsbPicture.kt, разбор логов 04.11.2026).
   "Магнитолы с ADB по USB пока нет — жду до {#s} с.": "No head unit with ADB on USB yet — waiting up to {s} s.",
+  "ADB: жду магнитолу по USB — до 20 с…": "ADB: waiting for the head unit on USB — up to 20 s…",
   "Магнитола появилась по USB через {#s} с.": "The head unit appeared on USB after {s} s.",
   "USB: телефон видит устройств: {#n} — {list}. ADB-интерфейса среди них нет.": "USB: the phone sees {n} device(s) — {list}. None of them has an ADB interface.",
   "USB: телефон не видит ни одного устройства, а сам {how} — главной в паре стала магнитола, а не телефон.": "USB: the phone sees no devices and is itself {how} — the head unit took the host role, not the phone.",

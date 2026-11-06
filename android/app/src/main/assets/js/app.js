@@ -1338,6 +1338,19 @@
     onAdbStageResult({ index: flow.index, result: { success: false, cancelled: true, reason: message } });
   }
 
+  // Подключение по проводу идёт: телефон до 20 с ждёт магнитолу (WebBridge.kt: ADB_USB_WAIT_MS, с 1.1.21). Техник не
+  // видел, что программа ждёт, жал «Подключить» снова и получал «Уже выполняется другая операция» — 41 из 49 таких
+  // сообщений в логах 1.1.21 (разбор 06.11.2026). Пока ждём — кнопка выключена, в строке статуса «жду магнитолу».
+  // Страховка: если ответ не пришёл (Kotlin был занят другой операцией и только написал об этом), через 35 с отпускаем.
+  let adbUsbConnecting = false;
+  let adbUsbConnectingTimer = null;
+  function setAdbUsbConnecting(on) {
+    adbUsbConnecting = on;
+    clearTimeout(adbUsbConnectingTimer);
+    if (on) adbUsbConnectingTimer = setTimeout(() => setAdbUsbConnecting(false), 35000);
+    if (adbConnectBtn) adbConnectBtn.disabled = on || labInstallBusy;
+  }
+
   function onAdbConnect() {
     const stage = stages[currentIndex];
     if (connectionModeFor(stage) === "wifi") {
@@ -1354,12 +1367,15 @@
       );
       return;
     }
-    setAdbStatus(false, "ADB: подключаюсь...");
+    if (adbUsbConnecting) return;
+    setAdbStatus(false, "ADB: жду магнитолу по USB — до 20 с…");
+    setAdbUsbConnecting(true);
     Bridge.call("adb_connect", {});
   }
 
   function onAdbConnectResult(event) {
     const r = event.result || {};
+    setAdbUsbConnecting(false);
     // Подключение, начатое из Wi-Fi-потока установки (см. beginWifiInstall) — после него продолжаем/повторяем.
     const flow = wifiInstallFlow && wifiInstallFlow.connecting ? wifiInstallFlow : null;
     if (flow) flow.connecting = false;
@@ -3346,7 +3362,7 @@
   }
 
   function updateTransportBars(stage) {
-    adbConnectBtn.disabled = labInstallBusy;
+    adbConnectBtn.disabled = labInstallBusy || adbUsbConnecting;
     adbModeWiredBtn.disabled = labInstallBusy;
     adbModeWifiBtn.disabled = labInstallBusy;
     adbBarEl.style.display = ADB_STAGE_TYPES.has(stage.type) ? "flex" : "none";

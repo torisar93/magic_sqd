@@ -48,3 +48,17 @@ def test_window_follows_usb_cause():
     assert "else if (wired) showOtgHintModal(r.usb_cause);" in js
     modal = re.search(r"function showOtgHintModal\(cause\) \{.*?\n  }\n", js, flags=re.S).group(0)
     assert 'const role = cause === "phone_is_device";' in modal and "Телефон стал устройством" in modal
+
+
+def test_connect_button_waits_instead_of_busy():
+    # 1.1.21 в поле (разбор 06.11.2026): 41 из 49 «Уже выполняется другая операция» — сразу после «жду до 20 с»:
+    # техник жал «Подключить» снова. Пока телефон ждёт магнитолу, кнопка выключена и повтор не уходит в Kotlin.
+    js = APP_JS.read_text(encoding="utf-8")
+    connect = re.search(r"function onAdbConnect\(\) \{.*?\n  }\n", js, flags=re.S).group(0)
+    assert connect.index("if (adbUsbConnecting) return;") < connect.index('Bridge.call("adb_connect", {});')
+    assert "setAdbUsbConnecting(true);" in connect and "жду магнитолу по USB" in connect
+    result = re.search(r"function onAdbConnectResult\(event\) \{.*?\n  }\n", js, flags=re.S).group(0)
+    assert result.index("setAdbUsbConnecting(false);") < result.index("if (r.connected)")
+    helper = re.search(r"function setAdbUsbConnecting\(on\) \{.*?\n  }\n", js, flags=re.S).group(0)
+    assert "setTimeout(() => setAdbUsbConnecting(false), 35000)" in helper  # ответа нет (Kotlin занят) — не залипнуть
+    assert "adbConnectBtn.disabled = labInstallBusy || adbUsbConnecting;" in js

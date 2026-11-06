@@ -1004,10 +1004,12 @@ class WebBridge(private val context: Context, private val webView: WebView) {
 
     private fun serverApkIcon(path: String): String? {
         return try {
-            val root = context.filesDir.canonicalFile.toPath()
-            val file = File(path).canonicalFile.toPath()
+            // Строками, а не File.toPath(): его нет до Android 8, а NoSuchMethodError — не Exception, catch ниже его не
+            // ловит. Магнитола с Android 7.1.2 падала на каждом значке (лог №13602, 05.11.2026).
+            val root = context.filesDir.canonicalPath.trimEnd('/') + "/"
+            val file = File(path).canonicalPath
             if (!file.startsWith(root)) return null
-            val relative = root.relativize(file).toString().replace('\\', '/')
+            val relative = file.removePrefix(root).replace('\\', '/')
             if (!relative.startsWith("apk/") && !relative.startsWith("cars/")) return null
             if (System.currentTimeMillis() > labServerIconsUntil) {
                 // Через Python (content_sync.open_url): с токеном официальной сборки и cookie вошедшего (значки скрытых

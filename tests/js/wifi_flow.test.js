@@ -21,6 +21,8 @@ module.exports = async function () {
     promptHostPicker: (title, port, onSubmit, opts) => { picker = { title, port, onSubmit, opts }; },
     aiNotify() {},  // ИИ-мастер (js/ai_phone.js) здесь не нужен
     markDownloaded: (paths) => marked.push(paths),  // подсказка Wi-Fi: скачанное — уже на телефоне
+    // ожидание магнитолы по USB (setAdbUsbConnecting, с 1.1.21) — кнопки здесь нет, таймер не нужен
+    setTimeout: () => 0, clearTimeout() {}, adbConnectBtn: null, labInstallBusy: false,
   };
   const api = run(code + "\nthis.__api={beginWifiInstall,onApkDownloadDone,cancelWifiInstall,onAdbConnectResult,getFlow:()=>wifiInstallFlow};", ctx).__api;
 
