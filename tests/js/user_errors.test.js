@@ -171,7 +171,8 @@ module.exports = async function () {
   // «Подключить» на Android, по USB есть устройство без ADB (UsbPicture.kt, разбор логов 04.11.2026): окно только по id,
   // сам текст «не найдено» по-прежнему ведёт к no_device.
   const noAdb = load(true).window.UserErrors.byId("usb_no_adb");
-  assert(noAdb && noAdb.title === "Магнитола видна, но ADB закрыт" && noAdb.steps.length === 3, "Android: окно usb_no_adb");
+  assert(noAdb && noAdb.title === "По USB подключена не магнитола" && /флешк/.test(noAdb.steps[0]) && noAdb.steps.length === 3,
+    "Android: окно usb_no_adb — сначала про флешку/переходник (06.11: все 5 случаев были не магнитола)");
   assert(CASES.every(([message]) => load(true).window.UserErrors.classify(message)?.id !== "usb_no_adb"), "usb_no_adb не ловит тексты сам");
 
   // 2) Итог этапа с ошибкой техника: окно «что сделать», без «отправьте разработчику» и кнопок лога.
