@@ -4305,9 +4305,20 @@
     return null;
   }
 
+  // action:N — кнопки «Доп. действий»; на этапах флешки и «Пароль ADB по QR-коду» — кнопки их карточек («Записать…»,
+  // «Получить пароль»). Раньше ИИ этих кнопок не видел и жал «Далее» вместо «Получить пароль» (разбор 07.11.2026).
   function aiActionButtons() {
     if (!aiOnWizard()) return [];
-    return [...wizardContentEl.querySelectorAll(".flow-action-card")].map((card) => card.querySelector("button.usb-step-action"));
+    const actions = [...wizardContentEl.querySelectorAll(".flow-action-card")].map((card) => card.querySelector("button.usb-step-action"));
+    if (actions.length) return actions;
+    return [...wizardContentEl.querySelectorAll(".usb-stage > .usb-step-card")].map((card) => card.querySelector(":scope > .usb-step-action"));
+  }
+
+  // Подпись кнопки этапа для ИИ: заголовок её карточки и надпись на кнопке.
+  function aiButtonLabel(button) {
+    const card = button && button.closest(".usb-step-card, .flow-action-card");
+    const title = card && card.querySelector("h3");
+    return [title && title.textContent.trim(), button && button.textContent.trim()].filter(Boolean).join(" · ").slice(0, 80);
   }
 
   function aiControls() {
@@ -4340,6 +4351,12 @@
     if (model && !stages.length && screenWizard.classList.contains("active")) state.loading = true;
     if (stage && stage.type === "check") state.options = stage.check_options || [];
     if (stage && stage.type === "actions") state.actions = (stage.actions || []).map((a, i) => `action:${i} — ${a.label || a.kind || ""}`);
+    // Кнопки других этапов (флешка, «Пароль ADB по QR-коду») — тоже с подписями: без них ИИ угадывал номер и жал «Далее»
+    // вместо «Получить пароль» (разбор переписки 07.11.2026).
+    else if (stage) {
+      const labeled = aiActionButtons().map((button, i) => (button ? `action:${i} — ${aiButtonLabel(button)}` : ""));
+      if (labeled.some(Boolean)) state.actions = labeled.filter(Boolean);
+    }
     if (stage && stage.type === "apps") state.apps_tab = appsActiveTabs[stage.index] || "";
     const box = document.querySelector("dialog[open], .modal-overlay .modal-box");
     if (box) state.dialog = ((box.querySelector("h1,h2,h3,p") || {}).textContent || "окно программы").trim().slice(0, 120);
@@ -4403,6 +4420,7 @@
     const action = /^action:(\d+)$/.exec(String(control || ""));
     const stage = stages[currentIndex];
     if (action && stage && stage.actions && stage.actions[Number(action[1])]) return stage.actions[Number(action[1])].label || "";
+    if (action) return aiButtonLabel(aiActionButtons()[Number(action[1])]);
     const node = aiElement(control);
     return node ? String(node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60) : "";
   }
