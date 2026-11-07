@@ -97,10 +97,20 @@ object AdbSession {
                 usbCause = picture.cause,
             )
         }
-        val (target, targetIface) = found
+        var (target, targetIface) = found
 
-        if (!requestUsbPermissionBlocking(context, target)) {
-            return AdbHandshakeResult.Failed("Пользователь отклонил разрешение на доступ к USB-устройству")
+        var permissionRetries = 0
+        while (!requestUsbPermissionBlocking(context, target)) {
+            // «Отказ», которого техник не давал: магнитола переподключилась по USB, пока было открыто окно разрешения,
+            // Android закрыл его с отказом. 1.1.21: «Пользователь отклонил…» сразу после «Магнитола появилась по USB»
+            // — 29 из 47 таких строк, 10 из 11 техников потом подключились (разбор 07.11.2026, №13856). Магнитола на
+            // месте под прежним адресом — отказ настоящий.
+            val back = (if (waitForDeviceMs > 0 && permissionRetries < 2) reattached(usbManager, target, ::find) else null)
+                ?: return AdbHandshakeResult.Failed("Пользователь отклонил разрешение на доступ к USB-устройству")
+            permissionRetries++
+            log("Магнитола переподключилась по USB, пока было открыто окно разрешения, — спрашиваю ещё раз.")
+            target = back.first
+            targetIface = back.second
         }
 
         val conn = usbManager.openDevice(target)
@@ -362,6 +372,22 @@ object AdbSession {
 
     private fun requireTransport(): AdbTransport =
         transport ?: error("ADB не подключён — сначала нужно установить соединение с устройством")
+
+    /** Магнитола пропала из списка USB под прежним адресом — ждём её снова до 5 с (переподключилась). null — она на
+     * месте (отказ настоящий) или так и не вернулась. */
+    private fun reattached(
+        usbManager: UsbManager,
+        previous: UsbDevice,
+        find: () -> Pair<UsbDevice, AdbUsbInterface>?,
+    ): Pair<UsbDevice, AdbUsbInterface>? {
+        if (usbManager.deviceList.containsKey(previous.deviceName)) return null
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(500)
+            find()?.let { return it }
+        }
+        return null
+    }
 
     private fun requestUsbPermissionBlocking(context: Context, device: UsbDevice): Boolean {
         val latch = CountDownLatch(1)

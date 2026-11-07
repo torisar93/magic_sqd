@@ -62,3 +62,15 @@ def test_connect_button_waits_instead_of_busy():
     helper = re.search(r"function setAdbUsbConnecting\(on\) \{.*?\n  }\n", js, flags=re.S).group(0)
     assert "setTimeout(() => setAdbUsbConnecting(false), 35000)" in helper  # ответа нет (Kotlin занят) — не залипнуть
     assert "adbConnectBtn.disabled = labInstallBusy || adbUsbConnecting;" in js
+
+
+def test_permission_denial_from_reconnect_is_retried():
+    # 1.1.21 (разбор 07.11.2026): «Пользователь отклонил разрешение…» сразу после «Магнитола появилась по USB» —
+    # магнитола переподключалась, пока было открыто окно разрешения. Её нет под прежним адресом — спрашиваем снова
+    # (до двух раз); на месте — отказ настоящий.
+    session = _code(KOTLIN / "usb/AdbSession.kt")
+    connect = re.search(r"fun connectBlocking\(.*?\n    }\n", session, flags=re.S).group(0)
+    assert "while (!requestUsbPermissionBlocking(context, target))" in connect
+    assert "permissionRetries < 2" in connect and "reattached(usbManager, target, ::find)" in connect
+    helper = re.search(r"private fun reattached\(.*?\n    }\n", session, flags=re.S).group(0)
+    assert "if (usbManager.deviceList.containsKey(previous.deviceName)) return null" in helper
