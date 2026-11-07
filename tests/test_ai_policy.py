@@ -60,3 +60,30 @@ def test_may_run(client):
     assert client.may_run("kill-server", "confirm", False)[0] is False  # adb уровня компьютера — никогда
     assert client.may_run("getprop", "auto", True)[0] is False  # во время установки — нет
     assert client.normalize("  shell   pm   list packages ") == "pm list packages"
+
+
+
+
+def _function(source: str, name: str) -> str:
+    import re
+    return re.search(rf"\ndef {name}\(.*?(?=\n\n\n|\Z)", source, flags=re.S).group(0)
+
+
+def test_split_parts_is_the_same_as_on_server():
+    # С 1.1.22 программа делит команду с учётом кавычек — сервер для неё делает так же (ai_master.QUOTED_PIPES_SINCE).
+    if not (SERVER / "ai_master.py").exists():
+        pytest.skip("нет server/")
+    server = (SERVER / "ai_master.py").read_text(encoding="utf-8")
+    client_src = (ROOT / "app/ai_policy.py").read_text(encoding="utf-8")
+    body = lambda src: _function(src, "split_parts").split('"""', 2)[2]  # без докстринга
+    assert body(client_src) == body(server)
+    assert "QUOTED_PIPES_SINCE = (1, 1, 22)" in server
+
+
+@pytest.mark.parametrize("cmd, kind", [
+    ('logcat -d | grep -E "gbinder|accessibility"', "readonly"), ("pm list packages | grep -iE 'yandex|navi'", "readonly"),
+    ("echo 'x", "confirm"), ('ls "a|b" | sh', "confirm"), ("cat x && settings put global a 1", "confirm"),
+    ("getprop ro.build.version.sdk", "readonly"), ("kill-server", "forbidden"),
+])
+def test_pipes_inside_quotes(client, cmd, kind):
+    assert client.classify_command(cmd)[0] == kind

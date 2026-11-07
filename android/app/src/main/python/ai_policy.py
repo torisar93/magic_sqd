@@ -109,7 +109,36 @@ POLICY = {
 
 _READONLY = [re.compile(p) for p in POLICY["readonly"]]
 _FORBIDDEN = [re.compile(p) for p in POLICY["forbidden"]]
-_PART_SPLIT = re.compile(r"\s*(?:\|\||&&|;|\|)\s*")
+
+
+def split_parts(text: str) -> list[str] | None:
+    """Части цепочки команд (|, ||, &&, ;) — разделители внутри кавычек не считаются: grep -E "a|b" — одна часть
+    (с 1.1.22, разбор переписки 07.11.2026). None — незакрытая кавычка. Та же функция — server/ai_master.split_parts."""
+    parts, buf, quote, i = [], [], "", 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+            buf.append(ch)
+        elif text.startswith(("||", "&&"), i):
+            parts.append("".join(buf))
+            buf = []
+            i += 2
+            continue
+        elif ch in "|;":
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    if quote:
+        return None
+    parts.append("".join(buf))
+    return [part.strip() for part in parts]
 
 
 def normalize(cmd: str) -> str:
@@ -136,7 +165,10 @@ def classify_command(cmd: str) -> tuple[str, str]:
             return "forbidden", "команда может сломать магнитолу"
     if any(chars in text for chars in POLICY["write_chars"]):
         return "confirm", "пишет в файл или подставляет вывод"
-    for part in _PART_SPLIT.split(text):
+    parts = split_parts(text)
+    if parts is None:
+        return "confirm", "непонятная команда"
+    for part in parts:
         if not part:
             return "confirm", "непонятная команда"
         tokens = part.split(" ")
