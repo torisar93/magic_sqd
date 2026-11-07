@@ -2265,7 +2265,20 @@
     }
     const unauthorized = devices.some((d) => d.state === "unauthorized");
     window.StageRun.showUserError({ id: unauthorized ? "unauthorized" : "no_device" }, { retry });
+    logUsbPicture();
     return null;
+  }
+
+  // Рядом с окном «Магнитола не подключена» — что видят adb и компьютер по USB (app/usb_picture.py, с 1.1.22): на маках
+  // с паролем по QR по логу было не понять, нет ли магнитолы на USB или adb видит её offline (№13512, №14266).
+  // Не чаще раза в минуту — техник жмёт «Повторить» подряд.
+  let usbPictureAt = 0;
+  async function logUsbPicture() {
+    if (Date.now() - usbPictureAt < 60000 || !window.pywebview.api.install_usb_picture) return;
+    usbPictureAt = Date.now();
+    try {
+      ((await window.pywebview.api.install_usb_picture()) || []).forEach((line) => log(line));
+    } catch { /* подробности необязательны */ }
   }
 
   // -- adb ------------------------------------------------------------------

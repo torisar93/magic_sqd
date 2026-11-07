@@ -288,6 +288,9 @@ class WebApi:
     def install_list_devices(self) -> list:
         return self._install.list_devices()
 
+    def install_usb_picture(self) -> list:
+        return self._install.usb_picture()
+
     def install_device_fingerprint(self, serial: str) -> dict:
         return self._install.device_fingerprint(serial)
 

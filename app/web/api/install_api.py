@@ -29,7 +29,7 @@ from ...content_sync import (ensure_apks_downloaded, fetch_manifest, filter_mani
                              not_on_server_message,
                              prune_model_stale_files, sync_model_apk_metadata, sync_model_definition,
                              sync_model_subfolder, sync_shared_folder)
-from ... import catalog_i18n, closed_stages
+from ... import catalog_i18n, closed_stages, usb_picture
 from ...install_context import InstallCancelled
 from ... import device_models
 from ...rollback import rollback
@@ -485,6 +485,11 @@ class InstallApi:
     # ------------------------------------------------------------------
     def list_devices(self) -> list[dict]:
         return list_devices(self.adb_path)
+
+    def usb_picture(self) -> list[str]:
+        """Что видно, когда магнитолы нет: ответ adb и USB-устройства компьютера (app/usb_picture.py) — stage_wizard.js
+        пишет это в журнал рядом с окном «Магнитола не подключена»."""
+        return usb_picture.describe(self.adb_path)
 
     def busy(self) -> bool:
         """Идёт этап, откат или докачка перед установкой — ИИ-мастер (ai_api.py) в это время команд не выполняет."""
