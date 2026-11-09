@@ -74,3 +74,14 @@ def test_deepal_shell_login_stops_install_on_both_platforms():
     rejection = re.search(r"private fun definitiveRejection\(.*?\n    }\n", engine, flags=re.S).group(0)
     assert "SHELL_LOGIN_RE.containsMatchIn(reason) ->" in rejection
     assert 'Regex("log in to .adb shell.", RegexOption.IGNORE_CASE)' in engine
+
+
+def test_self_update_download_resumes_after_a_drop():
+    """«Не удалось обновить: Software caused connection abort» — ~10% скачиваний обновления обрывались посреди файла
+    (журнал nginx, 09.11.2026). Теперь докачка с того же места (Range), до 5 попыток; sha256 — по всему файлу."""
+    src = _code(KOTLIN / "AppSelfUpdate.kt")
+    download = re.search(r"    fun download\(context: Context.*?\n    }\n", src, flags=re.S).group(0)
+    assert 'setRequestProperty("Range", "bytes=$done-")' in download
+    assert "HttpURLConnection.HTTP_PARTIAL" in download and "java.io.FileOutputStream(target, resumed)" in download
+    assert "if (attempt >= DOWNLOAD_ATTEMPTS) throw e" in download and "private const val DOWNLOAD_ATTEMPTS = 5" in src
+    assert download.index("while (true) {") < download.index("MessageDigest.getInstance")

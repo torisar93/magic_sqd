@@ -130,36 +130,66 @@ object AppSelfUpdate {
     fun permissionIntent(context: Context): Intent =
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
 
-    /** APK обновления в кэш программы; sha256 (если сервер его дал) обязан совпасть. Ошибка — текстом для техника. */
+    /** APK обновления в кэш программы; sha256 (если сервер его дал) обязан совпасть. Ошибка — текстом для техника.
+     * Оборвалось — докачиваем с того же места (Range), до DOWNLOAD_ATTEMPTS попыток: по журналу сервера около 10%
+     * скачиваний обновления программой обрывались посреди файла («Software caused connection abort», 0,4–48 МБ из 64),
+     * и техник видел «Не удалось обновить» (разбор 09.11.2026), а браузер на том же телефоне докачивал. */
     fun download(context: Context, url: String, sha256: String?, onProgress: (done: Long, total: Long) -> Unit): File {
         val dir = File(context.cacheDir, "update").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }  // недокачанное с прошлого раза
         val target = File(dir, "update.apk")
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            instanceFollowRedirects = true  // GitHub отдаёт файл переадресацией
-        }
+        var done = 0L
+        var total = -1L
+        var attempt = 0
         try {
-            val code = connection.responseCode
-            if (code != HttpURLConnection.HTTP_OK) throw IOException("сервер ответил $code")
-            val total = connection.contentLengthLong
-            val digest = MessageDigest.getInstance("SHA-256")
-            var done = 0L
-            connection.inputStream.use { input ->
-                target.outputStream().use { output ->
-                    val buffer = ByteArray(256 * 1024)
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        digest.update(buffer, 0, read)
-                        done += read
-                        onProgress(done, total)
+            while (true) {
+                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 15_000
+                    readTimeout = 30_000
+                    instanceFollowRedirects = true  // GitHub отдаёт файл переадресацией
+                    if (done > 0) setRequestProperty("Range", "bytes=$done-")
+                }
+                try {
+                    val code = connection.responseCode
+                    val resumed = done > 0 && code == HttpURLConnection.HTTP_PARTIAL
+                    if (code != HttpURLConnection.HTTP_OK && !resumed) throw IOException("сервер ответил $code")
+                    if (!resumed) {
+                        done = 0
+                        total = connection.contentLengthLong
+                    } else if (total <= 0) {
+                        total = connection.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull() ?: -1L
                     }
+                    connection.inputStream.use { input ->
+                        java.io.FileOutputStream(target, resumed).use { output ->
+                            val buffer = ByteArray(256 * 1024)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                output.write(buffer, 0, read)
+                                done += read
+                                onProgress(done, total)
+                            }
+                        }
+                    }
+                    if (total > 0 && done != total) throw IOException("скачано $done из $total байт — соединение оборвалось")
+                    break
+                } catch (e: IOException) {
+                    attempt++
+                    if (attempt >= DOWNLOAD_ATTEMPTS) throw e
+                    Thread.sleep(2_000L * attempt)
+                } finally {
+                    connection.disconnect()
                 }
             }
-            if (total > 0 && done != total) throw IOException("скачано $done из $total байт — соединение оборвалось")
+            val digest = MessageDigest.getInstance("SHA-256")
+            target.inputStream().use { input ->
+                val buffer = ByteArray(256 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
             val actual = digest.digest().joinToString("") { "%02x".format(it) }
             if (!sha256.isNullOrBlank() && !actual.equals(sha256.trim(), ignoreCase = true)) {
                 throw IOException("файл повредился при скачивании (контрольная сумма не совпала)")
@@ -168,10 +198,10 @@ object AppSelfUpdate {
         } catch (e: Exception) {
             target.delete()
             throw e
-        } finally {
-            connection.disconnect()
         }
     }
+
+    private const val DOWNLOAD_ATTEMPTS = 5
 
     /** Почему этот файл не ставить, или null: в нём наша программа, новее установленной и подписана тем же ключом
      * (Android и сам не обновит программу файлом с чужой подписью — проверяем заранее, чтобы сказать понятно). */
