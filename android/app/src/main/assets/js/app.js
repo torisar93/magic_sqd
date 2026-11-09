@@ -1950,10 +1950,10 @@
     return String(event.title || "").endsWith(ASK_MANY_MARK) && Array.isArray(event.choices) && event.choices.length > 0;
   }
 
-  function promptAskMany(event, onSubmit) {
+  function promptAskMany(event, onSubmit, okText = null) {
     const choices = event.choices.map(String);
-    const title = String(event.title).slice(0, -ASK_MANY_MARK.length) || "Выбор";
-    const okLabel = ASK_MANY_OK[title] || "Готово";
+    const title = String(event.title).replace(/\u2063$/, "") || "Выбор";
+    const okLabel = okText || ASK_MANY_OK[title] || "Готово";
     const selected = new Set();
     const dialog = el("dialog", { class: "apps-picker-dialog ask-many-dialog", "aria-labelledby": "ask-many-title" });
     const count = el("p", { class: "apps-picker-count", role: "status" });
@@ -2339,6 +2339,29 @@
     page.append(card);
   }
 
+  // Несколько приложений по очереди: следующее — когда Kotlin закончил предыдущее (operation_busy), как техник нажал бы
+  // кнопку ещё раз. Пока идёт очередь, другие кнопки «Доп. действий» отвечают «дождитесь».
+  let packageBatch = null;
+  async function runPackageBatch(method, packages, note, btn) {
+    const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    packageBatch = { method, left: packages.length };
+    btn.disabled = true;
+    try {
+      for (let i = 0; i < packages.length; i++) {
+        note.textContent = `Выполняю: ${i + 1} из ${packages.length} — ${packages[i]}`;
+        try { Bridge.call(method, { pkg: packages[i] }); }
+        catch (error) { note.textContent = error.message || 'Не удалось выполнить действие.'; log(note.textContent); return; }
+        await pause(300);
+        for (let waited = 0; operationBusy() && waited < 600; waited++) await pause(500);
+        packageBatch.left--;
+      }
+      note.textContent = `Готово: ${packages.length} из ${packages.length}. Подробности — в логе.`;
+    } finally {
+      packageBatch = null;
+      btn.disabled = false;
+    }
+  }
+
   function renderActionsStage(page, stage) {
     if (connectionModeFor(stage) === "wifi") prefetchStageFiles(stage, (stage.actions || []).flatMap((a) => a.files || []));
     page.classList.add("flow-stage");
@@ -2348,12 +2371,14 @@
         // сторонние (владелец, 2026-09-26: штатные нельзя — техники пытались
         // удалить сам «android», логи #1187, #1222); включать — из полного
         // списка (thirdPartyOnly=false), чтобы вернуть отключённое раньше.
-        grant_permissions: { bridgeMethod: "actions_grant_permissions", thirdPartyOnly: true },
+        // many — выбор нескольких галочками (владелец, 09.11.2026: «такой же список … для кнопок выдать права, вкл откл
+        // приложения»): окно как у «Режима стелс», приложения обрабатываются по очереди (packageBatch ниже).
+        grant_permissions: { bridgeMethod: "actions_grant_permissions", thirdPartyOnly: true, many: "Выдать" },
         mock_location: { bridgeMethod: "actions_mock_location", thirdPartyOnly: true },
         launch_activity: { bridgeMethod: "actions_launch_activity", thirdPartyOnly: true },
         uninstall_app: { bridgeMethod: "actions_uninstall_app", thirdPartyOnly: true },
-        disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: true },
-        enable_app: { bridgeMethod: "actions_enable_app", thirdPartyOnly: false },
+        disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: true, many: "Отключить" },
+        enable_app: { bridgeMethod: "actions_enable_app", thirdPartyOnly: false, many: "Включить" },
         // «Разрешить работу в движении» — техник выбирает установленное приложение, дальше MotionOptimize.kt
         // (порт InstallContext.optimize_for_motion): пометить окна distractionOptimized, переподписать, поставить заново.
         motion_optimize: { bridgeMethod: "actions_motion_optimize", thirdPartyOnly: true },
@@ -2381,7 +2406,7 @@
           // Идёт другое действие (запуск, разрешения, снятие APK…) — программа откажет, а карточка висела «Получаем
           // список приложений…» с неактивной кнопкой (18 раз в логах №9428–9955, 27.10.2026). Говорим сразу.
           const busyText='Сейчас выполняется другое действие — дождитесь «Готово.» в журнале и нажмите «Выполнить» ещё раз.';
-          if (operationBusy()) { card.append(el('p',{class:'flow-action-note',role:'status',text:busyText}));log(busyText);return; }
+          if (packageBatch || operationBusy()) { card.append(el('p',{class:'flow-action-note',role:'status',text:busyText}));log(busyText);return; }
           log("Получаю список приложений...");
           const note=el('p',{class:'flow-action-note',role:'status',text:'Получаем список приложений…'});
           card.append(note);btn.disabled=true;
@@ -2391,6 +2416,15 @@
             if (busy) { note.textContent=busyText;log(busyText);return; }
             if (!packages.length) { note.textContent='Не удалось получить список приложений: магнитола не ответила или оборвалась связь. Подождите несколько секунд и нажмите «Выполнить» ещё раз; не поможет — переподключитесь к магнитоле.';log(note.textContent);return; }
             note.textContent='Выберите приложение.';
+            if (pickerAction.many) {
+              promptAskMany({ title: action.label || "Выбор", prompt: "", choices: packages }, (value) => {
+                if (!value || !page.isConnected || labInstallBusy) { note.textContent = 'Ничего не выбрано.'; return; }
+                let chosen = [];
+                try { chosen = JSON.parse(value); } catch (_) { chosen = []; }
+                runPackageBatch(pickerAction.bridgeMethod, chosen, note, btn);
+              }, pickerAction.many);
+              return;
+            }
             promptPackagePicker("Выберите приложение", packages, (pkg) => {
               if (!page.isConnected || labInstallBusy) return;
               try {
@@ -3712,6 +3746,10 @@
   function onAppUpdateEvent(event) {
     if (!appUpdate) return;
     const { status, button, manual } = appUpdate;
+    // Итог шагов обновления — и в журнал: раньше его видел только техник в окне, а по логам было не понять, почему
+    // программа не обновилась («Software caused connection abort» — обрыв скачивания; разбор 09.11.2026).
+    if (event.stage === "error") log(`Обновление программы не удалось: ${event.message || "неизвестная ошибка"}`);
+    else if (event.stage === "install" || event.stage === "confirm" || event.stage === "wait") log(`Обновление программы: ${event.stage}`);
     if (event.stage === "download") {
       status.textContent = event.total > 0
         ? `Скачиваю обновление: ${updateMb(event.done)} из ${updateMb(event.total)}`

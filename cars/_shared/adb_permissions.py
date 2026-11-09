@@ -9,6 +9,7 @@ app/car_generator.py: StepSpec.actions, ActionSpec.kind ==
 голосовой ассистент) — руками через adb shell, что и делает этот модуль
 вместо техника."""
 from __future__ import annotations
+import json
 import re
 
 # Полный список разрешений на устройстве заранее неизвестен, поэтому
@@ -385,6 +386,27 @@ def _enable_notification_listener(ctx, package: str, dumpsys_output: str) -> Non
     ctx.log(f"Доступ к уведомлениям включён: {component}")
 
 
+def _many(package) -> "list | None":
+    """Несколько приложений сразу: окно с галочками (интерфейс с 09.11.2026 — бандлы 1.1.21–1.1.23; владелец: «можно
+    такой же список сделать и для кнопок выдать права, вкл откл приложения») отвечает JSON-списком вместо одного имени
+    пакета. None — одно приложение, как раньше."""
+    text = str(package or "").strip()
+    if not text.startswith("["):
+        return None
+    try:
+        items = json.loads(text)
+    except ValueError:
+        return None
+    return [p for p in items if isinstance(p, str) and _PACKAGE_NAME_RE.fullmatch(p)] if isinstance(items, list) else None
+
+
+def _for_each(ctx, packages: list, action) -> None:
+    for number, one in enumerate(packages, 1):
+        ctx.log(f"— {number} из {len(packages)}: {one}")
+        action(ctx, one)
+    ctx.log(f"Все выбранные приложения ({len(packages)}) обработаны — итог по каждому выше.")
+
+
 def grant_all_permissions(ctx, package: str) -> None:
     """Выдаёт приложению все разрешения, которые оно запрашивает в
     манифесте (обычные runtime + WRITE_SECURE_SETTINGS), плюс "спецдоступы"
@@ -397,6 +419,10 @@ def grant_all_permissions(ctx, package: str) -> None:
     штатным экраном настроек. Плюс освобождает приложение от ограничений
     энергосбережения (Doze/App Standby) — иначе Android рано или поздно
     убивает его в фоне, частая жалоба именно на магнитолах."""
+    many = _many(package)
+    if many is not None:
+        _for_each(ctx, many, grant_all_permissions)
+        return
     ctx.log(f"Выдаю разрешения: {package}")
     dumpsys_output = ctx.shell(f"dumpsys package {package}", check=False).stdout or ""
     requested = _parse_requested_permissions(dumpsys_output)
@@ -814,6 +840,10 @@ def disable_app(ctx, package: str) -> None:
     _is_system_package). Не путать с pm uninstall — приложение остаётся
     установленным, просто не запускается и пропадает из лаунчера, обратимо
     через enable_app ниже."""
+    many = _many(package)
+    if many is not None:
+        _for_each(ctx, many, disable_app)
+        return
     ctx.log(f"Отключаю приложение: {package}")
     stock = _is_system_package(ctx, package)
     if stock is None:
@@ -827,6 +857,10 @@ def disable_app(ctx, package: str) -> None:
 
 def enable_app(ctx, package: str) -> None:
     """Обратное disable_app — включает ранее отключённое приложение."""
+    many = _many(package)
+    if many is not None:
+        _for_each(ctx, many, enable_app)
+        return
     ctx.log(f"Включаю приложение: {package}")
     _set_enabled_state(ctx, f"pm enable {package}", "включить")
 

@@ -17,6 +17,7 @@ function make(code, bridge = {}) {
     setInterval: (fn, ms) => { st.intervals = (st.intervals || []).concat([{ fn, ms }]); return st.intervals.length; },
     clearInterval: (id) => { if (st.intervals && st.intervals[id - 1]) st.intervals[id - 1].cleared = true; },
     operationBusy: () => Boolean(st.busy),
+    log: (text) => { st.logs = (st.logs || []).concat([text]); },
     Bridge: { call: (method, args) => { st.calls.push([method, args]); return bridge[method] ? bridge[method](args) : {}; } },
   };
   run(code + "\nthis.__api={startupPopups,onUpdateCheckResult,startAppUpdate,resumeAppUpdate,onAppUpdateEvent};", ctx);
@@ -95,6 +96,7 @@ module.exports = async function () {
   api.onAppUpdateEvent({ stage: "error", message: "файл подписан другим ключом" });
   assert(button.disabled === false && button.textContent === "Повторить" && manual.hidden === false
     && /подписан другим ключом/.test(status.textContent), "сбой: «Повторить» и ссылка на APK");
+  assert(st.logs.some((line) => line === "Обновление программы не удалось: файл подписан другим ключом"), "сбой — в журнал");
   // Окно пришло бандлом интерфейса к программе старше 1.1.12: моста обновления нет («Неизвестный метод») — «Обновить»
   // открывает ссылку на APK, как прежняя «Скачать APK», а не застревает на разрешении.
   ({ st, api } = make(code, { app_update_status: () => ({ error: "Неизвестный метод: app_update_status" }) }));

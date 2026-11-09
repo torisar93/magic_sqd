@@ -249,3 +249,19 @@ def test_both_interfaces_know_the_checkbox_mark_and_answer_with_json():
         assert f'"{stealth.TITLE}": "Скрыть"' in src, path
         assert show in src and "JSON.stringify(choices.filter((c) => selected.has(c)))" in src, path
         assert 'dialog.addEventListener("cancel", (e) => { e.preventDefault(); done(' in src, path
+
+
+def test_grant_disable_enable_take_a_checkbox_list():
+    """«Выдать разрешения», «Отключить/Включить приложение» — окно с галочками отвечает JSON-списком; файлы моделей
+    (install.py) передают его общим функциям как есть (владелец 09.11: «такой же список … для кнопок выдать права, вкл
+    откл приложения»)."""
+    adb_permissions = importlib.import_module("adb_permissions")
+    unit = HeadUnit(third=["a.b", "c.d"])
+    ctx = Ctx(unit)
+    adb_permissions.disable_app(ctx, '["a.b", "c.d", "bad name;rm"]')
+    assert unit.disabled == {"a.b", "c.d"}
+    assert any("1 из 2: a.b" in m for m in ctx.logs) and "обработаны" in ctx.logs[-1]
+    adb_permissions.enable_app(ctx, '["c.d"]')
+    assert unit.disabled == {"a.b"}
+    adb_permissions.disable_app(ctx, "c.d")  # одно имя — как раньше
+    assert unit.disabled == {"a.b", "c.d"}

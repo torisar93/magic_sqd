@@ -461,14 +461,21 @@
   // на Android (app.js: promptAskMany).
   const ASK_MANY_MARK = "\u2063";
   const ASK_MANY_OK = { "Режим стелс": "Скрыть" };
+  // Кнопки «Доп. действий» с выбором приложения: вопрос задаёт файл модели (install.py) без знака U+2063 — узнаём их по
+  // подписи (одна и та же во всех моделях); ответ — JSON-список, adb_permissions.grant_all_permissions/disable_app/
+  // enable_app его понимают (владелец, 09.11.2026: «такой же список … для кнопок выдать права, вкл откл приложения»).
+  const ASK_MANY_ACTIONS = { "Выдать разрешения": "Выдать", "Выдать разрешения приложению": "Выдать",
+    "Отключить приложение": "Отключить", "Включить приложение": "Включить" };
   function isAskMany(event) {
-    return String(event.title || "").endsWith(ASK_MANY_MARK) && Array.isArray(event.choices) && event.choices.length > 0;
+    if (!Array.isArray(event.choices) || !event.choices.length) return false;
+    const title = String(event.title || "");
+    return title.endsWith(ASK_MANY_MARK) || Boolean(ASK_MANY_ACTIONS[title] && isPackageList(event.choices.map(String)));
   }
 
   function showAskManyDialog(event) {
     const choices = event.choices.map(String);
-    const title = String(event.title).slice(0, -ASK_MANY_MARK.length) || "Выбор";
-    const okLabel = ASK_MANY_OK[title] || "Готово";
+    const title = String(event.title).replace(/\u2063$/, "") || "Выбор";
+    const okLabel = ASK_MANY_OK[title] || ASK_MANY_ACTIONS[title] || "Готово";
     const selected = new Set();
     const dialog = el("dialog", { class: "ask-many-dialog", style: "width: min(560px, 92vw)" });
     const count = el("p", { class: "ask-many-count", style: "margin: 0 0 10px; color: var(--text-dim); font-size: 13px" });

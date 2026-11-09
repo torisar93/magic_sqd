@@ -36,5 +36,6 @@ def test_generated_lists_hide_stock_apps_for_uninstall_and_disable():
 def test_android_lists_hide_stock_apps_for_uninstall_and_disable():
     app_js = (ROOT / "android/app/src/main/assets/js/app.js").read_text(encoding="utf-8")
     assert 'uninstall_app: { bridgeMethod: "actions_uninstall_app", thirdPartyOnly: true }' in app_js
-    assert 'disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: true }' in app_js
-    assert 'enable_app: { bridgeMethod: "actions_enable_app", thirdPartyOnly: false }' in app_js
+    # many — выбор нескольких галочками (09.11.2026); штатные по-прежнему вне списка отключения
+    assert 'disable_app: { bridgeMethod: "actions_disable_app", thirdPartyOnly: true, many: "Отключить" }' in app_js
+    assert 'enable_app: { bridgeMethod: "actions_enable_app", thirdPartyOnly: false, many: "Включить" }' in app_js
