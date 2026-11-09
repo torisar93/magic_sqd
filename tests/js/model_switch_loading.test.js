@@ -28,7 +28,7 @@ module.exports = async function () {
     "let model=null, stages=[], loadError=null, loadErrorNeedsUpdate=false, hasIntro=false, currentIndex=0;",
     "let loadingStatusEl=null, loadingFillEl=null, openGeneration=0, renderRevision=0;",
     "let chosenVariants={}, appSelection={}, personalApks=[], sharedApksPromise=null, activeRun=null, afterRunClose=null;",
-    "let activeCommand=null, modelWifiPort=5555, modelWifi=false, installCompletedShown=false, writePermissionWarningShown=false;",
+    "let activeCommand=null, modelWifiPort=5555, modelWifiSerial=null, modelWifi=false, installCompletedShown=false, writePermissionWarningShown=false;",
     "let sessionLog=[], sessionHasActivity=false, sessionSent=false, sessionToken='', nextAction=null;",
     "const commandResults=new Map(), prefetchedStages=new Set(), failedStages=new Map(), done=new Set(), historyStack=[];",
     "function ensureMounted(){} function flushSessionLog(){} function log(){} function advanceAfter(){}",

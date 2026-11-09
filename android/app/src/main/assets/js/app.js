@@ -1351,6 +1351,17 @@
     if (adbConnectBtn) adbConnectBtn.disabled = on || labInstallBusy;
   }
 
+  // Пока ждём магнитолу по USB, Kotlin занят подключением: «Начать установку» или «Выполнить» в это время кончались
+  // «Этап завершился с ошибкой: Другая операция ещё выполняется» (1.1.21 r1, №14010 — Wi-Fi-установка нажата через
+  // 2 с после «жду до 20 с»). Теперь — окно «дождитесь», операция не начинается.
+  function waitingForUsb() {
+    if (!adbUsbConnecting) return false;
+    const text = "Программа ещё ждёт магнитолу по USB — до 20 секунд. Дождитесь ответа и нажмите снова.";
+    log(text);
+    showLabNotice("Ждём магнитолу по USB", text);
+    return true;
+  }
+
   function onAdbConnect() {
     const stage = stages[currentIndex];
     if (connectionModeFor(stage) === "wifi") {
@@ -2281,7 +2292,7 @@
   }
 
   function runStageOperation(method, args, page, card, actionIndex = null) {
-    if (labInstallBusy) return;
+    if (labInstallBusy || waitingForUsb()) return;
     stageOperation = { index: args.index, actionIndex };
     labInstallBusy = true;
     renderNav();
@@ -2820,7 +2831,7 @@
     const btn = usbStageButton('Начать установку', 'play', () => {}, true);
     btn.classList.add('apps-install-start');
     btn.addEventListener("click", () => {
-      if (labInstallBusy) return;
+      if (labInstallBusy || waitingForUsb()) return;
       // Wi-Fi ADB: подключение НЕ нужно заранее — сначала скачиваем, потом окно подключения (beginWifiInstall).
       const wifiFirst = connectionModeFor(stage) === "wifi";
       if (!wifiFirst && !adbConnected) { showNoAdbNotice(); return; }
@@ -3669,6 +3680,20 @@
       return;
     }
     appUpdate.waitingPermission = false;
+    // Идёт работа с магнитолой — ждём её конца: на время установки новой версии Android закрывает программу, и заливка
+    // обрывалась посреди файла (1.1.20, Haval H3, №13592; разбор 09.11.2026).
+    clearInterval(appUpdate.waitTimer);
+    if (operationBusy()) {
+      appUpdate.button.disabled = true;
+      appUpdate.status.textContent = "Сейчас идёт работа с магнитолой — обновление начнётся, как только она закончится.";
+      appUpdate.waitTimer = setInterval(() => {
+        if (operationBusy()) return;
+        clearInterval(appUpdate.waitTimer);
+        appUpdate.button.disabled = false;
+        startAppUpdate();
+      }, 2000);
+      return;
+    }
     appUpdate.button.disabled = true;
     appUpdate.manual.hidden = true;
     appUpdate.status.textContent = "Скачиваю обновление…";
@@ -3691,6 +3716,8 @@
       status.textContent = event.total > 0
         ? `Скачиваю обновление: ${updateMb(event.done)} из ${updateMb(event.total)}`
         : `Скачиваю обновление: ${updateMb(event.done)}`;
+    } else if (event.stage === "wait") {
+      status.textContent = "Обновление скачано — поставлю его, как только закончится работа с магнитолой.";
     } else if (event.stage === "install") {
       status.textContent = event.silent
         ? "Устанавливаю обновление. Программа закроется на несколько секунд — потом откройте её снова: нажмите на "

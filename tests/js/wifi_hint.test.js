@@ -121,7 +121,7 @@ module.exports = async function () {
       const window = { pywebview: { api: { install_list_devices: async () => [], install_wifi_connect: async () => ({ ok: true }) } } };
       run(read("app/web/frontend/js/apps_tabs.js"), { window, document });
       const ctx = run(code, {
-        window, document, el, clear: (node) => node.replaceChildren(), noteDeviceFingerprint() {}, modelWifiPort: 5555,
+        window, document, el, clear: (node) => node.replaceChildren(), noteDeviceFingerprint() {}, modelWifiPort: 5555, modelWifiSerial: null,
         LabUI: { connection: (opts) => { connect = opts.connect; } }, Number, String, Boolean, Promise,
         runnerBusy: false, contentEl,
       });
