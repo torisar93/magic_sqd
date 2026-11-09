@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .adb_utils import Adb, AdbError
 from .apk_check import already_installed_message, file_problem, installed_base_apk, rejection_message
-from .apk_package import read_package_name
+from .apk_package import read_package_name, why_unreadable
 from .scanner import read_apk_mock_location
 from .uninstall_helper import HELPER_NAME as UNINSTALL_HELPER_NAME, uninstall_via_helper
 
@@ -65,6 +65,27 @@ _ABI_TO_ISA = {"arm64-v8a": "arm64", "armeabi-v7a": "arm", "armeabi": "arm", "x8
                "mips": "mips", "mips64": "mips64"}
 _PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
 _REBOOT_NEEDED_RE = re.compile(r"reboot your device|now reboot", re.IGNORECASE)
+
+
+# Deepal S07 (Changan, «SA8155 Digital Cockpit»/parkcity): прошивка пускает adb shell только после входа (разбор 09.11.2026:
+# №10597, №13195, №14153 — три магнитолы; то же железо у других марок ставит без входа, №10909). Как входить, пока не
+# знаем — честная остановка с понятной причиной (окно «что сделать» — shell_login_required в client.json).
+SHELL_LOGIN_RE = re.compile(r"log in to .adb shell.", re.IGNORECASE)
+SHELL_LOGIN_TEXT = ("Магнитола закрыла командную строку ADB входом («Please log in to 'adb shell' first») — так делает "
+                    "прошивка Deepal. Программа пока не умеет входить, поэтому приложения не встанут ни одним способом. "
+                    "Напишите нам в Telegram (@magicsqd) и пришлите фото инженерного меню магнитолы — добавим вход.")
+
+
+def size_timeout(path, base: int = 180) -> int:
+    """Сколько ждать заливки или установки файла. Один таймаут 180 с на любой размер: VK Video 167 МБ по Wi-Fi (Changan
+    EADO Plus, №7962/7965) и ~170 МБ на Tiggo 7 Pro Max (№12745) не укладывались — каждый способ упирался в 180 с и
+    заливал файл заново, ~15 минут на файл (разбор 09.11.2026). Теперь — 120 с плюс 2 с на мегабайт (≈0,5 МБ/с по слабому
+    Wi-Fi), не меньше base."""
+    try:
+        size_mb = Path(path).stat().st_size / 1_048_576
+    except (OSError, TypeError, ValueError):
+        return base
+    return max(base, int(120 + 2 * size_mb))
 
 
 def _completed_text(result) -> str:
@@ -492,8 +513,9 @@ class InstallContext:
         self.log(output if output else "(пусто)")
         return result
 
-    def install_apk(self, path, reinstall=True, extra_args=None, timeout=180):
+    def install_apk(self, path, reinstall=True, extra_args=None, timeout=None):
         self.check_cancelled()
+        timeout = timeout or size_timeout(path)
         self.log(f"Установка APK: {Path(path).name}")
         staged = self._prestaged.get(str(path))
         if staged:
@@ -803,6 +825,10 @@ class InstallContext:
                 gone = device_unavailable_message(str(exc), during=self._device_confirmed)
                 if gone:
                     raise InstallCancelled(gone) from exc
+                # Deepal S07: прошивка закрыла adb shell входом — на любую команду «Please log in to 'adb shell' first»;
+                # раньше программа перебирала все способы по каждому приложению (№10597, №13195, №14153).
+                if SHELL_LOGIN_RE.search(str(exc)):
+                    raise InstallCancelled(SHELL_LOGIN_TEXT) from exc
                 # Отказ из-за самого файла (другой процессор, нужен Android новее, файл не читается) — остальные
                 # способы упрутся в то же самое: сразу понятная причина, приложение пропускаем (логи №1942, №2087).
                 unsuitable = self._rejection(name, exc, path)
@@ -1275,7 +1301,7 @@ class InstallContext:
         path = Path(path)
         package = read_package_name(path)
         if not package:
-            raise AdbError(f"не удалось прочитать имя пакета {path.name} — нужно для JDWP-патча белого списка")
+            raise AdbError(f"не удалось прочитать имя пакета {path.name} ({why_unreadable(path)}) — нужно для JDWP-патча белого списка")
         remote_path = f"{remote_dir.rstrip('/')}/{path.name}"
         self.log(f"Установка APK (JDWP-патч белого списка, Desay x9h): {path.name} [{package}]")
         try:
@@ -1337,7 +1363,7 @@ class InstallContext:
         path = Path(path)
         package = read_package_name(path)
         if not package or not _PACKAGE_NAME_RE.fullmatch(package):
-            raise AdbError(f"не удалось прочитать имя пакета {path.name} — без него некуда положить файл в /system/app")
+            raise AdbError(f"не удалось прочитать имя пакета {path.name} ({why_unreadable(path)}) — без него некуда положить файл в /system/app")
         self._open_system_partition()
         folder = f"/system/app/{package}"
         self.log(f"Установка APK в системную папку: {path.name} → {folder}")
@@ -1739,8 +1765,9 @@ class InstallContext:
     def uninstall(self, package, check=False):
         return self._adb.uninstall(package, check=check)
 
-    def push(self, local, remote, timeout=180):
+    def push(self, local, remote, timeout=None):
         self.check_cancelled()
+        timeout = timeout or size_timeout(local)
         staged = self._prestaged.get(str(local))
         if staged:
             # Уже на магнитоле (optimize_for_motion) — копируем там же, без передачи по сети.

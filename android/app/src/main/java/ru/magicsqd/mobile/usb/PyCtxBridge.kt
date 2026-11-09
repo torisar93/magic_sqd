@@ -25,6 +25,8 @@ class PyCtxBridge(
     private val progressFn: (Int, Int) -> Unit = { _, _ -> },
     /** «Работа в движении» (MotionOptimize) для пакета; null — нет такой возможности в этом месте приложения. */
     private val motion: ((String) -> Unit)? = null,
+    /** Докачать скрипты каталога (cars, в том числе файлы общего кода и их подписи); null — нечем. */
+    private val resyncShared: (() -> Unit)? = null,
 ) {
     fun log(text: String) = logFn(text)
 
@@ -138,9 +140,26 @@ class PyCtxBridge(
         e.message ?: "связь с магнитолой потеряна"
     }
 
-    /** Вызвать <module>.<function>(ctx, *args) из cars/_shared (py_runner.run). */
+    /** Вызвать <module>.<function>(ctx, *args) из cars/_shared (py_runner.run). Файл общего кода на телефоне неполный —
+     * есть .py, а подписи (.sig) нет или она от другой версии: синхронизация каталога прервалась посередине (пропал
+     * интернет). «Собрать подробный лог» тогда отказывал «без подписи разработчика» (OnePlus, №13001/13003; разбор
+     * 09.11.2026) — теперь докачиваем скрипты каталога и повторяем один раз. */
     fun call(module: String, function: String, args: JSONArray, modelDir: String = "",
              files: Map<String, String> = emptyMap()): PyCallResult {
+        val first = callOnce(module, function, args, modelDir, files)
+        val resync = resyncShared ?: return first
+        if (first.ok || !first.unavailable || !INCOMPLETE_CODE.containsMatchIn(first.error)) return first
+        logFn("Файл общего кода на телефоне неполный (${first.error}) — докачиваю скрипты каталога и повторяю.")
+        try {
+            resync()
+        } catch (e: Exception) {
+            return first
+        }
+        return callOnce(module, function, args, modelDir, files)
+    }
+
+    private fun callOnce(module: String, function: String, args: JSONArray, modelDir: String,
+                         files: Map<String, String>): PyCallResult {
         val shared = File(context.filesDir, "cars/_shared").absolutePath
         val raw = try {
             Python.getInstance().getModule("py_runner").callAttr(
@@ -157,6 +176,9 @@ class PyCtxBridge(
     }
 
     companion object {
+        /** Ответы code_signing.read_signed: нет файла, нет подписи, подпись не сошлась. */
+        internal val INCOMPLETE_CODE = Regex("без подписи разработчика|подпись .* не сошлась|нет файла .* синхронизируйте")
+
         /** Начало строки — ADB-сеанс оборвался (py_runner._FAIL). */
         const val FAIL = "\u0000fail:"
     }

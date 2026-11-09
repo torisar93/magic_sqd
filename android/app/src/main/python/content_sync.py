@@ -51,14 +51,22 @@ def app_token_header() -> dict:
 
 
 def open_url(url: str, timeout: float):
-    """urlopen для запросов к каталогу — с токеном официальной сборки и cookie сессии техника."""
-    request = urllib.request.Request(url)
-    if _app_token is not None:
-        for name, value in _app_token.header().items():
-            request.add_header(name, value)
-    if _auth_cookie and urlparse(url).hostname == _auth_host:
-        request.add_header("Cookie", _auth_cookie)
-    return urllib.request.urlopen(request, timeout=timeout)
+    """urlopen для запросов к каталогу — с токеном официальной сборки и cookie сессии техника.
+    Сервер не принял токен (403) — один повтор с новым: часы устройства после выдачи токена могли уйти назад, и программа
+    ещё считала его годным (№10419: файл модели — 403 и окно «Нет интернета»)."""
+    for attempt in range(2):
+        request = urllib.request.Request(url)
+        if _app_token is not None:
+            for name, value in _app_token.header().items():
+                request.add_header(name, value)
+        if _auth_cookie and urlparse(url).hostname == _auth_host:
+            request.add_header("Cookie", _auth_cookie)
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 403 or attempt or not hasattr(_app_token, "invalidate"):
+                raise
+            _app_token.invalidate()
 
 
 class ContentSyncError(RuntimeError):

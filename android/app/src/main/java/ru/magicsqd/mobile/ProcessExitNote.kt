@@ -57,12 +57,29 @@ object ProcessExitNote {
                     "${reasonText(info.reason, info.status, info.description, context.packageName)} в ${clock(info.timestamp)}, " +
                     "раньше конца этой сессии)."
             } else {
-                line(info.reason, info.status, info.importance, if (info.pss > 0) info.pss else info.rss,
+                val text = line(info.reason, info.status, info.importance, if (info.pss > 0) info.pss else info.rss,
                     info.description, info.timestamp - lastLineAt, context.packageName)
+                // Не отвечала — где именно встала: стек главного потока из снимка Android (1.1.14, Haval Dargo, №13831:
+                // ANR во время pm install, а в журнале только «не отвечала»; разбор 09.11.2026).
+                val stack = if (info.reason != ApplicationExitInfo.REASON_ANR) null else try {
+                    info.traceInputStream?.bufferedReader()?.use { anrMainStack(it.readText().take(500_000)) }
+                } catch (_: Exception) {
+                    null
+                }
+                if (stack != null) "$text\n$stack" else text
             }
         } catch (_: Exception) {
             null  // досылка журнала важнее этой строки
         }
+    }
+
+    /** Стек потока «main» из снимка ANR (формат traces.txt: заголовок «"main" prio=…», строки «at …» до пустой строки). */
+    internal fun anrMainStack(trace: String, maxLines: Int = 25): String? {
+        val lines = trace.lines()
+        val start = lines.indexOfFirst { it.startsWith("\"main\"") }
+        if (start < 0) return null
+        val stack = lines.drop(start).takeWhile { it.isNotBlank() }.take(maxLines)
+        return "Стек главного потока, когда программа не отвечала:\n" + stack.joinToString("\n") { "  " + it.trim() }
     }
 
     private fun clock(ms: Long): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(ms))

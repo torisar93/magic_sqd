@@ -739,6 +739,14 @@ class WebBridge(private val context: Context, private val webView: WebView) {
                     apk.delete()
                     throw java.io.IOException(reason)
                 }
+                // Пока идёт операция с магнитолой (заливка, установка) — ждём её конца: Android закрывает программу на время
+                // установки новой версии, и заливка обрывалась посреди файла (1.1.20, Haval H3, №13592: «stop
+                // ru.magicsqd.mobile due to installPackageLI» на 4 МБ из 19). Окно обновления с бандла 1.1.22 r2 и так
+                // не начинает обновление во время операции — это на случай, если операция началась, пока шло скачивание.
+                if (operationBusy.get()) {
+                    pushAppUpdate("wait", "")
+                    while (operationBusy.get()) Thread.sleep(1000)
+                }
                 pushAppUpdate("install", "")
                 AppSelfUpdate.install(context, apk)
             } catch (e: Exception) {
@@ -1599,6 +1607,7 @@ class WebBridge(private val context: Context, private val webView: WebView) {
             if (!MotionOptimize.certReady(context)) syncSharedFolder(MotionOptimize.CERT_FOLDER)
             MotionOptimize.run(context, pkg, installEngine(), { labCancelInstall }, ::pushAdbLog)
         },
+        resyncShared = { pyModule("mobile_bridge").callAttr("sync_cars", carsDir, BASE_URL) },
     )
 
     /** Какие «Доп. действия» исполнять общим Python-кодом каталога (cars/_shared/adb_permissions.py — тот же, что на

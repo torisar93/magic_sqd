@@ -53,7 +53,7 @@ fun removeOtherTriggerFlags(fs: FileSystem, writtenNames: Collection<String>, lo
     val removed = mutableListOf<String>()
     for (name in TRIGGER_FLAGS) {
         if (name in written) continue
-        val existing = fs.rootDirectory.search(name) ?: continue
+        val existing = fs.rootDirectory.child(name) ?: continue
         if (existing.isDirectory) continue
         try {
             existing.delete()
@@ -118,6 +118,13 @@ internal fun usbWriteFailureMessage(fileName: String, errors: List<Exception>): 
 /** Текст сбоя для журнала с причиной: libaums прячет ошибку связи в cause («MAX_RECOVERY_ATTEMPTS… ← libusb, запись
  * 262144 байт: LIBUSB_ERROR_TIMEOUT» или «… ← Could not read from device, result == -1 errno 12 Out of memory» у
  * прежнего способа) — по ней разбор логов видит, отчего флешка «перестала отвечать». */
+/** Как UsbFile.search, но без учёта регистра. FAT регистр не различает, и libaums в createFile/createDirectory проверяет
+ * имя без учёта регистра, а search() — с учётом: на флешке уже был «yn4_…apk» или папка «APK», поиск «apk/YN4_…» его не
+ * находил, а создание падало «Item already exists!» на всех попытках (Tugella, №14257; №130, №355, №3554, №3697, №8907;
+ * разбор 09.11.2026). */
+internal fun UsbFile.child(name: String): UsbFile? =
+    search(name) ?: listFiles().firstOrNull { it.name.equals(name, ignoreCase = true) }
+
 internal fun describeUsbError(e: Throwable): String =
     generateSequence(e) { it.cause }.take(4)
         .map { it.message?.takeIf(String::isNotBlank) ?: it.javaClass.simpleName }
@@ -199,7 +206,7 @@ fun writeFileToUsb(
             var dir: UsbFile = current.rootDirectory
             for (i in 0 until segments.size - 1) {
                 val name = segments[i]
-                val found = dir.search(name)
+                val found = dir.child(name)
                 // Файл на месте папки комплекта (остался от прошлой записи или другой программы) — убираем, как на ПК
                 // (usb_context._make_dirs; логи №5376, №5380): иначе запись в «папку»-файл падала непонятной ошибкой.
                 if (found != null && !found.isDirectory) {
@@ -217,7 +224,7 @@ fun writeFileToUsb(
             // функции — весь retry молча обрывался после попытки 1, хотя лог
             // перед этим обещал "(попытка 1/5)" (реальный случай, install_logs
             // #501 — 211МБ файл, ни одной строки "попытка 2/5" не появилось).
-            dir.search(fileName)?.let { it.delete() }
+            dir.child(fileName)?.let { it.delete() }
             val target = dir.createFile(fileName)
             val totalSize = localFile.length()
             val buffer = ByteArray(WRITE_CHUNK_SIZE)
@@ -243,7 +250,9 @@ fun writeFileToUsb(
             UsbFlashSession.noteSuccess(log)
             return
         } catch (e: Exception) {
-            if (e !is IOException && e !is IllegalArgumentException) throw e
+            // Повторяем и сбои самого драйвера флешки не из IOException: libaums на испорченной записи бросал
+            // NullPointerException на 5-м файле, и запись обрывалась без повторов (Tiggo 7 Pro Max, №9998).
+            if (e is InterruptedException) throw e
             errors.add(e)
             // Сбой связи через libusb — флешка переподключается прежним способом, и файл пишется им заново; эта попытка
             // не в счёт (UsbFlashSession.fallBack). Следующие файлы вызывающий берёт уже из UsbFlashSession.requireFs().
@@ -281,7 +290,7 @@ data class UsbPlan(
 /** Убирает из корня флешки файлы плана (триггеры прошлого шага) — тексты те же, что у removeOtherTriggerFlags. */
 fun removeFlashFiles(fs: FileSystem, names: List<String>, log: (String) -> Unit) {
     for (name in names) {
-        val existing = fs.rootDirectory.search(name) ?: continue
+        val existing = fs.rootDirectory.child(name) ?: continue
         if (existing.isDirectory) continue
         try {
             existing.delete()

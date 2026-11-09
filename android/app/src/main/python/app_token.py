@@ -90,6 +90,14 @@ class AppToken:
         token = self.get()
         return {"X-App-Token": token} if token else {}
 
+    def invalidate(self) -> None:
+        """Сервер не принял токен (403) — забыть его, следующий запрос получит новый. Часы телефона после выдачи токена
+        ушли назад: программа ещё считала токен годным, а сервер — нет, и файл модели кончался «Нет интернета»
+        (Android 1.1.13, №10419; разбор 09.11.2026)."""
+        with self._lock:
+            self._token = ""
+            self._exp = 0.0
+
     def get(self) -> str:
         if not self._build_secret:
             return ""

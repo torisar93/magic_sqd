@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import struct
 import zipfile
+import zlib
 from pathlib import Path
 
 _RES_XML_TYPE = 0x0003
@@ -52,8 +53,12 @@ def _read_string_pool(data: bytes, offset: int) -> tuple[list[str], int]:
 
 
 def _package_from_binary_manifest(data: bytes) -> str | None:
+    """Атрибут package первого тега <manifest>. Как сам Android (ResXMLParser::getAttributeStringValue): строка берётся по
+    rawValue, даже если тип значения сбит, — защищённые сборки (протекторы APK) так делают, и программа не читала имя
+    пакета своих APK техника (Jolion 2026, JDWP-способ: strelka.apk, Car Launcher Pro, microG — №10697, №11055).
+    Тип заголовка файла тоже не обязателен: важен пул строк сразу за ним."""
     file_type, _header_size, _size = struct.unpack_from("<HHI", data, 0)
-    if file_type != _RES_XML_TYPE:
+    if file_type not in (_RES_XML_TYPE, 0):
         return None
     strings, offset = _read_string_pool(data, 8)
     while offset + 8 <= len(data):
@@ -66,24 +71,69 @@ def _package_from_binary_manifest(data: bytes) -> str | None:
             if name_idx < len(strings) and strings[name_idx] == "manifest":
                 first_attr = body + attr_start
                 for i in range(attr_count):
-                    at = first_attr + i * attr_size
+                    at = first_attr + i * (attr_size or 20)
                     _ans, attr_name, raw_value, _vsize, _res0, value_type, value_data = struct.unpack_from("<IIIHBBI", data, at)
                     if attr_name < len(strings) and strings[attr_name] == "package":
-                        index = raw_value if raw_value != _NO_INDEX else value_data
-                        if value_type == 0x03 and index < len(strings):
-                            return strings[index] or None
+                        if raw_value != _NO_INDEX and raw_value < len(strings):
+                            return strings[raw_value] or None
+                        if value_type == 0x03 and value_data < len(strings):
+                            return strings[value_data] or None
                         return None
                 return None  # первый же тег — <manifest>; атрибута package нет
         offset += chunk_size
     return None
 
 
+_PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
+
+
+def _guess_from_strings(data: bytes) -> str | None:
+    """Последняя попытка, когда разбор тегов не прошёл: имя пакета — та строка пула, которая служит началом имён классов
+    манифеста (activity/service «пакет.Класс»), а сама классом не является. Неверная догадка безвредна: способ
+    установки с ней просто не сработает, как и без имени."""
+    try:
+        strings, _ = _read_string_pool(data, 8)
+    except (struct.error, ValueError, IndexError):
+        return None
+    names = [s for s in strings if _PACKAGE_RE.match(s) and not s.startswith(("android.", "androidx."))]
+    best, best_score = None, 0
+    for candidate in names:
+        if candidate[candidate.rfind(".") + 1:][:1].isupper():
+            continue  # «пакет.Класс» — это класс
+        score = sum(1 for other in names if other.startswith(candidate + "."))
+        if score > best_score or (score == best_score and best and len(candidate) < len(best)):
+            best, best_score = candidate, score
+    return best if best_score else None
+
+
+def _manifest_bytes(path: Path) -> bytes:
+    """AndroidManifest.xml из архива. Протекторы APK ставят записи ложный флаг шифрования или нестандартный метод сжатия
+    — Python отказывается читать («File is encrypted»), а Android их не замечает. Тогда читаем запись сами: локальный
+    заголовок, затем stored или deflate."""
+    with zipfile.ZipFile(path) as archive:
+        info = archive.getinfo("AndroidManifest.xml")
+        try:
+            return archive.read(info)
+        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error):
+            pass
+    with open(path, "rb") as f:
+        f.seek(info.header_offset)
+        header = f.read(30)
+        if header[:4] != b"PK\x03\x04":
+            raise zipfile.BadZipFile("нет локального заголовка записи")
+        name_len, extra_len = struct.unpack_from("<HH", header, 26)
+        f.seek(info.header_offset + 30 + name_len + extra_len)
+        raw = f.read(info.compress_size)
+    if info.compress_type == zipfile.ZIP_STORED:
+        return raw
+    return zlib.decompressobj(-15).decompress(raw)
+
+
 def read_package_name(apk_path) -> str | None:
     """Имя пакета из .apk или None, если прочитать не удалось."""
     try:
-        with zipfile.ZipFile(Path(apk_path)) as archive:
-            data = archive.read("AndroidManifest.xml")
-    except (OSError, KeyError, zipfile.BadZipFile):
+        data = _manifest_bytes(Path(apk_path))
+    except (OSError, KeyError, zipfile.BadZipFile, zlib.error, struct.error):
         return None
     try:
         name = _package_from_binary_manifest(data)
@@ -93,4 +143,29 @@ def read_package_name(apk_path) -> str | None:
         return name
     # Не бинарный (редкая сборка с открытым XML) — обычный поиск в тексте.
     match = re.search(rb'package\s*=\s*"([A-Za-z0-9_.]+)"', data)
-    return match.group(1).decode("ascii") if match else None
+    if match:
+        return match.group(1).decode("ascii")
+    return _guess_from_strings(data)
+
+
+def why_unreadable(apk_path) -> str:
+    """Коротко, почему имя пакета не прочиталось — в журнал рядом с отказом (чтобы по логу было видно причину, а не
+    только «не удалось прочитать»): нет файла, не zip, это набор APK (XAPK/APKS), нет манифеста, что в его начале."""
+    path = Path(apk_path)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+    except OSError as exc:
+        return f"файл не открылся ({type(exc).__name__})"
+    except zipfile.BadZipFile:
+        return "это не zip-архив APK"
+    if "AndroidManifest.xml" not in names:
+        apks = [n for n in names if n.lower().endswith(".apk")]
+        if apks:
+            return f"это набор APK (XAPK/APKS: {', '.join(apks[:3])}), а не один APK"
+        return f"в архиве нет AndroidManifest.xml ({len(names)} файлов)"
+    try:
+        head = _manifest_bytes(path)[:16]
+    except Exception as exc:  # noqa: BLE001 — только для журнала
+        return f"AndroidManifest.xml не читается ({type(exc).__name__}: {exc})"
+    return f"манифест не разобран (начало: {head.hex()})"
