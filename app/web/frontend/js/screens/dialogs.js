@@ -817,6 +817,15 @@
     }
 
     async function onInstall() {
+      // Идёт этап с магнитолой — ждём его конца: установщик новой версии закрывает программу, и заливка оборвалась бы
+      // посреди файла (так было на Android, №13592; разбор 09.11.2026).
+      const busy = () => Boolean(window.stageWizard && window.stageWizard.isBusy && window.stageWizard.isBusy());
+      if (busy()) {
+        installBtn.disabled = true;
+        installBtn.textContent = "Ждёт окончания этапа…";
+        const timer = setInterval(() => { if (!busy()) { clearInterval(timer); onInstall(); } }, 2000);
+        return;
+      }
       installing = true;
       installBtn.disabled = true;
       installBtn.textContent = "Устанавливаю...";
