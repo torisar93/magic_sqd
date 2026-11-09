@@ -49,6 +49,14 @@ def test_mac_usb_both_formats_without_serials():
     empty = usb_picture.mac_usb_lines(_runner({"SPUSBHostDataType": json.dumps({"SPUSBHostDataType": [{"_name": "Bus"}]})}))
     assert empty == ["USB компьютера: ни одного устройства, кроме самих USB-шин."]
     assert "SECRET" not in " ".join(new + old)
+    # system_profiler не ответил — не «пусто» (разбор 09.11.2026: одна фраза на оба случая путала)
+    silent = usb_picture.mac_usb_lines(_runner({"SPUSBHostDataType": "", "SPUSBDataType": OSError()}))
+    assert silent == ["USB компьютера: system_profiler не ответил — список USB не получен."]
+
+
+def test_windows_powershell_writes_utf8():
+    """Без этого русские имена устройств в журнале — «�������⭮� USB-���ன�⢮» (cp866 консоли, №14732)."""
+    assert usb_picture._WIN_SCRIPT.startswith("[Console]::OutputEncoding = [Text.Encoding]::UTF8;")
 
 
 def test_windows_usb_without_serials_and_hubs():

@@ -68,6 +68,26 @@ object AdbSession {
      * чем магнитола поднялась, и снова «не найдено» (Jolion 2026: десятки нажатий подряд, разбор логов 04.11.2026).
      */
     fun connectBlocking(context: Context, log: (String) -> Unit, waitForDeviceMs: Long = 0): AdbHandshakeResult {
+        // По очереди. Кнопка «Подключить» и фоновое переподключение после обрыва (waitForUsbAndReconnect) шли разом:
+        // каждое начинало с disconnect() и просило разрешение на ту же магнитолу — Android отвечал отказом одному из
+        // запросов, и техник видел «Пользователь отклонил…», хотя нажал «ОК», а второе подключение тут же проходило
+        // (1.1.22: «CNXN отправлен» без «Магнитола появилась» сразу после отказа, №14521; №14977). Если, пока ждали
+        // очереди, магнитолу уже подключили по USB, — это и есть результат.
+        val generation = connectGeneration
+        synchronized(connectLock) {
+            if (connectGeneration != generation && mode == Mode.USB && isConnected) {
+                log("Магнитола уже подключена по USB.")
+                return AdbHandshakeResult.Connected(lastBanner)
+            }
+            return connectUsbLocked(context, log, waitForDeviceMs)
+        }
+    }
+
+    private val connectLock = Any()
+    @Volatile private var connectGeneration = 0
+    @Volatile private var lastBanner = ""
+
+    private fun connectUsbLocked(context: Context, log: (String) -> Unit, waitForDeviceMs: Long): AdbHandshakeResult {
         disconnect()
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         // Ищем устройство и его ADB-интерфейс ОДНИМ проходом (не два отдельных
@@ -100,7 +120,7 @@ object AdbSession {
         var (target, targetIface) = found
 
         var permissionRetries = 0
-        while (!requestUsbPermissionBlocking(context, target)) {
+        while (!requestUsbPermissionBlocking(context, target) && !usbManager.hasPermission(target)) {
             // «Отказ», которого техник не давал: магнитола переподключилась по USB, пока было открыто окно разрешения,
             // Android закрыл его с отказом. 1.1.21: «Пользователь отклонил…» сразу после «Магнитола появилась по USB»
             // — 29 из 47 таких строк, 10 из 11 техников потом подключились (разбор 07.11.2026, №13856). Магнитола на
@@ -127,6 +147,8 @@ object AdbSession {
             ShellVerifyPassword.onConnected(result.bannerFromDevice)
             transport = LinkWatch(usbTransport)
             mode = Mode.USB
+            lastBanner = result.bannerFromDevice
+            connectGeneration++
         } else {
             usbTransport.close()
         }

@@ -68,19 +68,27 @@ def _mac_devices(node, out: list) -> None:
 
 
 def mac_usb_lines(run=_run) -> list[str]:
+    answered = False
     for data_type in ("SPUSBHostDataType", "SPUSBDataType"):  # Apple Silicon на macOS 15+ — первый, старые — второй
         try:
             data = json.loads(run(["/usr/sbin/system_profiler", data_type, "-json"], 25) or "{}")
         except (OSError, subprocess.SubprocessError, ValueError):
             continue
+        answered = answered or bool(data.get(data_type))
         devices: list[str] = []
         _mac_devices(data.get(data_type) or [], devices)
         if devices:
             return [f"USB компьютера: {device}" for device in devices[:MAX_USB_LINES]]
+    # «Пусто» и «не узнать» — разные вещи: первое значит, что Mac не видит магнитолу по USB (кабель, порт, переходник).
+    if not answered:
+        return ["USB компьютера: system_profiler не ответил — список USB не получен."]
     return ["USB компьютера: ни одного устройства, кроме самих USB-шин."]
 
 
-_WIN_SCRIPT = ("Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like 'USB\\VID_*' } | "
+# Вывод PowerShell — в UTF-8: по умолчанию он в кодировке консоли (cp866), и русские имена устройств в журнале
+# становились «�������⭮� USB-���ன�⢮» (1.1.22, все 7 журналов с диагностикой, №14732).
+_WIN_SCRIPT = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+               "Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like 'USB\\VID_*' } | "
                "ForEach-Object { $_.InstanceId.Split('\\')[1] + '|' + $_.FriendlyName + '|' + $_.Status }")
 
 

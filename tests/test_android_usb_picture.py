@@ -19,8 +19,9 @@ def _code(path: Path) -> str:
 
 def test_connect_waits_for_head_unit_only_on_user_press():
     session = _code(KOTLIN / "usb/AdbSession.kt")
-    connect = re.search(r"fun connectBlocking\(.*?\n    }\n", session, flags=re.S).group(0)
-    assert "waitForDeviceMs: Long = 0" in connect and "Thread.sleep(1000)" in connect
+    assert "fun connectBlocking(context: Context, log: (String) -> Unit, waitForDeviceMs: Long = 0)" in session
+    connect = re.search(r"private fun connectUsbLocked\(.*?\n    }\n", session, flags=re.S).group(0)
+    assert "Thread.sleep(1000)" in connect
     assert connect.index("UsbPicture.describe(context, usbManager)") < connect.index("noDevice = true")
     assert "usbCause = picture.cause" in connect
     bridge = _code(KOTLIN / "WebBridge.kt")
@@ -69,8 +70,23 @@ def test_permission_denial_from_reconnect_is_retried():
     # магнитола переподключалась, пока было открыто окно разрешения. Её нет под прежним адресом — спрашиваем снова
     # (до двух раз); на месте — отказ настоящий.
     session = _code(KOTLIN / "usb/AdbSession.kt")
-    connect = re.search(r"fun connectBlocking\(.*?\n    }\n", session, flags=re.S).group(0)
-    assert "while (!requestUsbPermissionBlocking(context, target))" in connect
+    connect = re.search(r"private fun connectUsbLocked\(.*?\n    }\n", session, flags=re.S).group(0)
+    assert "while (!requestUsbPermissionBlocking(context, target) && !usbManager.hasPermission(target))" in connect
     assert "permissionRetries < 2" in connect and "reattached(usbManager, target, ::find)" in connect
     helper = re.search(r"private fun reattached\(.*?\n    }\n", session, flags=re.S).group(0)
     assert "if (usbManager.deviceList.containsKey(previous.deviceName)) return null" in helper
+
+
+def test_usb_connects_go_one_at_a_time():
+    # 1.1.22 (разбор 09.11.2026, №14521, №14977): «Подключить» и фоновое переподключение просили разрешение на ту же
+    # магнитолу разом — Android отказывал одному из них. Теперь подключения по очереди; если, пока ждали, магнитолу уже
+    # подключили по USB, — возвращаем это подключение, не рвём его новым disconnect().
+    session = _code(KOTLIN / "usb/AdbSession.kt")
+    outer = re.search(r"fun connectBlocking\(.*?\n    }\n", session, flags=re.S).group(0)
+    assert "synchronized(connectLock)" in outer
+    assert "connectGeneration != generation && mode == Mode.USB && isConnected" in outer
+    assert outer.index("val generation = connectGeneration") < outer.index("synchronized(connectLock)")
+    assert "disconnect()" not in outer
+    inner = re.search(r"private fun connectUsbLocked\(.*?\n    }\n", session, flags=re.S).group(0)
+    assert inner.lstrip().split("\n")[1].strip() == "disconnect()"
+    assert "lastBanner = result.bannerFromDevice" in inner and "connectGeneration++" in inner
