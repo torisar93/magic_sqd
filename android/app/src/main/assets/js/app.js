@@ -1924,8 +1924,72 @@
 
   function onAdbAskInput(event) {
     const answer = (value) => Bridge.call("adb_ask_input_response", { requestId: event.requestId, value });
-    if (event.cancellable) promptAsk(event, answer);
+    if (event.cancellable && isAskMany(event)) promptAskMany(event, answer);
+    else if (event.cancellable) promptAsk(event, answer);
     else promptText(event.prompt, "", answer);
+  }
+
+  // Выбор нескольких вариантов галочками (общий код каталога: cars/_shared/stealth.py — «Режим стелс», 09.11.2026):
+  // заголовок вопроса кончается невидимым знаком U+2063. Окно — как «Выбор приложений» этапа «Приложения»; ответ —
+  // JSON-список выбранного, «Отмена» — пусто. Прежний интерфейс знака не видит и показывает выбор одного — код каталога
+  // тогда спрашивает по одному. Тот же знак и ответ — на ПК (stage_wizard.js: showAskManyDialog).
+  const ASK_MANY_MARK = "\u2063";
+  const ASK_MANY_OK = { "Режим стелс": "Скрыть" };
+  function isAskMany(event) {
+    return String(event.title || "").endsWith(ASK_MANY_MARK) && Array.isArray(event.choices) && event.choices.length > 0;
+  }
+
+  function promptAskMany(event, onSubmit) {
+    const choices = event.choices.map(String);
+    const title = String(event.title).slice(0, -ASK_MANY_MARK.length) || "Выбор";
+    const okLabel = ASK_MANY_OK[title] || "Готово";
+    const selected = new Set();
+    const dialog = el("dialog", { class: "apps-picker-dialog ask-many-dialog", "aria-labelledby": "ask-many-title" });
+    const count = el("p", { class: "apps-picker-count", role: "status" });
+    const heading = el("header", { class: "apps-picker-heading" }, [
+      el("div", {}, [el("h2", { id: "ask-many-title", text: title }), count]),
+    ]);
+    const search = el("input", { type: "search", class: "apps-picker-search", placeholder: "Поиск приложений", "aria-label": "Поиск приложений", autocomplete: "off" });
+    const body = el("div", { class: "apps-picker-body" });
+    const empty = el("p", { class: "apps-picker-empty", text: "Ничего не найдено. Попробуйте другое название.", hidden: "" });
+    const ok = el("button", { type: "button", class: "accent" });
+    let answered = false;
+    const done = (value) => {
+      if (answered) return;
+      answered = true;
+      if (dialog.open) dialog.close();
+      dialog.remove();
+      onSubmit(value);
+    };
+    const update = () => {
+      count.textContent = `Выбрано: ${selected.size} из ${choices.length}`;
+      ok.textContent = selected.size ? `${okLabel} (${selected.size})` : okLabel;
+      ok.disabled = !selected.size;
+    };
+    if (event.prompt) body.append(el("p", { class: "stage-text ask-many-note", style: "margin: 0 0 10px; color: var(--text-dim)", text: event.prompt }));
+    choices.forEach((choice) => {
+      const checkbox = el("input", { type: "checkbox" });
+      checkbox.addEventListener("change", () => { if (checkbox.checked) selected.add(choice); else selected.delete(choice); update(); });
+      const row = el("div", { class: "app-choice" });
+      row.append(LabUI.appIcon(choice + ".apk"), checkbox, el("span", { class: "app-choice-name", text: choice }));
+      row.addEventListener("click", (e) => {
+        if (e.target === checkbox) return;
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event("change"));
+      });
+      body.append(row);
+    });
+    body.append(empty);
+    search.addEventListener("input", () => filterAppRows(body, search, empty));
+    ok.addEventListener("click", () => { if (selected.size) done(JSON.stringify(choices.filter((c) => selected.has(c)))); });
+    const cancel = el("button", { type: "button", text: "Отмена", onclick: () => done("") });
+    // Код каталога ждёт ответа: закрытие окна (кнопка «Назад» — событие cancel, см. __handleBackPress) — это «Отмена».
+    dialog.addEventListener("cancel", (e) => { e.preventDefault(); done(""); });
+    dialog.addEventListener("close", () => done(""));
+    dialog.append(heading, el("div", { class: "apps-picker-search-wrap" }, [search]), body, el("footer", { class: "apps-picker-actions" }, [cancel, ok]));
+    update();
+    document.body.append(dialog);
+    dialog.showModal();
   }
 
   // Вопрос общего Python-кода каталога (ctx.ask_input/ask_choice — PyCtxBridge.kt, py_runner.py): как окно ask_choice
