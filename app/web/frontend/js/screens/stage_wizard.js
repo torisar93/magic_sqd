@@ -287,7 +287,7 @@
     });
     window.events.on("install_finished", onInstallFinished);
     window.events.on("rollback_finished", finishRollback);
-    window.events.on("ask_input", (event) => showAskInputDialog(event));
+    window.events.on("ask_input", (event) => (isAskMany(event) ? showAskManyDialog(event) : showAskInputDialog(event)));
     // Какое окно «что сделать» увидел техник (user_errors.js) — строкой в лог сессии: по ней разбор логов
     // на сервере отличает ошибку подключения/действий техника от сбоя программы.
     window.StageRun.configure({ onUserError: (rule) => {
@@ -449,6 +449,68 @@
   function isPackageList(choices) {
     return choices.some((choice) => choice.includes("."))
       && choices.every((choice) => /^[A-Za-z]\w*(\.\w+)*$/.test(choice));
+  }
+
+  // Выбор нескольких вариантов галочками (общий код каталога: cars/_shared/stealth.py — «Режим стелс», 09.11.2026):
+  // заголовок вопроса кончается невидимым знаком U+2063. Ответ — JSON-список выбранного, «Отмена» — null. Прежний
+  // интерфейс знака не видит и показывает выбор одного — код каталога тогда спрашивает по одному. Тот же знак и ответ —
+  // на Android (app.js: promptAskMany).
+  const ASK_MANY_MARK = "\u2063";
+  const ASK_MANY_OK = { "Режим стелс": "Скрыть" };
+  function isAskMany(event) {
+    return String(event.title || "").endsWith(ASK_MANY_MARK) && Array.isArray(event.choices) && event.choices.length > 0;
+  }
+
+  function showAskManyDialog(event) {
+    const choices = event.choices.map(String);
+    const title = String(event.title).slice(0, -ASK_MANY_MARK.length) || "Выбор";
+    const okLabel = ASK_MANY_OK[title] || "Готово";
+    const selected = new Set();
+    const dialog = el("dialog", { class: "ask-many-dialog", style: "width: min(560px, 92vw)" });
+    const count = el("p", { class: "ask-many-count", style: "margin: 0 0 10px; color: var(--text-dim); font-size: 13px" });
+    const search = el("input", { type: "search", placeholder: "Поиск приложений", "aria-label": "Поиск приложений", autocomplete: "off", style: "width: 100%; margin-bottom: 10px" });
+    const list = el("div", { class: "ask-many-list", style: "max-height: min(330px, 50vh); overflow: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px" });
+    const empty = el("p", { text: "Ничего не найдено. Попробуйте другое название.", hidden: "", style: "color: var(--text-dim)" });
+    const ok = el("button", { type: "button", class: "accent" });
+    let answered = false;
+    const done = (value) => {
+      if (answered) return;
+      answered = true;
+      if (dialog.open) dialog.close();
+      dialog.remove();
+      window.pywebview.api.install_answer_input(event.id, value);
+    };
+    const update = () => {
+      count.textContent = `Выбрано: ${selected.size} из ${choices.length}`;
+      ok.textContent = selected.size ? `${okLabel} (${selected.size})` : okLabel;
+      ok.disabled = !selected.size;
+    };
+    for (const choice of choices) {
+      const checkbox = el("input", { type: "checkbox" });
+      checkbox.addEventListener("change", () => { if (checkbox.checked) selected.add(choice); else selected.delete(choice); update(); });
+      list.append(el("label", { class: "app-choice", style: "display: flex; align-items: center; gap: 10px; min-height: 0; padding: 8px 12px !important; cursor: pointer" },
+        [checkbox, el("span", { class: "app-choice-name", text: choice })]));
+    }
+    list.append(empty);
+    search.addEventListener("input", () => {
+      const query = search.value.trim().toLocaleLowerCase("ru-RU");
+      let shown = 0;
+      list.querySelectorAll(".app-choice").forEach((row) => {
+        row.hidden = query !== "" && !row.textContent.toLocaleLowerCase("ru-RU").includes(query);
+        if (!row.hidden) shown++;
+      });
+      empty.hidden = shown > 0;
+    });
+    ok.addEventListener("click", () => { if (selected.size) done(JSON.stringify(choices.filter((c) => selected.has(c)))); });
+    // Код каталога ждёт ответа: Esc и закрытие окна — это «Отмена», а не тишина.
+    dialog.addEventListener("cancel", (e) => { e.preventDefault(); done(null); });
+    dialog.append(el("h3", { text: title, style: "margin: 0 0 6px" }));
+    if (event.prompt) dialog.append(el("p", { text: event.prompt, style: "margin: 0 0 8px" }));
+    dialog.append(count, search, list, el("div", { class: "dialog-actions", style: "display: flex; justify-content: flex-end; gap: 10px" },
+      [el("button", { type: "button", text: "Отмена", onclick: () => done(null) }), ok]));
+    update();
+    document.body.append(dialog);
+    dialog.showModal();
   }
 
   function showAskInputDialog(event) {
