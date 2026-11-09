@@ -487,6 +487,11 @@ window.I18N_EN = {
   "ИИ: не ставить": "AI: don't install",
   "Выбрано: {#n}": "Selected: {n}",
   "Выбрано: {#n} из {#m}": "Selected: {n} of {m}",
+  "Ждём магнитолу по USB": "Waiting for the head unit over USB",
+  "Ждёт окончания этапа…": "Waiting for the stage to finish…",
+  "Сейчас идёт работа с магнитолой — обновление начнётся, как только она закончится.": "The app is working with the head unit right now — the update will start as soon as it finishes.",
+  "Обновление скачано — поставлю его, как только закончится работа с магнитолой.": "The update is downloaded — it will be installed as soon as the work with the head unit finishes.",
+  "Программа ещё ждёт магнитолу по USB — до 20 секунд. Дождитесь ответа и нажмите снова.": "The app is still waiting for the head unit over USB — up to 20 seconds. Wait for the result and press again.",
   // Режим стелс (cars/_shared/stealth.py, окно выбора нескольких — promptAskMany / showAskManyDialog)
   "Режим стелс": "Stealth mode",
   "Режим стелс: скрыть приложения": "Stealth mode: hide apps",

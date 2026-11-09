@@ -79,6 +79,10 @@
   let activeCommand = null;
   const commandResults = new Map();
   let modelWifiPort = 5555;
+  // Магнитола, подключённая по Wi-Fi на любом этапе модели («ip:порт»). Раньше подключение жило только в баре своего
+  // этапа: подключились на «Приложениях» — на «Доп. действиях» окно «Магнитола не подключена», хотя adb видит её
+  // «device» (мак 1.1.22, №14575). Теперь следующий этап берёт её, если adb всё ещё видит её подключённой.
+  let modelWifiSerial = null;
   // Wi-Fi-модель (см. install_api.load_stages: "wifi"): файлы adb/actions-этапов докачиваем при показе
   // этапа, пока интернет ещё есть (см. prefetchStageFiles), и запускаем с prefetched=true.
   let modelWifi = false;
@@ -701,6 +705,7 @@
     loadErrorNeedsUpdate = false;
     stages = [];
     modelWifiPort = 5555;
+    modelWifiSerial = null;
     installCompletedShown = false;
     lastFinishLine = "";
     failedStages.clear();
@@ -1090,6 +1095,24 @@
     const wiredRow = el("div", { class: "row" }, [select, refreshBtn]);
 
     const wifiStatus = el("span", { style: "color: var(--text-dim)", text: "Wi-Fi: не подключено" });
+    function setWifi(serial) {
+      wifiSerial = serial;
+      modelWifiSerial = serial;
+      wifiStatus.textContent = serial ? `Wi-Fi: подключено (${serial})` : "Wi-Fi: не подключено";
+    }
+    // Подключение с прошлого этапа — если adb всё ещё видит магнитолу подключённой («device», не «offline»).
+    async function adoptWifi() {
+      if (wifiSerial || !modelWifiSerial) return wifiSerial;
+      try {
+        const devices = (await window.pywebview.api.install_list_devices()) || [];
+        if (devices.some((d) => d.serial === modelWifiSerial && d.state === "device")) {
+          wifiSerial = modelWifiSerial;
+          wifiStatus.textContent = `Wi-Fi: подключено (${wifiSerial})`;
+          changed();
+        }
+      } catch { /* нет списка — подключится заново */ }
+      return wifiSerial;
+    }
     // Порт САМОГО ЭТАПА (apps_wifi_port/actions_wifi_port, задаётся в
     // редакторе прямо на этапе — не общий на модель modelWifiPort, тот
     // остался только для легаси-типа "adb") — если известен заранее,
@@ -1115,8 +1138,8 @@
           scan:p=>window.pywebview.api.install_scan_wifi(p),
           connect:async(ip,port)=>{
             const result=await window.pywebview.api.install_wifi_connect(port,ip);
-            if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;noteDeviceFingerprint(wifiSerial);settle(wifiSerial);}
-            else {wifiSerial=null;wifiStatus.textContent='Wi-Fi: не подключено';}
+            if(result.ok){setWifi(`${result.ip||ip}:${port}`);portInput.value=port;noteDeviceFingerprint(wifiSerial);settle(wifiSerial);}
+            else setWifi(null);
             changed();
             return result;
           },
@@ -1128,8 +1151,8 @@
         scan:p=>window.pywebview.api.install_scan_wifi(p),
         connect:async(ip,port)=>{
           const result=await window.pywebview.api.install_wifi_connect(port,ip);
-          if(result.ok){wifiSerial=`${result.ip||ip}:${port}`;portInput.value=port;wifiStatus.textContent=`Wi-Fi: подключено (${wifiSerial})`;noteDeviceFingerprint(wifiSerial);}
-          else {wifiSerial=null;wifiStatus.textContent='Wi-Fi: не подключено';}
+          if(result.ok){setWifi(`${result.ip||ip}:${port}`);portInput.value=port;noteDeviceFingerprint(wifiSerial);}
+          else setWifi(null);
           changed();
           return result;
         }
@@ -1146,6 +1169,7 @@
       refreshDevices();
     } else if (connection === "wifi") {
       bar.appendChild(wifiRow);
+      adoptWifi();
     } else {
       // "ask" — технику предлагается выбрать способ прямо здесь.
       const toggleRow = el("div", { class: "row" });
@@ -1163,6 +1187,7 @@
         wifiBtn.className = "accent"; wiredBtn.className = "";
         clear(body); body.appendChild(wifiRow);
         changed();
+        adoptWifi();
       }
       wiredBtn.addEventListener("click", showWired);
       wifiBtn.addEventListener("click", showWifi);
@@ -1175,7 +1200,7 @@
 
     return {
       element: bar, getDevice: () => wifiSerial || deviceByLabel[select.value] || null,
-      mode: () => (connection === "ask" ? askMode : connection), askWifi, refreshDevices,
+      mode: () => (connection === "ask" ? askMode : connection), askWifi, refreshDevices, adoptWifi,
       wifiButton: wifiConnectBtn, refreshButton: refreshBtn,
       wifiConnected: () => Boolean(wifiSerial), onChange: (listener) => changeListeners.push(listener),
     };
@@ -2323,6 +2348,10 @@
     if (transport && transport.mode() !== "wifi" && typeof transport.refreshDevices === "function") {
       try { devices = (await transport.refreshDevices()) || []; } catch { devices = []; }
       const device = getDevice();
+      if (device) return device;
+    }
+    if (transport && transport.mode() === "wifi" && typeof transport.adoptWifi === "function") {
+      const device = await transport.adoptWifi();
       if (device) return device;
     }
     const unauthorized = devices.some((d) => d.state === "unauthorized");

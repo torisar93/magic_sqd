@@ -14,6 +14,9 @@ function make(code, bridge = {}) {
     document: { querySelector: (sel) => (sel === ".welcome-overlay" && st.welcomeOpen ? { remove: () => { st.removedWelcome++; } } : null) },
     setTimeout: (fn, ms) => { st.timers.push({ fn, ms }); return st.timers.length; },
     clearTimeout: (id) => { if (st.timers[id - 1]) st.timers[id - 1].cleared = true; },
+    setInterval: (fn, ms) => { st.intervals = (st.intervals || []).concat([{ fn, ms }]); return st.intervals.length; },
+    clearInterval: (id) => { if (st.intervals && st.intervals[id - 1]) st.intervals[id - 1].cleared = true; },
+    operationBusy: () => Boolean(st.busy),
     Bridge: { call: (method, args) => { st.calls.push([method, args]); return bridge[method] ? bridge[method](args) : {}; } },
   };
   run(code + "\nthis.__api={startupPopups,onUpdateCheckResult,startAppUpdate,resumeAppUpdate,onAppUpdateEvent};", ctx);
@@ -110,4 +113,20 @@ module.exports = async function () {
   ({ st, api } = make(code)); api.onUpdateCheckResult({ result: update });
   node(st.modals[0], "Скачать APK вручную").a[1].onclick();
   assert(st.overlayRemoved === 1, "обычное: ссылка закрывает окно");
+  // Идёт работа с магнитолой — обновление ждёт её конца (№13592: Android закрыл программу посреди заливки).
+  ({ st, api } = make(code, { app_update_status: () => ({ can: true, silent: true }) }));
+  api.onUpdateCheckResult({ result: { ...update, sha256: sha } });
+  const busyModal = st.modals[0];
+  const busyStatus = busyModal.children.find((n) => n.a && n.a[1] && n.a[1].class === "stage-text update-status");
+  st.busy = true;
+  node(busyModal, "Обновить").a[1].onclick();
+  assert(!st.calls.some((c) => c[0] === "app_update_install") && /как только она закончится/.test(busyStatus.textContent),
+    "во время операции не ставим: " + busyStatus.textContent);
+  st.intervals[0].fn();
+  assert(!st.calls.some((c) => c[0] === "app_update_install"), "операция ещё идёт — ждём");
+  st.busy = false;
+  st.intervals[0].fn();
+  assert(st.calls.some((c) => c[0] === "app_update_install") && st.intervals[0].cleared, "операция кончилась — ставим");
+  api.onAppUpdateEvent({ stage: "wait" });
+  assert(/как только закончится работа с магнитолой/.test(busyStatus.textContent), "Kotlin ждёт операцию перед установкой");
 };
