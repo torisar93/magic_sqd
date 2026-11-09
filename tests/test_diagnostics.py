@@ -63,11 +63,11 @@ def section(ctx, title):
 def test_reads_only_and_logs_every_section():
     ctx = Ctx({"getprop": GETPROP, "logcat": LOGCAT, "pm list users": "Users:\n\tUserInfo{0:Иван Петров:c13} running"})
     total = diagnostics.collect(ctx)
-    assert ctx.logs[0].startswith(diagnostics.HEADER) and "только чтение" in ctx.logs[0]
+    assert ctx.logs[0].startswith(diagnostics.HEADER) and "ничего не меняется" in ctx.logs[0]
     assert ctx.logs[-1].startswith(f"=== Подробный лог собран: {total} строк.")
-    assert len(ctx.commands) == len(diagnostics.SECTIONS)
+    sections = ctx.commands[:len(diagnostics.SECTIONS)]
     writes = ("install ", "uninstall", " rm ", "settings put", "pm grant", "disable", "reboot", "am start")
-    assert not any(word in command for command in ctx.commands for word in writes)
+    assert not any(word in command for command in sections for word in writes)
     for title, _, _ in diagnostics.SECTIONS:
         section(ctx, title)
 
@@ -145,3 +145,42 @@ def test_accessibility_services_one_per_line():
     assert all(len(line) <= 2 + diagnostics.LINE_CHARS for line in lines)
     assert sum("{Service[label=App" in line for line in lines) == 3
     assert lines[-1] == "  nu.back.button: SYSTEM_ALERT_WINDOW: allow; WRITE_SETTINGS: allow"
+
+
+class ProbeCtx(Ctx):
+    def __init__(self, replies, shared):
+        super().__init__(replies)
+        self.shared_dir = shared
+        self.pushed = []
+
+    def push(self, local, remote, timeout=None):
+        self.pushed.append((Path(local).name, remote))
+
+
+def test_probe_install_catches_the_firmware_answer(tmp_path):
+    """lajolla/Omoda C7 (№14285): к нажатию кнопки журнал про установку уже вытеснили — раздел пустой. Проба ставит
+    крошечный installtest.apk и снимает журнал ровно с этого момента (logcat -T)."""
+    (tmp_path / "installtest.apk").write_bytes(b"PK")
+    ctx = ProbeCtx({"date": "11-09 17:30:00.000\n", "pm install": "Failure [INSTALL_FAILED_INTERNAL_ERROR]",
+                    "logcat -d -v time -T": "11-09 17:30:01.000 E/PackageManager( 812): install vetoed\n"
+                                            "\tat com.mega.pm.Policy.check(Policy.java:42)"}, tmp_path)
+    diagnostics.collect(ctx)
+    probe = section(ctx, diagnostics.PROBE_TITLE)
+    assert ctx.pushed == [("installtest.apk", diagnostics.PROBE_REMOTE)]
+    assert "INSTALL_FAILED_INTERNAL_ERROR" in probe and "install vetoed" in probe and "Policy.java:42" in probe
+    assert any(c.startswith("logcat -d -v time -T '11-09 17:30:00.000'") for c in ctx.commands)
+    assert f"rm -f {diagnostics.PROBE_REMOTE}" in ctx.commands
+    assert not any(c.startswith("pm uninstall") for c in ctx.commands), "не встало — удалять нечего"
+
+    ok = ProbeCtx({"date": "11-09 17:30:00.000", "pm install": "Success"}, tmp_path)
+    diagnostics.collect(ok)
+    assert f"pm uninstall {diagnostics.PROBE_PACKAGE}" in ok.commands
+    assert "тестовое приложение удалено" in section(ok, diagnostics.PROBE_TITLE)
+
+
+def test_probe_apk_is_published_next_to_the_module():
+    """installtest.apk — в каталоге на сервере (cars/_shared, *.apk в git не хранятся); локально — если скачан."""
+    if not (ROOT / "cars/_shared" / diagnostics.PROBE_APK).is_file():
+        pytest.skip("installtest.apk нет в рабочей копии каталога")
+    from app.apk_package import read_package_name
+    assert read_package_name(ROOT / "cars/_shared" / diagnostics.PROBE_APK) == diagnostics.PROBE_PACKAGE

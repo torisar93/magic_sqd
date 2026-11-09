@@ -4,14 +4,18 @@
 lajolla: все способы установки отказали с INSTALL_FAILED_INTERNAL_ERROR (логи №7400, №7405), а почему — видно только в
 системном журнале магнитолы.
 
-Только чтение: прошивка, место, права adb, ограничения установки, установщики и магазины производителя, службы
-спецвозможностей и спецдоступы сторонних приложений, системный журнал про установку. Всё пишется в журнал установки, а он и так уходит на сервер — отдельно отправлять ничего не
+Почти только чтение: прошивка, место, права adb, ограничения установки, установщики и магазины производителя, службы
+спецвозможностей и спецдоступы сторонних приложений, системный журнал про установку. В конце — пробная установка
+крошечного тестового приложения (installtest.apk, сразу удаляется) и системный журнал ровно с этого момента: причина
+отказа прошивки видна, даже если кнопку нажали не сразу (lajolla/Omoda C7, №14285: к нажатию журнал про установку уже
+вытеснили, раздел был пуст; разбор 09.11.2026). Всё пишется в журнал установки, а он и так уходит на сервер — отдельно отправлять ничего не
 нужно. Серийные номера, MAC-адреса, VIN и имена пользователей не собираются. Нажимать лучше сразу после неудачной
 установки: тогда её причина ещё лежит в системном журнале магнитолы. Общий для ПК и Android (android/.../py_runner.py).
 """
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 HEADER = "=== Подробный лог для разработчика ==="
 LINE_CHARS = 300  # длиннее — обрезаем: в системном журнале бывают строки по несколько килобайт
@@ -106,9 +110,50 @@ def _clean(title: str, text: str) -> list:
     return lines
 
 
+PROBE_APK = "installtest.apk"
+PROBE_PACKAGE = "ru.magicsqd.installtest"
+PROBE_REMOTE = "/data/local/tmp/msqd_installtest.apk"
+PROBE_TITLE = "Пробная установка тестового приложения"
+# Журнал после пробы: установщики, исключения и строки стека — по ним видно, где прошивка отказала.
+_PROBE_LOG = _INSTALL_LOG + r"|Exception|Error|^\s+at |\tat "
+
+
+def _probe_apk(ctx):
+    shared = getattr(ctx, "shared_dir", None)
+    local = (Path(shared) if shared else Path(__file__).resolve().parent) / PROBE_APK
+    return local if local.is_file() else None
+
+
+def probe_install(ctx) -> list:
+    """Поставить и сразу удалить installtest.apk, снять системный журнал с момента установки. Строки раздела."""
+    local = _probe_apk(ctx)
+    if local is None:
+        return [f"(тестового {PROBE_APK} на этом устройстве нет — каталог ещё не скачан)"]
+    since = _output(ctx.shell("date +'%m-%d %H:%M:%S.000'", check=False, timeout=20)).splitlines()
+    since = since[-1].strip() if since else ""
+    try:
+        ctx.push(str(local), PROBE_REMOTE)
+    except Exception as exc:  # noqa: BLE001 — разные классы на ПК и Android
+        if type(exc).__name__ == "InstallCancelled":
+            raise
+        return [f"не записался на магнитолу: {exc}"]
+    answer = _output(ctx.shell(f"pm install -r -t {PROBE_REMOTE}", check=False, timeout=120)) or "(пусто)"
+    lines = [f"pm install: {line}" for line in answer.splitlines()[:5]]
+    if "Success" in answer:
+        ctx.shell(f"pm uninstall {PROBE_PACKAGE}", check=False, timeout=60)
+        lines.append("встало — тестовое приложение удалено")
+    ctx.shell(f"rm -f {PROBE_REMOTE}", check=False, timeout=20)
+    window = f"-T '{since}'" if re.fullmatch(r"\d\d-\d\d \d\d:\d\d:\d\d\.000", since) else "-t 1500"
+    log = _output(ctx.shell(f"logcat -d -v time {window} 2>/dev/null | grep -E '{_PROBE_LOG}' | head -n 150",
+                            check=False, timeout=60))
+    lines += _clean(PROBE_TITLE, log) or ["(системный журнал про установку пуст)"]
+    return lines
+
+
 def collect(ctx) -> int:
     """Пишет подробный лог в журнал установки; возвращает число собранных строк."""
-    ctx.log(f"{HEADER}\nСобираю сведения о магнитоле для разработчика — только чтение, на магнитоле ничего не меняется.")
+    ctx.log(f"{HEADER}\nСобираю сведения о магнитоле для разработчика. На магнитоле ничего не меняется — только в конце "
+            "ставлю и сразу удаляю крошечное тестовое приложение, чтобы увидеть, как прошивка отвечает на установку.")
     total, failed_in_row = 0, 0
     for title, command, limit in SECTIONS:
         try:
@@ -128,5 +173,13 @@ def collect(ctx) -> int:
         body = "\n".join(f"  {line}" for line in shown) if shown else "  (пусто)"
         ctx.log(f"[{title}]{more}\n{body}")
         total += len(shown)
+    try:
+        probe = probe_install(ctx)
+    except Exception as exc:  # noqa: BLE001 — проба необязательна
+        if type(exc).__name__ == "InstallCancelled":
+            raise
+        probe = [f"не получилось: {exc}"]
+    ctx.log(f"[{PROBE_TITLE}]\n" + "\n".join(f"  {line}" for line in probe[:160]))
+    total += len(probe)
     ctx.log(f"=== Подробный лог собран: {total} строк. Он уйдёт разработчику вместе с журналом установки. ===")
     return total
