@@ -122,6 +122,9 @@ internal fun usbWriteFailureMessage(fileName: String, errors: List<Exception>): 
  * имя без учёта регистра, а search() — с учётом: на флешке уже был «yn4_…apk» или папка «APK», поиск «apk/YN4_…» его не
  * находил, а создание падало «Item already exists!» на всех попытках (Tugella, №14257; №130, №355, №3554, №3697, №8907;
  * разбор 09.11.2026). */
+private val MAX_RECOVERY_RE = Regex("MAX_RECOVERY", RegexOption.IGNORE_CASE)
+private const val MAX_RECOVERY_ATTEMPTS = 2
+
 internal fun UsbFile.child(name: String): UsbFile? =
     search(name) ?: listFiles().firstOrNull { it.name.equals(name, ignoreCase = true) }
 
@@ -261,6 +264,9 @@ fun writeFileToUsb(
                 current = fresh
                 continue
             }
+            // Флешка перестала отвечать (MAX_RECOVERY_ATTEMPTS): повторы до 5 раз по ~30 с ни разу не помогли (113
+            // попыток в логах 10–12.11.2026) — техник ждал минуты и закрывал программу. После второй — итог сразу.
+            if (MAX_RECOVERY_RE.containsMatchIn(describeUsbError(e)) && attempt >= MAX_RECOVERY_ATTEMPTS) break
             if (attempt < WRITE_RETRY_ATTEMPTS) {
                 log("Сбой записи $destRelativePath (попытка $attempt/$WRITE_RETRY_ATTEMPTS): " +
                     "${describeUsbError(e)}. Повторяю...")

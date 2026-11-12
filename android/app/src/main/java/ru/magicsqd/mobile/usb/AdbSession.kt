@@ -214,6 +214,7 @@ object AdbSession {
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val deadline = System.currentTimeMillis() + timeoutMs
         var lastFailure: String? = null
+        var denials = 0
         while (System.currentTimeMillis() < deadline) {
             if (usbManager.deviceList.values.any { findAdbInterface(it) != null }) {
                 // Устройство уже видно, но рукопожатие могло не пройти (магнитола ещё
@@ -222,7 +223,16 @@ object AdbSession {
                 val result = connectBlocking(context, log)
                 if (result is AdbHandshakeResult.Connected) return result
                 lastFailure = (result as AdbHandshakeResult.Failed).reason
-                if (lastFailure.startsWith("Пользователь отклонил")) return result
+                // После обрыва магнитола переподключается по USB ещё раз-другой, пока открыто окно разрешения, и Android
+                // закрывает его «отказом», которого техник не давал: этап падал «Пользователь отклонил…», а через
+                // 10–30 с магнитола подключалась сама (1.1.24, №15625, №15995, №15869; разбор 12.11.2026). Спрашиваем
+                // ещё до двух раз; три отказа подряд — настоящий.
+                if (lastFailure.startsWith("Пользователь отклонил")) {
+                    if (++denials > 2) return result
+                    log("Разрешение на USB после обрыва не получено — магнитола могла переподключиться ещё раз, спрашиваю снова.")
+                    Thread.sleep(2000)
+                    continue
+                }
             }
             Thread.sleep(1000)
         }

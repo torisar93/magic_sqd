@@ -85,3 +85,20 @@ def test_self_update_download_resumes_after_a_drop():
     assert "HttpURLConnection.HTTP_PARTIAL" in download and "java.io.FileOutputStream(target, resumed)" in download
     assert "if (attempt >= DOWNLOAD_ATTEMPTS) throw e" in download and "private const val DOWNLOAD_ATTEMPTS = 5" in src
     assert download.index("while (true) {") < download.index("MessageDigest.getInstance")
+
+
+def test_reconnect_after_drop_retries_a_false_usb_denial():
+    """После обрыва магнитола переподключается при открытом окне разрешения — «Пользователь отклонил…», хотя техник его
+    не давал, а через 10–30 с подключалась сама (1.1.24, №15625, №15995, №15869). До двух повторов; три подряд — настоящий."""
+    src = _code(KOTLIN / "usb/AdbSession.kt")
+    wait = re.search(r"private fun waitForUsbAndReconnect\(.*?\n    }\n", src, flags=re.S).group(0)
+    assert "if (++denials > 2) return result" in wait and "continue" in wait
+    assert 'if (lastFailure.startsWith("Пользователь отклонил")) return result' not in wait
+
+
+def test_flash_write_stops_retrying_after_two_max_recovery_failures():
+    """MAX_RECOVERY: 113 повторов по ~30 с в логах ни разу не помогли — после второй попытки итог сразу."""
+    src = _code(KOTLIN / "usb/UsbFlashWrite.kt")
+    write = re.search(r"fun writeFileToUsb\(.*?\n}\n", src, flags=re.S).group(0)
+    assert "MAX_RECOVERY_RE.containsMatchIn(describeUsbError(e)) && attempt >= MAX_RECOVERY_ATTEMPTS) break" in write
+    assert "private const val MAX_RECOVERY_ATTEMPTS = 2" in src

@@ -257,7 +257,11 @@ def patch_manifest(axml: bytes) -> tuple[bytes, int]:
     if not todo:
         return axml, 0
     if android_ns is None:
-        raise MotionPatchError("в манифесте нет пространства имён android")
+        # Блока объявления пространства имён в манифесте нет (Chrome на Haval Dargo, №15579: «нет пространства имён
+        # android», 178 МБ сняты зря; разбор 12.11.2026) — Android опознаёт атрибуты по номерам ресурсов (resmap), а не
+        # по пространству имён: берём строку из пула, нет её — добавляем.
+        android_ns = pool.find(ANDROID_NS)
+        android_ns = pool.add(ANDROID_NS) if android_ns is None else android_ns
     name_attr = _attr_index(pool, resmap, ATTR_NAME, "name")
     value_attr = _attr_index(pool, resmap, ATTR_VALUE, "value")
     tag = pool.find("meta-data")

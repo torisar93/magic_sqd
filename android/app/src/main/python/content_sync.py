@@ -5,6 +5,7 @@
 concurrent.futures), поэтому переносится почти без изменений, только урезана
 до того, что нужно для списка машин (без apk/-библиотеки и files/model —
 это отдельные следующие шаги)."""
+import http.client
 import json
 import os
 import shutil
@@ -86,7 +87,10 @@ def fetch_manifest(base_url: str):
     try:
         with open_url(f"{base_url}/manifest.json", timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+    # Таймаут и обрыв на чтении (resp.read) — не URLError: «TimeoutError: The read operation timed out» уходил наверх
+    # необработанной ошибкой интерфейса (ПК 1.1.21, BAIC, №15424; разбор 12.11.2026). Любой сбой сети/ответа — «нет
+    # манифеста», вызывающий откатывается как раньше.
+    except (OSError, ValueError, http.client.HTTPException):
         return None
     files = data.get("files")
     if not isinstance(files, dict):

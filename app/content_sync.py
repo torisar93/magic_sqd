@@ -20,6 +20,7 @@ sync_shared_apks/ensure_apks_downloaded). Исключение — список 
 тоже идёт при каждом запуске, как и cars/-скрипты, — иначе дерево выбора
 приложений было бы пустым, пока пользователь не нажмёт "Скачать" сам."""
 from __future__ import annotations
+import http.client
 import json
 import os
 import shutil
@@ -222,7 +223,10 @@ def fetch_manifest(base_url: str) -> dict[str, dict] | None:
     try:
         with open_url(f"{base_url}/manifest.json", timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+    # Таймаут и обрыв на чтении (resp.read) — не URLError: «TimeoutError: The read operation timed out» уходил наверх
+    # необработанной ошибкой интерфейса (ПК 1.1.21, BAIC, №15424; разбор 12.11.2026). Любой сбой сети/ответа — «нет
+    # манифеста», вызывающий откатывается как раньше.
+    except (OSError, ValueError, http.client.HTTPException):
         return None
     files = data.get("files")
     if not isinstance(files, dict):

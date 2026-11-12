@@ -220,3 +220,16 @@ def test_flash_out_of_space_while_writing_stays_a_flash_error(env, monkeypatch, 
     _write_through(monkeypatch, path, write_then_fail)
     run(env)
     assert env.events[-1]["message"] == "Ошибка: [Errno 28] No space left on device"
+
+
+def test_missing_selected_apk_is_not_written_after_format(env, monkeypatch):
+    """«Скачалось не всё — пойдут только скачанные», а сценарий записи копировал и нескачанный APK: WinError 2 уже после
+    форматирования, 0 из N файлов (ПК 1.1.24, №15281; с 1.1.3 — №9120, №12497, №14483). Путь без плана общим кодом
+    (план сам говорит «Файл не скачан» до записи)."""
+    monkeypatch.setattr(env.api, "_block_plan", lambda *a, **k: None)
+    missing = env.apk.parent / "Лаунчеры" / "AutoEasy 0.5.6.apk"
+    env.api._worker(env.model, env.stage, 0, None, [str(env.apk), str(missing)], str(env.drive), False, "FAT32",
+                    env.stage["flash_blocks"][0])
+    assert env.events[-1]["kind"] == "usb_finished" and env.events[-1]["success"] is True, env.events[-1]
+    written = {p.name for p in env.drive.rglob("*") if p.is_file()}
+    assert "Data_Belgee_2.3.apk" in written and "AutoEasy 0.5.6.apk" not in written

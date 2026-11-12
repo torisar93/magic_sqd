@@ -151,3 +151,25 @@ def test_desktop_and_android_copies_match():
     desktop = (ROOT / "app/motion_patch.py").read_bytes()
     android = (ROOT / "android/app/src/main/python/motion_patch.py").read_bytes()
     assert desktop == android, "motion_patch.py на ПК и Android должны совпадать байт в байт"
+
+
+def _without_namespace_chunks(axml: bytes) -> bytes:
+    """Тот же манифест без блоков START/END_NAMESPACE (как у Chrome, №15579)."""
+    import struct
+    _type, header, _total = struct.unpack_from("<HHI", axml)
+    pos, body = header, bytearray()
+    while pos + 8 <= len(axml):
+        ctype, _h, size = struct.unpack_from("<HHI", axml, pos)
+        if ctype not in (0x0100, 0x0101):
+            body += axml[pos:pos + size]
+        pos += size
+    return struct.pack("<HHI", 0x0003, 8, 8 + len(body)) + bytes(body)
+
+
+def test_manifest_without_namespace_chunk_is_still_marked():
+    """Chrome на Haval Dargo (1.1.24, №15579): «в манифесте нет пространства имён android» — теперь строка
+    пространства имён берётся из пула (или добавляется), окна помечаются."""
+    bare = _without_namespace_chunks(AXML)
+    assert motion_patch.count_optimized(bare) == (5, 1)
+    patched, marked = motion_patch.patch_manifest(bare)
+    assert marked == 4 and motion_patch.count_optimized(patched) == (5, 5)
