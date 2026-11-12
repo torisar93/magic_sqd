@@ -184,3 +184,14 @@ def test_probe_apk_is_published_next_to_the_module():
         pytest.skip("installtest.apk нет в рабочей копии каталога")
     from app.apk_package import read_package_name
     assert read_package_name(ROOT / "cars/_shared" / diagnostics.PROBE_APK) == diagnostics.PROBE_PACKAGE
+
+
+def test_probe_on_geely_closed_pm_install_cleans_up_without_the_forbidden_word(tmp_path):
+    """Geely OneOS отклоняет любую команду со словом «install» — и rm старого msqd_installtest.apk тоже (№15523)."""
+    (tmp_path / "installtest.apk").write_bytes(b"PK")
+    ctx = ProbeCtx({"date": "11-10 20:35:57.000", "pm install": "error: closed"}, tmp_path)
+    diagnostics.collect(ctx)
+    cleanup = [c for c in ctx.commands if c.startswith("rm -f")]
+    assert cleanup and not any("install" in c for c in cleanup), cleanup
+    assert "msqd_*test.apk" in cleanup[0] and "install" not in diagnostics.PROBE_REMOTE
+    assert "проба здесь не показательна" in section(ctx, diagnostics.PROBE_TITLE)

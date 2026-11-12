@@ -112,7 +112,10 @@ def _clean(title: str, text: str) -> list:
 
 PROBE_APK = "installtest.apk"
 PROBE_PACKAGE = "ru.magicsqd.installtest"
-PROBE_REMOTE = "/data/local/tmp/msqd_installtest.apk"
+# Без слова «install» в имени: Geely OneOS/N155 отклоняют ЛЮБУЮ команду с ним (adbd «Error … opening service
+# shell:rm -f …installtest.apk»), и файл оставался на магнитоле (№15523, №15997, №16022; разбор 12.11.2026).
+PROBE_REMOTE = "/data/local/tmp/msqd_probe.apk"
+_OLD_PROBE_GLOB = "/data/local/tmp/msqd_*test.apk"  # прежний msqd_installtest.apk — шаблоном, без запретного слова
 PROBE_TITLE = "Пробная установка тестового приложения"
 # Журнал после пробы: установщики, исключения и строки стека — по ним видно, где прошивка отказала.
 _PROBE_LOG = _INSTALL_LOG + r"|Exception|Error|^\s+at |\tat "
@@ -137,8 +140,12 @@ def probe_install(ctx) -> list:
         if type(exc).__name__ == "InstallCancelled":
             raise
         return [f"не записался на магнитолу: {exc}"]
+    ctx.shell(f"rm -f {_OLD_PROBE_GLOB}", check=False, timeout=20)
     answer = _output(ctx.shell(f"pm install -r -t {PROBE_REMOTE}", check=False, timeout=120)) or "(пусто)"
     lines = [f"pm install: {line}" for line in answer.splitlines()[:5]]
+    if "error: closed" in answer.lower():
+        lines.append("прошивка закрыла команды со словом «install» (так у Geely OneOS) — проба здесь не показательна, "
+                     "программа ставит приложения на такой магнитоле своим dex-хелпером")
     if "Success" in answer:
         ctx.shell(f"pm uninstall {PROBE_PACKAGE}", check=False, timeout=60)
         lines.append("встало — тестовое приложение удалено")
