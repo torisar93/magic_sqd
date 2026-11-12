@@ -51,6 +51,9 @@ const CASES = [
   ["«DuduAutoUi.apk» не установлено: системный раздел не открылся на запись (adb remount: remount of /system failed: Permission denied remount failed)", "system_read_only"],
   ["«DuduAutoUi.apk» не установлено: магнитола не дала права root (adb root: adbd cannot run as root in production builds)", "system_read_only"],
   ["Ошибка: [Errno 28] No space left on device: 'E:\\\\update.zip'", "no_space"],
+  // Место кончилось на МАГНИТОЛЕ при установке по ADB — не «На флешке не хватает места» (ПК 1.1.24, №15840)
+  ["adb: failed to install C:\\Users\\x\\Desktop\\a.apk: Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]", "unit_no_space"],
+  ["adb: error: failed to copy 'a.apk' to '/data/local/tmp/desaysv-install-target.apk': remote write failed: No space left on device", "unit_no_space"],
   // ПК: место кончилось на диске компьютера ещё до записи (лог №7407) — не «на флешке»
   ["На диске компьютера (C:, свободно 0,0 МБ) не хватает места для файлов программы — она скачивает их к себе, а потом пишет на флешку. Запись на флешку не начиналась. ([Errno 28] No space left on device)", "pc_no_space"],
   ["Ошибка: [WinError 19] Носитель защищен от записи", "write_protected"],
