@@ -812,10 +812,27 @@
     navLabelEl.textContent = '';
   }
 
+  // Список приложений модели. Сервер каталога иногда не успевает ответить (медленный интернет) — Python отдавал
+  // «TimeoutError: The read operation timed out», и в окне всплывала необработанная ошибка (ПК 1.1.21, №15424; разбор
+  // 12.11.2026; в Python поправлено для 1.1.25). Один повтор; не вышло — пустой список и понятная строка в журнале.
+  async function standardApks(key, index, variant) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await window.pywebview.api.install_standard_apks(key, index, variant);
+      } catch (error) {
+        if (attempt) {
+          log(`Список приложений модели не загрузился (${(error && error.message) || error}) — проверьте интернет и откройте модель заново.`);
+          return { required: [], optional: [] };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+  }
+
   async function initAppSelectionDefaults(generation) {
     for (const stage of stages) {
       if (stage.type !== "apps") continue;
-      const standard = await window.pywebview.api.install_standard_apks(model.key, stage.index, null);
+      const standard = await standardApks(model.key, stage.index, null);
       if (generation !== openGeneration) return;
       // required — не чекбокс вовсе (см. buildAppRow), но appSelection всё
       // равно держит их как true — этим же словарём собирается финальный
@@ -1262,7 +1279,7 @@
     select.addEventListener("change", async () => {
       chosenVariants[index] = select.value;
       if (stage.type === "apps") {
-        const standard = await window.pywebview.api.install_standard_apks(model.key, index, select.value);
+        const standard = await standardApks(model.key, index, select.value);
         for (const apk of standard.required) appSelection[apk.path] = true;
         for (const apk of standard.optional) {
           if (!(apk.path in appSelection)) appSelection[apk.path] = false;
@@ -1562,7 +1579,7 @@
     // buildCollapsibleSection ниже — required=true рисует уже отмеченный и
     // задизейбленный чекбокс, чтобы визуально было видно, что это тоже
     // приложение, просто без права его снять).
-    const standard = await window.pywebview.api.install_standard_apks(model.key, stage.index, chosenVariants[stage.index]);
+    const standard = await standardApks(model.key, stage.index, chosenVariants[stage.index]);
     if(revision!==renderRevision)return tree;
     for (const apk of standard.required) selection[apk.path] = true;
     for (const apk of standard.optional) {
