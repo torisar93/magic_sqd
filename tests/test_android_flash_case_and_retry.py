@@ -102,3 +102,19 @@ def test_flash_write_stops_retrying_after_two_max_recovery_failures():
     write = re.search(r"fun writeFileToUsb\(.*?\n}\n", src, flags=re.S).group(0)
     assert "MAX_RECOVERY_RE.containsMatchIn(describeUsbError(e)) && attempt >= MAX_RECOVERY_ATTEMPTS) break" in write
     assert "private const val MAX_RECOVERY_ATTEMPTS = 2" in src
+
+
+def test_connect_waits_for_a_late_usb_permission_after_denial():
+    """1.1.24: после повтора тоже бывал «отказ», а следующее подключение проходило без окна (№16228, №16442) —
+    разрешение приходит чуть позже ответа; ждём его до 3 с, прежде чем считать отказ настоящим."""
+    src = _code(KOTLIN / "usb/AdbSession.kt")
+    inner = re.search(r"private fun connectUsbLocked\(.*?\n    }\n", src, flags=re.S).group(0)
+    assert inner.index("val granted = permissionArrived(usbManager, ::find)") < inner.index("reattached(usbManager, target, ::find)")
+    helper = re.search(r"private fun permissionArrived\(.*?\n    }\n", src, flags=re.S).group(0)
+    assert "usbManager.hasPermission(it.first)" in helper and "+ 3000" in helper
+
+
+def test_webview_update_is_not_reported_as_our_update():
+    src = _code(KOTLIN / "ProcessExitNote.kt")
+    assert 'Regex("stop ([\\\\w.]+) due to killDueToPackageUpdate")' in src
+    assert "обновился компонент Android WebView" in src

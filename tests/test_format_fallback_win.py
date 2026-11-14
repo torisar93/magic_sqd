@@ -47,7 +47,7 @@ def test_format_volume_success_needs_no_fallback(win, monkeypatch):
 
 def test_invalid_parameter_falls_back_to_format_com(win, monkeypatch):
     calls = []
-    monkeypatch.setattr(win.subprocess, "run", _run([(1, "", POWERSHELL_ERROR), (0, "Форматирование завершено.\n", "")],
+    monkeypatch.setattr(win.subprocess, "run", _run([(1, "", POWERSHELL_ERROR), (0, "Форматирование завершено.\n".encode("cp866"), b"")],
                                                     calls))
     monkeypatch.setenv("SystemRoot", r"C:\Windows")
     log = []
@@ -55,7 +55,8 @@ def test_invalid_parameter_falls_back_to_format_com(win, monkeypatch):
     cmd, kwargs = calls[1]
     assert cmd[0].replace("/", "\\").endswith(r"System32\format.com")
     assert cmd[1:] == ["F:", "/FS:NTFS", "/Q", "/V:X50Belgee", "/X", "/Y"]
-    assert kwargs["input"].startswith("\r\n") and kwargs["encoding"] == "cp866"
+    # format.com — байтами: его строки в OEM, а системные сообщения бывают в ANSI (app/console_text.py, №16206)
+    assert kwargs["input"].startswith(b"\r\n") and "encoding" not in kwargs
     assert log == ["Форматирование F:\\ в NTFS...",
                    "Format-Volume не справился (Format-Volume : Invalid Parameter) — форматирую командой format...",
                    "Форматирование завершено."]
@@ -72,7 +73,8 @@ def test_filesystem_names_for_format_com(win, monkeypatch):
 
 def test_both_failing_report_both(win, monkeypatch):
     monkeypatch.setattr(win.subprocess, "run", _run(
-        [(1, "", POWERSHELL_ERROR), (4, "Тип файловой системы: RAW.\nДиск защищён от записи.\n", "")], []))
+        [(1, "", POWERSHELL_ERROR), (4, "Тип файловой системы: RAW.\n".encode("cp866")
+                                        + "Диск защищён от записи.\n".encode("cp1251"), b"")], []))
     with pytest.raises(RuntimeError) as error:
         win.format_drive("F:", "NTFS", "", Path("C:/app"))
     assert str(error.value) == ("Не удалось отформатировать F:\\: Format-Volume : Invalid Parameter; "

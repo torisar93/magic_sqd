@@ -16,6 +16,8 @@ CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 DRIVE_REMOVABLE = 2
 DRIVE_FIXED = 3
 
+from .console_text import decode_console  # noqa: E402 — вывод format.com: OEM и ANSI вперемешку
+
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _kernel32.GetLogicalDrives.argtypes = []
 _kernel32.GetLogicalDrives.restype = ctypes.c_uint32
@@ -226,18 +228,25 @@ def _first_error_line(text: str) -> str:
     return "".join(head)
 
 
+def _codepage(getter: str, default: str) -> str:
+    try:
+        encoding = f"cp{getattr(_kernel32, getter)()}"
+        "".encode(encoding)
+        return encoding
+    except (AttributeError, LookupError, OSError, NameError):
+        return default
+
+
 def _format_com(drive_letter: str, filesystem: str, safe_label: str) -> subprocess.CompletedProcess:
     """format X: /FS: /Q /V: /X /Y — без вопросов (/Y — «продолжить форматирование?», /X — отключить том, если открыт;
-    «вставьте диск и нажмите ВВОД» у съёмных — пустыми строками во вводе). Вывод — в кодировке OEM консоли."""
+    «вставьте диск и нажмите ВВОД» у съёмных — пустыми строками во вводе). Вывод — OEM и ANSI вперемешку (decode_console)."""
     fs = {"FAT32": "FAT32", "EXFAT": "exFAT", "NTFS": "NTFS"}[filesystem.upper()]
     exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "format.com"
-    try:
-        encoding = f"cp{_kernel32.GetOEMCP()}"
-        "".encode(encoding)
-    except (AttributeError, LookupError, OSError):
-        encoding = "cp866"
-    return subprocess.run(
+    oem, ansi = _codepage("GetOEMCP", "cp866"), _codepage("GetACP", "cp1251")
+    result = subprocess.run(
         [str(exe), f"{drive_letter}:", f"/FS:{fs}", "/Q", f"/V:{safe_label}", "/X", "/Y"],
-        input="\r\n" * 3, capture_output=True, text=True, encoding=encoding, errors="replace",
-        timeout=600, creationflags=CREATE_NO_WINDOW,
+        input=b"\r\n" * 3, capture_output=True, timeout=600, creationflags=CREATE_NO_WINDOW,
     )
+    result.stdout = decode_console(result.stdout or b"", oem, ansi)
+    result.stderr = decode_console(result.stderr or b"", oem, ansi)
+    return result

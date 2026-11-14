@@ -25,6 +25,7 @@ object ProcessExitNote {
     // (29.09): «[FORCE STOP] stop ru.magicsqd.mobile due to from process:com.miui.securitycenter» — не техник, а очистка
     // Xiaomi через 50 с после сворачивания; строка же говорила «закрыли вручную».
     private val STOPPED_BY = Regex("from process:([\\w.]+)")
+    private val UPDATED_PACKAGE = Regex("stop ([\\w.]+) due to killDueToPackageUpdate")
     private val KNOWN_STOPPERS = mapOf(
         "com.miui.securitycenter" to "принудительно остановила «Безопасность» Xiaomi — очистка памяти или экономия заряда",
         "com.miui.powerkeeper" to "принудительно остановил «Контроль питания» Xiaomi",
@@ -108,6 +109,13 @@ object ProcessExitNote {
             val text = description.orEmpty().lowercase()
             if ("remove task" in text || "swipeupclean" in text) return "смахнули из недавних приложений"
             if ("kill background" in text) return "закрыл в фоне при очистке памяти"
+        }
+        // «stop com.google.android.webview due to killDueToPackageUpdate» — обновился не Magic SQD, а WebView, на котором
+        // показан её интерфейс; писалось «программа обновилась» (№16301, №16496; разбор 14.11.2026).
+        val updated = UPDATED_PACKAGE.find(description.orEmpty())?.groupValues?.get(1)
+        if (reason == 16 && updated != null && updated != ownPackage) {
+            return if ("webview" in updated.lowercase()) "обновился компонент Android WebView, на котором работает окно программы"
+            else "обновилось приложение «$updated», с которым связана программа"
         }
         return when (reason) {
             ApplicationExitInfo.REASON_LOW_MEMORY -> "выгрузил из-за нехватки памяти"

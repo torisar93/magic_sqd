@@ -125,6 +125,14 @@ object AdbSession {
             // Android закрыл его с отказом. 1.1.21: «Пользователь отклонил…» сразу после «Магнитола появилась по USB»
             // — 29 из 47 таких строк, 10 из 11 техников потом подключились (разбор 07.11.2026, №13856). Магнитола на
             // месте под прежним адресом — отказ настоящий.
+            // 1.1.24: и после повтора бывает «отказ», а следующее подключение проходит сразу, без окна — разрешение
+            // приходит чуть позже ответа (3 из 21, №16228, №16442; разбор 14.11.2026). Сначала ждём его до 3 с.
+            val granted = permissionArrived(usbManager, ::find)
+            if (granted != null) {
+                target = granted.first
+                targetIface = granted.second
+                break
+            }
             val back = (if (waitForDeviceMs > 0 && permissionRetries < 2) reattached(usbManager, target, ::find) else null)
                 ?: return AdbHandshakeResult.Failed("Пользователь отклонил разрешение на доступ к USB-устройству")
             permissionRetries++
@@ -407,6 +415,19 @@ object AdbSession {
 
     /** Магнитола пропала из списка USB под прежним адресом — ждём её снова до 5 с (переподключилась). null — она на
      * месте (отказ настоящий) или так и не вернулась. */
+    /** Разрешение на магнитолу (её текущий экземпляр — find) появилось в течение 3 с после «отказа», или null. */
+    private fun permissionArrived(
+        usbManager: UsbManager,
+        find: () -> Pair<UsbDevice, AdbUsbInterface>?,
+    ): Pair<UsbDevice, AdbUsbInterface>? {
+        val deadline = System.currentTimeMillis() + 3000
+        while (true) {
+            find()?.takeIf { usbManager.hasPermission(it.first) }?.let { return it }
+            if (System.currentTimeMillis() >= deadline) return null
+            Thread.sleep(300)
+        }
+    }
+
     private fun reattached(
         usbManager: UsbManager,
         previous: UsbDevice,
