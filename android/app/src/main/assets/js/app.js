@@ -1363,6 +1363,10 @@
   }
 
   function onAdbConnect() {
+    // Идёт действие (запуск, «Работа в движении», удаление…) — новое подключение Kotlin всё равно отклонит («Уже
+    // выполняется другая операция»), а статус уже сброшен в «подключаюсь…»: дальше на каждое нажатие — окно «Магнитола
+    // не подключена» посреди заливки (H3 по Wi-Fi, №16412; разбор 14.11.2026). Пусть дождутся.
+    if (operationBusy()) { showLabBusyNotice(); return; }
     const stage = stages[currentIndex];
     if (connectionModeFor(stage) === "wifi") {
       promptHostPicker(
