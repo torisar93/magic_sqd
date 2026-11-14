@@ -122,6 +122,12 @@ def wait_for_package_command(package: str, seconds: int) -> str:
             f"sleep 2; i=$((i+1)); done")
 
 
+def localinstall_killed(output: str) -> bool:
+    """Хелпер localinstall убит системой («Killed» в ответе app_process) — установка не дошла до конца, повтор
+    обычно проходит (лог №16621). Копия — android AdbInstall.kt:localinstallKilled."""
+    return re.search(r"\bKilled\b", output or "") is not None
+
+
 def localinstall_status(logcat: str) -> str:
     """Итог установки из logcat Chery-хелпера (тег LocalInstall): строка «install status=…» после последней
     «created session» — в выводе самой команды хелпер ничего не пишет, причина отказа была пустой."""
@@ -1563,21 +1569,29 @@ class InstallContext:
         self.shell(f"chmod 644 {_LOCALINSTALL_REMOTE_APK}", check=False)
         self.push(helper, _LOCALINSTALL_REMOTE_HELPER)
         self.shell(f"chmod 644 {_LOCALINSTALL_REMOTE_HELPER}", check=False)
-        result = self.shell(
-            f"CLASSPATH={_LOCALINSTALL_REMOTE_HELPER} app_process /system/bin LocalInstall {_LOCALINSTALL_REMOTE_APK}",
-            check=False)
-        self.sleep(2)
-        after = self._installed_packages()
         expected = read_package_name(path)
         wait_for = expected if expected and expected not in before and _PACKAGE_NAME_RE.match(expected) else None
-        if wait_for and wait_for not in after:
-            # Хелпер коммитит сессию и сразу выходит, пакет система дописывает сама: крупное приложение на Haval
-            # sa8155 встаёт ~10 с (лог №2042, FreeZona 20 МБ). Раньше через 2 с его считали «не вставшим», а позднее
-            # появление засчитывалось следующему приложению. Ждём именно этот пакет — на самой магнитоле.
-            wait = localinstall_wait_seconds(path.stat().st_size)
-            self.log(f"Магнитола ещё дописывает {wait_for} — жду до {wait} с...")
-            self.shell(wait_for_package_command(wait_for, wait), check=False, timeout=wait + 30)
+        for attempt in range(2):
+            result = self.shell(
+                f"CLASSPATH={_LOCALINSTALL_REMOTE_HELPER} app_process /system/bin LocalInstall {_LOCALINSTALL_REMOTE_APK}",
+                check=False)
+            self.sleep(2)
             after = self._installed_packages()
+            if wait_for and wait_for not in after:
+                # Хелпер коммитит сессию и сразу выходит, пакет система дописывает сама: крупное приложение на Haval
+                # sa8155 встаёт ~10 с (лог №2042, FreeZona 20 МБ). Раньше через 2 с его считали «не вставшим», а
+                # позднее появление засчитывалось следующему приложению. Ждём именно этот пакет — на самой магнитоле.
+                wait = localinstall_wait_seconds(path.stat().st_size)
+                self.log(f"Магнитола ещё дописывает {wait_for} — жду до {wait} с...")
+                self.shell(wait_for_package_command(wait_for, wait), check=False, timeout=wait + 30)
+                after = self._installed_packages()
+            installed = wait_for in after if wait_for else len(after - before) == 1
+            if installed or attempt or not localinstall_killed(_completed_text(result)):
+                break
+            # Систему убила сам хелпер («Killed») — пакет не встал, а другие способы на Chery DesaySV закрыты
+            # («Restriction prevents installing»). Техник нажимал ещё раз — вставало (Jaecoo J7, №16621).
+            self.check_cancelled()
+            self.log("Магнитола остановила установщик (Killed) — пробую ещё раз...")
         self.shell(f"rm -f {_LOCALINSTALL_REMOTE_APK} {_LOCALINSTALL_REMOTE_HELPER}", check=False)
 
         new_packages = after - before

@@ -23,13 +23,14 @@ GRANT_DENIED = ("java.lang.SecurityException: You need the android.permission.IN
 class FakeHeadUnit:
     """pm list packages, Chery LocalInstall и MonjiShellInstaller — как отвечает настоящий Android 9."""
 
-    def __init__(self, installed=(), grant_denied=False, dex_failure=None, lands="now", stray=None, logcat=""):
+    def __init__(self, installed=(), grant_denied=False, dex_failure=None, lands="now", stray=None, logcat="", killed=0):
         self.installed = set(installed)
         self.grant_denied = grant_denied
         self.dex_failure = dex_failure
         self.lands = lands      # когда система допишет пакет после LocalInstall: "now", "late" (через секунды), "never"
         self.stray = stray      # пакет прошлого приложения, который дописался только сейчас (лог №2042: free.zona)
         self.logcat = logcat    # что хелпер оставил в logcat (тег LocalInstall)
+        self.killed = killed    # сколько первых запусков хелпера система убивает («Killed», лог №16621)
         self.commands = []
 
     def shell(self, command, check=True, timeout=120):
@@ -39,6 +40,9 @@ class FakeHeadUnit:
             out = "".join(f"package:{p}\n" for p in sorted(self.installed | {"android"}))
         elif command.startswith("logcat"):
             out = self.logcat
+        elif "LocalInstall" in command and self.killed:
+            self.killed -= 1
+            out = "Killed\n"
         elif "LocalInstall" in command:
             if self.stray:
                 self.installed.add(self.stray)
@@ -63,7 +67,7 @@ class FakeHeadUnit:
     def helper_runs(self):
         runs = []
         for command in self.commands:
-            if "LocalInstall" in command:
+            if "LocalInstall" in command and not command.startswith("logcat"):
                 runs.append("localinstall")
             elif "MonjiShellInstaller" in command:
                 runs.append("dex " + command.rsplit("--flags ", 1)[1])
@@ -273,3 +277,38 @@ def test_android_localinstall_waits_for_the_apks_own_package():
     assert 'sleep 2; i=\\$((i+1)); done' in code
     engine = _code(KOTLIN / "usb/InstallEngine.kt")
     assert "AdbSession.installApkLocalinstall(apk, helper.readBytes(), methodLog, staged, currentPackageName)" in engine
+
+
+def test_killed_helper_is_run_once_more(make_ctx):
+    # №16621 (Jaecoo J7, ПК 1.1.24): система убила хелпер — «Killed», пакет не встал, остальные способы на Chery
+    # DesaySV закрыты («Restriction prevents installing»). Техник нажал ещё раз — встало. Теперь повтор сам.
+    device = FakeHeadUnit(killed=1)
+    ctx = make_ctx(device, locked=True)
+    ctx.install_apk_auto(ctx.test.apk)
+    assert device.helper_runs() == ["localinstall", "localinstall"]
+    assert ctx.test.grants == [PKG]
+    assert any("остановила установщик (Killed) — пробую ещё раз" in line for line in ctx.test.log)
+
+
+def test_killed_twice_is_a_plain_failure_after_two_runs(make_ctx):
+    device = FakeHeadUnit(killed=2)
+    ctx = make_ctx(device, locked=False)
+    with pytest.raises(install_context.AdbError, match="Killed"):
+        ctx.install_apk_localinstall(ctx.test.apk)
+    assert device.helper_runs() == ["localinstall", "localinstall"]
+
+
+def test_plain_refusal_is_not_retried(make_ctx):
+    device = FakeHeadUnit(lands="never")
+    ctx = make_ctx(device, locked=False)
+    with pytest.raises(install_context.AdbError):
+        ctx.install_apk_localinstall(ctx.test.apk)
+    assert device.helper_runs() == ["localinstall"]
+    assert not any("Killed" in line for line in ctx.test.log)
+
+
+def test_killed_helper_detection():
+    assert install_context.localinstall_killed("Killed\n")
+    assert install_context.localinstall_killed("/system/bin/sh: line 1: 1234 Killed  app_process ...")
+    assert not install_context.localinstall_killed("")
+    assert not install_context.localinstall_killed("Success")
