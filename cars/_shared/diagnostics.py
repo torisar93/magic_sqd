@@ -44,6 +44,8 @@ A11Y_TITLE = "Спецвозможности и спецдоступы"
 # Длинные списки служб — по одной на строку: «a/b:c/d» (settings) и «{…}, {…}» (dumpsys accessibility).
 _SERVICE_SPLIT = re.compile(r"(?<=\}), (?=\{)|(?<=[\w.$]):(?=[A-Za-z][\w.]*/)")
 
+# В командах разделов нет слова «install» строчными: Geely OneOS/N155 закрывают ЛЮБУЮ команду с ним («error: closed»),
+# и три раздела выходили пустыми (№16323, №16469; разбор 14.11.2026) — «inst[a]ll» в grep, «${i}all» в именах настроек.
 # (заголовок, команда на магнитоле, сколько строк оставить). Команды — только чтение; каждая со своим ограничением,
 # чтобы весь лог был в пределах пары сотен килобайт.
 SECTIONS = (
@@ -53,16 +55,16 @@ SECTIONS = (
     ("Права adb и SELinux", "id; getenforce 2>/dev/null", 4),
     ("Пользователи и ограничения",
      "pm list users 2>/dev/null; "
-     "dumpsys user 2>/dev/null | grep -iE 'restriction|disallow|no_install|no_debugging' | head -n 30; "
+     "dumpsys user 2>/dev/null | grep -iE 'restriction|disallow|no_inst[a]ll|no_debugging' | head -n 30; "
      "dumpsys device_policy 2>/dev/null | grep -iE 'device owner|profile owner|admin|disallow|restrict' | head -n 30", 70),
     ("Проверка приложений при установке",
-     "for k in package_verifier_enable verifier_verify_adb_installs package_verifier_user_consent "
-     "install_non_market_apps; do echo \"global $k=$(settings get global $k 2>/dev/null)\"; done; "
-     "echo \"secure install_non_market_apps=$(settings get secure install_non_market_apps 2>/dev/null)\"; "
-     "settings list global 2>/dev/null | grep -iE 'install|verif|package' | head -n 20; "
-     "settings list system 2>/dev/null | grep -iE 'install|white|black|forbid' | head -n 20", 50),
+     "i=inst; for k in package_verifier_enable verifier_verify_adb_${i}alls package_verifier_user_consent "
+     "${i}all_non_market_apps; do echo \"global $k=$(settings get global $k 2>/dev/null)\"; done; "
+     "echo \"secure ${i}all_non_market_apps=$(settings get secure ${i}all_non_market_apps 2>/dev/null)\"; "
+     "settings list global 2>/dev/null | grep -iE 'inst[a]ll|verif|package' | head -n 20; "
+     "settings list system 2>/dev/null | grep -iE 'inst[a]ll|white|black|forbid' | head -n 20", 50),
     ("Установщики и магазины на магнитоле",
-     "pm list packages -s 2>/dev/null | grep -iE 'store|market|install|appmanager|appmgr|upgrade|update|white|mega' "
+     "pm list packages -s 2>/dev/null | grep -iE 'store|market|inst[a]ll|appmanager|appmgr|upgrade|update|white|mega' "
      "| sort | head -n 40", 40),
     ("Сторонние приложения", "pm list packages -3 2>/dev/null | sort | head -n 80", 80),
     # Выдача разрешений после установки ответы магнитолы не проверяет: включилась ли служба на самом деле (Bound —

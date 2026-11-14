@@ -117,8 +117,15 @@ def hide(ctx, restore_label: str = RESTORE_LABEL) -> list:
         ctx.log("Режим стелс: скрывать нечего — " + ("все сторонние приложения уже скрыты." if state["p"]
                                                         else "сторонних приложений на магнитоле нет."))
         return []
-    chosen = _ask_many(ctx, visible, "Отмеченные приложения пропадут с экрана магнитолы. Вернуть — кнопкой "
-                                     f"«{restore_label}».")
+    try:
+        chosen = _ask_many(ctx, visible, "Отмеченные приложения пропадут с экрана магнитолы. Вернуть — кнопкой "
+                                         f"«{restore_label}».")
+    except Exception as exc:  # noqa: BLE001 — InstallCancelled у ПК и Android свой
+        # «Отмена» в окне выбора — не ошибка этапа (было «Этап завершился с ошибкой: Выбор отменён…», №16182);
+        # «Остановить» (Остановлено пользователем) — как раньше.
+        if type(exc).__name__ != "InstallCancelled" or "отмен" not in str(exc).lower():
+            raise
+        chosen = []
     if not chosen:
         ctx.log("Режим стелс: ничего не выбрано.")
         return []

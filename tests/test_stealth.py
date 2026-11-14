@@ -265,3 +265,17 @@ def test_grant_disable_enable_take_a_checkbox_list():
     assert unit.disabled == {"a.b"}
     adb_permissions.disable_app(ctx, "c.d")  # одно имя — как раньше
     assert unit.disabled == {"a.b", "c.d"}
+
+
+def test_cancel_in_the_window_is_not_a_stage_error():
+    """«Отмена» в окне выбора — «ничего не выбрано», а не «Этап завершился с ошибкой» (№16182, 14.11.2026)."""
+    class InstallCancelled(RuntimeError):
+        pass
+
+    unit = HeadUnit(third=["a.b"])
+    ctx = Ctx(unit)
+    ctx.ask_choice = lambda *a, **k: (_ for _ in ()).throw(InstallCancelled("Выбор отменён пользователем."))
+    assert stealth.hide(ctx) == [] and ctx.logs[-1] == "Режим стелс: ничего не выбрано."
+    ctx.ask_choice = lambda *a, **k: (_ for _ in ()).throw(InstallCancelled("Остановлено пользователем."))
+    with pytest.raises(InstallCancelled):
+        stealth.hide(ctx)

@@ -195,3 +195,16 @@ def test_probe_on_geely_closed_pm_install_cleans_up_without_the_forbidden_word(t
     assert cleanup and not any("install" in c for c in cleanup), cleanup
     assert "msqd_*test.apk" in cleanup[0] and "install" not in diagnostics.PROBE_REMOTE
     assert "проба здесь не показательна" in section(ctx, diagnostics.PROBE_TITLE)
+
+
+def test_section_commands_avoid_the_word_geely_blocks():
+    """Geely OneOS/N155 закрывают любую команду со словом «install» строчными — три раздела были пустыми (№16323)."""
+    for title, command, _ in diagnostics.SECTIONS:
+        assert "install" not in command, title
+
+
+def test_install_settings_still_queried_by_name():
+    ctx = Ctx({"i=inst; for k in": "global install_non_market_apps=1"})
+    diagnostics.collect(ctx)
+    command = next(c for c in ctx.commands if c.startswith("i=inst; for k in"))
+    assert "${i}all_non_market_apps" in command and "verifier_verify_adb_${i}alls" in command
