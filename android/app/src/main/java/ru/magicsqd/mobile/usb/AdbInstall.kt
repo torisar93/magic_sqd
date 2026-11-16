@@ -541,8 +541,11 @@ fun installApkViaLocalinstall(
             val logcat = runAdbShellCommand(transport, "logcat -d -s LocalInstall", log)
             val status = localinstallStatus((logcat as? AdbShellResult.Output)?.text ?: "")
             val candidates = if (newPackages.isEmpty()) "нет" else newPackages.joinToString(", ")
+            // Хелпер молчит и в logcat итога нет — без пустого «: » в конце (№17634: «…новых пакетов: нет): »).
+            val detail = listOf(text.trim(), status).filter { it.isNotEmpty() }.joinToString(" ")
             return AdbInstallResult.Failed(
-                "localinstall не подтвердил успех (новых пакетов: $candidates): ${listOf(text.trim(), status).filter { it.isNotEmpty() }.joinToString(" ")}"
+                "localinstall не подтвердил успех (новых пакетов: $candidates)" +
+                    (if (detail.isEmpty()) " — магнитола не приняла файл и ничего не ответила" else ": $detail")
             )
         }
     }
