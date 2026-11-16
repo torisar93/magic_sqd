@@ -2297,6 +2297,9 @@
 
   function runStageOperation(method, args, page, card, actionIndex = null) {
     if (labInstallBusy || waitingForUsb()) return;
+    // Kotlin занят другим — например, Wi-Fi-подключение ждёт подтверждения ключа на магнитоле (№16672): «дождитесь»,
+    // а не «Этап завершился с ошибкой: Другая операция ещё выполняется».
+    if (operationBusy()) { showLabBusyNotice(); return; }
     stageOperation = { index: args.index, actionIndex };
     labInstallBusy = true;
     renderNav();
@@ -2870,6 +2873,7 @@
     btn.classList.add('apps-install-start');
     btn.addEventListener("click", () => {
       if (labInstallBusy || waitingForUsb()) return;
+      if (operationBusy()) { showLabBusyNotice(); return; }  // как runStageOperation (№16672)
       // Wi-Fi ADB: подключение НЕ нужно заранее — сначала скачиваем, потом окно подключения (beginWifiInstall).
       const wifiFirst = connectionModeFor(stage) === "wifi";
       if (!wifiFirst && !adbConnected) { showNoAdbNotice(); return; }
@@ -3949,6 +3953,28 @@
     ]);
   }
 
+  // «Скопировать лог»: Huawei с Android 10–12 не дают WebView clipboard API — «Не удалось скопировать лог
+  // автоматически» (№17312, №17259, №17313; 8 логов, все Huawei). Тогда — старый способ через выделение, как
+  // copyText в stage_run.js (окно этапа).
+  async function copyLogText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+      document.body.append(area);
+      area.select();
+      area.setSelectionRange(0, text.length);
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch (_) { copied = false; }
+      area.remove();
+      return copied;
+    }
+  }
+
   function setMenuActionLabel(button, text) {
     const label = button.querySelector(".menu13-action-label");
     if (label) label.textContent = text;
@@ -4207,8 +4233,8 @@
     const copyLog = menuAction("Скопировать лог", "copy");
     copyLog.dataset.action = "copy-log";
     copyLog.addEventListener("click", async () => {
-      try { await navigator.clipboard.writeText(logPanelEl.innerText); setMenuActionLabel(copyLog, "Лог скопирован"); }
-      catch (_) { setMenuActionLabel(copyLog, "Не удалось скопировать"); log("Не удалось скопировать лог автоматически."); }
+      if (await copyLogText(logPanelEl.innerText)) setMenuActionLabel(copyLog, "Лог скопирован");
+      else { setMenuActionLabel(copyLog, "Не удалось скопировать"); log("Не удалось скопировать лог автоматически."); }
     });
     const account = el("button", { class: "menu13-account-link", type: "button", "data-action": "account" }, [
       el("span", { class: "menu13-avatar" }, [AppIcons.icon("user")]),
@@ -4737,12 +4763,11 @@
     logBarEl.addEventListener("click", () => setLogOpen(true));
     logCollapseBtn.addEventListener("click", () => setLogOpen(false));
     logCopyBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(logPanelEl.innerText);
+      if (await copyLogText(logPanelEl.innerText)) {
         const original = logCopyBtn.innerHTML;
         logCopyBtn.replaceChildren(usbStageIcon('check'));
         setTimeout(() => { logCopyBtn.innerHTML = original; }, 1500);
-      } catch (_) {
+      } else {
         log("Не удалось скопировать лог автоматически.");
       }
     });
