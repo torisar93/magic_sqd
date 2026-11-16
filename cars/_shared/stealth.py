@@ -65,7 +65,18 @@ def _write_state(ctx, state: dict) -> bool:
         ctx.shell(f"rm -f {STATE_FILE}", check=False, timeout=30)
         return True
     quoted = " ".join(f"'{line}'" for line in lines)  # имена проверены регэкспами — кавычек в них нет
-    return _SAVED in _text(ctx.shell(f"printf '%s\\n' {quoted} > {STATE_FILE} && echo {_SAVED}", check=False, timeout=30))
+    answer = _text(ctx.shell(f"printf '%s\\n' {quoted} > {STATE_FILE} && echo {_SAVED}", check=False, timeout=30))
+    if _SAVED in answer:
+        return True
+    # Jolion 2026 (x9h_a01g, Android 12; №17488, 16.11.2026): подтверждение не пришло, причина неизвестна — сверяем
+    # запись чтением (ответ мог потеряться), не записалось — ответ магнитолы в журнал.
+    try:
+        if read_state(ctx) == {kind: list(state.get(kind, [])) for kind in _KINDS}:
+            return True
+    except RuntimeError:
+        pass
+    ctx.log(f"Режим стелс: ответ магнитолы на запись списка — {answer[:300] or '(пусто)'}")
+    return False
 
 
 def _packages(ctx, flags: str) -> list[str]:
@@ -108,6 +119,9 @@ def hide(ctx, restore_label: str = RESTORE_LABEL) -> list:
     state = read_state(ctx)
     installed = adb_permissions.list_installed_packages(ctx)
     if not installed:
+        if _packages(ctx, "-s"):  # штатные магнитола назвала — она на связи, сторонних и правда нет (№17108: техник
+            ctx.log("Режим стелс: скрывать нечего — сторонних приложений на магнитоле нет.")  # удалил все)
+            return []
         ctx.log("Не удалось получить список приложений: магнитола не ответила или оборвалась связь. Подождите несколько "
                 "секунд и нажмите «Выполнить» ещё раз.")
         return []

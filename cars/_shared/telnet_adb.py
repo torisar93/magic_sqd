@@ -13,7 +13,9 @@ IPv6-адрес — link-local (fe80::...), поэтому телефон/ПК �
 поэтому берём ifIndex активного сетевого адаптера (того же, что и для
 Wi-Fi ADB в cars/_shared/wifi_adb.py)."""
 from __future__ import annotations
+import ipaddress
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -23,6 +25,9 @@ from pathlib import Path
 import mdns_scan  # см. mdns_scan.py — тот же каталог cars/_shared/, обычный import по sys.path
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+
+_MAC_RE = re.compile(r"[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}")
 
 
 def _powershell_path() -> str:
@@ -225,10 +230,21 @@ def enable_adb_via_telnet(
                 "Не нашёл IPv6-соседей в сети. Введите IPv6-адрес магнитолы вручную:",
                 title="Telnet ADB")
 
-    host = (ipv6_address or "").strip()
+    host = (ipv6_address or "").strip().strip("[]")
     if not host:
         raise RuntimeError("Не указан IPv6-адрес магнитолы")
-    if "%" not in host:
+    bare = host.split("%", 1)[0]
+    # ПК 1.1.25, №17286: введён MAC «02:00:00:00:00:00» — к нему дописалась зона, и техник видел сырое
+    # «[Errno 11001] getaddrinfo failed». Что не так с вводом — говорим сразу.
+    if _MAC_RE.fullmatch(bare):
+        raise RuntimeError(f"Введён MAC-адрес ({bare}), а нужен IPv6-адрес магнитолы — он начинается с «fe80::» (в "
+                           "PingTools на телефоне — строка IPv6 у устройства «Android»). Запустите этап ещё раз.")
+    try:
+        version = ipaddress.ip_address(bare).version
+    except ValueError:
+        raise RuntimeError(f"«{bare}» — не адрес. Нужен IPv6-адрес магнитолы вида fe80::1a2b:3cff:fe4d:5e6f "
+                           "(в PingTools на телефоне — строка IPv6). Запустите этап ещё раз.") from None
+    if version == 6 and "%" not in host:
         host = f"{host}%{get_active_interface_index()}"
 
     ctx.log(f"Подключаюсь по telnet к [{host}]:{port}")

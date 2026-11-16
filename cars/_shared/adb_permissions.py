@@ -659,9 +659,14 @@ def _remove_with_helper(ctx, package: str, refusal: list | None = None):
         ctx.log("dex-хелпер не удалил: не записался на магнитолу (" + (_answer_text(pushed) or "adb push не сработал") + ")")
         return False
     ctx.shell(f"chmod 644 {_PKG_HELPER_REMOTE}", check=False)
-    result = ctx.shell(f"CLASSPATH={_PKG_HELPER_REMOTE} app_process /data/local/tmp {_PKG_HELPER_CLASS} {package}",
-                       check=False, timeout=90)
+    # Changan CS75 Plus S311_G1 (ПК 1.1.25, №17166): хелпер молчал 90 с — исключение таймаута уходило наверх, этап падал
+    # «Ошибка установки: Команда не ответила за 90 сек». Не ответил — значит не удалил: дальше, как при отказе.
+    result = _shell_or_timeout(
+        ctx, f"CLASSPATH={_PKG_HELPER_REMOTE} app_process /data/local/tmp {_PKG_HELPER_CLASS} {package}", 90)
     ctx.shell(f"rm -f {_PKG_HELPER_REMOTE}", check=False)
+    if result is None:
+        ctx.log("dex-хелпер не удалил: магнитола не ответила за 90 с")
+        return False
     text = _answer_text(result)
     if "success" in text.lower() and "failure" not in text.lower():
         return True

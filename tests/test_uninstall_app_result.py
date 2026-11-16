@@ -420,3 +420,23 @@ def test_success_but_still_installed_is_not_gotovo():
     adb_permissions.uninstall_app(ctx, "ru.yandex.music")
     assert log[-1] == "Готово."
     assert adb_permissions.remove_for_rollback(ctx, "ru.yandex.music") == "removed"
+
+
+def test_silent_dex_helper_is_not_an_install_error(tmp_path):
+    """№17166 (ПК 1.1.25, Changan CS75 Plus S311_G1): pm молчит, и dex-хелпер молчит 90 с — таймаут уходил наверх, этап
+    падал «Ошибка установки: Команда не ответила за 90 сек». Теперь — «не удалось удалить», как при отказе."""
+    (tmp_path / adb_permissions._PKG_HELPER_DEX).write_bytes(b"dex")
+    ctx, log, commands = _changan_ctx(AdbTimeoutError, installed=True, services="null")
+    ctx.shared_dir = tmp_path
+    ctx.adb = lambda *args, **kw: SimpleNamespace(returncode=0, stdout="", stderr="")
+    shell = ctx.shell
+
+    def shell_with_helper(command, check=True, timeout=120):
+        if command.startswith("CLASSPATH="):
+            raise AdbTimeoutError(f"Команда не ответила за {timeout} сек")
+        return shell(command, check=check, timeout=timeout)
+    ctx.shell = shell_with_helper
+    adb_permissions.uninstall_app(ctx, "ace.jun.simplecontrol")
+    assert "dex-хелпер не удалил: магнитола не ответила за 90 с" in log
+    assert log[-1].startswith("Не удалось удалить:")
+    assert adb_permissions.remove_for_rollback(ctx, "ace.jun.simplecontrol").startswith("failed")

@@ -23,7 +23,7 @@ class HeadUnit:
     """Магнитола: сторонние/штатные пакеты, отключённые, secure-настройки и файлы — команды shell разбираются как есть."""
 
     def __init__(self, third=(), system=("android", "com.android.settings"), disabled=(), secure=None, files=None,
-                 refuse=(), writable=True):
+                 refuse=(), writable=True, lost_answer=False):
         self.third = list(third)
         self.system = list(system)
         self.disabled = set(disabled)
@@ -31,6 +31,7 @@ class HeadUnit:
         self.files = dict(files or {})
         self.refuse = set(refuse)
         self.writable = writable
+        self.lost_answer = lost_answer  # записала, а «msqd_saved» не дошло (вариант для №17488)
         self.commands: list[str] = []
 
     def run(self, command: str) -> str:
@@ -75,7 +76,7 @@ class HeadUnit:
             if not self.writable:
                 return "/system/bin/sh: can't create: Read-only file system"
             self.files[m.group(2)] = "".join(part + "\n" for part in re.findall(r"'([^']*)'", m.group(1)))
-            return "msqd_saved"
+            return "" if self.lost_answer else "msqd_saved"
         m = re.fullmatch(r"cmd notification allow_listener '(\S+)'", command)
         if m:
             self.listeners = getattr(self, "listeners", []) + [m.group(1)]
@@ -279,3 +280,36 @@ def test_cancel_in_the_window_is_not_a_stage_error():
     ctx.ask_choice = lambda *a, **k: (_ for _ in ()).throw(InstallCancelled("Остановлено пользователем."))
     with pytest.raises(InstallCancelled):
         stealth.hide(ctx)
+
+
+def test_lost_save_answer_is_checked_by_reading_back():
+    # №17488 (Jolion 2026, x9h): «msqd_saved» не пришло — если файл на магнитоле записан, скрываем как обычно.
+    unit = HeadUnit(third=["a.b", "c.d"], lost_answer=True)
+    ctx = Ctx(unit, ['["a.b"]'])
+    assert stealth.hide(ctx) == ["a.b"]
+    assert unit.files[stealth.STATE_FILE] == "p a.b\n"
+
+
+def test_failed_save_logs_the_head_unit_answer():
+    unit = HeadUnit(third=["a.b"], writable=False)
+    ctx = Ctx(unit, ['["a.b"]'])
+    assert stealth.hide(ctx) == []
+    assert any("ответ магнитолы на запись списка — /system/bin/sh: can't create: Read-only file system" in m
+               for m in ctx.logs)
+
+
+def test_no_third_party_apps_is_not_called_silence():
+    # №17108: техник удалил все сторонние приложения — «скрывать нечего», а не «магнитола не ответила».
+    ctx = Ctx(HeadUnit(third=[]))
+    assert stealth.hide(ctx) == []
+    assert ctx.logs[-1] == "Режим стелс: скрывать нечего — сторонних приложений на магнитоле нет."
+
+
+def test_silent_head_unit_on_hide_is_still_silence():
+    unit = HeadUnit(third=["a.b"])
+    ctx = Ctx(unit)
+    real = ctx.shell
+    ctx.shell = lambda command, check=True, timeout=120: (
+        SimpleNamespace(stdout="", stderr="", returncode=-1) if command.startswith("pm list") else real(command))
+    assert stealth.hide(ctx) == []
+    assert ctx.logs[-1].startswith("Не удалось получить список приложений: магнитола не ответила")
