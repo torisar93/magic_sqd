@@ -68,11 +68,15 @@ object UsbFlashSession {
     fun connectBlocking(context: Context, log: (String) -> Unit): Result<FileSystem> {
         disconnect()
         appContext = context.applicationContext
-        val target = listMassStorageDevices(context).firstOrNull()
+        var target = listMassStorageDevices(context).firstOrNull()
             ?: return Result.failure(IllegalStateException(
                 "Флешка не найдена (нет USB mass storage устройств) — проверь OTG-подключение."))
         if (!requestUsbPermissionBlocking(context, target.usbDevice)) {
-            return Result.failure(IllegalStateException("Пользователь отклонил разрешение на доступ к флешке"))
+            // «Отказ», а техник ничего не нажимал: флешка переподключилась, пока шёл запрос («разделы ещё не
+            // определились»), и у её нового экземпляра разрешение уже есть — окно «Нет разрешения на USB», а следом
+            // «Флешка смонтирована» (1.1.25: №16696, №17210, №17560). Как ADB: AdbSession.permissionArrived.
+            target = permittedFlashWithin(context, 3000)
+                ?: return Result.failure(IllegalStateException("Пользователь отклонил разрешение на доступ к флешке"))
         }
         if (FlashTransports.choose(context, log) == FlashTransport.ANDROID) {
             return mount(target, FlashTransport.ANDROID, log)
@@ -229,6 +233,9 @@ object UsbFlashSession {
                 if (fallBack(IOException(result.reason), "форматировании", log) != null) {
                     format(capacityBytes, volumeLabel, log)
                 } else {
+                    // Следующее нажатие — уже на новом подключении, как у записи и чтения: повторное «Форматировать»
+                    // шло через то же мёртвое подключение и падало так же (№16789, 1.1.25).
+                    noteFailure(result.reason)
                     Result.failure(IllegalStateException(result.reason))
                 }
             }
@@ -238,6 +245,17 @@ object UsbFlashSession {
     fun requireFs(): FileSystem = fs ?: error("Флешка не подключена — сначала нужно её смонтировать")
 
     fun capacityBytes(): Long = requireFs().capacity
+
+    /** Вставленная флешка, на которую разрешение появилось в течение [timeoutMs] после «отказа», или null. */
+    private fun permittedFlashWithin(context: Context, timeoutMs: Long): UsbMassStorageDevice? {
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager ?: return null
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (true) {
+            listMassStorageDevices(context).firstOrNull { usbManager.hasPermission(it.usbDevice) }?.let { return it }
+            if (System.currentTimeMillis() >= deadline) return null
+            Thread.sleep(300)
+        }
+    }
 
     private fun requestUsbPermissionBlocking(context: Context, device: UsbDevice): Boolean {
         val latch = CountDownLatch(1)

@@ -118,3 +118,25 @@ def test_webview_update_is_not_reported_as_our_update():
     src = _code(KOTLIN / "ProcessExitNote.kt")
     assert 'Regex("stop ([\\\\w.]+) due to killDueToPackageUpdate")' in src
     assert "обновился компонент Android WebView" in src
+
+
+def test_flash_connect_waits_for_a_late_permission_after_denial():
+    # 1.1.25, разбор 16.11: «Пользователь отклонил разрешение на доступ к флешке» и окно «Нет разрешения на USB», а
+    # следующая попытка — «Флешка смонтирована» без нажатий техника (№16696, №17210, №17560): флешка переподключилась,
+    # пока шёл запрос. Как ADB (permissionArrived): до 3 с ждём разрешение на вставленную флешку.
+    src = _code(KOTLIN / "usb/UsbFlashSession.kt")
+    connect = re.search(r"fun connectBlocking\(.*?\n    }\n", src, flags=re.S).group(0)
+    assert "target = permittedFlashWithin(context, 3000)" in connect
+    assert connect.index("requestUsbPermissionBlocking") < connect.index("permittedFlashWithin") < connect.index(
+        "Пользователь отклонил разрешение на доступ к флешке")
+    helper = re.search(r"private fun permittedFlashWithin\(.*?\n    }\n", src, flags=re.S).group(0)
+    assert "usbManager.hasPermission(it.usbDevice)" in helper and "Thread.sleep(300)" in helper
+
+
+def test_failed_format_marks_the_connection_broken():
+    # №16789 (1.1.25): «Форматировать» → MAX_RECOVERY → окно «Флешка перестала отвечать»; повторное нажатие шло через
+    # то же подключение (remountIfReplugged смотрит на broken, а format его не ставил).
+    src = _code(KOTLIN / "usb/UsbFlashSession.kt")
+    fmt = re.search(r"fun format\(.*?\n    }\n", src, flags=re.S).group(0)
+    failed = fmt.split("is FormatResult.Failed ->", 1)[1]
+    assert failed.index("noteFailure(result.reason)") < failed.index("Result.failure(IllegalStateException(result.reason))")
