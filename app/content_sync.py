@@ -346,7 +346,10 @@ def download_file(base_url: str, remote_path: str, dest: Path,
     """Скачивает один файл в dest (атомарно — через .part)."""
     url = f"{base_url}/{_encode_path(remote_path)}"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp_dest = dest.with_name(dest.name + ".part")
+    # Своё имя .part у каждого скачивания: две синхронизации одной папки (инструкция открывается, пока идёт проверка
+    # обновлений) писали в один «картинка.png.part» — первая его переименовывала, вторая падала WinError 2
+    # «не удается найти … .part» (№17583, ПК 1.1.25). Теперь каждая подменяет итоговый файл своим целым .part.
+    tmp_dest = dest.with_name(f"{dest.name}.{os.getpid()}-{threading.get_ident()}.part")
     try:
         with open_url(url, timeout=60) as resp, open(tmp_dest, "wb") as f:
             try:
