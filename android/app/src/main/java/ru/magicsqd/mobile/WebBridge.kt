@@ -2194,6 +2194,9 @@ class WebBridge(private val context: Context, private val webView: WebView) {
      * "list_packages" (см. pyActionEnabled); null — встроенным способом. */
     private fun pyListPackages(thirdPartyOnly: Boolean): List<String>? {
         if (!pyActionEnabled("list_packages")) return null
+        // «Стоп» прошлого этапа здесь ни при чём (как runPyAction): иначе список отвечал «Остановлено пользователем»
+        // и шёл встроенным способом (№16826, №17319, №17540 — с 1.1.21).
+        labCancelInstall = false
         val r = pyBridge().call("adb_permissions", "list_installed_packages", JSONArray().put(thirdPartyOnly))
         val list = r.result as? JSONArray
         if (!r.ok || list == null) {

@@ -387,6 +387,12 @@ def download_file(base_url: str, remote_path: str, dest: Path,
     except (urllib.error.HTTPError, urllib.error.URLError) as exc:
         tmp_dest.unlink(missing_ok=True)
         raise ContentSyncError(f"Ошибка скачивания {remote_path}: {exc}") from exc
+    except (TimeoutError, ConnectionError, http.client.HTTPException) as exc:
+        # Обрыв посреди скачивания (ПК 1.1.25, №17173: «Скачиваю YK_MonjaroMOD…», 7 мин, «Ошибка установки: The read
+        # operation timed out» — упал весь этап): как обрыв HTTP — «Не удалось скачать X», остальные файлы качаются
+        # дальше. Текст исключения остаётся в сообщении — по нему окно «Нет интернета» (user_errors.js).
+        tmp_dest.unlink(missing_ok=True)
+        raise ContentSyncError(f"Ошибка скачивания {remote_path}: связь оборвалась ({exc})") from exc
     except BaseException:
         tmp_dest.unlink(missing_ok=True)
         raise

@@ -271,6 +271,9 @@ def _raise_if_version_downgrade(text: str) -> None:
         raise SignatureMismatchError(text)
 
 
+_SELINUX_PERMISSIVE_RE = re.compile(r"^[^\n]*\bavc: [^\n]*\bpermissive=1\b[^\n]*$\n?", re.MULTILINE)
+
+
 def _check_pm_install_result(result) -> None:
     """pm install через adb shell (в отличие от "adb install" целиком) не
     всегда даёт надёжный код возврата — старые прошивки/adb используют shell
@@ -281,7 +284,10 @@ def _check_pm_install_result(result) -> None:
     text = ((result.stdout or "") + (result.stderr or "")).strip()
     if "success" not in text.lower() or "failure" in text.lower():
         _raise_if_version_downgrade(text)
-        raise AdbError(text or "pm install не подтвердил успех (пустой вывод)")
+        # Jetour T1 (ПК 1.1.24, №16713): pm ответил одной строкой SELinux «avc: denied … permissive=1» — это не отказ
+        # (permissive пропускает), а техник видел её причиной «Не установлено». Такие строки из причины убираем.
+        reason = _SELINUX_PERMISSIVE_RE.sub("", text).strip()
+        raise AdbError(reason or "pm install не подтвердил успех (пустой вывод)")
 
 
 # Ошибки adb, после которых перебирать остальные способы установки бессмысленно:
