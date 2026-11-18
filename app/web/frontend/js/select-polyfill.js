@@ -45,7 +45,15 @@
   }
   if (nativeSupported) return;
 
-  const topLayer = typeof HTMLElement !== 'undefined' && 'popover' in HTMLElement.prototype;
+  // Popover API — по селектору: в WKWebView программы на macOS 27 'popover' в прототипе есть, а ':popover-open' —
+  // «не селектор» (Popover API выключен): showPopover не поднимал список в top layer, и он обрезался краем окна.
+  let topLayer = false;
+  try {
+    topLayer = typeof HTMLElement !== 'undefined' && typeof HTMLElement.prototype.showPopover === 'function'
+      && CSS.supports('selector(:popover-open)');
+  } catch (_) {
+    topLayer = false;
+  }
   const GAP = 4;
   const EDGE = 8;
 
@@ -53,6 +61,25 @@
     popup.hidden = true;
     if (topLayer && popup.matches(':popover-open')) popup.hidePopover();
     popup.previousElementSibling?.classList.remove('csel-open');
+    restoreDialogClip(popup);
+  }
+
+  // Без top layer список лежит внутри окна (<dialog>) и обрезается его краем (overflow) — «полторы строки» в коротком
+  // окне выбора (29.10, 18.11: macOS 27, программа с выключенным Popover API). Пока список открыт, окно не обрезает,
+  // если его содержимое и так помещается (прокручиваемое окно — как было: снять обрезку значило бы вылезти содержимым).
+  function unclipDialog(trigger) {
+    const dialog = trigger.closest('dialog');
+    if (!dialog || 'cselOverflow' in dialog.dataset || dialog.scrollHeight > dialog.clientHeight + 1) return;
+    dialog.dataset.cselOverflow = dialog.style.overflow;
+    dialog.style.overflow = 'visible';
+  }
+
+  function restoreDialogClip(popup) {
+    const dialog = popup.closest('dialog');
+    if (!dialog || !('cselOverflow' in dialog.dataset)) return;
+    if (dialog.querySelector('.csel-popup:not([hidden])')) return;
+    dialog.style.overflow = dialog.dataset.cselOverflow;
+    delete dialog.dataset.cselOverflow;
   }
 
   function closeAllExcept(exceptPopup) {
@@ -196,6 +223,8 @@
         hidePopup(popup);
         return;
       }
+      // До показа списка: иначе он сам растянет прокрутку окна, и окно сочтётся не помещающимся.
+      if (!topLayer) unclipDialog(trigger);
       popup.hidden = false;
       trigger.classList.add('csel-open');
       renderOptions(select, popup);

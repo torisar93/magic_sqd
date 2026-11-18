@@ -535,13 +535,11 @@
     if (choices.length) {
       select.innerHTML = "";
       const packages = isPackageList(choices);
-      // macOS 27: WebKit сам рисует выпадающий список (appearance:base-select, js/select08.js), но в этом окне он
-      // открывается невидимым — стрелка повернулась, пунктов нет (жалоба техника на Jolion 2026, 29.10.2026; «Запустить
-      // приложения» и др. кончались «Выбор отменён»). Там приложения — списком прямо в окне, без всплывающего меню.
-      const inlineList = packages && window.Select08 && window.Select08.mode === "native-customizable"
-        && /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent);
-      select.size = inlineList ? Math.min(choices.length + 1, 8) : 0;
-      if (packages && !inlineList) {
+      // macOS 27: невидимый выпадающий список (29.10, Jolion 2026) — причина в выключенном Popover API программы, там
+      // теперь свой выпадающий список (js/select08.js, js/select-polyfill.js). Списка «прямо в окне» больше нет —
+      // владелец 18.11.2026: «выглядит супер уродски».
+      select.size = 0;
+      if (packages) {
         const placeholder = document.createElement("option");
         placeholder.value = "";
         placeholder.textContent = "— выберите приложение —";
@@ -562,7 +560,6 @@
       }
       select.style.display = "";
       select.value = packages ? "" : choices[0];
-      if (inlineList) select.selectedIndex = -1;
       valueInput.style.display = "none";
     } else {
       select.style.display = "none";
