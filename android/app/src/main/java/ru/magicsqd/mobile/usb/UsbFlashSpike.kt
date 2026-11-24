@@ -8,6 +8,9 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.atomic.AtomicBoolean
 import me.jahnen.libaums.core.UsbMassStorageDevice
 
 /**
@@ -39,10 +42,13 @@ fun requestUsbPermission(context: Context, device: UsbDevice, onResult: (granted
         return
     }
 
+    val appCtx = context.applicationContext
+    val settled = AtomicBoolean(false)
     val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
-            ctx.unregisterReceiver(this)
+            if (!settled.compareAndSet(false, true)) return
+            try { appCtx.unregisterReceiver(this) } catch (_: Exception) { }
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
             onResult(granted)
         }
@@ -63,11 +69,18 @@ fun requestUsbPermission(context: Context, device: UsbDevice, onResult: (granted
     val permissionIntent = PendingIntent.getBroadcast(context, 0, intent, flags)
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        context.registerReceiver(receiver, IntentFilter(ACTION_USB_PERMISSION), Context.RECEIVER_NOT_EXPORTED)
+        appCtx.registerReceiver(receiver, IntentFilter(ACTION_USB_PERMISSION), Context.RECEIVER_NOT_EXPORTED)
     } else {
         @Suppress("UnspecifiedRegisterReceiverFlag")
-        context.registerReceiver(receiver, IntentFilter(ACTION_USB_PERMISSION))
+        appCtx.registerReceiver(receiver, IntentFilter(ACTION_USB_PERMISSION))
     }
+    // Если техник свернул диалог и не ответил — снимаем ресивер через 65 с, чтобы он не висел в фоне
+    // (№18595, Android 13: CannotDeliverBroadcastException в фоне).
+    Handler(Looper.getMainLooper()).postDelayed({
+        if (settled.compareAndSet(false, true)) {
+            try { appCtx.unregisterReceiver(receiver) } catch (_: Exception) { }
+        }
+    }, 65_000L)
     usbManager.requestPermission(device, permissionIntent)
 }
 

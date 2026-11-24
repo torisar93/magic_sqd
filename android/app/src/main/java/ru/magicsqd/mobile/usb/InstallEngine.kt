@@ -271,6 +271,10 @@ class InstallEngine(
     private var currentApkName: String = "install.apk"
     // Имя пакета текущего APK (из getPackageArchiveInfo) — нужно способу jdwp_whitelist ДО установки.
     private var currentPackageName: String = "" 
+    // Был ли текущий пакет внесён в mInstallWhiteList по JDWP во время перебора способов: если после обрыва
+    // pm install следующий способ (pm_install) прошёл только благодаря этому патчу, нельзя запоминать pm_install
+    // вместо jdwp_whitelist для этой магнитолы (№17850, Jolion 2026 x9h: MicroG упал с INSTALL_FAILED_ABORTED).
+    private var jdwpPatchedCurrentApk: Boolean = false
     // Файл текущего APK на телефоне — способу system_app, чтобы достать из него библиотеки.
     private var currentApkFile: File? = null
     // Способ system_app: системный раздел уже открыт на запись в этом запуске (до перезагрузки).
@@ -440,7 +444,11 @@ class InstallEngine(
             }
         },
         "jdwp_whitelist" to { apk, staged, methodLog ->
-            AdbSession.installApkJdwpWhitelist(apk, currentPackageName, methodLog, staged, currentApkName)
+            val trackedLog: (String) -> Unit = { line ->
+                if ("добавлен в белый список" in line) jdwpPatchedCurrentApk = true
+                methodLog(line)
+            }
+            AdbSession.installApkJdwpWhitelist(apk, currentPackageName, trackedLog, staged, currentApkName)
         },
         "system_app" to { apk, staged, methodLog -> installSystemApp(apk, staged, methodLog) },
     )
@@ -957,6 +965,7 @@ class InstallEngine(
             var done = false
             var keptNewer = false
             var unsuitable: String? = null
+            jdwpPatchedCurrentApk = false
             for (methodIndex in order) {
                 val (label, install) = methods[methodIndex]
                 var attempt = perform(install, apk, { stagedPath() })
@@ -996,15 +1005,23 @@ class InstallEngine(
                         if (unsuitable != null) break
                     }
                     is AdbInstallResult.Success -> {
+                        // Если на этом APK уже сработал JDWP-патч белого списка, а затем при переборе прошёл обычный
+                        // pm_install*, — это заслуга JDWP-патча, а не pm_install (№17850): оставляем/запоминаем
+                        // jdwp_whitelist, чтобы следующий APK не получил INSTALL_FAILED_ABORTED.
+                        val viaJdwpSideEffect = jdwpPatchedCurrentApk && label in setOf("pm_install", "pm_install_stream", "pm_install_spoofed")
+                        val jdwpIndex = if (viaJdwpSideEffect) methods.indexOfFirst { it.first == "jdwp_whitelist" }.takeIf { it >= 0 } else null
+                        val effectiveIndex = jdwpIndex ?: methodIndex
+                        val effectiveLabel = methods[effectiveIndex].first
                         // Обновил dex-хелпер вместо localinstall — способ магнитолы прежний; localinstall подтверждаем на
                         // сеанс, только если он уже работал на ней (запомнен), иначе следующее приложение — снова по порядку.
                         confirmedMethod = if (updatedByDex && remembered != "localinstall") null else methodIndex
-                        if (!updatedByDex && methodIndex != 0 && !exclusive) {
-                            log("Сработал способ установки APK: $label — дальше буду использовать его же для остальных приложений.")
+                        if (viaJdwpSideEffect && jdwpIndex != null) confirmedMethod = jdwpIndex
+                        if (!updatedByDex && effectiveIndex != 0 && !exclusive) {
+                            log("Сработал способ установки APK: $effectiveLabel — дальше буду использовать его же для остальных приложений.")
                         }
-                        if (!updatedByDex && deviceModel != null && !exclusive && methodPrefs.getString(deviceModel, null) != label) {
-                            methodPrefs.edit().putString(deviceModel, label).apply()
-                            log("Запомнил: для магнитолы $deviceModel работает способ «$label» — в следующий раз начну с него.")
+                        if (!updatedByDex && deviceModel != null && !exclusive && methodPrefs.getString(deviceModel, null) != effectiveLabel) {
+                            methodPrefs.edit().putString(deviceModel, effectiveLabel).apply()
+                            log("Запомнил: для магнитолы $deviceModel работает способ «$effectiveLabel» — в следующий раз начну с него.")
                         }
                         log("Установлено: ${file.name}")
                         done = true

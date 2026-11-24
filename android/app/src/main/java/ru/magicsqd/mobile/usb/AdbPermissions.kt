@@ -157,7 +157,7 @@ object AdbPermissions {
         }
         val current = shellText("settings get secure enabled_accessibility_services", log).trim()
         val existing = if (current.isNotEmpty() && current != "null") {
-            current.split(":").filter { it.isNotEmpty() }.toMutableList()
+            current.split(":").filter { it.isNotEmpty() }.distinct().toMutableList()
         } else mutableListOf()
         if (component !in existing) {
             existing.add(component)
@@ -184,7 +184,7 @@ object AdbPermissions {
         }
         val current = shellText("settings get secure enabled_notification_listeners", log).trim()
         val existing = if (current.isNotEmpty() && current != "null") {
-            current.split(":").filter { it.isNotEmpty() }.toMutableList()
+            current.split(":").filter { it.isNotEmpty() }.distinct().toMutableList()
         } else mutableListOf()
         if (component !in existing) {
             existing.add(component)

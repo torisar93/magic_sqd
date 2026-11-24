@@ -535,6 +535,10 @@ class InstallContext:
             args = " ".join(["-r"] * reinstall + [shlex.quote(a) for a in (extra_args or [])])
             result = self.shell(f"pm install {args} {shlex.quote(staged)}", check=False, timeout=timeout)
             text = _completed_text(result)
+            if "must have --user" in text.lower() and "--user" not in args:
+                self.log("Прошивка требует флаг --user — повторяю pm install с --user current...")
+                result = self.shell(f"pm install --user current {args} {shlex.quote(staged)}", check=False, timeout=timeout)
+                text = _completed_text(result)
             if "Success" not in text:
                 _raise_if_version_downgrade(text)
                 raise AdbError(f"pm install (файл уже на магнитоле) не вернул Success: {text[:300]}")
@@ -542,6 +546,16 @@ class InstallContext:
         try:
             return self._adb.install(path, reinstall=reinstall, extra_args=extra_args, timeout=timeout)
         except AdbError as exc:
+            if "must have --user" in str(exc).lower() and "--user" not in (extra_args or []):
+                self.log("Прошивка требует флаг --user — повторяю adb install с --user current...")
+                try:
+                    return self._adb.install(
+                        path, reinstall=reinstall,
+                        extra_args=["--user", "current", *(extra_args or [])], timeout=timeout,
+                    )
+                except AdbError as retry_exc:
+                    _raise_if_version_downgrade(str(retry_exc))
+                    raise
             _raise_if_version_downgrade(str(exc))
             raise
 
@@ -1248,6 +1262,9 @@ class InstallContext:
         self.push(path, remote_path)
         extra = (" " + " ".join(extra_args)) if extra_args else ""
         result = self.shell(f"pm install -r {shlex.quote(remote_path)}{extra}", check=False)
+        if "must have --user" in _completed_text(result).lower() and "--user" not in extra:
+            self.log("Прошивка требует флаг --user — повторяю pm install с --user current...")
+            result = self.shell(f"pm install --user current -r {shlex.quote(remote_path)}{extra}", check=False)
         _check_pm_install_result(result)
 
     def install_apk_stream(self, path, remote_dir="/sdcard/Download", extra_args=None):
@@ -1268,6 +1285,9 @@ class InstallContext:
         size = path.stat().st_size
         extra = (" " + " ".join(extra_args)) if extra_args else ""
         result = self.shell(f"cat {shlex.quote(remote_path)} | pm install -S {size}{extra}", check=False)
+        if "must have --user" in _completed_text(result).lower() and "--user" not in extra:
+            self.log("Прошивка требует флаг --user — повторяю pm install -S с --user current...")
+            result = self.shell(f"cat {shlex.quote(remote_path)} | pm install --user current -S {size}{extra}", check=False)
         _check_pm_install_result(result)
 
     def install_apk_pm_spoofed(self, path, remote_dir="/data/local/tmp", extra_args=None):
@@ -1296,6 +1316,9 @@ class InstallContext:
         if "unknown option" in text or "invalid_installer" in text or "invalid installer" in text:
             self.log("Флаг -i отклонён этой прошивкой — пробую pm install без подмены установщика")
             result = self.shell(f"pm install -t -g -r {quoted_remote_path}{extra}", check=False)
+        elif "must have --user" in text and "--user" not in extra:
+            self.log("Прошивка требует флаг --user — повторяю pm install -i с --user current...")
+            result = self.shell(f"pm install --user current -i com.android.packageinstaller -t -g -r {quoted_remote_path}{extra}", check=False)
         _check_pm_install_result(result)
 
     def install_apk_jdwp_whitelist(self, path, remote_dir="/data/local/tmp", extra_args=None) -> None:

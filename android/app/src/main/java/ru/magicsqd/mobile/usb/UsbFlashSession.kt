@@ -65,32 +65,49 @@ object UsbFlashSession {
         broken = false
     }
 
+    private val connectLock = Any()
+    @Volatile private var connectGeneration = 0
+
     fun connectBlocking(context: Context, log: (String) -> Unit): Result<FileSystem> {
-        disconnect()
-        appContext = context.applicationContext
-        var target = listMassStorageDevices(context).firstOrNull()
-            ?: return Result.failure(IllegalStateException(
-                "Флешка не найдена (нет USB mass storage устройств) — проверь OTG-подключение."))
-        if (!requestUsbPermissionBlocking(context, target.usbDevice)) {
-            // «Отказ», а техник ничего не нажимал: флешка переподключилась, пока шёл запрос («разделы ещё не
-            // определились»), и у её нового экземпляра разрешение уже есть — окно «Нет разрешения на USB», а следом
-            // «Флешка смонтирована» (1.1.25: №16696, №17210, №17560). Как ADB: AdbSession.permissionArrived.
-            target = permittedFlashWithin(context, 3000)
-                ?: return Result.failure(IllegalStateException("Пользователь отклонил разрешение на доступ к флешке"))
-        }
-        if (FlashTransports.choose(context, log) == FlashTransport.ANDROID) {
-            return mount(target, FlashTransport.ANDROID, log)
-        }
-        val viaLibusb = mount(target, FlashTransport.LIBUSB, log)
-        val error = viaLibusb.exceptionOrNull() ?: return viaLibusb
-        if (error.message == FLASH_CORRUPTED) return viaLibusb  // испорченная FAT — способ связи ни при чём
-        // Не подключилась через libusb — сразу прежним способом; до перезапуска программы только им.
-        FlashTransports.noteFallback()
-        log("libusb: флешка не подключилась (${error.message}) — подключаюсь стандартным способом.")
-        val again = listMassStorageDevices(context).firstOrNull() ?: return viaLibusb
-        return mount(again, FlashTransport.ANDROID, log).onSuccess {
-            // «Разделы ещё не определились» — флешка не успела, а не libusb: не в счёт откатов подряд.
-            if (error.message != PARTITIONS_PENDING) FlashTransports.noteStandardHelped(context, log)
+        // По очереди (как AdbSession.connectBlocking): два одновременных подключения к одной флешке
+        // начинали с disconnect() и просили разрешение разом — Android отвечал отказом первому, а второе
+        // тут же монтировало флешку (1.1.26 Xiaomi Android 16: №18168, №18961).
+        val generation = connectGeneration
+        synchronized(connectLock) {
+            if (connectGeneration != generation && isMounted && isStillAttached(context)) {
+                fs?.let {
+                    log("Флешка уже смонтирована.")
+                    return Result.success(it)
+                }
+            }
+            disconnect()
+            appContext = context.applicationContext
+            val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            var target = listMassStorageDevices(context).firstOrNull()
+                ?: return Result.failure(IllegalStateException(
+                    "Флешка не найдена (нет USB mass storage устройств) — проверь OTG-подключение."))
+            if (!requestUsbPermissionBlocking(context, target.usbDevice) && usbManager?.hasPermission(target.usbDevice) != true) {
+                // «Отказ», а техник ничего не нажимал: флешка переподключилась, пока шёл запрос («разделы ещё не
+                // определились»), и у её нового экземпляра разрешение уже есть — окно «Нет разрешения на USB», а следом
+                // «Флешка смонтирована» (1.1.25: №16696, №17210, №17560). Как ADB: AdbSession.permissionArrived.
+                target = permittedFlashWithin(context, 3000)
+                    ?: return Result.failure(IllegalStateException("Пользователь отклонил разрешение на доступ к флешке"))
+            }
+            if (FlashTransports.choose(context, log) == FlashTransport.ANDROID) {
+                return mount(target, FlashTransport.ANDROID, log).also { if (it.isSuccess) connectGeneration++ }
+            }
+            val viaLibusb = mount(target, FlashTransport.LIBUSB, log)
+            val error = viaLibusb.exceptionOrNull() ?: return viaLibusb.also { connectGeneration++ }
+            if (error.message == FLASH_CORRUPTED) return viaLibusb  // испорченная FAT — способ связи ни при чём
+            // Не подключилась через libusb — сразу прежним способом; до перезапуска программы только им.
+            FlashTransports.noteFallback()
+            log("libusb: флешка не подключилась (${error.message}) — подключаюсь стандартным способом.")
+            val again = listMassStorageDevices(context).firstOrNull() ?: return viaLibusb
+            return mount(again, FlashTransport.ANDROID, log).onSuccess {
+                connectGeneration++
+                // «Разделы ещё не определились» — флешка не успела, а не libusb: не в счёт откатов подряд.
+                if (error.message != PARTITIONS_PENDING) FlashTransports.noteStandardHelped(context, log)
+            }
         }
     }
 

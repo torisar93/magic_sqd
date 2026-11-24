@@ -34,6 +34,11 @@ sealed class AdbInstallResult {
 internal fun helperReportedSuccess(text: String): Boolean =
     text.lineSequence().any { it.trim() == "Success" }
 
+/** Geely DS11-S1 / pikes_p177 (№17928, 24.11.2026): прошивка отклоняет pm install без флага --user
+ *  («java.lang.IllegalArgumentException: geely install must have --user, for example ... --user current»). */
+internal fun needsUserFlag(text: String): Boolean =
+    "must have --user" in text.lowercase()
+
 sealed class AdbPushResult {
     object Success : AdbPushResult()
     data class Failed(val reason: String) : AdbPushResult()
@@ -306,13 +311,24 @@ fun installApkOverAdb(
 
     // pm install для крупного APK (dexopt/верификация) может занимать заметно
     // больше 5с по умолчанию — на Redmi Note 7 не уложился, вис ровно на ~5с.
-    val installResult = runAdbShellCommand(
+    var installResult = runAdbShellCommand(
         transport, "pm install -r $remotePath", log, timeoutMs = 120000
     )
-    val pmOutput = when (installResult) {
+    var pmOutput = when (installResult) {
         is AdbShellResult.Output -> installResult.text
         is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install отклонён: ${installResult.reason}")
         is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install ошибка: ${installResult.reason}")
+    }
+    if (needsUserFlag(pmOutput)) {
+        log("Прошивка требует флаг --user — повторяю pm install с --user current...")
+        installResult = runAdbShellCommand(
+            transport, "pm install --user current -r $remotePath", log, timeoutMs = 120000
+        )
+        pmOutput = when (installResult) {
+            is AdbShellResult.Output -> installResult.text
+            is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install отклонён: ${installResult.reason}")
+            is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install ошибка: ${installResult.reason}")
+        }
     }
 
     if (!prePushed) runAdbShellCommand(transport, "rm -f $remotePath", log) // best effort, на результат не влияет
@@ -364,6 +380,16 @@ fun installApkSpoofedOverAdb(
             is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install отклонён: ${installResult.reason}")
             is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install ошибка: ${installResult.reason}")
         }
+    } else if (needsUserFlag(pmOutput)) {
+        log("Прошивка требует флаг --user — повторяю pm install -i с --user current...")
+        installResult = runAdbShellCommand(
+            transport, "pm install --user current -i com.android.packageinstaller -t -g -r $remotePath", log, timeoutMs = 120000
+        )
+        pmOutput = when (installResult) {
+            is AdbShellResult.Output -> installResult.text
+            is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install отклонён: ${installResult.reason}")
+            is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install ошибка: ${installResult.reason}")
+        }
     }
 
     if (!prePushed) runAdbShellCommand(transport, "rm -f $remotePath", log) // best effort, на результат не влияет
@@ -392,13 +418,24 @@ fun installApkStreamOverAdb(
     log("Файл записан на устройство. Запускаю pm install -S ${apk.size} (поток) ...")
     AdbInstallProgress.installing()
 
-    val installResult = runAdbShellCommand(
+    var installResult = runAdbShellCommand(
         transport, "cat $remotePath | pm install -S ${apk.size}", log, timeoutMs = 120000
     )
-    val pmOutput = when (installResult) {
+    var pmOutput = when (installResult) {
         is AdbShellResult.Output -> installResult.text
         is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install -S отклонён: ${installResult.reason}")
         is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install -S ошибка: ${installResult.reason}")
+    }
+    if (needsUserFlag(pmOutput)) {
+        log("Прошивка требует флаг --user — повторяю pm install -S с --user current...")
+        installResult = runAdbShellCommand(
+            transport, "cat $remotePath | pm install --user current -S ${apk.size}", log, timeoutMs = 120000
+        )
+        pmOutput = when (installResult) {
+            is AdbShellResult.Output -> installResult.text
+            is AdbShellResult.Rejected -> return AdbInstallResult.Failed("pm install -S отклонён: ${installResult.reason}")
+            is AdbShellResult.Failed -> return AdbInstallResult.Failed("pm install -S ошибка: ${installResult.reason}")
+        }
     }
 
     if (!prePushed) runAdbShellCommand(transport, "rm -f $remotePath", log)

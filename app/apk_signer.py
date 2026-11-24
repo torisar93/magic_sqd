@@ -21,8 +21,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import client_config
 from .adb_utils import CREATE_NO_WINDOW
 from .platform_paths import bundled_tools_root
+
+DEFAULT_RESIGN_TIMEOUT = 180
 
 
 class ApkSignError(RuntimeError):
@@ -64,12 +67,14 @@ def resign_cert_dir_for_model(model_dir: Path) -> Path | None:
 
 
 def resign_apk(base_dir: Path, apk_path: Path, cert_dir: Path, out_path: Path,
-                timeout: int = 60) -> None:
+                timeout: int | None = None) -> None:
     """Переподписывает apk_path сертификатом из cert_dir (private.pk8 —
     PKCS#8 DER, certificate.crt — X.509 PEM), результат — out_path.
     Бросает ApkSignError с понятным текстом, если JRE/apksigner.jar не
     найдены или сам apksigner вернул ошибку (например файл — не валидный
-    zip/APK)."""
+    zip/APK). Таймаут берётся из client.json (settings.apksigner_timeout_sec,
+    по умолчанию 180 с — 60 с не хватало на медленных ПК для крупных APK,
+    логи №19185, №19201)."""
     java_path = find_java_path(base_dir)
     if java_path is None:
         raise ApkSignError("Не найден встроенный JRE (tools/jre_minimal) — "
@@ -78,15 +83,22 @@ def resign_apk(base_dir: Path, apk_path: Path, cert_dir: Path, out_path: Path,
     if apksigner_jar is None:
         raise ApkSignError("Не найден tools/apksigner.jar — переустановите программу.")
 
+    effective_timeout = max(30, int(timeout if timeout is not None
+                                    else client_config.setting("apksigner_timeout_sec", DEFAULT_RESIGN_TIMEOUT)))
     private_key = cert_dir / "private.pk8"
     certificate = cert_dir / "certificate.crt"
 
-    result = subprocess.run(
-        [str(java_path), "-jar", str(apksigner_jar), "sign",
-         "--key", str(private_key), "--cert", str(certificate),
-         "--out", str(out_path), str(apk_path)],
-        capture_output=True, text=True, timeout=timeout, creationflags=CREATE_NO_WINDOW,
-    )
+    try:
+        result = subprocess.run(
+            [str(java_path), "-jar", str(apksigner_jar), "sign",
+             "--key", str(private_key), "--cert", str(certificate),
+             "--out", str(out_path), str(apk_path)],
+            capture_output=True, text=True, timeout=effective_timeout, creationflags=CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ApkSignError(
+            f"apksigner не успел переподписать {apk_path.name} за {effective_timeout} с — повторите установку."
+        ) from exc
     if result.returncode != 0 or not out_path.is_file():
         detail = (result.stdout + result.stderr).strip() or f"код возврата {result.returncode}"
         raise ApkSignError(f"apksigner не смог переподписать {apk_path.name}: {detail}")
