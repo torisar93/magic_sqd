@@ -89,7 +89,7 @@ def _secure_list(ctx, key: str) -> list[str]:
     value = _text(ctx.shell(f"settings get secure {key}", check=False, timeout=20))
     if not value or value == "null":
         return []
-    return [c for c in value.split(":") if _COMPONENT_RE.match(c)]
+    return list(dict.fromkeys(c for c in value.split(":") if _COMPONENT_RE.match(c)))
 
 
 def _ask_many(ctx, packages: list[str], prompt: str) -> list[str]:

@@ -2641,6 +2641,12 @@
     return list;
   }
 
+  function safeModelPath(m) {
+    if (!m) return "";
+    if (window.DeviceHint && typeof window.DeviceHint.modelPath === "function") return window.DeviceHint.modelPath(m);
+    return [m.brand, m.name, m.modification].filter(Boolean).join("/");
+  }
+
   function aiState() {
     const stage = currentIndex >= 0 ? stages[currentIndex] : null;
     const serial = (aiTransport && aiTransport.getDevice()) || aiLastDevice;
@@ -2648,12 +2654,12 @@
     const dialog = document.querySelector("dialog[open]");
     const state = {
       screen: model ? "wizard" : "catalog",
-      model: model ? window.DeviceHint.modelPath(model) : null,
+      model: model ? safeModelPath(model) : null,
       stage: stage ? { index: currentIndex + 1, total: stages.length, type: stage.type, title: stage.title || "" }
         : { index: 0, total: stages.length },
       busy: runnerBusy,
       controls: aiControls(),
-      device: serial ? { serial, key: fp ? window.DeviceHint.key(fp) : "", model: fp ? fp.model : "" } : null,
+      device: serial ? { serial, key: (fp && window.DeviceHint && typeof window.DeviceHint.key === "function") ? window.DeviceHint.key(fp) : "", model: fp ? fp.model : "" } : null,
       selected: Object.keys(appSelection).filter((path) => appSelection[path]).map(aiRelPath),
       log_tail: sessionLog.slice(-30),
     };

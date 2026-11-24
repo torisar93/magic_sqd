@@ -82,7 +82,9 @@
   // -- программа для ядра чата ---------------------------------------------------------------------------
   function modelKey() {
     const model = wizard().model();
-    return model ? window.DeviceHint.modelPath(model) : "";
+    if (!model) return "";
+    if (window.DeviceHint && typeof window.DeviceHint.modelPath === "function") return window.DeviceHint.modelPath(model);
+    return [model.brand, model.name, model.modification].filter(Boolean).join("/");
   }
 
   // Оглавление инструкций модели для сервера: номера блоков — те же, что ставит фрейм (Instructions12.reader).

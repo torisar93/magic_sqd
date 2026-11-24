@@ -440,3 +440,44 @@ def test_silent_dex_helper_is_not_an_install_error(tmp_path):
     assert "dex-хелпер не удалил: магнитола не ответила за 90 с" in log
     assert log[-1].startswith("Не удалось удалить:")
     assert adb_permissions.remove_for_rollback(ctx, "ace.jun.simplecontrol").startswith("failed")
+
+
+def test_release_before_uninstall_deduplicates_bloated_accessibility_services():
+    """№18415/18416/18693 (Changan UNI-S): в enabled_accessibility_services тысячи дублей системных служб — при
+    удалении пакета список должен дедуплицироваться с сохранением порядка, иначе settings put падает с AdbError."""
+    bloated = ":".join(["com.incall.coreserver/.HardKeyService", "com.incall.welscreen/.Key"] * 500
+                       + ["ace.jun.simplecontrol/.Svc", "com.incall.coreserver/.HardKeyService"])
+    commands = []
+
+    def shell(command, **kwargs):
+        commands.append(command)
+        if command == "settings get secure enabled_accessibility_services":
+            return SimpleNamespace(stdout=bloated + "\n", stderr="")
+        return SimpleNamespace(stdout="", stderr="")
+
+    ctx = SimpleNamespace(log=lambda _: None, shell=shell)
+    adb_permissions._release_before_uninstall(ctx, "ace.jun.simplecontrol")
+    put_cmds = [c for c in commands if c.startswith("settings put secure enabled_accessibility_services ")]
+    assert put_cmds == [
+        "settings put secure enabled_accessibility_services "
+        "com.incall.coreserver/.HardKeyService:com.incall.welscreen/.Key"
+    ]
+
+
+def test_enable_accessibility_service_deduplicates_existing():
+    bloated = "com.a/.S1:com.b/.S2:com.a/.S1:com.b/.S2"
+    commands = []
+
+    def shell(command, **kwargs):
+        commands.append(command)
+        if command == "settings get secure enabled_accessibility_services":
+            return SimpleNamespace(stdout=bloated + "\n", stderr="")
+        return SimpleNamespace(stdout="", stderr="")
+
+    ctx = SimpleNamespace(log=lambda _: None, shell=shell)
+    dumpsys = "      com.example.app/.MyA11y filter 123456 permission android.permission.BIND_ACCESSIBILITY_SERVICE\n"
+    adb_permissions._enable_accessibility_service(ctx, "com.example.app", dumpsys)
+    put_cmds = [c for c in commands if c.startswith("settings put secure enabled_accessibility_services ")]
+    assert put_cmds == [
+        "settings put secure enabled_accessibility_services com.a/.S1:com.b/.S2:com.example.app/com.example.app.MyA11y"
+    ]

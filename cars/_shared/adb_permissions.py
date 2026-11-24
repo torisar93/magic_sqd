@@ -353,7 +353,7 @@ def _enable_accessibility_service(ctx, package: str, dumpsys_output: str) -> Non
                     "включите её вручную (Настройки → Спецвозможности).")
         return
     current = (ctx.shell("settings get secure enabled_accessibility_services", check=False).stdout or "").strip()
-    existing = [c for c in current.split(":") if c] if current and current != "null" else []
+    existing = list(dict.fromkeys(c for c in current.split(":") if c)) if current and current != "null" else []
     if component not in existing:
         existing.append(component)
         ctx.shell(f"settings put secure enabled_accessibility_services {':'.join(existing)}", check=False)
@@ -714,8 +714,10 @@ _GONE_MARK = "msqd_pkg_gone"
 def _release_before_uninstall(ctx, package: str) -> None:
     current = (ctx.shell("settings get secure enabled_accessibility_services", check=False).stdout or "").strip()
     existing = [c for c in current.split(":") if c] if current and current != "null" else []
-    left = [c for c in existing if c.split("/", 1)[0] != package]
-    if len(left) != len(existing):
+    # Changan UNI-S (№18415/18416/18693, 24.11.2026): в настройке копятся тысячи дублей системных служб
+    # (до 2,3 МБ) — запись обратно без дедупликации превышает лимит ADB shell и падает с AdbError.
+    left = list(dict.fromkeys(c for c in existing if c.split("/", 1)[0] != package))
+    if any(c.split("/", 1)[0] == package for c in existing):
         ctx.log("Выключаю службу спецвозможностей приложения перед удалением...")
         ctx.shell("settings put secure enabled_accessibility_services " + (":".join(left) or "''"), check=False)
     ctx.shell(f"am force-stop {package}", check=False)
